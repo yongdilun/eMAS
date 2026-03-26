@@ -1,0 +1,63 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Local Go build and module caches
+.gocache/
+.gopath/
+bin/
+dist/
+build/
+
+# Python cache and virtual envs
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+env/
+ENV/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.pid
+*.out
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Local binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Generated ML / simulation artifacts
+ml_artifacts/
+simulator_output/
+
+# Coverage and test output
+coverage
+coverage.*
+*.coverprofile
+
+# Generated scheduling/debug outputs
+all_proposals.json
+reschedule_output.json
+schedule_output.json
+proposal_check.json
+proposal_ascii.json
+proposals_overlap_check.csv
+slots_by_machine.json
+_p.json
+_sched_settings.json
+

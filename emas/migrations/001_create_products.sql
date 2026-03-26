@@ -1,0 +1,2 @@
+-- 001_create_products.sql - placeholder
+-- TODO: add migration
