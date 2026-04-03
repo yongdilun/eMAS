@@ -33,6 +33,7 @@ DELETE FROM step_resource_requirements;
 DELETE FROM resources;
 DELETE FROM machine_setup_rules;
 DELETE FROM scheduling_events;
+DELETE FROM system_settings;
 
 -- Products (has formula_id now)
 DELETE FROM products;

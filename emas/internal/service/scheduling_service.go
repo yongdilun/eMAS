@@ -520,8 +520,10 @@ func (s *SchedulingService) CandidateMachinesForStepWithTentative(stepID string,
 			if resourceStart.After(baseCandidates[i].AvailableFrom) {
 				baseCandidates[i].AvailableFrom = resourceStart
 			}
+			baseCandidates[i].AvailableFrom = roundUpToHalfHour(baseCandidates[i].AvailableFrom)
 			baseCandidates[i].Reasons = []string{"not available in current window"}
 		} else {
+			baseCandidates[i].AvailableFrom = roundUpToHalfHour(baseCandidates[i].AvailableFrom)
 			baseCandidates[i].Reasons = nil
 		}
 	}
@@ -592,9 +594,9 @@ func (s *SchedulingService) EstimateJobEarliestCompletion(jobID string) (*Comple
 	if err != nil {
 		return nil, err
 	}
-	cursor := time.Now()
+	cursor := roundUpToHalfHour(time.Now().UTC())
 	if readiness.EarliestReadyAt != nil && readiness.EarliestReadyAt.After(cursor) {
-		cursor = *readiness.EarliestReadyAt
+		cursor = alignSuccessorStart(*readiness.EarliestReadyAt)
 	}
 	start := cursor
 	for _, jobStep := range steps {
@@ -628,7 +630,7 @@ func (s *SchedulingService) EstimateJobEarliestCompletion(jobID string) (*Comple
 				selectedStart = candidates[0].AvailableFrom
 			}
 		}
-		cursor = selectedStart.Add(selectedDuration)
+		cursor = alignSuccessorStart(selectedStart.Add(selectedDuration))
 	}
 	return &CompletionEstimate{
 		JobID:               jobID,
@@ -1598,80 +1600,114 @@ func (s *SchedulingService) findFeasibleMachineStart(
 	predecessorEnd *time.Time,
 	horizonEnd time.Time,
 ) (time.Time, bool, []string, map[string]interface{}) {
+	duration = ceilDurationTo30Min(duration)
 	if duration <= 0 {
-		duration = time.Minute
+		duration = schedulerSlotGranularity
 	}
 	if !horizonEnd.After(start) {
 		horizonEnd = start.Add(72 * time.Hour)
 	}
-	effectiveStart := start
+	effectiveStart := roundUpToHalfHour(start)
 	if predecessorEnd != nil && predecessorEnd.After(effectiveStart) {
-		effectiveStart = *predecessorEnd
+		effectiveStart = alignSuccessorStart(*predecessorEnd)
 	}
 	workWindows := s.machineWorkWindows(machineID, effectiveStart, horizonEnd)
 	busy := s.machineBusyIntervals(machineID, tentativeSlots)
-	mergedBusy := mergeBusyIntervals(busy)
+	mergedBusy := normalizeBusyIntervals(busy)
 	diag := map[string]interface{}{
 		"attempted_horizon_start": effectiveStart.UTC().Format(time.RFC3339),
 		"attempted_horizon_end":   horizonEnd.UTC().Format(time.RFC3339),
 		"cap_hit":                 false,
 	}
-	for _, window := range workWindows {
-		candidate := window.Start
-		if effectiveStart.After(candidate) {
-			candidate = effectiveStart
-		}
-		for candidate.Add(duration).Before(window.End) || candidate.Add(duration).Equal(window.End) {
-			candidate = NextFreeWindowFromIntervals(candidate, duration, mergedBusy)
-			if candidate.Add(duration).After(window.End) {
-				break
-			}
-			// For proposal generation/repair we validate against machine/resource/global
-			// constraints using core validation and enforce precedence via predecessorEnd
-			// (cursor), because DB-based precedence checks require persisted predecessor slots.
-			ps := processStep
-			if ps == nil && jobStepID != "" {
-				if resolved, err := s.GetProcessStepForJobStep(jobStepID); err == nil {
-					ps = resolved
-				}
-			}
-			if ps == nil {
-				return time.Time{}, false, []string{"missing process step; cannot validate machine calendar for placement"}, diag
-			}
-			ok, err := s.validateSlotCoreForStep(ps, machineID, candidate, candidate.Add(duration), quantity, excludeSlotID)
-			if err != nil {
-				return time.Time{}, false, []string{"slot validation failed: " + err.Error()}, diag
-			}
-			if ok {
-				return candidate, true, nil, diag
-			}
-			// jump to end of first overlapping busy interval when possible; otherwise move to next boundary
-			jumped := false
-			for _, iv := range mergedBusy {
-				if candidate.Before(iv.End) && candidate.Add(duration).After(iv.Start) {
-					candidate = iv.End
-					jumped = true
-					break
-				}
-			}
-			if !jumped {
-				candidate = candidate.Add(15 * time.Minute)
-			}
+	workWindows = normalizeBusyIntervals(workWindows)
+	ps := processStep
+	if ps == nil && jobStepID != "" {
+		if resolved, err := s.GetProcessStepForJobStep(jobStepID); err == nil {
+			ps = resolved
 		}
 	}
+	if ps == nil {
+		return time.Time{}, false, []string{"reason_code=" + noFeasibleSlotReasonCode + " missing process step for placement"}, diag
+	}
+	candidate, ok := nextAlignedWorkStart(effectiveStart, workWindows, mergedBusy, time.UTC)
+	if !ok {
+		diag["cap_hit"] = true
+		return time.Time{}, false, []string{"reason_code=" + searchHorizonExceededReasonCode + " no aligned machine work window found in planning horizon"}, diag
+	}
+	for iterations := 0; iterations < maxAlignedPlacementIterations; iterations++ {
+		if !horizonEnd.After(candidate) {
+			break
+		}
+		candidate = roundUpToHalfHour(candidate)
+		end := candidate.Add(duration)
+		var containing *BusyInterval
+		for idx := range workWindows {
+			if intervalContainsStart(workWindows[idx], candidate) {
+				containing = &workWindows[idx]
+				break
+			}
+		}
+		if containing == nil {
+			nextCandidate, found := nextAlignedWorkStart(candidate.Add(schedulerSlotGranularity), workWindows, mergedBusy, time.UTC)
+			if !found {
+				break
+			}
+			candidate = nextCandidate
+			continue
+		}
+		if !intervalFullyContains(*containing, candidate, end) {
+			nextCandidate, found := nextAlignedWorkStart(containing.End, workWindows, mergedBusy, time.UTC)
+			if !found {
+				break
+			}
+			candidate = nextCandidate
+			continue
+		}
+		resourceCandidate := s.nextResourceWorkWindowStart(ps, candidate)
+		resourceCandidate = roundUpToHalfHour(resourceCandidate)
+		if resourceCandidate.After(candidate) {
+			candidate = resourceCandidate
+			continue
+		}
+		ok, err := s.validateSlotCoreForStep(ps, machineID, candidate, end, quantity, excludeSlotID)
+		if err != nil {
+			return time.Time{}, false, []string{"reason_code=" + noFeasibleSlotReasonCode + " slot validation failed: " + err.Error()}, diag
+		}
+		if ok {
+			return candidate, true, nil, diag
+		}
+		nextCandidate, found := nextAlignedWorkStart(candidate.Add(schedulerSlotGranularity), workWindows, mergedBusy, time.UTC)
+		if !found {
+			break
+		}
+		candidate = nextCandidate
+	}
 	diag["cap_hit"] = true
-	return time.Time{}, false, []string{"no feasible window found in scheduling horizon"}, diag
+	return time.Time{}, false, []string{"reason_code=" + searchHorizonExceededReasonCode + " no feasible aligned window found in scheduling horizon"}, diag
+}
+
+func (s *SchedulingService) validateSlotCoreResultForStep(processStep *domain.ProcessSteps, machineID string, start, end time.Time, quantity int, excludeSlotID string) (*SlotValidationResult, error) {
+	result := &SlotValidationResult{
+		Valid:          true,
+		MachineID:      machineID,
+		ScheduledStart: start,
+		ScheduledEnd:   end,
+	}
+	if err := s.validateMachineWindow(processStep, machineID, start, end, quantity, excludeSlotID, "", false, result); err != nil {
+		return nil, err
+	}
+	if err := s.validateResourceAvailability(processStep, start, end, excludeSlotID, result); err != nil {
+		return nil, err
+	}
+	result.Finalize()
+	return result, nil
 }
 
 func (s *SchedulingService) validateSlotCoreForStep(processStep *domain.ProcessSteps, machineID string, start, end time.Time, quantity int, excludeSlotID string) (bool, error) {
-	result := &SlotValidationResult{Valid: true}
-	if err := s.validateMachineWindow(processStep, machineID, start, end, quantity, excludeSlotID, "", false, result); err != nil {
+	result, err := s.validateSlotCoreResultForStep(processStep, machineID, start, end, quantity, excludeSlotID)
+	if err != nil {
 		return false, err
 	}
-	if err := s.validateResourceAvailability(processStep, start, end, excludeSlotID, result); err != nil {
-		return false, err
-	}
-	result.Finalize()
 	return result.Valid, nil
 }
 
@@ -1840,7 +1876,7 @@ func (s *SchedulingService) machineBusyIntervals(machineID string, tentativeSlot
 // earliestStartWithSetup returns the earliest start time for a slot, accounting for machine busy intervals
 // and setup time when switching products. Used when validation fails to give a feasible AvailableFrom.
 func (s *SchedulingService) earliestStartWithSetup(machineID string, start time.Time, duration time.Duration, toProductID string, tentativeSlots []TentativeSlot) time.Time {
-	raw := s.nextMachineFreeTimeWithTentative(machineID, start, duration, tentativeSlots)
+	raw := roundUpToHalfHour(s.nextMachineFreeTimeWithTentative(machineID, start, duration, tentativeSlots))
 	if s.setupRepo == nil || toProductID == "" {
 		return raw
 	}
@@ -1854,7 +1890,7 @@ func (s *SchedulingService) earliestStartWithSetup(machineID string, start time.
 	}
 	afterSetup := lastRow.Slot.ScheduledEnd.Add(time.Duration(setupMins) * time.Minute)
 	if afterSetup.After(raw) {
-		return afterSetup
+		return roundUpToHalfHour(afterSetup)
 	}
 	return raw
 }
@@ -1866,9 +1902,9 @@ func (s *SchedulingService) nextMachineFreeTimeWithTentative(machineID string, s
 	intervals := s.machineBusyIntervals(machineID, tentativeSlots)
 	intervals = mergeBusyIntervals(intervals)
 	if duration > 0 {
-		return NextFreeWindowFromIntervals(start, duration, intervals)
+		return roundUpToHalfHour(NextFreeWindowFromIntervals(start, duration, intervals))
 	}
-	return NextFreeFromIntervals(start, intervals)
+	return roundUpToHalfHour(NextFreeFromIntervals(start, intervals))
 }
 
 func adjustedDuration(base time.Duration, efficiency float64) time.Duration {

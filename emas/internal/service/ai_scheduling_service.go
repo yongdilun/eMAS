@@ -145,7 +145,10 @@ type ProposedSlot struct {
 	AllocationPercent     float64   `json:"allocation_percent"`
 	IsParallel            bool      `json:"is_parallel"`
 	BatchSequence         int       `json:"batch_sequence"`
+	ActualDurationMins    int       `json:"actual_duration_mins,omitempty"`
 	EstimatedDurationMins int       `json:"estimated_duration_mins"`
+	ReservedDurationMins  int       `json:"reserved_duration_mins,omitempty"`
+	RoundingOverheadMins  int       `json:"rounding_overhead_mins,omitempty"`
 	Reasoning             []string  `json:"reasoning"`
 }
 

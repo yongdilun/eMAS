@@ -78,9 +78,9 @@ type realSchedulingOptimizer struct {
 }
 
 func newRealSchedulingOptimizer(job *domain.Job, preview *SolverPreview) *realSchedulingOptimizer {
-	cursor := time.Now().UTC()
+	cursor := roundUpToHalfHour(time.Now().UTC())
 	if preview.EarliestReadyAt != nil && preview.EarliestReadyAt.After(cursor) {
-		cursor = *preview.EarliestReadyAt
+		cursor = alignSuccessorStart(*preview.EarliestReadyAt)
 	}
 	return &realSchedulingOptimizer{job: job, preview: preview, cursor: cursor}
 }
@@ -128,7 +128,7 @@ func (o *realSchedulingOptimizer) greedySchedule(ctx context.Context) ([]stepPla
 		if best.end.After(cursor) {
 			cursor = best.end
 		}
-		cursor = cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute)
+		cursor = alignSuccessorStart(cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 	}
 	return plans, nil
 }
@@ -252,6 +252,7 @@ func (o *realSchedulingOptimizer) singleMachinePlan(
 	if ms.freeAt.After(start) {
 		start = ms.freeAt
 	}
+	start = alignSuccessorStart(start)
 	end := start.Add(duration)
 
 	return stepPlan{
@@ -304,6 +305,7 @@ func (o *realSchedulingOptimizer) parallelPlan(
 			start = ms.freeAt
 		}
 	}
+	start = alignSuccessorStart(start)
 	end := start.Add(duration)
 
 	allocs := equalPercents(n)
@@ -361,7 +363,7 @@ func (o *realSchedulingOptimizer) localSearch(ctx context.Context, plans []stepP
 			cursor := o.cursor
 			if i > 0 {
 				prev := best[i-1]
-				cursor = prev.end.Add(time.Duration(prev.step.MinWaitMinutes+prev.step.TransferMinutes) * time.Minute)
+				cursor = alignSuccessorStart(prev.end.Add(time.Duration(prev.step.MinWaitMinutes+prev.step.TransferMinutes) * time.Minute))
 			}
 
 			for _, alt := range available {
@@ -417,7 +419,7 @@ func (o *realSchedulingOptimizer) recomputeFrom(plans []stepPlan, fromIndex int)
 	cursor := o.cursor
 	if fromIndex > 0 && !plans[fromIndex-1].end.IsZero() {
 		prev := plans[fromIndex-1]
-		cursor = prev.end.Add(time.Duration(prev.step.MinWaitMinutes+prev.step.TransferMinutes) * time.Minute)
+		cursor = alignSuccessorStart(prev.end.Add(time.Duration(prev.step.MinWaitMinutes+prev.step.TransferMinutes) * time.Minute))
 	}
 	for i := fromIndex; i < len(plans); i++ {
 		step := plans[i].step
@@ -436,7 +438,7 @@ func (o *realSchedulingOptimizer) recomputeFrom(plans []stepPlan, fromIndex int)
 		if plans[i].end.After(cursor) {
 			cursor = plans[i].end
 		}
-		cursor = cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute)
+		cursor = alignSuccessorStart(cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 	}
 	return plans
 }
@@ -564,7 +566,10 @@ func buildRealSolverProposal(
 				AllocationPercent:     sl.pct,
 				IsParallel:            sl.isParallel,
 				BatchSequence:         sl.batchSeq,
+				ActualDurationMins:    sp.step.ActualDurationMins,
 				EstimatedDurationMins: sl.durationMins,
+				ReservedDurationMins:  sl.durationMins,
+				RoundingOverheadMins:  maxInt(sl.durationMins-sp.step.ActualDurationMins, 0),
 				Reasoning:             reasoning,
 			})
 		}

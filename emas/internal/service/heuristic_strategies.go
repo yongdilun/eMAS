@@ -103,7 +103,7 @@ func buildBaseProposal(job *domain.Job, engineVersion string, now time.Time) *Sc
 		EngineVersion:  engineVersion,
 		GeneratedAt:    now.UTC(),
 		Feasible:       true,
-		EarliestStart:  now,
+		EarliestStart:  roundUpToHalfHour(now.UTC()),
 		ProposedSlots:  make([]ProposedSlot, 0),
 		Summary:        make([]string, 0, 4),
 		BlockedReasons: make([]string, 0, 4),
@@ -241,7 +241,7 @@ func (s GreedyEarliestStart) Applicable(_ *domain.Job, _ *SolverPreview, _ []Ten
 }
 func (s GreedyEarliestStart) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
 	h := newHeuristicContext(time.Now())
-	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByEarliestStart(), 0, 0, 5*time.Minute)
+	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByEarliestStart(), 0, 0, schedulerSlotGranularity)
 }
 
 // ─── Strategy: Least loaded machine ───────────────────────────────────────────
@@ -258,7 +258,7 @@ func (s LeastLoadedMachine) Applicable(_ *domain.Job, _ *SolverPreview, _ []Tent
 func (s LeastLoadedMachine) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
 	h := newHeuristicContext(time.Now())
 	h.computeLoadScoresOnce(svc)
-	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByLeastLoaded(h.loadScore), 0, 0, 10*time.Minute)
+	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByLeastLoaded(h.loadScore), 0, 0, schedulerSlotGranularity)
 }
 
 // ─── Strategy: Deadline biased last step ──────────────────────────────────────
@@ -274,7 +274,7 @@ func (s DeadlineBiasedLastStep) Applicable(_ *domain.Job, _ *SolverPreview, _ []
 }
 func (s DeadlineBiasedLastStep) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
 	h := newHeuristicContext(time.Now())
-	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByDeadlineBiased(targetCompletion), 0, 0, 15*time.Minute)
+	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByDeadlineBiased(targetCompletion), 0, 0, schedulerSlotGranularity)
 }
 
 // ─── Shared generator ─────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ const (
 	topKMachines                    = 5
 	minDistinctAttemptsForEarlyExit = 3
 	maxSlicesPerStep                = 8
-	minSliceMinutes                 = 15
+	minSliceMinutes                 = 30
 	maxIntervalsScannedPerMachine   = 128
 )
 
@@ -423,7 +423,9 @@ func placementRetryEligible(reasons []string) bool {
 	}
 	return containsAnyReasonCode(reasons, "no feasible window") ||
 		containsAnyReasonCode(reasons, "no_feasible_window") ||
-		containsAnyReasonCode(reasons, "horizon_cap_reached")
+		containsAnyReasonCode(reasons, "horizon_cap_reached") ||
+		containsAnyReasonCode(reasons, searchHorizonExceededReasonCode) ||
+		containsAnyReasonCode(reasons, noFeasibleSlotReasonCode)
 }
 
 func placementCapEnd(now, start, adaptiveEnd time.Time, horizonDays int) time.Time {
@@ -469,7 +471,9 @@ func classifyAttemptResult(reasons []string) machineAttemptResult {
 	}
 	if containsAnyReasonCode(reasons, "no feasible window") ||
 		containsAnyReasonCode(reasons, "no_feasible_window") ||
-		containsAnyReasonCode(reasons, "horizon_cap_reached") {
+		containsAnyReasonCode(reasons, "horizon_cap_reached") ||
+		containsAnyReasonCode(reasons, searchHorizonExceededReasonCode) ||
+		containsAnyReasonCode(reasons, noFeasibleSlotReasonCode) {
 		return machineAttemptNoWindow
 	}
 	return machineAttemptUnknown
@@ -980,14 +984,14 @@ func generateWithCandidateSortPick(
 	cursorOffset time.Duration,
 	stepStartOffset time.Duration,
 ) (*SchedulingProposal, error) {
-	now := time.Now()
+	now := roundUpToHalfHour(time.Now().UTC())
 	p := buildBaseProposal(job, "v2/"+engineVersion, now)
 	cursor := now
 	if preview != nil && preview.EarliestReadyAt != nil && preview.EarliestReadyAt.After(cursor) {
-		cursor = *preview.EarliestReadyAt
+		cursor = alignSuccessorStart(*preview.EarliestReadyAt)
 	}
 	if cursorOffset > 0 {
-		cursor = cursor.Add(cursorOffset)
+		cursor = alignSuccessorStart(cursor.Add(cursorOffset))
 	}
 	p.EarliestStart = cursor
 	hp := defaultHorizonPolicy()
@@ -1006,7 +1010,7 @@ func generateWithCandidateSortPick(
 		ct := combinedTentative(tentativeSlots, p.ProposedSlots)
 		stepCursor := cursor
 		if stepStartOffset > 0 {
-			stepCursor = stepCursor.Add(stepStartOffset)
+			stepCursor = alignSuccessorStart(stepCursor.Add(stepStartOffset))
 		}
 		adaptiveEnd := computeAdaptiveHorizonEnd(now, job.Deadline, targetCompletion, stepCursor, hp)
 		candidates, err := h.candidatesWithCache(svc, step.JobStepID, stepCursor, adaptiveEnd, ct)
@@ -1029,7 +1033,8 @@ func generateWithCandidateSortPick(
 		if processStep == nil {
 			processStep = &domain.ProcessSteps{DefaultProcessingTime: maxInt(step.EstimatedDurationMins, 1)}
 		}
-		stepDuration := estimatedStepDuration(*processStep, candidates, float64(step.QuantityTarget))
+		durationMetrics := stepDurationMetrics(*processStep, candidates, float64(step.QuantityTarget))
+		stepDuration := durationMetrics.ReservedDuration
 		candidates, err = h.candidatesWithCache(svc, step.JobStepID, stepCursor, adaptiveEnd, ct)
 		if err != nil {
 			p.Feasible = false
@@ -1039,7 +1044,7 @@ func generateWithCandidateSortPick(
 		available := filterAvailableCandidates(candidates)
 		if len(available) == 0 {
 			p.Feasible = false
-			p.BlockedReasons = append(p.BlockedReasons, fmt.Sprintf("reason_code=horizon_cap_reached no feasible window for step %s within horizon (expanded_steps=%d, horizon_end=%s).", step.StepName, expanded, adaptiveEnd.UTC().Format(time.RFC3339)))
+			p.BlockedReasons = append(p.BlockedReasons, fmt.Sprintf("reason_code=%s no feasible aligned window for step %s within horizon (expanded_steps=%d, horizon_end=%s).", searchHorizonExceededReasonCode, step.StepName, expanded, adaptiveEnd.UTC().Format(time.RFC3339)))
 			continue
 		}
 
@@ -1057,7 +1062,8 @@ func generateWithCandidateSortPick(
 					groupStart = c.AvailableFrom
 				}
 			}
-			duration := estimatedStepDuration(domain.ProcessSteps{
+			groupStart = alignSuccessorStart(groupStart)
+			parallelDurationMetrics := stepDurationMetrics(domain.ProcessSteps{
 				DefaultPreparationTime: 0,
 				DefaultProcessingTime:  maxInt(step.EstimatedDurationMins, 1),
 				DefaultCleaningTime:    0,
@@ -1066,7 +1072,7 @@ func generateWithCandidateSortPick(
 			allocations := allocateSplitQuantities(step.QuantityTarget, suggestion.AllocationPercents, parallelCount, step.MinBatchSize)
 			groupEnd := groupStart
 			for i := 0; i < parallelCount; i++ {
-				end := groupStart.Add(duration)
+				end := groupStart.Add(parallelDurationMetrics.ReservedDuration)
 				if end.After(groupEnd) {
 					groupEnd = end
 				}
@@ -1082,15 +1088,17 @@ func generateWithCandidateSortPick(
 					AllocationPercent:     suggestion.AllocationPercents[minInt(i, len(suggestion.AllocationPercents)-1)],
 					IsParallel:            true,
 					BatchSequence:         i + 1,
-					EstimatedDurationMins: int(duration.Minutes()),
+					ActualDurationMins:    parallelDurationMetrics.ActualDurationMins,
+					EstimatedDurationMins: parallelDurationMetrics.ReservedDurationMins,
+					ReservedDurationMins:  parallelDurationMetrics.ReservedDurationMins,
+					RoundingOverheadMins:  parallelDurationMetrics.RoundingOverheadMins,
 					Reasoning: []string{
 						"Parallel split was chosen because the step allows parallel execution.",
 						fmt.Sprintf("Machine %s is one of the best currently feasible candidates.", group[i].MachineName),
 					},
 				})
 			}
-			cursor = groupEnd
-			cursor = cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute)
+			cursor = alignSuccessorStart(groupEnd.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 			p.Summary = append(p.Summary, fmt.Sprintf("Step %s was split across %d machines.", step.StepName, parallelCount))
 			continue
 		}
@@ -1107,6 +1115,7 @@ func generateWithCandidateSortPick(
 		if best.AvailableFrom.After(start) {
 			start = best.AvailableFrom
 		}
+		start = alignSuccessorStart(start)
 		attemptMachines := make([]CandidateMachine, 0, topKMachines)
 		attemptMachines = append(attemptMachines, best)
 		for _, c := range candidatePool {
@@ -1164,7 +1173,7 @@ func generateWithCandidateSortPick(
 		}
 		if !outcome.Ok {
 			p.Feasible = false
-			reason := "reason_code=no_feasible_window failed strict feasible placement"
+			reason := "reason_code=" + noFeasibleSlotReasonCode + " failed strict feasible placement"
 			if len(outcome.Reasons) > 0 {
 				reason += ": " + outcome.Reasons[0]
 				finalReason = outcome.Reasons[0]
@@ -1208,7 +1217,7 @@ func generateWithCandidateSortPick(
 				zap.Any("attempts", outcome.Attempts),
 			)
 		}
-		start = outcome.Start
+		start = alignSuccessorStart(outcome.Start)
 		if outcome.SelectedMachineID != "" {
 			for _, c := range candidatePool {
 				if c.MachineID == outcome.SelectedMachineID {
@@ -1259,13 +1268,16 @@ func generateWithCandidateSortPick(
 					StepName:              step.StepName,
 					MachineID:             splitMachineID,
 					MachineName:           splitMachineName,
-					ScheduledStart:        sl.Start,
-					ScheduledEnd:          sl.End,
+					ScheduledStart:        alignSuccessorStart(sl.Start),
+					ScheduledEnd:          alignSuccessorStart(sl.Start).Add(ceilDurationTo30Min(sl.End.Sub(sl.Start))),
 					QuantityPlanned:       allocations[idx],
 					AllocationPercent:     mathRound(float64(allocations[idx])*100/float64(step.QuantityTarget), 2),
 					IsParallel:            false,
 					BatchSequence:         idx + 1,
-					EstimatedDurationMins: maxInt(int(sl.End.Sub(sl.Start).Minutes()), 1),
+					ActualDurationMins:    maxInt(int(sl.End.Sub(sl.Start).Minutes()), 1),
+					EstimatedDurationMins: maxInt(int(ceilDurationTo30Min(sl.End.Sub(sl.Start)).Minutes()), int(schedulerSlotGranularity.Minutes())),
+					ReservedDurationMins:  maxInt(int(ceilDurationTo30Min(sl.End.Sub(sl.Start)).Minutes()), int(schedulerSlotGranularity.Minutes())),
+					RoundingOverheadMins:  maxInt(int(ceilDurationTo30Min(sl.End.Sub(sl.Start)).Minutes()-sl.End.Sub(sl.Start).Minutes()), 0),
 					Reasoning: []string{
 						fmt.Sprintf("Selected machine %s via strategy %s.", splitMachineName, engineVersion),
 						"Split fallback used after no continuous window found.",
@@ -1287,7 +1299,10 @@ func generateWithCandidateSortPick(
 				AllocationPercent:     100,
 				IsParallel:            false,
 				BatchSequence:         1,
-				EstimatedDurationMins: maxInt(int(stepDuration.Minutes()), 1),
+				ActualDurationMins:    durationMetrics.ActualDurationMins,
+				EstimatedDurationMins: durationMetrics.ReservedDurationMins,
+				ReservedDurationMins:  durationMetrics.ReservedDurationMins,
+				RoundingOverheadMins:  durationMetrics.RoundingOverheadMins,
 				Reasoning: []string{
 					fmt.Sprintf("Selected machine %s via strategy %s.", best.MachineName, engineVersion),
 					fmt.Sprintf("Tiered score: lateness_class=%d setup_switch=%d slack_rank=%.1f", tier.latenessClass, tier.setupCost, tier.negativeSlack),
@@ -1296,8 +1311,7 @@ func generateWithCandidateSortPick(
 			})
 		}
 		lastMachineID = best.MachineID
-		cursor = end
-		cursor = cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute)
+		cursor = alignSuccessorStart(end.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 		p.Summary = append(p.Summary, fmt.Sprintf("Step %s was assigned to %s.", step.StepName, best.MachineName))
 	}
 

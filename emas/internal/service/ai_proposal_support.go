@@ -305,8 +305,9 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 		cp.GeneratedAt = time.Now().UTC()
 		cp.Alternatives = nil
 		for i := range cp.ProposedSlots {
-			cp.ProposedSlots[i].ScheduledStart = cp.ProposedSlots[i].ScheduledStart.Add(delta)
-			cp.ProposedSlots[i].ScheduledEnd = cp.ProposedSlots[i].ScheduledEnd.Add(delta)
+			reserved := ceilDurationTo30Min(cp.ProposedSlots[i].ScheduledEnd.Sub(cp.ProposedSlots[i].ScheduledStart))
+			cp.ProposedSlots[i].ScheduledStart = alignSuccessorStart(cp.ProposedSlots[i].ScheduledStart.Add(delta))
+			cp.ProposedSlots[i].ScheduledEnd = cp.ProposedSlots[i].ScheduledStart.Add(reserved)
 		}
 		if cp.EstimatedCompletion != nil {
 			t := cp.EstimatedCompletion.Add(delta)
@@ -353,8 +354,8 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 			addCandidate(p2, "greedy_second_best_finish", fmt.Sprintf("%s/B", st.ID()), "second_best")
 		}
 
-		// Variant C: small what-if time shift (+5m)
-		addCandidate(shiftedClone(p, 5*time.Minute, "shift_plus_5m"), st.ID(), fmt.Sprintf("%s/C", st.ID()), "shift_plus_5m")
+		// Variant C: small what-if time shift (+30m on the aligned slot grid)
+		addCandidate(shiftedClone(p, schedulerSlotGranularity, "shift_plus_30m"), st.ID(), fmt.Sprintf("%s/C", st.ID()), "shift_plus_30m")
 
 		if len(scenarios) >= 9 {
 			break
@@ -415,14 +416,14 @@ func (s *AIPredictiveService) buildPreviewSolverProposal(job *domain.Job, previe
 		EngineVersion:  "preview-optimizer-v2",
 		GeneratedAt:    time.Now().UTC(),
 		Feasible:       true,
-		EarliestStart:  time.Now(),
+		EarliestStart:  roundUpToHalfHour(time.Now().UTC()),
 		ProposedSlots:  make([]ProposedSlot, 0),
 		Summary:        make([]string, 0, 4),
 		BlockedReasons: make([]string, 0, 4),
 	}
-	cursor := time.Now()
+	cursor := roundUpToHalfHour(time.Now().UTC())
 	if preview.EarliestReadyAt != nil && preview.EarliestReadyAt.After(cursor) {
-		cursor = *preview.EarliestReadyAt
+		cursor = alignSuccessorStart(*preview.EarliestReadyAt)
 	}
 	proposal.EarliestStart = cursor
 
@@ -457,7 +458,8 @@ func (s *AIPredictiveService) buildPreviewSolverProposal(job *domain.Job, previe
 				start = candidate.AvailableFrom
 			}
 		}
-		duration := estimatedStepDuration(domain.ProcessSteps{
+		start = alignSuccessorStart(start)
+		durationMetrics := stepDurationMetrics(domain.ProcessSteps{
 			DefaultProcessingTime: maxInt(step.EstimatedDurationMins, 1),
 		}, selected, float64(step.QuantityTarget))
 		allocations := make([]int, parallelCount)
@@ -470,7 +472,7 @@ func (s *AIPredictiveService) buildPreviewSolverProposal(job *domain.Job, previe
 		}
 		stepEnd := start
 		for idx, candidate := range selected {
-			end := start.Add(duration)
+			end := start.Add(durationMetrics.ReservedDuration)
 			if end.After(stepEnd) {
 				stepEnd = end
 			}
@@ -486,7 +488,10 @@ func (s *AIPredictiveService) buildPreviewSolverProposal(job *domain.Job, previe
 				AllocationPercent:     float64(allocations[idx]) / float64(step.QuantityTarget) * 100,
 				IsParallel:            parallelCount > 1,
 				BatchSequence:         idx + 1,
-				EstimatedDurationMins: int(duration.Minutes()),
+				ActualDurationMins:    durationMetrics.ActualDurationMins,
+				EstimatedDurationMins: durationMetrics.ReservedDurationMins,
+				ReservedDurationMins:  durationMetrics.ReservedDurationMins,
+				RoundingOverheadMins:  durationMetrics.RoundingOverheadMins,
 				Reasoning: []string{
 					"Preview optimizer selected the machine combination with the earliest projected completion.",
 					fmt.Sprintf("Machine %s was chosen because it minimizes finish time under current readiness and availability.", candidate.MachineName),
@@ -494,8 +499,7 @@ func (s *AIPredictiveService) buildPreviewSolverProposal(job *domain.Job, previe
 			})
 		}
 		proposal.Summary = append(proposal.Summary, fmt.Sprintf("Optimizer scheduled step %s using %d machine(s).", step.StepName, parallelCount))
-		cursor = stepEnd
-		cursor = cursor.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute)
+		cursor = alignSuccessorStart(stepEnd.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 	}
 
 	finalizeProposalScores(proposal, job)
@@ -598,12 +602,12 @@ func (s *AIPredictiveService) buildProposalSnapshot(jobID string) (*SolverPrevie
 
 // buildProposalSnapshotWithTentative builds snapshot for batch scheduling,
 // using tentative slots from earlier jobs in the batch when computing preview.
-func (s *AIPredictiveService) buildProposalSnapshotWithTentative(jobID string, tentativeSlots []TentativeSlot) (*SolverPreview, string, string, error) {
+func (s *AIPredictiveService) buildProposalSnapshotWithTentative(jobID string, tentativeSlots []TentativeSlot, earliestFloor *time.Time) (*SolverPreview, string, string, error) {
 	job, err := s.jobRepo.GetByID(jobID)
 	if err != nil {
 		return nil, "", "", err
 	}
-	preview, err := s.scheduling.BuildSolverPreviewWithTentativeSlots(jobID, tentativeSlots)
+	preview, err := s.scheduling.BuildSolverPreviewWithTentativeSlotsAndFloor(jobID, tentativeSlots, earliestFloor)
 	if err != nil {
 		return nil, "", "", err
 	}

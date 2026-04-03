@@ -2,10 +2,10 @@
 package main
 
 import (
-	"encoding/json"
 	"emas/config"
 	"emas/internal/domain"
 	"emas/internal/repository"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -102,9 +102,13 @@ func main() {
 
 func seedSchedulingSettings(db *gorm.DB) {
 	settingsRepo := repository.NewSystemSettingsRepository(db)
-	_ = settingsRepo.PutString("scheduling.work_start_time", "08:00")
-	_ = settingsRepo.PutString("scheduling.work_end_time", "17:00")
-	_ = settingsRepo.PutString("scheduling.work_days", "1,2,3,4,5")
+	// Seed demo data should be schedulable on the same day even when the reset/seed
+	// command is run late in the afternoon. We therefore use a broad 7-day work
+	// template and no reschedule lock window by default for seeded environments.
+	_ = settingsRepo.PutInt("scheduling.lock_in_window_minutes", 0)
+	_ = settingsRepo.PutString("scheduling.work_start_time", "00:00")
+	_ = settingsRepo.PutString("scheduling.work_end_time", "23:30")
+	_ = settingsRepo.PutString("scheduling.work_days", "0,1,2,3,4,5,6")
 	_ = settingsRepo.PutString("scheduling.public_holidays", "[]")
 }
 
@@ -283,12 +287,12 @@ func seedProcessStepGaps(db *gorm.DB) {
 	}
 	for _, u := range updates {
 		_ = db.Model(&domain.ProcessSteps{}).Where("step_id = ?", u.StepID).Updates(map[string]interface{}{
-			"min_wait_minutes":      u.MinWaitMinutes,
-			"transfer_minutes":      u.TransferMinutes,
-			"batch_size":            u.BatchSize,
-			"min_batch_size":        u.MinBatchSize,
-			"is_batch_process":      u.IsBatchProcess,
-			"predecessor_step_ids":  u.PredecessorStepIDs,
+			"min_wait_minutes":     u.MinWaitMinutes,
+			"transfer_minutes":     u.TransferMinutes,
+			"batch_size":           u.BatchSize,
+			"min_batch_size":       u.MinBatchSize,
+			"is_batch_process":     u.IsBatchProcess,
+			"predecessor_step_ids": u.PredecessorStepIDs,
 		}).Error
 	}
 }
@@ -639,13 +643,16 @@ func seedJobs(db *gorm.DB) map[string][]string {
 	// Medium-load quantities to keep seed realistic and schedulable while still exercising fallback logic.
 	// Extra jobs (013–018) added to increase contention.
 	specs := []struct {
-		jobID       string
-		productID   string
-		priority    string
+		jobID        string
+		productID    string
+		priority     string
 		deadlineDays int
-		status      string
-		qty         int
-		slotSpecs   []struct{ machineID, start string; durationMins, qty int }
+		status       string
+		qty          int
+		slotSpecs    []struct {
+			machineID, start  string
+			durationMins, qty int
+		}
 	}{
 		{"JOB-SEED-001", "P-001", "high", 14, domain.JobStatusPlanned, 1600, nil},
 		{"JOB-SEED-002", "P-002", "medium", 14, domain.JobStatusPlanned, 900, nil},

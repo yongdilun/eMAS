@@ -44,9 +44,11 @@ func (s *AIPredictiveService) RescheduleAll(ctx context.Context, orderBy, genera
 			}
 		}
 	}
+	lockFloor := s.rescheduleLockFloor()
 	return s.ScheduleJobSet(ctx, jobIDs, generatedBy, orderBy, &ScheduleJobSetOpts{
 		IncludeJobsWithActiveSlots: dryRun,
 		PersistProposals:           !dryRun,
+		EarliestStartFloor:         lockFloor,
 	})
 }
 
@@ -79,10 +81,23 @@ func (s *AIPredictiveService) resolveJobsForReschedule() ([]domain.Job, error) {
 	return result, nil
 }
 
+func (s *AIPredictiveService) rescheduleLockFloor() *time.Time {
+	const lockInKey = "scheduling.lock_in_window_minutes"
+	lockMins := 240
+	if s.settingsRepo != nil {
+		if v, err := s.settingsRepo.GetInt(lockInKey, lockMins); err == nil {
+			lockMins = v
+		}
+	}
+	floor := roundUpToHalfHour(time.Now().UTC().Add(time.Duration(lockMins) * time.Minute))
+	return &floor
+}
+
 // ScheduleJobSetOpts configures ScheduleJobSet behavior.
 type ScheduleJobSetOpts struct {
 	IncludeJobsWithActiveSlots bool // when true, include jobs that have planned/running slots (for preview)
 	PersistProposals           bool // when false, do not write to DB (preview mode)
+	EarliestStartFloor         *time.Time
 }
 
 // ScheduleJobSet schedules a set of jobs in priority order, using shared machine
@@ -132,7 +147,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		default:
 		}
 
-		preview, snapshotJSON, snapshotHash, err := s.buildProposalSnapshotWithTentative(job.JobID, tentativeSlots)
+		preview, snapshotJSON, snapshotHash, err := s.buildProposalSnapshotWithTentative(job.JobID, tentativeSlots, opts.EarliestStartFloor)
 		if err != nil {
 			summary.Blocked++
 			logger.L().Warn("batch_proposal_preview_failed", zap.String("job_id", job.JobID), zap.Error(err))
@@ -149,7 +164,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		if err := s.validateProposalSlotsStrict(job.JobID, proposal); err != nil {
 			// buildProposalForPreview can emit slots that drift past the global work template (e.g. 17:05
 			// vs settings 08:00–17:00) or past shift after heuristics. Repair before failing the batch.
-			if rerr := s.chainAwareForwardRepair([]*SchedulingProposal{proposal}, 2, tentativeSlots); rerr != nil {
+			if rerr := s.chainAwareForwardRepair([]*SchedulingProposal{proposal}, chainRepairPassBudget([]*SchedulingProposal{proposal}), tentativeSlots); rerr != nil {
 				return nil, nil, rerr
 			}
 			if err := s.validateProposalSlotsStrict(job.JobID, proposal); err != nil {
@@ -322,18 +337,14 @@ func (s *AIPredictiveService) validateProposalSlotsStrict(jobID string, proposal
 		if !prevEnd.IsZero() && slot.ScheduledStart.Before(prevEnd) {
 			return newSchedulingActionError(422, fmt.Sprintf("reason_code=calendar_or_constraint_blocked proposal slot invalid (job_id=%s, step=%s, machine=%s, start=%s, end=%s): step precedence violated in proposal chain", jobID, slot.JobStepID, slot.MachineID, slot.ScheduledStart.In(time.Local).Format(time.RFC3339), slot.ScheduledEnd.In(time.Local).Format(time.RFC3339)))
 		}
-		ok, err := s.scheduling.validateSlotCoreForStep(processStep, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), "")
+		validation, err := s.scheduling.validateSlotCoreResultForStep(processStep, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), "")
 		if err != nil {
 			return newSchedulingActionError(422, fmt.Sprintf("proposal slot validation failed (job_id=%s, step=%s, machine=%s, start=%s, end=%s): %v", jobID, slot.JobStepID, slot.MachineID, slot.ScheduledStart.UTC().Format(time.RFC3339), slot.ScheduledEnd.UTC().Format(time.RFC3339), err))
 		}
-		if !ok {
+		if !validation.Valid {
 			reason := "invalid slot (core validation)"
-			if processStep != nil {
-				// get reason from full validation for better diagnostics, but do not use
-				// it as the pass/fail predicate in proposal chain generation.
-				if v, e := s.scheduling.ValidateSlot(slot.JobStepID, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), ""); e == nil && len(v.Reasons) > 0 {
-					reason = v.Reasons[0]
-				}
+			if len(validation.Reasons) > 0 {
+				reason = validation.Reasons[0]
 			}
 			return newSchedulingActionError(422, fmt.Sprintf("reason_code=calendar_or_constraint_blocked proposal slot invalid (job_id=%s, step=%s, machine=%s, start=%s, end=%s): %s", jobID, slot.JobStepID, slot.MachineID, slot.ScheduledStart.In(time.Local).Format(time.RFC3339), slot.ScheduledEnd.In(time.Local).Format(time.RFC3339), reason))
 		}
@@ -342,6 +353,44 @@ func (s *AIPredictiveService) validateProposalSlotsStrict(jobID string, proposal
 		}
 	}
 	return nil
+}
+
+func (s *AIPredictiveService) firstProposalConflict(proposal *SchedulingProposal) (int, string, error) {
+	if proposal == nil {
+		return -1, "", nil
+	}
+	prevEnd := time.Time{}
+	for i := range proposal.ProposedSlots {
+		slot := proposal.ProposedSlots[i]
+		if slot.JobStepID == "" || slot.MachineID == "" {
+			if slot.ScheduledEnd.After(prevEnd) {
+				prevEnd = slot.ScheduledEnd
+			}
+			continue
+		}
+		processStep, err := s.scheduling.GetProcessStepForJobStep(slot.JobStepID)
+		if err != nil {
+			return i, "missing process step", err
+		}
+		if !prevEnd.IsZero() && slot.ScheduledStart.Before(prevEnd) {
+			return i, "step precedence violated in proposal chain", nil
+		}
+		validation, err := s.scheduling.validateSlotCoreResultForStep(processStep, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), "")
+		if err != nil {
+			return i, "slot validation failed", err
+		}
+		if !validation.Valid {
+			reason := "invalid slot (core validation)"
+			if len(validation.Reasons) > 0 {
+				reason = validation.Reasons[0]
+			}
+			return i, reason, nil
+		}
+		if slot.ScheduledEnd.After(prevEnd) {
+			prevEnd = slot.ScheduledEnd
+		}
+	}
+	return -1, "", nil
 }
 
 func (s *AIPredictiveService) validateBatchProposalSlotsStrict(proposals []*SchedulingProposal) error {
@@ -360,7 +409,7 @@ func (s *AIPredictiveService) repairAndValidateBatchProposals(proposals []*Sched
 	if err := s.validateBatchProposalSlotsStrict(proposals); err == nil {
 		return nil
 	}
-	if err := s.chainAwareForwardRepair(proposals, 2, nil); err != nil {
+	if err := s.chainAwareForwardRepair(proposals, chainRepairPassBudget(proposals), nil); err != nil {
 		return err
 	}
 	if err := s.validateBatchProposalSlotsStrict(proposals); err != nil {
@@ -369,19 +418,28 @@ func (s *AIPredictiveService) repairAndValidateBatchProposals(proposals []*Sched
 	return nil
 }
 
-// tentativesForChainRepair returns extra tentative occupancy plus all proposed slots from proposals,
-// excluding the slot currently being repaired (same slice element pointer).
-func tentativesForChainRepair(extra []TentativeSlot, proposals []*SchedulingProposal, exclude *ProposedSlot) []TentativeSlot {
+// tentativesForChainRepair returns extra tentative occupancy plus already-fixed proposal slots
+// that should block the slot currently being repaired.
+//
+// For the proposal under repair, only slots before currentIndex are treated as fixed blockers.
+// Downstream slots in the same proposal are intentionally excluded because they will be shifted
+// later in the same repair pass.
+func tentativesForChainRepair(extra []TentativeSlot, proposals []*SchedulingProposal, currentProposal *SchedulingProposal, currentIndex int) []TentativeSlot {
 	n := len(extra)
 	for _, p := range proposals {
 		if p == nil {
 			continue
 		}
-		for i := range p.ProposedSlots {
-			ps := &p.ProposedSlots[i]
-			if exclude != nil && ps == exclude {
-				continue
+		limit := len(p.ProposedSlots)
+		if p == currentProposal {
+			if currentIndex < 0 {
+				limit = 0
+			} else if currentIndex < limit {
+				limit = currentIndex
 			}
+		}
+		for i := 0; i < limit; i++ {
+			ps := &p.ProposedSlots[i]
 			if ps.MachineID == "" {
 				continue
 			}
@@ -394,11 +452,16 @@ func tentativesForChainRepair(extra []TentativeSlot, proposals []*SchedulingProp
 		if p == nil {
 			continue
 		}
-		for i := range p.ProposedSlots {
-			ps := &p.ProposedSlots[i]
-			if exclude != nil && ps == exclude {
-				continue
+		limit := len(p.ProposedSlots)
+		if p == currentProposal {
+			if currentIndex < 0 {
+				limit = 0
+			} else if currentIndex < limit {
+				limit = currentIndex
 			}
+		}
+		for i := 0; i < limit; i++ {
+			ps := &p.ProposedSlots[i]
 			if ps.MachineID == "" {
 				continue
 			}
@@ -413,12 +476,17 @@ func tentativesForChainRepair(extra []TentativeSlot, proposals []*SchedulingProp
 }
 
 func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingProposal, maxPasses int, batchExtraTentative []TentativeSlot) error {
+	if maxPasses <= 0 {
+		maxPasses = chainRepairPassBudget(proposals)
+	}
 	minStart := map[string]time.Time{}
 	signatures := map[string]bool{}
+	lastConflict := ""
+	s.sortProposalsForRepair(proposals)
 	for pass := 0; pass < maxPasses; pass++ {
 		signature := proposalStateSignature(proposals)
 		if signatures[signature] {
-			return newSchedulingActionError(422, "reason_code=no_feasible_window chain repair cycle detected")
+			return newSchedulingActionError(422, "reason_code="+repairLimitExceededReasonCode+" chain repair cycle detected")
 		}
 		signatures[signature] = true
 		changed := false
@@ -432,17 +500,17 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 				}
 				return p.ProposedSlots[i].ScheduledStart.Before(p.ProposedSlots[j].ScheduledStart)
 			})
-			conflictIdx := -1
-			for i := range p.ProposedSlots {
-				slot := p.ProposedSlots[i]
-				validation, err := s.scheduling.ValidateSlot(slot.JobStepID, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), "")
-				if err != nil || !validation.Valid {
-					conflictIdx = i
-					break
-				}
+			conflictIdx, conflictReason, err := s.firstProposalConflict(p)
+			if err != nil {
+				return err
 			}
 			if conflictIdx < 0 {
 				continue
+			}
+			slot := p.ProposedSlots[conflictIdx]
+			lastConflict = fmt.Sprintf("job_id=%s step=%s machine=%s start=%s end=%s", p.JobID, slot.JobStepID, slot.MachineID, slot.ScheduledStart.In(time.Local).Format(time.RFC3339), slot.ScheduledEnd.In(time.Local).Format(time.RFC3339))
+			if strings.TrimSpace(conflictReason) != "" {
+				lastConflict += " reason=" + conflictReason
 			}
 			var predecessorEnd *time.Time
 			if conflictIdx > 0 {
@@ -466,7 +534,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 				if err != nil || processStep == nil {
 					return newSchedulingActionError(422, fmt.Sprintf("reason_code=no_feasible_window missing process step for job_step=%s", slot.JobStepID))
 				}
-				repairBusy := tentativesForChainRepair(batchExtraTentative, proposals, slot)
+				repairBusy := tentativesForChainRepair(batchExtraTentative, proposals, p, i)
 				var (
 					start   time.Time
 					ok      bool
@@ -491,14 +559,14 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 					if ok {
 						break
 					}
-					tryStart = s.scheduling.nextWorkWindowStartFromSettings(tryStart.Add(time.Minute))
+					tryStart = s.scheduling.nextWorkWindowStartFromSettings(tryStart.Add(schedulerSlotGranularity))
 				}
 				if !ok {
 					details := ""
 					if len(reasons) > 0 {
 						details = reasons[0]
 					}
-					return newSchedulingActionError(422, fmt.Sprintf("reason_code=no_feasible_window chain-repair failed (job_id=%s, step=%s, machine=%s, details=%s, attempted_horizon=%v)", p.JobID, slot.JobStepID, slot.MachineID, details, diag))
+					return newSchedulingActionError(422, fmt.Sprintf("reason_code=%s chain-repair failed (job_id=%s, step=%s, machine=%s, details=%s, attempted_horizon=%v)", repairLimitExceededReasonCode, p.JobID, slot.JobStepID, slot.MachineID, details, diag))
 				}
 				// Never clamp start back to the old ScheduledStart without re-searching: that can force
 				// [start, start+duration] outside machine shift / global template while staying "feasible"
@@ -523,11 +591,11 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 					// else keep first feasible `start` (valid calendar) even if slightly earlier than prior proposal
 				}
 				slot.ScheduledStart = chosen
-				slot.ScheduledEnd = chosen.Add(duration)
+				slot.ScheduledEnd = chosen.Add(ceilDurationTo30Min(duration))
 				if okVal, vErr := s.scheduling.validateSlotCoreForStep(processStep, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), ""); vErr != nil || !okVal {
 					// Fall back to first search result if anchor produced invalid slot (should be rare).
 					slot.ScheduledStart = start
-					slot.ScheduledEnd = start.Add(duration)
+					slot.ScheduledEnd = start.Add(ceilDurationTo30Min(duration))
 				}
 				logger.L().Info("proposal_stage_chain_repair",
 					zap.String("job_id", p.JobID),
@@ -549,7 +617,81 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 			return nil
 		}
 	}
-	return nil
+	if lastConflict != "" {
+		return newSchedulingActionError(422, fmt.Sprintf("reason_code=%s chain repair exceeded maximum passes (passes=%d proposals=%d slots=%d last_conflict=%s)", repairLimitExceededReasonCode, maxPasses, countNonNilProposals(proposals), countProposalSlots(proposals), lastConflict))
+	}
+	return newSchedulingActionError(422, fmt.Sprintf("reason_code=%s chain repair exceeded maximum passes (passes=%d proposals=%d slots=%d)", repairLimitExceededReasonCode, maxPasses, countNonNilProposals(proposals), countProposalSlots(proposals)))
+}
+
+func chainRepairPassBudget(proposals []*SchedulingProposal) int {
+	slots := countProposalSlots(proposals)
+	if slots == 0 {
+		return 6
+	}
+	budget := slots + countNonNilProposals(proposals) + 2
+	if budget < 6 {
+		budget = 6
+	}
+	if budget > 64 {
+		budget = 64
+	}
+	return budget
+}
+
+func countProposalSlots(proposals []*SchedulingProposal) int {
+	count := 0
+	for _, proposal := range proposals {
+		if proposal == nil {
+			continue
+		}
+		count += len(proposal.ProposedSlots)
+	}
+	return count
+}
+
+func countNonNilProposals(proposals []*SchedulingProposal) int {
+	count := 0
+	for _, proposal := range proposals {
+		if proposal != nil {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *AIPredictiveService) sortProposalsForRepair(proposals []*SchedulingProposal) {
+	priorityRank := func(jobID string) int {
+		job, err := s.jobRepo.GetByID(jobID)
+		if err != nil || job == nil {
+			return 99
+		}
+		switch strings.ToLower(strings.TrimSpace(job.Priority)) {
+		case strings.ToLower(domain.JobPriorityUrgent):
+			return 0
+		case strings.ToLower(domain.JobPriorityHigh):
+			return 1
+		case strings.ToLower(domain.JobPriorityMedium):
+			return 2
+		case strings.ToLower(domain.JobPriorityLow):
+			return 3
+		default:
+			return 4
+		}
+	}
+	sort.SliceStable(proposals, func(i, j int) bool {
+		if proposals[i] == nil || proposals[j] == nil {
+			return i < j
+		}
+		pi := priorityRank(proposals[i].JobID)
+		pj := priorityRank(proposals[j].JobID)
+		if pi != pj {
+			return pi < pj
+		}
+		if !proposals[i].EarliestStart.Equal(proposals[j].EarliestStart) {
+			return proposals[i].EarliestStart.Before(proposals[j].EarliestStart)
+		}
+		return proposals[i].JobID < proposals[j].JobID
+	})
 }
 
 func proposalStateSignature(proposals []*SchedulingProposal) string {
@@ -984,6 +1126,15 @@ func repairOverlapsInProposals(proposals []*SchedulingProposal) bool {
 	}
 	modified := false
 	occupied := make(map[string][]slotWindow)
+	sort.SliceStable(proposals, func(i, j int) bool {
+		if proposals[i] == nil || proposals[j] == nil {
+			return i < j
+		}
+		if !proposals[i].EarliestStart.Equal(proposals[j].EarliestStart) {
+			return proposals[i].EarliestStart.Before(proposals[j].EarliestStart)
+		}
+		return proposals[i].JobID < proposals[j].JobID
+	})
 	// Enforce deterministic non-overlap by proposal order.
 	for _, p := range proposals {
 		if p == nil || len(p.ProposedSlots) == 0 {
@@ -1058,8 +1209,9 @@ func normalizeIntraProposalMachineOverlaps(p *SchedulingProposal) bool {
 			}
 			delta := prev.end.Sub(curr.start)
 			ps := &p.ProposedSlots[curr.slotIdx]
-			ps.ScheduledStart = ps.ScheduledStart.Add(delta)
-			ps.ScheduledEnd = ps.ScheduledEnd.Add(delta)
+			duration := ceilDurationTo30Min(ps.ScheduledEnd.Sub(ps.ScheduledStart))
+			ps.ScheduledStart = alignSuccessorStart(ps.ScheduledStart.Add(delta))
+			ps.ScheduledEnd = ps.ScheduledStart.Add(duration)
 			slots[i].start = ps.ScheduledStart
 			slots[i].end = ps.ScheduledEnd
 			changed = true
@@ -1080,6 +1232,7 @@ func requiredProposalShift(p *SchedulingProposal, occupied map[string][]slotWind
 		for _, w := range occupied[ps.MachineID] {
 			if ps.ScheduledStart.Before(w.end) && ps.ScheduledEnd.After(w.start) {
 				delta := w.end.Sub(ps.ScheduledStart)
+				delta = ceilDurationTo30Min(delta)
 				if delta > maxDelta {
 					maxDelta = delta
 				}
@@ -1112,8 +1265,9 @@ func mergeSlotWindows(in []slotWindow) []slotWindow {
 
 func shiftProposalSlots(p *SchedulingProposal, delta time.Duration) {
 	for i := range p.ProposedSlots {
-		p.ProposedSlots[i].ScheduledStart = p.ProposedSlots[i].ScheduledStart.Add(delta)
-		p.ProposedSlots[i].ScheduledEnd = p.ProposedSlots[i].ScheduledEnd.Add(delta)
+		duration := ceilDurationTo30Min(p.ProposedSlots[i].ScheduledEnd.Sub(p.ProposedSlots[i].ScheduledStart))
+		p.ProposedSlots[i].ScheduledStart = alignSuccessorStart(p.ProposedSlots[i].ScheduledStart.Add(delta))
+		p.ProposedSlots[i].ScheduledEnd = p.ProposedSlots[i].ScheduledStart.Add(duration)
 	}
 	recomputeProposalBounds(p)
 }
@@ -1155,8 +1309,9 @@ func linearizeOverlapsByMachine(proposals []*SchedulingProposal) {
 				continue
 			}
 			delta := cursor.Sub(slot.ScheduledStart)
-			slot.ScheduledStart = slot.ScheduledStart.Add(delta)
-			slot.ScheduledEnd = slot.ScheduledEnd.Add(delta)
+			duration := ceilDurationTo30Min(slot.ScheduledEnd.Sub(slot.ScheduledStart))
+			slot.ScheduledStart = alignSuccessorStart(slot.ScheduledStart.Add(delta))
+			slot.ScheduledEnd = slot.ScheduledStart.Add(duration)
 			machineCursor[slot.MachineID] = slot.ScheduledEnd
 		}
 		recomputeProposalBounds(p)

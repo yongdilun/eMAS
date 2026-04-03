@@ -23,6 +23,160 @@ type productStockSnapshot struct {
 	ReadyAt      *time.Time
 }
 
+const (
+	schedulerSlotGranularity        = 30 * time.Minute
+	maxAlignedPlacementIterations   = 2048
+	searchHorizonExceededReasonCode = "SEARCH_HORIZON_EXCEEDED"
+	repairLimitExceededReasonCode   = "REPAIR_LIMIT_EXCEEDED"
+	noFeasibleSlotReasonCode        = "NO_FEASIBLE_SLOT"
+	lockWindowBlockedReasonCode     = "LOCK_WINDOW_BLOCKED"
+	calendarOutsideShiftReasonCode  = "CALENDAR_OUTSIDE_SHIFT"
+	invalidSlotAlignmentReasonCode  = "INVALID_SLOT_ALIGNMENT"
+)
+
+type StepDurationMetrics struct {
+	ActualDuration       time.Duration
+	ReservedDuration     time.Duration
+	RoundingOverhead     time.Duration
+	ActualDurationMins   int
+	ReservedDurationMins int
+	RoundingOverheadMins int
+}
+
+func roundUpToHalfHour(ts time.Time) time.Time {
+	if ts.IsZero() {
+		return ts
+	}
+	return roundUpToDuration(ts, schedulerSlotGranularity)
+}
+
+func roundUpToDuration(ts time.Time, step time.Duration) time.Time {
+	if ts.IsZero() || step <= 0 {
+		return ts
+	}
+	base := ts.Truncate(step)
+	if base.Equal(ts) {
+		return ts
+	}
+	return base.Add(step)
+}
+
+func ceilDurationTo30Min(d time.Duration) time.Duration {
+	if d <= 0 {
+		return schedulerSlotGranularity
+	}
+	if d%schedulerSlotGranularity == 0 {
+		return d
+	}
+	return ((d / schedulerSlotGranularity) + 1) * schedulerSlotGranularity
+}
+
+func alignSuccessorStart(ts time.Time) time.Time {
+	return roundUpToHalfHour(ts)
+}
+
+func isHalfHourAligned(ts time.Time) bool {
+	if ts.IsZero() {
+		return true
+	}
+	return ts.Second() == 0 && ts.Nanosecond() == 0 && (ts.Minute() == 0 || ts.Minute() == 30)
+}
+
+func sameOrAfter(a, b time.Time) bool {
+	return a.Equal(b) || a.After(b)
+}
+
+func intervalContainsStart(interval BusyInterval, candidate time.Time) bool {
+	return sameOrAfter(candidate, interval.Start) && candidate.Before(interval.End)
+}
+
+func intervalFullyContains(interval BusyInterval, start, end time.Time) bool {
+	return sameOrAfter(start, interval.Start) && (end.Equal(interval.End) || end.Before(interval.End))
+}
+
+func nextAlignedWorkStart(base time.Time, workIntervals, blocked []BusyInterval, loc *time.Location) (time.Time, bool) {
+	if base.IsZero() {
+		base = time.Now().UTC()
+	}
+	if loc == nil {
+		loc = base.Location()
+	}
+	workIntervals = normalizeBusyIntervals(workIntervals)
+	blocked = normalizeBusyIntervals(blocked)
+	if len(workIntervals) == 0 {
+		return time.Time{}, false
+	}
+	candidate := roundUpToHalfHour(base.In(loc))
+	for i := 0; i < maxAlignedPlacementIterations; i++ {
+		var containing *BusyInterval
+		var nextWork *BusyInterval
+		for idx := range workIntervals {
+			iv := workIntervals[idx]
+			if intervalContainsStart(iv, candidate) {
+				containing = &workIntervals[idx]
+				break
+			}
+			if iv.Start.After(candidate) {
+				nextWork = &workIntervals[idx]
+				break
+			}
+		}
+		if containing == nil {
+			if nextWork == nil {
+				return time.Time{}, false
+			}
+			candidate = roundUpToHalfHour(nextWork.Start.In(loc))
+			continue
+		}
+		blockedShift := false
+		for _, iv := range blocked {
+			if intervalContainsStart(iv, candidate) {
+				candidate = roundUpToHalfHour(iv.End.In(loc))
+				blockedShift = true
+				break
+			}
+		}
+		if blockedShift {
+			continue
+		}
+		if candidate.Before(containing.Start.In(loc)) {
+			candidate = roundUpToHalfHour(containing.Start.In(loc))
+			continue
+		}
+		return candidate.UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func normalizeBusyIntervals(intervals []BusyInterval) []BusyInterval {
+	filtered := make([]BusyInterval, 0, len(intervals))
+	for _, iv := range intervals {
+		if !iv.End.After(iv.Start) {
+			continue
+		}
+		filtered = append(filtered, iv)
+	}
+	if len(filtered) <= 1 {
+		return filtered
+	}
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].Start.Before(filtered[j].Start) })
+	return mergeBusyIntervals(filtered)
+}
+
+func stepDurationMetrics(step domain.ProcessSteps, candidates []CandidateMachine, quantity float64) StepDurationMetrics {
+	actual := estimateActualStepDuration(step, candidates, quantity)
+	reserved := ceilDurationTo30Min(actual)
+	rounding := reserved - actual
+	return StepDurationMetrics{
+		ActualDuration:       actual,
+		ReservedDuration:     reserved,
+		RoundingOverhead:     rounding,
+		ActualDurationMins:   int(actual / time.Minute),
+		ReservedDurationMins: int(reserved / time.Minute),
+		RoundingOverheadMins: int(rounding / time.Minute),
+	}
+}
+
 func (s *SchedulingService) loadProductComponents(product *domain.Product) ([]domain.FormulaIngredients, []domain.ProductBOM, string, error) {
 	if product.FormulaID != "" {
 		ingredients, err := s.formulaRepo.ListIngredientsByFormulaID(product.FormulaID)
@@ -56,7 +210,15 @@ func (s *SchedulingService) resolveStepContext(id string) (*domain.JobSteps, *do
 
 func (s *SchedulingService) validateMachineWindow(processStep *domain.ProcessSteps, machineID string, start, end time.Time, quantity int, excludeSlotID string, toProductID string, ignoreMinSplitQty bool, result *SlotValidationResult) error {
 	if !end.After(start) {
-		result.AddHardReason("scheduled_end must be after scheduled_start")
+		result.AddHardReason("scheduled_end must be after scheduled_start (reason_code=" + invalidSlotAlignmentReasonCode + ")")
+		return nil
+	}
+	if !isHalfHourAligned(start) || !isHalfHourAligned(end) {
+		result.AddHardReason("slot start/end must align to :00 or :30 boundaries (reason_code=" + invalidSlotAlignmentReasonCode + ")")
+		return nil
+	}
+	if end.Sub(start)%schedulerSlotGranularity != 0 {
+		result.AddHardReason("slot duration must be a multiple of 30 minutes (reason_code=" + invalidSlotAlignmentReasonCode + ")")
 		return nil
 	}
 	machine, err := s.machineRepo.GetByID(machineID)
@@ -211,7 +373,7 @@ func (s *SchedulingService) isSlotInsideWorkTemplateFromSettings(start, end time
 // Used when a resource/machine has no per-entity calendar.
 func (s *SchedulingService) nextWorkWindowStartFromSettings(from time.Time) time.Time {
 	if s.settingsRepo == nil {
-		return from
+		return roundUpToHalfHour(from)
 	}
 	workStart, ok1, _ := s.settingsRepo.GetString("scheduling.work_start_time")
 	workEnd, ok2, _ := s.settingsRepo.GetString("scheduling.work_end_time")
@@ -245,12 +407,12 @@ func (s *SchedulingService) nextWorkWindowStartFromSettings(from time.Time) time
 	startT, err1 := time.Parse("15:04", workStart)
 	endT, err2 := time.Parse("15:04", workEnd)
 	if err1 != nil || err2 != nil {
-		return from
+		return roundUpToHalfHour(from)
 	}
 	startHH, startMM := startT.Hour(), startT.Minute()
-	endHH, endMM := endT.Hour(), endT.Minute()
 	loc := time.Local
 	from = from.In(loc)
+	workIntervals := make([]BusyInterval, 0, 365)
 	for d := 0; d < 365; d++ {
 		day := from.AddDate(0, 0, d)
 		wd := int(day.Weekday())
@@ -262,18 +424,16 @@ func (s *SchedulingService) nextWorkWindowStartFromSettings(from time.Time) time
 			continue
 		}
 		winStart := time.Date(day.Year(), day.Month(), day.Day(), startHH, startMM, 0, 0, loc)
-		winEnd := time.Date(day.Year(), day.Month(), day.Day(), endHH, endMM, 0, 0, loc)
-		if !winEnd.After(from) {
-			continue
-		}
-		if !from.Before(winStart) && from.Before(winEnd) {
-			return from
-		}
-		if (winStart.After(from) || winStart.Equal(from)) && winStart.Before(winEnd) {
-			return winStart
+		winEnd := time.Date(day.Year(), day.Month(), day.Day(), endT.Hour(), endT.Minute(), 0, 0, loc)
+		if winEnd.After(from) {
+			workIntervals = append(workIntervals, BusyInterval{Start: winStart.UTC(), End: winEnd.UTC()})
 		}
 	}
-	return from
+	next, ok := nextAlignedWorkStart(from.UTC(), workIntervals, nil, time.UTC)
+	if !ok {
+		return roundUpToHalfHour(from.UTC())
+	}
+	return next
 }
 
 func (s *SchedulingService) isPublicHolidayFromSettings(ts time.Time) bool {
@@ -305,13 +465,13 @@ func (s *SchedulingService) isPublicHolidayFromSettings(ts time.Time) bool {
 // work template from scheduling settings.
 func (s *SchedulingService) nextResourceWorkWindowStart(processStep *domain.ProcessSteps, from time.Time) time.Time {
 	if s.resourceRepo == nil {
-		return from
+		return roundUpToHalfHour(from)
 	}
 	reqs, err := s.resourceRepo.ListRequirementsByStepID(processStep.StepID)
 	if err != nil || len(reqs) == 0 {
-		return from
+		return roundUpToHalfHour(from)
 	}
-	latest := from
+	latest := roundUpToHalfHour(from)
 	for _, req := range reqs {
 		calendars, err := s.resourceRepo.ListCalendarByResourceID(req.ResourceID)
 		if err != nil {
@@ -319,19 +479,21 @@ func (s *SchedulingService) nextResourceWorkWindowStart(processStep *domain.Proc
 		}
 		var resourceNext time.Time
 		if len(calendars) > 0 {
+			workIntervals := make([]BusyInterval, 0, len(calendars))
+			blocked := make([]BusyInterval, 0, len(calendars))
 			for _, cal := range calendars {
-				if cal.AvailabilityType != "work" {
-					continue
-				}
 				if !cal.EndTime.After(from) {
 					continue
 				}
-				if !from.Before(cal.StartTime) && from.Before(cal.EndTime) {
-					resourceNext = from
-					break
+				if cal.AvailabilityType == "work" {
+					workIntervals = append(workIntervals, BusyInterval{Start: cal.StartTime.UTC(), End: cal.EndTime.UTC()})
+					continue
 				}
-				if (cal.StartTime.After(from) || cal.StartTime.Equal(from)) && (resourceNext.IsZero() || cal.StartTime.Before(resourceNext)) {
-					resourceNext = cal.StartTime
+				blocked = append(blocked, BusyInterval{Start: cal.StartTime.UTC(), End: cal.EndTime.UTC()})
+			}
+			if len(workIntervals) > 0 {
+				if next, ok := nextAlignedWorkStart(from.UTC(), workIntervals, blocked, time.UTC); ok {
+					resourceNext = next
 				}
 			}
 		} else {
@@ -448,9 +610,9 @@ func (s *SchedulingService) validateStepPrecedence(jobStep *domain.JobSteps, sta
 		if processStep, err := s.processRepo.GetStepByID(prev.StepID); err == nil {
 			offset = time.Duration(processStep.MinWaitMinutes+processStep.TransferMinutes) * time.Minute
 		}
-		earliestNextStart := latestEnd.Add(offset)
+		earliestNextStart := alignSuccessorStart(latestEnd.Add(offset))
 		if earliestNextStart.After(start) {
-			result.AddHardReason("previous process step completes after the proposed start (including wait/transfer time)")
+			result.AddHardReason("previous process step completes after the proposed aligned start (including wait/transfer time)")
 		}
 	}
 	return nil
@@ -778,7 +940,7 @@ func (s *SchedulingService) estimateProcessCompletionAt(productID string, quanti
 	return &readyAt, nil
 }
 
-func estimatedStepDuration(step domain.ProcessSteps, candidates []CandidateMachine, quantity float64) time.Duration {
+func estimateActualStepDuration(step domain.ProcessSteps, candidates []CandidateMachine, quantity float64) time.Duration {
 	fixedMinutes := step.DefaultPreparationTime + step.DefaultCleaningTime + step.DefaultChangeoverTime
 	if fixedMinutes < 0 {
 		fixedMinutes = 0
@@ -820,6 +982,10 @@ func estimatedStepDuration(step domain.ProcessSteps, candidates []CandidateMachi
 		totalMinutes = 1
 	}
 	return time.Duration(totalMinutes) * time.Minute
+}
+
+func estimatedStepDuration(step domain.ProcessSteps, candidates []CandidateMachine, quantity float64) time.Duration {
+	return ceilDurationTo30Min(estimateActualStepDuration(step, candidates, quantity))
 }
 
 // topologicalStepOrder returns job steps in dependency order using PredecessorStepIDs (or StepSequence when empty).
@@ -1054,13 +1220,13 @@ func mergeBusyIntervals(intervals []BusyInterval) []BusyInterval {
 // NextFreeFromIntervals returns the earliest time at or after `from` when the
 // resource is free, given a sorted list of non-overlapping busy intervals.
 func NextFreeFromIntervals(from time.Time, intervals []BusyInterval) time.Time {
-	next := from
+	next := roundUpToHalfHour(from)
 	for _, iv := range intervals {
 		if !iv.End.After(next) {
 			continue
 		}
 		if iv.Start.Before(next) || iv.Start.Equal(next) {
-			next = iv.End
+			next = roundUpToHalfHour(iv.End)
 		} else {
 			break
 		}
@@ -1072,14 +1238,15 @@ func NextFreeFromIntervals(from time.Time, intervals []BusyInterval) time.Time {
 // such that [start, start+duration] does not overlap any busy interval.
 // This prevents scheduling slots that would overlap due to insufficient gap.
 func NextFreeWindowFromIntervals(from time.Time, duration time.Duration, intervals []BusyInterval) time.Time {
-	candidate := from
-	for {
+	candidate := roundUpToHalfHour(from)
+	duration = ceilDurationTo30Min(duration)
+	for i := 0; i < maxAlignedPlacementIterations; i++ {
 		slotEnd := candidate.Add(duration)
 		overlaps := false
 		for _, iv := range intervals {
 			if slotEnd.After(iv.Start) && candidate.Before(iv.End) {
 				overlaps = true
-				candidate = iv.End
+				candidate = roundUpToHalfHour(iv.End)
 				break
 			}
 		}
@@ -1087,4 +1254,5 @@ func NextFreeWindowFromIntervals(from time.Time, duration time.Duration, interva
 			return candidate
 		}
 	}
+	return candidate
 }

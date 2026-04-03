@@ -134,8 +134,8 @@ func Test_horizonTierConstants(t *testing.T) {
 	if maxSlicesPerStep != 8 {
 		t.Fatalf("expected maxSlicesPerStep 8, got %d", maxSlicesPerStep)
 	}
-	if minSliceMinutes != 15 {
-		t.Fatalf("expected minSliceMinutes 15, got %d", minSliceMinutes)
+	if minSliceMinutes != 30 {
+		t.Fatalf("expected minSliceMinutes 30, got %d", minSliceMinutes)
 	}
 }
 

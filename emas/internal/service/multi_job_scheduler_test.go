@@ -226,6 +226,209 @@ func Test_repairOverlapsInProposals_ChainedConflictsResolved(t *testing.T) {
 	}
 }
 
+func Test_chainRepairPassBudget_ScalesWithChainSize(t *testing.T) {
+	proposals := []*SchedulingProposal{
+		{
+			JobID: "J1",
+			ProposedSlots: []ProposedSlot{
+				{JobStepID: "JS-1", MachineID: "M1"},
+				{JobStepID: "JS-2", MachineID: "M1"},
+			},
+		},
+		{
+			JobID: "J2",
+			ProposedSlots: []ProposedSlot{
+				{JobStepID: "JS-3", MachineID: "M1"},
+				{JobStepID: "JS-4", MachineID: "M1"},
+			},
+		},
+		{
+			JobID: "J3",
+			ProposedSlots: []ProposedSlot{
+				{JobStepID: "JS-5", MachineID: "M1"},
+			},
+		},
+	}
+
+	got := chainRepairPassBudget(proposals)
+	if got <= 2 {
+		t.Fatalf("expected repair budget to grow beyond legacy 2-pass limit, got %d", got)
+	}
+	if got != 10 {
+		t.Fatalf("expected deterministic chain repair budget 10, got %d", got)
+	}
+}
+
+func Test_chainRepairPassBudget_HasMinimumFloor(t *testing.T) {
+	if got := chainRepairPassBudget(nil); got != 6 {
+		t.Fatalf("expected minimum budget of 6, got %d", got)
+	}
+}
+
+func Test_tentativesForChainRepair_ExcludesFutureSlotsInSameProposal(t *testing.T) {
+	base := time.Date(2026, 3, 24, 8, 0, 0, 0, time.UTC)
+	current := &SchedulingProposal{
+		JobID: "J1",
+		ProposedSlots: []ProposedSlot{
+			{JobStepID: "JS-1", MachineID: "M1", ScheduledStart: base, ScheduledEnd: base.Add(30 * time.Minute)},
+			{JobStepID: "JS-2", MachineID: "M1", ScheduledStart: base.Add(30 * time.Minute), ScheduledEnd: base.Add(60 * time.Minute)},
+			{JobStepID: "JS-3", MachineID: "M1", ScheduledStart: base.Add(60 * time.Minute), ScheduledEnd: base.Add(90 * time.Minute)},
+		},
+	}
+	other := &SchedulingProposal{
+		JobID: "J2",
+		ProposedSlots: []ProposedSlot{
+			{JobStepID: "JS-9", MachineID: "M2", ScheduledStart: base, ScheduledEnd: base.Add(45 * time.Minute)},
+		},
+	}
+	extra := []TentativeSlot{
+		{MachineID: "MX", ScheduledStart: base.Add(-30 * time.Minute), ScheduledEnd: base},
+	}
+
+	busy := tentativesForChainRepair(extra, []*SchedulingProposal{current, other}, current, 1)
+	if len(busy) != 3 {
+		t.Fatalf("expected extra + prior slot + other proposal slot, got %d entries", len(busy))
+	}
+	for _, interval := range busy {
+		if interval.MachineID == "M1" && interval.ScheduledStart.Equal(current.ProposedSlots[1].ScheduledStart) {
+			t.Fatal("current slot should not block itself during repair")
+		}
+		if interval.MachineID == "M1" && interval.ScheduledStart.Equal(current.ProposedSlots[2].ScheduledStart) {
+			t.Fatal("future slots in the same proposal should not be treated as fixed blockers")
+		}
+	}
+}
+
+func Test_firstProposalConflict_UsesProposalChainPrecedence(t *testing.T) {
+	db := testutil.NewTestDB(t)
+
+	jobRepo := repository.NewJobRepository(db)
+	stepRepo := repository.NewJobStepRepository(db)
+	slotRepo := repository.NewJobSlotRepository(db)
+	proposalRepo := repository.NewAIProposalRepository(db)
+	machineRepo := repository.NewMachineRepository(db)
+	maintenanceRepo := repository.NewMaintenanceRepository(db)
+	settingsRepo := repository.NewSystemSettingsRepository(db)
+	processRepo := repository.NewProcessRepository(db)
+	formulaRepo := repository.NewFormulaRepository(db)
+	productRepo := repository.NewProductRepository(db)
+	capRepo := repository.NewMachineCapabilityRepository(db)
+	downtimeRepo := repository.NewMachineDowntimeRepository(db)
+	bomRepo := repository.NewProductBOMRepository(db)
+	invRepo := repository.NewInventoryRepository(db)
+	logRepo := repository.NewProductionLogRepository(db)
+	setupRepo := repository.NewSetupRepository(db)
+	trainingRepo := repository.NewMLTrainingEventRepository(db)
+	resourceRepo := repository.NewResourceRepository(db)
+	wipRepo := repository.NewWIPRepository(db)
+	psmRepo := repository.NewProcessStepMaterialRepository(db)
+
+	_ = settingsRepo.PutString("scheduling.work_start_time", "08:00")
+	_ = settingsRepo.PutString("scheduling.work_end_time", "17:00")
+	_ = settingsRepo.PutString("scheduling.work_days", "0,1,2,3,4,5,6")
+
+	if err := machineRepo.Create(&domain.Machine{
+		MachineID:       "M-CHAIN-01",
+		MachineName:     "Chain Repair Machine",
+		MachineType:     "CUT",
+		Status:          domain.MachineStatusIdle,
+		CapacityPerHour: 10,
+	}); err != nil {
+		t.Fatalf("create machine: %v", err)
+	}
+
+	if err := processRepo.CreateStep(&domain.ProcessSteps{
+		StepID:                "STEP-CHAIN-1",
+		ProcessID:             "PROC-CHAIN",
+		StepSequence:          1,
+		StepName:              "Cut 1",
+		MachineTypeRequired:   "CUT",
+		DefaultProcessingTime: 30,
+	}); err != nil {
+		t.Fatalf("create process step 1: %v", err)
+	}
+	if err := processRepo.CreateStep(&domain.ProcessSteps{
+		StepID:                "STEP-CHAIN-2",
+		ProcessID:             "PROC-CHAIN",
+		StepSequence:          2,
+		StepName:              "Cut 2",
+		MachineTypeRequired:   "CUT",
+		DefaultProcessingTime: 30,
+	}); err != nil {
+		t.Fatalf("create process step 2: %v", err)
+	}
+
+	if err := capRepo.Create(&domain.MachineCapabilities{
+		CapabilityID:     "CAP-CHAIN-1",
+		MachineID:        "M-CHAIN-01",
+		StepID:           "STEP-CHAIN-1",
+		EfficiencyFactor: 1,
+	}); err != nil {
+		t.Fatalf("create capability 1: %v", err)
+	}
+	if err := capRepo.Create(&domain.MachineCapabilities{
+		CapabilityID:     "CAP-CHAIN-2",
+		MachineID:        "M-CHAIN-01",
+		StepID:           "STEP-CHAIN-2",
+		EfficiencyFactor: 1,
+	}); err != nil {
+		t.Fatalf("create capability 2: %v", err)
+	}
+
+	if err := jobRepo.Create(&domain.Job{
+		JobID:         "JOB-CHAIN-1",
+		ProductID:     "P-CHAIN-1",
+		QuantityTotal: 1,
+		Priority:      domain.JobPriorityMedium,
+		Deadline:      time.Now().Add(24 * time.Hour),
+		Status:        domain.JobStatusPlanned,
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := stepRepo.Create(&domain.JobSteps{
+		JobStepID:      "JS-CHAIN-1",
+		JobID:          "JOB-CHAIN-1",
+		StepID:         "STEP-CHAIN-1",
+		StepSequence:   1,
+		QuantityTarget: 1,
+	}); err != nil {
+		t.Fatalf("create job step 1: %v", err)
+	}
+	if err := stepRepo.Create(&domain.JobSteps{
+		JobStepID:      "JS-CHAIN-2",
+		JobID:          "JOB-CHAIN-1",
+		StepID:         "STEP-CHAIN-2",
+		StepSequence:   2,
+		QuantityTarget: 1,
+	}); err != nil {
+		t.Fatalf("create job step 2: %v", err)
+	}
+
+	schedulingSvc := NewSchedulingService(productRepo, bomRepo, formulaRepo, processRepo, jobRepo, stepRepo, slotRepo, machineRepo, capRepo, downtimeRepo, maintenanceRepo, invRepo, logRepo, proposalRepo, setupRepo, trainingRepo, resourceRepo, wipRepo, psmRepo, settingsRepo)
+	jobSlotSvc := NewJobSlotService(slotRepo, stepRepo, processRepo, jobRepo, schedulingSvc)
+	eventRepo := repository.NewSchedulingEventRepository(db)
+	ai := NewAIPredictiveService(db, jobRepo, stepRepo, slotRepo, proposalRepo, machineRepo, maintenanceRepo, settingsRepo, schedulingSvc, jobSlotSvc, eventRepo)
+
+	start1 := time.Date(2026, 5, 6, 8, 0, 0, 0, time.Local)
+	start2 := time.Date(2026, 5, 6, 8, 30, 0, 0, time.Local)
+	proposal := &SchedulingProposal{
+		JobID: "JOB-CHAIN-1",
+		ProposedSlots: []ProposedSlot{
+			{JobStepID: "JS-CHAIN-1", StepID: "STEP-CHAIN-1", MachineID: "M-CHAIN-01", ScheduledStart: start1, ScheduledEnd: start1.Add(30 * time.Minute), QuantityPlanned: 1},
+			{JobStepID: "JS-CHAIN-2", StepID: "STEP-CHAIN-2", MachineID: "M-CHAIN-01", ScheduledStart: start2, ScheduledEnd: start2.Add(30 * time.Minute), QuantityPlanned: 1},
+		},
+	}
+
+	conflictIdx, conflictReason, err := ai.firstProposalConflict(proposal)
+	if err != nil {
+		t.Fatalf("firstProposalConflict error: %v", err)
+	}
+	if conflictIdx != -1 {
+		t.Fatalf("expected proposal chain to validate without persisted predecessor slots, got idx=%d reason=%s", conflictIdx, conflictReason)
+	}
+}
+
 func Test_rebalanceByDeadlinePressure_prioritizesMoreLateJobs(t *testing.T) {
 	base := time.Date(2026, 3, 24, 8, 0, 0, 0, time.UTC)
 	p1End := base.Add(10 * time.Hour)
