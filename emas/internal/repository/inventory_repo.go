@@ -146,13 +146,24 @@ func (r *InventoryRepository) CreateReservation(res *domain.InventoryReservation
 	return r.db.Create(res).Error
 }
 
+func (r *InventoryRepository) UpdateReservation(res *domain.InventoryReservation) error {
+	return r.db.Save(res).Error
+}
+
 func (r *InventoryRepository) ListReservations(materialID string, status string) ([]domain.InventoryReservation, error) {
+	return r.ListReservationsExcluding(materialID, status, nil)
+}
+
+func (r *InventoryRepository) ListReservationsExcluding(materialID string, status string, excludeJobIDs []string) ([]domain.InventoryReservation, error) {
 	q := r.db.Model(&domain.InventoryReservation{})
 	if materialID != "" {
 		q = q.Where("material_id = ?", materialID)
 	}
 	if status != "" {
 		q = q.Where("status = ?", status)
+	}
+	if len(excludeJobIDs) > 0 {
+		q = q.Where("job_id NOT IN ?", excludeJobIDs)
 	}
 	var list []domain.InventoryReservation
 	err := q.Order("needed_at ASC").Find(&list).Error
@@ -179,9 +190,76 @@ func (r *InventoryRepository) SumActiveReservations(materialID string) (float64,
 }
 
 func (r *InventoryRepository) SumActiveReservationsUntil(materialID string, neededAt time.Time) (float64, error) {
+	return r.SumActiveReservationsUntilExcluding(materialID, neededAt, nil)
+}
+
+func (r *InventoryRepository) SumActiveReservationsUntilExcluding(materialID string, neededAt time.Time, excludeJobIDs []string) (float64, error) {
+	var total float64
+	q := r.db.Model(&domain.InventoryReservation{}).
+		Where("material_id = ? AND status = ? AND needed_at <= ?", materialID, domain.InventoryReservationStatusPending, neededAt)
+	if len(excludeJobIDs) > 0 {
+		q = q.Where("job_id NOT IN ?", excludeJobIDs)
+	}
+	err := q.Select("COALESCE(SUM(reserved_qty),0)").Scan(&total).Error
+	return total, err
+}
+
+// SumAllActiveReservations returns the total pending reserved quantity for a material
+// regardless of needed_at. This gives the true committed/locked stock across all
+// future-scheduled slots, so the scheduler knows the real free inventory.
+func (r *InventoryRepository) SumAllActiveReservations(materialID string) (float64, error) {
 	var total float64
 	err := r.db.Model(&domain.InventoryReservation{}).
-		Where("material_id = ? AND status = ? AND needed_at <= ?", materialID, domain.InventoryReservationStatusPending, neededAt).
+		Where("material_id = ? AND status = ?", materialID, domain.InventoryReservationStatusPending).
+		Select("COALESCE(SUM(reserved_qty),0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (r *InventoryRepository) CreateProductReservation(res *domain.ProductInventoryReservation) error {
+	return r.db.Create(res).Error
+}
+
+func (r *InventoryRepository) UpdateProductReservation(res *domain.ProductInventoryReservation) error {
+	return r.db.Save(res).Error
+}
+
+func (r *InventoryRepository) ListProductReservations(productID, status string) ([]domain.ProductInventoryReservation, error) {
+	q := r.db.Model(&domain.ProductInventoryReservation{})
+	if productID != "" {
+		q = q.Where("product_id = ?", productID)
+	}
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	var list []domain.ProductInventoryReservation
+	err := q.Order("needed_at ASC, reservation_id ASC").Find(&list).Error
+	return list, err
+}
+
+func (r *InventoryRepository) ListProductReservationsByProductUntil(productID string, neededAt time.Time, status string) ([]domain.ProductInventoryReservation, error) {
+	q := r.db.Model(&domain.ProductInventoryReservation{}).Where("product_id = ? AND needed_at <= ?", productID, neededAt)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	var list []domain.ProductInventoryReservation
+	err := q.Order("needed_at ASC, reservation_id ASC").Find(&list).Error
+	return list, err
+}
+
+func (r *InventoryRepository) SumActiveProductReservations(productID string) (float64, error) {
+	var total float64
+	err := r.db.Model(&domain.ProductInventoryReservation{}).
+		Where("product_id = ? AND status = ?", productID, domain.InventoryReservationStatusPending).
+		Select("COALESCE(SUM(reserved_qty),0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (r *InventoryRepository) SumActiveProductReservationsUntil(productID string, neededAt time.Time) (float64, error) {
+	var total float64
+	err := r.db.Model(&domain.ProductInventoryReservation{}).
+		Where("product_id = ? AND status = ? AND needed_at <= ?", productID, domain.InventoryReservationStatusPending, neededAt).
 		Select("COALESCE(SUM(reserved_qty),0)").
 		Scan(&total).Error
 	return total, err

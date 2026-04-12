@@ -53,15 +53,15 @@ const (
 
 // InventoryExpectedArrival - planned future stock arrivals
 type InventoryExpectedArrival struct {
-	ArrivalID         string     `gorm:"column:arrival_id;primaryKey;size:50"`
-	MaterialID        string     `gorm:"column:material_id;size:50;index;not null"`
-	Quantity          float64    `gorm:"column:quantity;not null"`
-	ExpectedArriveAt  time.Time  `gorm:"column:expected_arrive_at;index;not null"`
-	Status            string     `gorm:"column:status;size:20;default:pending"`
-	Notes             string     `gorm:"column:notes;type:text"`
-	ReferenceJobID    string     `gorm:"column:reference_job_id;size:50;index"`
-	ReceivedAt        *time.Time `gorm:"column:received_at"`
-	CreatedAt         time.Time  `gorm:"column:created_at"`
+	ArrivalID        string     `gorm:"column:arrival_id;primaryKey;size:50"`
+	MaterialID       string     `gorm:"column:material_id;size:50;index;not null"`
+	Quantity         float64    `gorm:"column:quantity;not null"`
+	ExpectedArriveAt time.Time  `gorm:"column:expected_arrive_at;index;not null"`
+	Status           string     `gorm:"column:status;size:20;default:pending"`
+	Notes            string     `gorm:"column:notes;type:text"`
+	ReferenceJobID   string     `gorm:"column:reference_job_id;size:50;index"`
+	ReceivedAt       *time.Time `gorm:"column:received_at"`
+	CreatedAt        time.Time  `gorm:"column:created_at"`
 }
 
 func (InventoryExpectedArrival) TableName() string { return "inventory_expected_arrivals" }
@@ -71,6 +71,11 @@ const (
 	ProductInventoryStatusAvailable = "available"
 	ProductInventoryStatusReserved  = "reserved"
 	ProductInventoryStatusBlocked   = "blocked"
+	// ProductInventoryStatusPlanned marks records created at proposal-apply time to represent
+	// planned production output. These bridge the plan-apply gap so that subsequent proposals
+	// in the same Apply All batch see production committed by earlier proposals, matching the
+	// visibility the batch planning ledger provides during proposal generation.
+	ProductInventoryStatusPlanned = "planned"
 )
 
 // ProductInventory - on-hand finished/semi-finished inventory for sub-product readiness
@@ -104,6 +109,7 @@ type InventoryReservation struct {
 	NeededAt      time.Time `gorm:"column:needed_at;index"`
 	Status        string    `gorm:"column:status;size:20;default:pending"`
 	CreatedAt     time.Time `gorm:"column:created_at"`
+	UpdatedAt     time.Time `gorm:"column:updated_at"`
 }
 
 func (InventoryReservation) TableName() string { return "inventory_reservations" }

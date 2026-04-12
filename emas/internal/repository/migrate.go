@@ -42,6 +42,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&domain.InventoryExpectedArrival{},
 		&domain.ProductInventory{},
 		&domain.InventoryReservation{},
+		&domain.ProductInventoryReservation{},
+		&domain.JobDependency{},
 		&domain.QualityInspectionRecords{},
 		&domain.ProductionLogs{},
 		&domain.MLTrainingEvent{},

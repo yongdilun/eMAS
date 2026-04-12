@@ -139,6 +139,7 @@ func nextAlignedWorkStart(base time.Time, workIntervals, blocked []BusyInterval,
 		if blockedShift {
 			continue
 		}
+
 		if candidate.Before(containing.Start.In(loc)) {
 			candidate = roundUpToHalfHour(containing.Start.In(loc))
 			continue
@@ -506,6 +507,75 @@ func (s *SchedulingService) nextResourceWorkWindowStart(processStep *domain.Proc
 	return latest
 }
 
+// nextFittingResourceWorkStart is like nextResourceWorkWindowStart but also ensures
+// that the proposed slot [start, start+duration] fits ENTIRELY within a single work
+// calendar entry. This prevents the planner from generating a slot whose end time
+// overflows the work window (e.g., a 15-hour slot when the calendar only allows 9 hours),
+// which would always be rejected by validateResourceAvailability at apply time.
+// It finds the earliest window start T >= from such that T+duration <= window.End.
+// If no window is wide enough, it returns from unchanged (no better option exists).
+func (s *SchedulingService) nextFittingResourceWorkStart(processStep *domain.ProcessSteps, from time.Time, duration time.Duration) time.Time {
+	if s.resourceRepo == nil || duration <= 0 {
+		return roundUpToHalfHour(from)
+	}
+	reqs, err := s.resourceRepo.ListRequirementsByStepID(processStep.StepID)
+	if err != nil || len(reqs) == 0 {
+		return roundUpToHalfHour(from)
+	}
+	latest := roundUpToHalfHour(from)
+	for _, req := range reqs {
+		calendars, err := s.resourceRepo.ListCalendarByResourceID(req.ResourceID)
+		if err != nil {
+			continue
+		}
+		if len(calendars) == 0 {
+			resourceNext := s.nextWorkWindowStartFromSettings(from)
+			if !resourceNext.IsZero() && resourceNext.After(latest) {
+				latest = resourceNext
+			}
+			continue
+		}
+		// Collect future work windows, sort by start time.
+		type window struct {
+			start, end time.Time
+		}
+		var windows []window
+		for _, cal := range calendars {
+			if cal.AvailabilityType != "work" || !cal.EndTime.After(from) {
+				continue
+			}
+			windows = append(windows, window{cal.StartTime.UTC(), cal.EndTime.UTC()})
+		}
+		sort.Slice(windows, func(i, j int) bool { return windows[i].start.Before(windows[j].start) })
+
+		// Find the earliest window where [candidateStart, candidateStart+duration] fits.
+		var resourceNext time.Time
+		for _, w := range windows {
+			if w.end.Sub(w.start) < duration {
+				continue // Window is too narrow for this job — skip entirely.
+			}
+			candidateStart := from
+			if w.start.After(candidateStart) {
+				candidateStart = w.start
+			}
+			candidateStart = roundUpToHalfHour(candidateStart)
+			if !candidateStart.Before(w.end) {
+				continue // Rounded start is already past window end.
+			}
+			if candidateStart.Add(duration).After(w.end) {
+				// Even starting at window.start the job overflows — skip.
+				continue
+			}
+			resourceNext = candidateStart
+			break
+		}
+		if !resourceNext.IsZero() && resourceNext.After(latest) {
+			latest = resourceNext
+		}
+	}
+	return latest
+}
+
 func (s *SchedulingService) validateResourceAvailability(processStep *domain.ProcessSteps, start, end time.Time, excludeSlotID string, result *SlotValidationResult) error {
 	if s.resourceRepo == nil {
 		return nil
@@ -536,14 +606,19 @@ func (s *SchedulingService) validateResourceAvailability(processStep *domain.Pro
 				result.AddHardReason("required resource is blocked during slot time")
 				continue
 			}
-			hasWork := false
+			// Only enforce the work-calendar restriction when there is at least one
+			// "work" entry that actually overlaps the slot's date range. If the
+			// resource's calendar coverage ends before this slot (e.g. only 30
+			// days were seeded), treat the slot as unrestricted rather than
+			// blocking it forever.
+			hasWorkForRange := false
 			for _, c := range calendars {
-				if c.AvailabilityType == "work" {
-					hasWork = true
+				if c.AvailabilityType == "work" && c.StartTime.Before(end) && c.EndTime.After(start) {
+					hasWorkForRange = true
 					break
 				}
 			}
-			if hasWork && !coveredByWork {
+			if hasWorkForRange && !coveredByWork {
 				result.AddHardReason("slot is outside resource work calendar (reason_code=resource_calendar_blocked)")
 				continue
 			}
@@ -677,7 +752,11 @@ func (s *SchedulingService) materialAvailability(materialID string, requiredQty 
 	if err != nil {
 		return nil, err
 	}
-	reservedNow, err := s.inventoryRepo.SumActiveReservationsUntil(materialID, at)
+	// Use ALL pending reservations (not just those with needed_at <= at) so the
+	// scheduler sees the true committed stock across every already-applied proposal.
+	// Future-dated reservations are the whole problem: at = now means needed_at
+	// filters to 0, hiding the full cumulative drain on the material.
+	reservedNow, err := s.inventoryRepo.SumAllActiveReservations(materialID)
 	if err != nil {
 		return nil, err
 	}
@@ -698,23 +777,17 @@ func (s *SchedulingService) materialAvailability(materialID string, requiredQty 
 		}
 		return result, nil
 	}
+	// Only fetch arrivals for the forward timeline. Reservations are already fully
+	// baked into the baseline `reservedNow` above, so adding them again as negative
+	// timeline deltas would double-count them.
 	arrivals, err := s.inventoryRepo.ListExpectedArrivals(materialID, nil, nil, domain.ExpectedArrivalStatusPending)
 	if err != nil {
 		return nil, err
 	}
-	reservations, err := s.inventoryRepo.ListReservations(materialID, domain.InventoryReservationStatusPending)
-	if err != nil {
-		return nil, err
-	}
-	events := make([]materialTimelineEvent, 0, len(arrivals)+len(reservations))
+	events := make([]materialTimelineEvent, 0, len(arrivals))
 	for _, arrival := range arrivals {
 		if arrival.ExpectedArriveAt.After(at) {
 			events = append(events, materialTimelineEvent{At: arrival.ExpectedArriveAt, Delta: arrival.Quantity})
-		}
-	}
-	for _, reservation := range reservations {
-		if reservation.NeededAt.After(at) {
-			events = append(events, materialTimelineEvent{At: reservation.NeededAt, Delta: -reservation.ReservedQty})
 		}
 	}
 	sort.Slice(events, func(i, j int) bool {
@@ -748,6 +821,10 @@ func (s *SchedulingService) productInventoryAvailability(productID string, requi
 	if err != nil {
 		return nil, err
 	}
+	reservations, err := s.inventoryRepo.ListProductReservations(productID, domain.InventoryReservationStatusPending)
+	if err != nil {
+		return nil, err
+	}
 	snapshot := &productStockSnapshot{}
 	current := 0.0
 	future := make([]domain.ProductInventory, 0)
@@ -763,6 +840,17 @@ func (s *SchedulingService) productInventoryAvailability(productID string, requi
 			continue
 		}
 		current += availableQty
+	}
+	for _, reservation := range reservations {
+		when := alignSuccessorStart(reservation.NeededAt.UTC())
+		if when.After(at) {
+			future = append(future, domain.ProductInventory{
+				QuantityOnHand: -reservation.ReservedQty,
+				AvailableFrom:  when,
+			})
+			continue
+		}
+		current -= reservation.ReservedQty
 	}
 	snapshot.AvailableNow = current
 	if current >= requiredQty {
@@ -1145,8 +1233,12 @@ func (s *SchedulingService) candidateMachinesForProcessStepWithTentative(process
 				result.AddSoftReason("scheduling horizon reached; no feasible window in current horizon", 8)
 			}
 		}
-		// Ensure slot respects resource work calendar when step requires resources
-		resourceStart := s.nextResourceWorkWindowStart(processStep, effectiveFree)
+		// Ensure the full slot [effectiveFree, effectiveFree+duration] fits within a
+		// single work-calendar entry. nextFittingResourceWorkStart finds the earliest
+		// window start where the entire duration is covered — not just the start of
+		// any work interval — preventing the planner from proposing slots whose end
+		// time overflows the calendar window (which would be rejected at apply time).
+		resourceStart := s.nextFittingResourceWorkStart(processStep, effectiveFree, duration)
 		if resourceStart.After(effectiveFree) {
 			effectiveFree = resourceStart
 		}

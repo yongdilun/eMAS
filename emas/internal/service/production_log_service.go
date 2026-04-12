@@ -7,18 +7,26 @@ import (
 	"emas/pkg/id"
 	"encoding/json"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type ProductionLogService struct {
-	logRepo      *repository.ProductionLogRepository
-	slotRepo     *repository.JobSlotRepository
-	stepRepo     *repository.JobStepRepository
-	jobRepo      *repository.JobRepository
-	proposalRepo *repository.AIProposalRepository
-	scheduling   *SchedulingService
+	db             *gorm.DB
+	logRepo        *repository.ProductionLogRepository
+	slotRepo       *repository.JobSlotRepository
+	stepRepo       *repository.JobStepRepository
+	jobRepo        *repository.JobRepository
+	proposalRepo   *repository.AIProposalRepository
+	scheduling     *SchedulingService
+	inventoryRepo  *repository.InventoryRepository
+	wipRepo        *repository.WIPRepository
+	psmRepo        *repository.ProcessStepMaterialRepository
+	dependencyRepo *repository.JobDependencyRepository
 }
 
 func NewProductionLogService(
+	db *gorm.DB,
 	logRepo *repository.ProductionLogRepository,
 	slotRepo *repository.JobSlotRepository,
 	stepRepo *repository.JobStepRepository,
@@ -27,12 +35,17 @@ func NewProductionLogService(
 	scheduling *SchedulingService,
 ) *ProductionLogService {
 	return &ProductionLogService{
-		logRepo:      logRepo,
-		slotRepo:     slotRepo,
-		stepRepo:     stepRepo,
-		jobRepo:      jobRepo,
-		proposalRepo: proposalRepo,
-		scheduling:   scheduling,
+		db:             db,
+		logRepo:        logRepo,
+		slotRepo:       slotRepo,
+		stepRepo:       stepRepo,
+		jobRepo:        jobRepo,
+		proposalRepo:   proposalRepo,
+		scheduling:     scheduling,
+		inventoryRepo:  repository.NewInventoryRepository(db),
+		wipRepo:        repository.NewWIPRepository(db),
+		psmRepo:        repository.NewProcessStepMaterialRepository(db),
+		dependencyRepo: repository.NewJobDependencyRepository(db),
 	}
 }
 
@@ -54,9 +67,12 @@ func (s *ProductionLogService) LogProduction(req dto.LogProductionRequest) (*dom
 	if slot != nil {
 		step, _ := s.stepRepo.GetByID(slot.JobStepID)
 		if step != nil {
+			_ = s.syncInventoryFromLog(slot, step, req)
 			step.QuantityCompleted += req.QuantityProduced
 			if step.QuantityCompleted >= step.QuantityTarget {
 				step.Status = domain.JobStepStatusCompleted
+			} else if req.QuantityProduced+req.QuantityScrap < slot.QuantityPlanned {
+				step.Status = domain.JobStepStatusBlocked
 			} else if step.QuantityCompleted > 0 {
 				step.Status = domain.JobStepStatusRunning
 			}
@@ -66,6 +82,8 @@ func (s *ProductionLogService) LogProduction(req dto.LogProductionRequest) (*dom
 				job.QuantityCompleted += req.QuantityProduced
 				if job.QuantityCompleted >= job.QuantityTotal {
 					job.Status = domain.JobStatusCompleted
+				} else if req.QuantityProduced+req.QuantityScrap < slot.QuantityPlanned {
+					job.Status = domain.JobStatusBlocked
 				} else if job.QuantityCompleted > 0 {
 					job.Status = domain.JobStatusRunning
 				}
@@ -87,6 +105,227 @@ func (s *ProductionLogService) LogProduction(req dto.LogProductionRequest) (*dom
 		}
 	}
 	return pl, nil
+}
+
+func (s *ProductionLogService) syncInventoryFromLog(slot *domain.JobStepScheduleSlots, step *domain.JobSteps, req dto.LogProductionRequest) error {
+	if slot == nil || step == nil || s.psmRepo == nil || s.inventoryRepo == nil {
+		return nil
+	}
+	processStep, err := s.scheduling.GetProcessStepForJobStep(step.JobStepID)
+	if err != nil || processStep == nil {
+		return nil
+	}
+	inputs, _ := s.psmRepo.ListInputsByStepID(processStep.StepID)
+	outputs, _ := s.psmRepo.ListOutputsByStepID(processStep.StepID)
+	inputUnits := float64(req.QuantityProduced + req.QuantityScrap)
+	outputUnits := float64(req.QuantityProduced)
+
+	for _, input := range inputs {
+		required := inputUnits * input.QuantityPerUnit
+		if required <= 0 {
+			continue
+		}
+		if input.ProductID != nil {
+			productID := *input.ProductID
+			wipConsumed := s.consumeWIP(step.JobID, productID, required)
+			remaining := required - wipConsumed
+			if remaining > 0 {
+				_ = s.consumePendingProductReservations(step.JobID, step.JobStepID, productID, remaining)
+			}
+			continue
+		}
+		if input.MaterialID != nil {
+			_ = s.consumePendingMaterialReservations(step.JobID, step.JobStepID, *input.MaterialID, required)
+		}
+	}
+
+	for _, output := range outputs {
+		if output.ProductID == nil {
+			continue
+		}
+		productID := *output.ProductID
+		qty := outputUnits * output.QuantityPerUnit
+		if qty <= 0 {
+			continue
+		}
+		if s.outputStaysInWIP(step.JobID, processStep.StepSequence, productID) {
+			_ = s.wipRepo.UpsertWIP(&domain.WIPInventory{
+				ID:        id.NewPrefixed("WIP-"),
+				JobStepID: step.JobStepID,
+				ProductID: &productID,
+				Quantity:  qty,
+				Unit:      output.Unit,
+				Location:  "WIP",
+				UpdatedAt: time.Now().UTC(),
+			})
+			continue
+		}
+		inventory := &domain.ProductInventory{
+			InventoryID:      id.NewPrefixed("PINV-"),
+			ProductID:        productID,
+			QuantityOnHand:   qty,
+			QuantityReserved: 0,
+			Status:           domain.ProductInventoryStatusAvailable,
+			StorageLocation:  "FG",
+			AvailableFrom:    alignSuccessorStart(req.EndTime.UTC()),
+			LastUpdated:      time.Now().UTC(),
+		}
+		if err := s.inventoryRepo.CreateProductInventory(inventory); err != nil {
+			return err
+		}
+	}
+	if req.QuantityProduced < slot.QuantityPlanned {
+		_ = s.blockDependentConsumers(step.JobID, step.JobStepID)
+	}
+	return nil
+}
+
+func (s *ProductionLogService) consumeWIP(jobID, productID string, qty float64) float64 {
+	if s.wipRepo == nil || qty <= 0 {
+		return 0
+	}
+	items, err := s.wipRepo.ListWIPByJobID(jobID)
+	if err != nil {
+		return 0
+	}
+	consumed := 0.0
+	for _, item := range items {
+		if item.ProductID == nil || *item.ProductID != productID || item.Quantity <= 0 {
+			continue
+		}
+		available := item.Quantity
+		used := mathMinFloat(available, qty-consumed)
+		if used <= 0 {
+			continue
+		}
+		item.Quantity -= used
+		item.UpdatedAt = time.Now().UTC()
+		_ = s.wipRepo.UpsertWIP(&item)
+		consumed += used
+		if consumed >= qty {
+			break
+		}
+	}
+	return consumed
+}
+
+func (s *ProductionLogService) consumePendingMaterialReservations(jobID, jobStepID, materialID string, qty float64) error {
+	reservations, err := s.inventoryRepo.ListReservations(materialID, domain.InventoryReservationStatusPending)
+	if err != nil {
+		return err
+	}
+	return s.consumeMaterialReservations(reservations, jobID, jobStepID, qty)
+}
+
+func (s *ProductionLogService) consumeMaterialReservations(reservations []domain.InventoryReservation, jobID, jobStepID string, qty float64) error {
+	remaining := qty
+	for _, reservation := range reservations {
+		if remaining <= 0 {
+			break
+		}
+		if reservation.JobID != jobID || reservation.JobStepID != jobStepID || reservation.ReservedQty <= 0 {
+			continue
+		}
+		used := mathMinFloat(reservation.ReservedQty, remaining)
+		reservation.ReservedQty -= used
+		reservation.UpdatedAt = time.Now().UTC()
+		if reservation.ReservedQty <= 0 {
+			reservation.Status = domain.InventoryReservationStatusConsumed
+		}
+		if err := s.inventoryRepo.UpdateReservation(&reservation); err != nil {
+			return err
+		}
+		remaining -= used
+	}
+	return nil
+}
+
+func (s *ProductionLogService) consumePendingProductReservations(jobID, jobStepID, productID string, qty float64) error {
+	reservations, err := s.inventoryRepo.ListProductReservations(productID, domain.InventoryReservationStatusPending)
+	if err != nil {
+		return err
+	}
+	remaining := qty
+	for _, reservation := range reservations {
+		if remaining <= 0 {
+			break
+		}
+		if reservation.JobID != jobID || reservation.JobStepID != jobStepID || reservation.ReservedQty <= 0 {
+			continue
+		}
+		used := mathMinFloat(reservation.ReservedQty, remaining)
+		reservation.ReservedQty -= used
+		reservation.UpdatedAt = time.Now().UTC()
+		if reservation.ReservedQty <= 0 {
+			reservation.Status = domain.InventoryReservationStatusConsumed
+		}
+		if err := s.inventoryRepo.UpdateProductReservation(&reservation); err != nil {
+			return err
+		}
+		remaining -= used
+	}
+	return nil
+}
+
+func (s *ProductionLogService) outputStaysInWIP(jobID string, currentSequence int, productID string) bool {
+	steps, err := s.stepRepo.ListByJobID(jobID)
+	if err != nil {
+		return false
+	}
+	for _, step := range steps {
+		if step.StepSequence <= currentSequence {
+			continue
+		}
+		processStep, err := s.scheduling.GetProcessStepForJobStep(step.JobStepID)
+		if err != nil || processStep == nil {
+			continue
+		}
+		inputs, err := s.psmRepo.ListInputsByStepID(processStep.StepID)
+		if err != nil {
+			continue
+		}
+		for _, input := range inputs {
+			if input.ProductID != nil && *input.ProductID == productID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *ProductionLogService) blockDependentConsumers(parentJobID, parentJobStepID string) error {
+	if s.dependencyRepo == nil {
+		return nil
+	}
+	deps, err := s.dependencyRepo.ListByConsumerJobStepID(parentJobStepID)
+	if err != nil || len(deps) == 0 {
+		deps, err = s.dependencyRepo.ListByParentJobID(parentJobID)
+		if err != nil {
+			return err
+		}
+	}
+	for _, dep := range deps {
+		step, err := s.stepRepo.GetByID(dep.ConsumerJobStepID)
+		if err == nil && step != nil {
+			step.Status = domain.JobStepStatusBlocked
+			_ = s.stepRepo.Update(step)
+			job, jobErr := s.jobRepo.GetByID(step.JobID)
+			if jobErr == nil && job != nil {
+				job.Status = domain.JobStatusBlocked
+				job.UpdatedAt = time.Now().UTC()
+				job.Notes = schedulerNoteAppend(job.Notes, "reason_code="+reasonCodeInsufficientOutput)
+				_ = s.jobRepo.Update(job)
+			}
+		}
+	}
+	return nil
+}
+
+func mathMinFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (s *ProductionLogService) refreshProposalOutcome(proposalID string) {

@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
+
 // RescheduleAll cancels active slots and deletes proposals for planned/scheduled
 // jobs, then regenerates proposals via ScheduleJobSet. Returns same shape as batch-proposals.
 // When dryRun is true: no cancel, no delete, no persist; returns proposals as preview only.
@@ -98,6 +99,7 @@ type ScheduleJobSetOpts struct {
 	IncludeJobsWithActiveSlots bool // when true, include jobs that have planned/running slots (for preview)
 	PersistProposals           bool // when false, do not write to DB (preview mode)
 	EarliestStartFloor         *time.Time
+	IncludeInventoryActions    bool
 }
 
 // ScheduleJobSet schedules a set of jobs in priority order, using shared machine
@@ -117,6 +119,11 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	if err != nil {
 		return nil, nil, err
 	}
+
+	timeoutMs := featureflags.AdaptiveBatchTimeoutMs(featureflags.BatchTimeoutMs(), len(jobs))
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+
 
 	summary := &BatchProposalSummary{Generated: 0, Blocked: 0, Skipped: len(jobs)}
 	readinessAt := computeReadinessForJobs(s.scheduling, jobs)
@@ -139,8 +146,17 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	tentativeSlots = append(tentativeSlots, tentativeSlotsFromActiveRows(activeRows, selectedJobIDs)...)
 	proposals := make([]*SchedulingProposal, 0, len(jobs))
 	completionTargets := computeCompletionTargets(s, jobs)
-
-	for _, job := range jobs {
+	batchState := newSubproductBatchState(s)
+	
+	// Ensure that material availability calculations exclude existing reservations 
+	// for jobs currently being re-planned in this batch. Failure to do so leads to
+	// double-counting their demand (once from the legacy DB row and once from the batch plan).
+	var excludedList []string
+	for jid := range selectedJobIDs {
+		excludedList = append(excludedList, jid)
+	}
+	batchState.ledger.excludedJobIDs = excludedList
+	for rootIndex, job := range jobs {
 		select {
 		case <-ctx.Done():
 			return proposals, summary, ctx.Err()
@@ -161,10 +177,32 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 			logger.L().Warn("batch_proposal_build_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			continue
 		}
+		proposal, err = s.finalizeProposalPlan(&job, preview, proposal, proposalBuildOptions{
+			BatchState:              batchState,
+			RootOrderIndex:          rootIndex,
+			IncludeInventoryActions: true,
+			TargetCompletion:        targetCompletion,
+			TentativeSlots:          tentativeSlots,
+		})
+		if err != nil {
+			summary.Blocked++
+			logger.L().Warn("batch_subproduct_plan_failed", zap.String("job_id", job.JobID), zap.Error(err))
+			continue
+		}
+		snapshotJSON, snapshotHash, err = enrichSnapshotWithProposalPlan(snapshotJSON, proposal)
+		if err != nil {
+			summary.Blocked++
+			logger.L().Warn("batch_snapshot_enrich_failed", zap.String("job_id", job.JobID), zap.Error(err))
+			continue
+		}
 		if err := s.validateProposalSlotsStrict(job.JobID, proposal); err != nil {
 			// buildProposalForPreview can emit slots that drift past the global work template (e.g. 17:05
 			// vs settings 08:00–17:00) or past shift after heuristics. Repair before failing the batch.
-			if rerr := s.chainAwareForwardRepair([]*SchedulingProposal{proposal}, chainRepairPassBudget([]*SchedulingProposal{proposal}), tentativeSlots); rerr != nil {
+			targetByJob := map[string]*time.Time{}
+			if targetCompletion != nil {
+				targetByJob[proposal.JobID] = targetCompletion
+			}
+			if rerr := s.chainAwareForwardRepair([]*SchedulingProposal{proposal}, chainRepairPassBudget([]*SchedulingProposal{proposal}), tentativeSlots, targetByJob); rerr != nil {
 				return nil, nil, rerr
 			}
 			if err := s.validateProposalSlotsStrict(job.JobID, proposal); err != nil {
@@ -210,7 +248,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				CreatedAt:             now,
 				UpdatedAt:             now,
 				SnapshotJSON:          snapshotJSON,
-				ProposalJSON:          mustJSON(proposal),
+				ProposalJSON:          mustJSON(canonicalProposalForPersistence(proposal)),
 				ShadowProposalJSON:    "",
 				EstimatedCompletionAt: proposal.EstimatedCompletion,
 				OutcomeStatus:         "pending_execution",
@@ -238,6 +276,15 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				ScheduledStart: ps.ScheduledStart,
 				ScheduledEnd:   ps.ScheduledEnd,
 			})
+		}
+		for _, dep := range proposal.DependentJobs {
+			for _, ps := range dep.ProposedSlots {
+				tentativeSlots = append(tentativeSlots, TentativeSlot{
+					MachineID:      ps.MachineID,
+					ScheduledStart: ps.ScheduledStart,
+					ScheduledEnd:   ps.ScheduledEnd,
+				})
+			}
 		}
 
 		if s.metrics != nil {
@@ -295,6 +342,72 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	}
 
 	enrichProposalsWithDeadlineStatus(proposals, summary, deadlineByJobID)
+	// Run the convergence loop: up to maxConvergencePasses full re-evaluations
+	// using the real planner pipeline so the returned aggregates are stable and
+	// one-shot apply by the frontend drives infeasible_count to 0.
+	var convPasses int
+	summary.MaterialReplenishmentAggregate, summary.ScheduleProductionAggregate, convPasses =
+		s.convergeBatchShortageAggregates(proposals, tentativeSlots, completionTargets, excludedList)
+	// #region agent log
+	{
+		infeasibleIDs := make([]string, 0)
+		detail := make([]map[string]any, 0, len(proposals))
+		for _, p := range proposals {
+			if p == nil || p.Feasible {
+				continue
+			}
+			infeasibleIDs = append(infeasibleIDs, p.JobID)
+			optTypes := make(map[string]struct{})
+			for _, r := range p.ShortageResolutions {
+				optTypes[strings.ToLower(strings.TrimSpace(r.OptionType))] = struct{}{}
+			}
+			typeList := make([]string, 0, len(optTypes))
+			for t := range optTypes {
+				typeList = append(typeList, t)
+			}
+			sort.Strings(typeList)
+			matIDs := make([]string, 0, len(p.MaterialShortages))
+			for _, sh := range p.MaterialShortages {
+				matIDs = append(matIDs, sh.MaterialID)
+			}
+			detail = append(detail, map[string]any{
+				"job_id":                           p.JobID,
+				"blocked_reasons":                  p.BlockedReasons,
+				"shortage_resolution_option_types": typeList,
+				"material_shortage_material_ids":   matIDs,
+				"shortage_resolutions_len":         len(p.ShortageResolutions),
+			})
+		}
+		sort.Strings(infeasibleIDs)
+		matLines := make([]map[string]any, 0, len(summary.MaterialReplenishmentAggregate))
+		for _, m := range summary.MaterialReplenishmentAggregate {
+			matLines = append(matLines, map[string]any{
+				"material_id":              m.MaterialID,
+				"recommended_qty":          m.RecommendedQty,
+				"suggested_arrive_rfc3339": m.SuggestedArriveAt.UTC().Format(time.RFC3339),
+				"affected_job_count":       len(m.AffectedJobIDs),
+			})
+		}
+		schedLines := make([]map[string]any, 0, len(summary.ScheduleProductionAggregate))
+		for _, sp := range summary.ScheduleProductionAggregate {
+			schedLines = append(schedLines, map[string]any{
+				"product_id":               sp.ProductID,
+				"recommended_qty":          sp.RecommendedQty,
+				"suggested_arrive_rfc3339": sp.SuggestedArriveAt.UTC().Format(time.RFC3339),
+			})
+		}
+		agentDebugNDJSON("BATCH", "multi_job_scheduler.ScheduleJobSet", "batch_infeasible_and_aggregates", map[string]any{
+			"generated":                        summary.Generated,
+			"blocked":                          summary.Blocked,
+			"infeasible_count":                 len(infeasibleIDs),
+			"infeasible_job_ids":               infeasibleIDs,
+			"material_replenishment_aggregate": matLines,
+			"schedule_production_aggregate":    schedLines,
+			"infeasible_detail":                detail,
+			"convergence_passes":               convPasses,
+		})
+	}
+	// #endregion
 	sort.SliceStable(proposals, func(i, j int) bool {
 		if proposals[i] == nil || proposals[j] == nil {
 			return false
@@ -309,8 +422,11 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		}
 		return proposals[i].JobID < proposals[j].JobID
 	})
-
-	return proposals, summary, nil
+	response := make([]*SchedulingProposal, 0, len(proposals))
+	for _, proposal := range proposals {
+		response = append(response, stripInventoryActionsForResponse(proposal, opts.IncludeInventoryActions))
+	}
+	return response, summary, nil
 }
 
 func (s *AIPredictiveService) validateProposalSlotsStrict(jobID string, proposal *SchedulingProposal) error {
@@ -355,7 +471,7 @@ func (s *AIPredictiveService) validateProposalSlotsStrict(jobID string, proposal
 	return nil
 }
 
-func (s *AIPredictiveService) firstProposalConflict(proposal *SchedulingProposal) (int, string, error) {
+func (s *AIPredictiveService) firstProposalConflict(proposal *SchedulingProposal, allProposals []*SchedulingProposal, extraTentative []TentativeSlot) (int, string, error) {
 	if proposal == nil {
 		return -1, "", nil
 	}
@@ -375,6 +491,15 @@ func (s *AIPredictiveService) firstProposalConflict(proposal *SchedulingProposal
 		if !prevEnd.IsZero() && slot.ScheduledStart.Before(prevEnd) {
 			return i, "step precedence violated in proposal chain", nil
 		}
+
+		// NEW: Explicitly check against other in-memory proposals
+		repairBusy := tentativesForChainRepair(extraTentative, allProposals, proposal, i)
+		for _, busy := range repairBusy {
+			if slot.MachineID == busy.MachineID && slot.ScheduledStart.Before(busy.ScheduledEnd) && slot.ScheduledEnd.After(busy.ScheduledStart) {
+				return i, "overlaps with another in-memory slot in the batch", nil
+			}
+		}
+
 		validation, err := s.scheduling.validateSlotCoreResultForStep(processStep, slot.MachineID, slot.ScheduledStart, slot.ScheduledEnd, maxInt(slot.QuantityPlanned, 1), "")
 		if err != nil {
 			return i, "slot validation failed", err
@@ -409,7 +534,7 @@ func (s *AIPredictiveService) repairAndValidateBatchProposals(proposals []*Sched
 	if err := s.validateBatchProposalSlotsStrict(proposals); err == nil {
 		return nil
 	}
-	if err := s.chainAwareForwardRepair(proposals, chainRepairPassBudget(proposals), nil); err != nil {
+	if err := s.chainAwareForwardRepair(proposals, chainRepairPassBudget(proposals), nil, nil); err != nil {
 		return err
 	}
 	if err := s.validateBatchProposalSlotsStrict(proposals); err != nil {
@@ -475,7 +600,7 @@ func tentativesForChainRepair(extra []TentativeSlot, proposals []*SchedulingProp
 	return out
 }
 
-func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingProposal, maxPasses int, batchExtraTentative []TentativeSlot) error {
+func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingProposal, maxPasses int, batchExtraTentative []TentativeSlot, targetCompletionByJob map[string]*time.Time) error {
 	if maxPasses <= 0 {
 		maxPasses = chainRepairPassBudget(proposals)
 	}
@@ -500,7 +625,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 				}
 				return p.ProposedSlots[i].ScheduledStart.Before(p.ProposedSlots[j].ScheduledStart)
 			})
-			conflictIdx, conflictReason, err := s.firstProposalConflict(p)
+			conflictIdx, conflictReason, err := s.firstProposalConflict(p, proposals, batchExtraTentative)
 			if err != nil {
 				return err
 			}
@@ -535,6 +660,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 					return newSchedulingActionError(422, fmt.Sprintf("reason_code=no_feasible_window missing process step for job_step=%s", slot.JobStepID))
 				}
 				repairBusy := tentativesForChainRepair(batchExtraTentative, proposals, p, i)
+				repairHorizonEnd := chainRepairHorizonEnd(p, slot.ScheduledStart, targetCompletionByJob[p.JobID])
 				var (
 					start   time.Time
 					ok      bool
@@ -554,7 +680,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 						"",
 						repairBusy,
 						predecessorEnd,
-						tryStart.Add(21*24*time.Hour),
+						repairHorizonEnd,
 					)
 					if ok {
 						break
@@ -583,7 +709,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 						"",
 						repairBusy,
 						predecessorEnd,
-						slot.ScheduledStart.Add(21*24*time.Hour),
+						repairHorizonEnd,
 					)
 					if ok2 {
 						chosen = anchored
@@ -621,6 +747,40 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 		return newSchedulingActionError(422, fmt.Sprintf("reason_code=%s chain repair exceeded maximum passes (passes=%d proposals=%d slots=%d last_conflict=%s)", repairLimitExceededReasonCode, maxPasses, countNonNilProposals(proposals), countProposalSlots(proposals), lastConflict))
 	}
 	return newSchedulingActionError(422, fmt.Sprintf("reason_code=%s chain repair exceeded maximum passes (passes=%d proposals=%d slots=%d)", repairLimitExceededReasonCode, maxPasses, countNonNilProposals(proposals), countProposalSlots(proposals)))
+}
+
+func chainRepairHorizonEnd(proposal *SchedulingProposal, slotStart time.Time, targetCompletion *time.Time) time.Time {
+	horizonEnd := alignSuccessorStart(slotStart.UTC().Add(21 * 24 * time.Hour))
+	if latest, ok := proposalLatestSlotEnd(proposal); ok {
+		candidate := alignSuccessorStart(latest.UTC().Add(30 * 24 * time.Hour))
+		if candidate.After(horizonEnd) {
+			horizonEnd = candidate
+		}
+	}
+	if targetCompletion != nil && !targetCompletion.IsZero() {
+		candidate := alignSuccessorStart(targetCompletion.UTC().Add(30 * 24 * time.Hour))
+		if candidate.After(horizonEnd) {
+			horizonEnd = candidate
+		}
+	}
+	absoluteCap := alignSuccessorStart(time.Now().UTC().Add(time.Duration(maxHorizonDays) * 24 * time.Hour))
+	if horizonEnd.After(absoluteCap) {
+		horizonEnd = absoluteCap
+	}
+	return horizonEnd
+}
+
+func proposalLatestSlotEnd(proposal *SchedulingProposal) (time.Time, bool) {
+	if proposal == nil || len(proposal.ProposedSlots) == 0 {
+		return time.Time{}, false
+	}
+	latest := proposal.ProposedSlots[0].ScheduledEnd
+	for i := 1; i < len(proposal.ProposedSlots); i++ {
+		if proposal.ProposedSlots[i].ScheduledEnd.After(latest) {
+			latest = proposal.ProposedSlots[i].ScheduledEnd
+		}
+	}
+	return latest, true
 }
 
 func chainRepairPassBudget(proposals []*SchedulingProposal) int {
@@ -745,6 +905,11 @@ type BatchProposalSummary struct {
 	LateJobs         []LateJobRef `json:"late_jobs,omitempty"` // for quick frontend filtering
 	MaxDelayRatio    float64      `json:"max_delay_ratio,omitempty"`
 	StarvedJobsCount int          `json:"starved_jobs_count,omitempty"`
+	// MaterialReplenishmentAggregate: one line per raw material for bulk apply-replenishment.
+	MaterialReplenishmentAggregate []BatchMaterialReplenishmentLine `json:"material_replenishment_aggregate,omitempty"`
+	// ScheduleProductionAggregate: one line per subproduct/FG for bulk apply-replenishment
+	// (option_type=schedule_production). Required when jobs are short on P-* not only MAT-*.
+	ScheduleProductionAggregate []BatchScheduleProductionLine `json:"schedule_production_aggregate,omitempty"`
 }
 
 // LateJobRef references a job that is late; used in batch summary.

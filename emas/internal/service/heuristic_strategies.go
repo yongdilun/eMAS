@@ -1045,6 +1045,16 @@ func generateWithCandidateSortPick(
 		if len(available) == 0 {
 			p.Feasible = false
 			p.BlockedReasons = append(p.BlockedReasons, fmt.Sprintf("reason_code=%s no feasible aligned window for step %s within horizon (expanded_steps=%d, horizon_end=%s).", searchHorizonExceededReasonCode, step.StepName, expanded, adaptiveEnd.UTC().Format(time.RFC3339)))
+			// #region agent log
+			agentDebugNDJSON("H4", "heuristic_strategies.go:Generate", "placement_no_candidates_horizon", map[string]any{
+				"job_id":       job.JobID,
+				"job_step_id":  step.JobStepID,
+				"step_name":    step.StepName,
+				"reason_code":  searchHorizonExceededReasonCode,
+				"horizon_utc":  adaptiveEnd.UTC().Format(time.RFC3339),
+				"expanded":     expanded,
+			})
+			// #endregion
 			continue
 		}
 
@@ -1173,6 +1183,20 @@ func generateWithCandidateSortPick(
 		}
 		if !outcome.Ok {
 			p.Feasible = false
+			firstOutcome := ""
+			if len(outcome.Reasons) > 0 {
+				firstOutcome = outcome.Reasons[0]
+			}
+			// #region agent log
+			agentDebugNDJSON("H4", "heuristic_strategies.go:Generate", "strict_placement_failed", map[string]any{
+				"job_id":               job.JobID,
+				"job_step_id":          step.JobStepID,
+				"step_name":            step.StepName,
+				"reason_code":          noFeasibleSlotReasonCode,
+				"first_outcome_reason": firstOutcome,
+				"attempted_machines":   outcome.AttemptedMachineIDs,
+			})
+			// #endregion
 			reason := "reason_code=" + noFeasibleSlotReasonCode + " failed strict feasible placement"
 			if len(outcome.Reasons) > 0 {
 				reason += ": " + outcome.Reasons[0]

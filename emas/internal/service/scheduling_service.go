@@ -1669,6 +1669,24 @@ func (s *SchedulingService) findFeasibleMachineStart(
 			candidate = resourceCandidate
 			continue
 		}
+
+		busyOverlap := false
+		for _, b := range mergedBusy {
+			// Check if [candidate, end) overlaps with [b.Start, b.End)
+			if candidate.Before(b.End) && end.After(b.Start) {
+				busyOverlap = true
+				nextCandidate, found := nextAlignedWorkStart(b.End, workWindows, mergedBusy, time.UTC)
+				if !found {
+					return time.Time{}, false, []string{"reason_code=" + searchHorizonExceededReasonCode}, diag
+				}
+				candidate = nextCandidate
+				break
+			}
+		}
+		if busyOverlap {
+			continue
+		}
+
 		ok, err := s.validateSlotCoreForStep(ps, machineID, candidate, end, quantity, excludeSlotID)
 		if err != nil {
 			return time.Time{}, false, []string{"reason_code=" + noFeasibleSlotReasonCode + " slot validation failed: " + err.Error()}, diag

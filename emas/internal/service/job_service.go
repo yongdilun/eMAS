@@ -62,11 +62,14 @@ func (s *JobService) Create(req dto.CreateJobRequest) (*domain.Job, error) {
 	}
 
 	process, err := s.processRepo.GetProcessByProductIDAsOf(req.ProductID, time.Now())
-	if err != nil {
+	if err != nil || process == nil {
 		if len(req.Slots) == 0 {
 			return s.jobRepo.GetByID(job.JobID)
 		}
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("no process routing found for product")
 	}
 	steps, err := s.processRepo.ListStepsByProcessID(process.ProcessID)
 	if err != nil {

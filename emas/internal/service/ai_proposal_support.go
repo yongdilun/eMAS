@@ -35,15 +35,76 @@ func newSchedulingActionError(statusCode int, message string) error {
 }
 
 type proposalSnapshot struct {
-	Job           proposalSnapshotJob     `json:"job"`
-	Preview       proposalSnapshotPreview `json:"preview"`
-	ExistingSlots []proposalSnapshotSlot  `json:"existing_slots"`
+	Job              proposalSnapshotJob               `json:"job"`
+	Preview          proposalSnapshotPreview           `json:"preview"`
+	ExistingSlots    []proposalSnapshotSlot            `json:"existing_slots"`
+	Inventory        proposalSnapshotInventory         `json:"inventory"`
+	DependentJobs    []proposalSnapshotDependentJob    `json:"dependent_jobs,omitempty"`
+	InventoryActions []proposalSnapshotInventoryAction `json:"inventory_actions,omitempty"`
 
 	// MachineIDs defines the fixed ordering for all vector features.
 	MachineIDs []string `json:"machine_ids"`
 
 	QueueLengthsVector       []int     `json:"queue_lengths_vector"`
 	MachineUtilizationVector []float64 `json:"machine_utilization_vector"`
+}
+
+type proposalSnapshotInventory struct {
+	Materials            []proposalSnapshotMaterialState    `json:"materials,omitempty"`
+	ProductInventory     []proposalSnapshotProductState     `json:"product_inventory,omitempty"`
+	MaterialReservations []proposalSnapshotReservationState `json:"material_reservations,omitempty"`
+	ProductReservations  []proposalSnapshotReservationState `json:"product_reservations,omitempty"`
+	ExpectedArrivals     []proposalSnapshotArrivalState     `json:"expected_arrivals,omitempty"`
+}
+
+type proposalSnapshotMaterialState struct {
+	MaterialID   string  `json:"material_id"`
+	CurrentStock float64 `json:"current_stock"`
+}
+
+type proposalSnapshotProductState struct {
+	ProductID        string    `json:"product_id"`
+	QuantityOnHand   float64   `json:"quantity_on_hand"`
+	QuantityReserved float64   `json:"quantity_reserved"`
+	AvailableFrom    time.Time `json:"available_from"`
+}
+
+type proposalSnapshotReservationState struct {
+	ResourceID  string    `json:"resource_id"`
+	ReservedQty float64   `json:"reserved_qty"`
+	NeededAt    time.Time `json:"needed_at"`
+	Status      string    `json:"status"`
+}
+
+type proposalSnapshotArrivalState struct {
+	MaterialID string    `json:"material_id"`
+	Quantity   float64   `json:"quantity"`
+	ReadyAt    time.Time `json:"ready_at"`
+	Status     string    `json:"status"`
+}
+
+type proposalSnapshotDependentJob struct {
+	PlanKey             string     `json:"plan_key"`
+	ProductID           string     `json:"product_id"`
+	ConsumerJobStepID   string     `json:"consumer_job_step_id"`
+	DependencyDepth     int        `json:"dependency_depth"`
+	RequiredQty         float64    `json:"required_qty"`
+	PlannedQty          float64    `json:"planned_qty"`
+	PlanningStatus      string     `json:"planning_status"`
+	ReasonCode          string     `json:"reason_code,omitempty"`
+	EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
+}
+
+type proposalSnapshotInventoryAction struct {
+	Sequence    int       `json:"sequence"`
+	ActionType  string    `json:"action_type"`
+	ResourceID  string    `json:"resource_id"`
+	JobID       string    `json:"job_id"`
+	JobStepID   string    `json:"job_step_id"`
+	Quantity    float64   `json:"quantity"`
+	EffectiveAt time.Time `json:"effective_at"`
+	ReasonCode  string    `json:"reason_code,omitempty"`
+	PlanKey     string    `json:"plan_key,omitempty"`
 }
 
 type proposalSnapshotJob struct {
@@ -131,6 +192,10 @@ func (s *AIPredictiveService) RecordReadonlyExecution() {
 }
 
 func (s *AIPredictiveService) BuildProposal(jobID string) (*SchedulingProposal, error) {
+	return s.BuildProposalWithOptions(jobID, true)
+}
+
+func (s *AIPredictiveService) BuildProposalWithOptions(jobID string, includeInventoryActions bool) (*SchedulingProposal, error) {
 	job, err := s.jobRepo.GetByID(jobID)
 	if err != nil {
 		return nil, err
@@ -140,6 +205,28 @@ func (s *AIPredictiveService) BuildProposal(jobID string) (*SchedulingProposal, 
 		return nil, err
 	}
 	proposal, err := s.buildProposalForPreview(job, preview, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	proposal, err = s.finalizeProposalPlan(job, preview, proposal, proposalBuildOptions{
+		BatchState:              newSubproductBatchState(s),
+		IncludeInventoryActions: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, nil); err == nil {
+		proposal.MaterialShortages = shortages
+		proposal.ShortageResolutions = resolutions
+		proposal.GlobalScore = score
+		for _, sh := range shortages {
+			if !sh.AllStepMaterialsFeasible {
+				proposal.Feasible = false
+				break
+			}
+		}
+	}
+	snapshotJSON, snapshotHash, err = enrichSnapshotWithProposalPlan(snapshotJSON, proposal)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +247,7 @@ func (s *AIPredictiveService) BuildProposal(jobID string) (*SchedulingProposal, 
 		}
 	}
 	_ = snapshotJSON
-	return proposal, nil
+	return stripInventoryActionsForResponse(proposal, includeInventoryActions), nil
 }
 
 func (s *AIPredictiveService) buildProposalForPreview(job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
@@ -370,7 +457,7 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 		defer cancel()
 		p, _ := GreedyEarliestFinish{}.Generate(ctx, s, job, preview, tentativeSlots, targetCompletion)
 		if p == nil {
-			return nil, fmt.Errorf("failed to generate heuristic proposal")
+			return nil, newSchedulingActionError(422, "reason_code=no_feasible_slot heuristic scheduler could not find any feasible slot for job "+job.JobID)
 		}
 		p.Alternatives = nil
 		return p, nil
@@ -588,6 +675,7 @@ func (s *AIPredictiveService) buildProposalSnapshot(jobID string) (*SolverPrevie
 		},
 		Preview:                  normalizePreview(preview),
 		ExistingSlots:            normalizeSnapshotSlots(slots),
+		Inventory:                s.buildInventorySnapshot(),
 		MachineIDs:               machineIDs,
 		QueueLengthsVector:       qVec,
 		MachineUtilizationVector: uVec,
@@ -631,6 +719,7 @@ func (s *AIPredictiveService) buildProposalSnapshotWithTentative(jobID string, t
 		},
 		Preview:                  normalizePreview(preview),
 		ExistingSlots:            normalizeSnapshotSlots(slots),
+		Inventory:                s.buildInventorySnapshot(),
 		MachineIDs:               machineIDs,
 		QueueLengthsVector:       qVec,
 		MachineUtilizationVector: uVec,
@@ -696,6 +785,155 @@ func normalizeSnapshotSlots(slots []domain.JobStepScheduleSlots) []proposalSnaps
 		})
 	}
 	return result
+}
+
+func (s *AIPredictiveService) buildInventorySnapshot() proposalSnapshotInventory {
+	inv := proposalSnapshotInventory{}
+	if s.scheduling == nil || s.scheduling.inventoryRepo == nil {
+		return inv
+	}
+	if materials, err := s.scheduling.inventoryRepo.ListMaterials(); err == nil {
+		sort.Slice(materials, func(i, j int) bool { return materials[i].MaterialID < materials[j].MaterialID })
+		for _, material := range materials {
+			inv.Materials = append(inv.Materials, proposalSnapshotMaterialState{
+				MaterialID:   material.MaterialID,
+				CurrentStock: material.CurrentStock,
+			})
+		}
+	}
+	if arrivals, err := s.scheduling.inventoryRepo.ListExpectedArrivals("", nil, nil, ""); err == nil {
+		sort.Slice(arrivals, func(i, j int) bool {
+			if arrivals[i].MaterialID == arrivals[j].MaterialID {
+				return arrivals[i].ExpectedArriveAt.Before(arrivals[j].ExpectedArriveAt)
+			}
+			return arrivals[i].MaterialID < arrivals[j].MaterialID
+		})
+		for _, arrival := range arrivals {
+			inv.ExpectedArrivals = append(inv.ExpectedArrivals, proposalSnapshotArrivalState{
+				MaterialID: arrival.MaterialID,
+				Quantity:   arrival.Quantity,
+				ReadyAt:    alignSuccessorStart(arrival.ExpectedArriveAt.UTC()),
+				Status:     arrival.Status,
+			})
+		}
+	}
+	if productInventory, err := s.scheduling.inventoryRepo.ListProductInventory(); err == nil {
+		sort.Slice(productInventory, func(i, j int) bool {
+			if productInventory[i].ProductID == productInventory[j].ProductID {
+				return productInventory[i].AvailableFrom.Before(productInventory[j].AvailableFrom)
+			}
+			return productInventory[i].ProductID < productInventory[j].ProductID
+		})
+		for _, record := range productInventory {
+			inv.ProductInventory = append(inv.ProductInventory, proposalSnapshotProductState{
+				ProductID:        record.ProductID,
+				QuantityOnHand:   record.QuantityOnHand,
+				QuantityReserved: record.QuantityReserved,
+				AvailableFrom:    alignSuccessorStart(record.AvailableFrom.UTC()),
+			})
+		}
+	}
+	if reservations, err := s.scheduling.inventoryRepo.ListReservations("", ""); err == nil {
+		sort.Slice(reservations, func(i, j int) bool {
+			if reservations[i].MaterialID == reservations[j].MaterialID {
+				return reservations[i].NeededAt.Before(reservations[j].NeededAt)
+			}
+			return reservations[i].MaterialID < reservations[j].MaterialID
+		})
+		for _, reservation := range reservations {
+			inv.MaterialReservations = append(inv.MaterialReservations, proposalSnapshotReservationState{
+				ResourceID:  reservation.MaterialID,
+				ReservedQty: reservation.ReservedQty,
+				NeededAt:    alignSuccessorStart(reservation.NeededAt.UTC()),
+				Status:      reservation.Status,
+			})
+		}
+	}
+	if reservations, err := s.scheduling.inventoryRepo.ListProductReservations("", ""); err == nil {
+		sort.Slice(reservations, func(i, j int) bool {
+			if reservations[i].ProductID == reservations[j].ProductID {
+				return reservations[i].NeededAt.Before(reservations[j].NeededAt)
+			}
+			return reservations[i].ProductID < reservations[j].ProductID
+		})
+		for _, reservation := range reservations {
+			inv.ProductReservations = append(inv.ProductReservations, proposalSnapshotReservationState{
+				ResourceID:  reservation.ProductID,
+				ReservedQty: reservation.ReservedQty,
+				NeededAt:    alignSuccessorStart(reservation.NeededAt.UTC()),
+				Status:      reservation.Status,
+			})
+		}
+	}
+	return inv
+}
+
+func enrichSnapshotWithProposalPlan(baseJSON string, proposal *SchedulingProposal) (string, string, error) {
+	var payload proposalSnapshot
+	if err := json.Unmarshal([]byte(baseJSON), &payload); err != nil {
+		return "", "", err
+	}
+	if proposal != nil {
+		payload.DependentJobs = normalizeSnapshotDependentJobs(proposal.DependentJobs)
+		payload.InventoryActions = normalizeSnapshotInventoryActions(proposal.InventoryActions)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", "", err
+	}
+	sum := sha256.Sum256(raw)
+	return string(raw), hex.EncodeToString(sum[:]), nil
+}
+
+func normalizeSnapshotDependentJobs(items []DependentJobPlan) []proposalSnapshotDependentJob {
+	out := make([]proposalSnapshotDependentJob, 0, len(items))
+	for _, item := range items {
+		out = append(out, proposalSnapshotDependentJob{
+			PlanKey:             item.PlanKey,
+			ProductID:           item.ProductID,
+			ConsumerJobStepID:   item.ConsumerJobStepID,
+			DependencyDepth:     item.DependencyDepth,
+			RequiredQty:         item.RequiredQty,
+			PlannedQty:          item.PlannedQty,
+			PlanningStatus:      item.PlanningStatus,
+			ReasonCode:          item.ReasonCode,
+			EstimatedCompletion: normalizeSnapshotTime(item.EstimatedCompletion),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PlanKey < out[j].PlanKey })
+	return out
+}
+
+func normalizeSnapshotInventoryActions(items []InventoryAction) []proposalSnapshotInventoryAction {
+	out := make([]proposalSnapshotInventoryAction, 0, len(items))
+	for _, item := range items {
+		out = append(out, proposalSnapshotInventoryAction{
+			Sequence:    item.Sequence,
+			ActionType:  item.ActionType,
+			ResourceID:  item.ResourceID,
+			JobID:       item.JobID,
+			JobStepID:   item.JobStepID,
+			Quantity:    item.Quantity,
+			EffectiveAt: alignSuccessorStart(item.EffectiveAt.UTC()),
+			ReasonCode:  item.ReasonCode,
+			PlanKey:     item.PlanKey,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Sequence == out[j].Sequence {
+			return out[i].ActionType < out[j].ActionType
+		}
+		return out[i].Sequence < out[j].Sequence
+	})
+	return out
+}
+
+func normalizeSnapshotTime(v *time.Time) *time.Time {
+	if v == nil {
+		return nil
+	}
+	t := alignSuccessorStart(v.UTC())
+	return &t
 }
 
 func roundToMinute(v time.Time) time.Time {
@@ -775,6 +1013,10 @@ func (s *AIPredictiveService) buildSchedulingContextVectors(now time.Time, tenta
 }
 
 func (s *AIPredictiveService) GenerateProposal(jobID, generatedBy string) (*SchedulingProposal, error) {
+	return s.GenerateProposalWithOptions(jobID, generatedBy, true)
+}
+
+func (s *AIPredictiveService) GenerateProposalWithOptions(jobID, generatedBy string, includeInventoryActions bool) (*SchedulingProposal, error) {
 	if s.proposalRepo == nil {
 		return nil, fmt.Errorf("proposal repository is not configured")
 	}
@@ -787,6 +1029,28 @@ func (s *AIPredictiveService) GenerateProposal(jobID, generatedBy string) (*Sche
 		return nil, err
 	}
 	proposal, err := s.buildProposalForPreview(job, preview, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	proposal, err = s.finalizeProposalPlan(job, preview, proposal, proposalBuildOptions{
+		BatchState:              newSubproductBatchState(s),
+		IncludeInventoryActions: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, nil); err == nil {
+		proposal.MaterialShortages = shortages
+		proposal.ShortageResolutions = resolutions
+		proposal.GlobalScore = score
+		for _, sh := range shortages {
+			if !sh.AllStepMaterialsFeasible {
+				proposal.Feasible = false
+				break
+			}
+		}
+	}
+	snapshotJSON, snapshotHash, err = enrichSnapshotWithProposalPlan(snapshotJSON, proposal)
 	if err != nil {
 		return nil, err
 	}
@@ -831,7 +1095,7 @@ func (s *AIPredictiveService) GenerateProposal(jobID, generatedBy string) (*Sche
 		CreatedAt:            now,
 		UpdatedAt:            now,
 		SnapshotJSON:         snapshotJSON,
-		ProposalJSON:         mustJSON(proposal),
+		ProposalJSON:         mustJSON(canonicalProposalForPersistence(proposal)),
 		ShadowProposalJSON: func() string {
 			if proposal.ShadowEngine == "" {
 				return ""
@@ -872,7 +1136,7 @@ func (s *AIPredictiveService) GenerateProposal(jobID, generatedBy string) (*Sche
 		zap.String("engine", proposal.Engine),
 		zap.String("generated_by", defaultActor(generatedBy)),
 	)
-	return proposal, nil
+	return stripInventoryActionsForResponse(proposal, includeInventoryActions), nil
 }
 
 func (s *AIPredictiveService) ListProposals(jobID string, includeStale bool) ([]domain.AIProposal, error) {
@@ -1058,6 +1322,8 @@ func (s *AIPredictiveService) ApplyProposalByIDWithOpts(proposalID, appliedBy, i
 	}
 
 	var createdIDs []string
+	var createdJobIDs []string
+	var createdDependencyLinks []CreatedDependencyLink
 	applyFn := func(tx *gorm.DB) error {
 		txSlotRepo := repository.NewJobSlotRepository(tx)
 		txStepRepo := repository.NewJobStepRepository(tx)
@@ -1074,10 +1340,54 @@ func (s *AIPredictiveService) ApplyProposalByIDWithOpts(proposalID, appliedBy, i
 				return newSchedulingActionError(409, "job already has active slots; proposal apply supports unscheduled jobs only")
 			}
 		}
+		// Repair persisted proposal against live machine occupancy/calendar at apply-time.
+		// Apply All may run over proposals generated earlier; this keeps apply from failing
+		// on overlap/calendar drift when a repairable alternative exists.
+		activeRows, err := txSlotRepo.ListActiveByJobIDs(nil)
+		if err != nil {
+			return err
+		}
+		liveTentative := tentativeSlotsFromActiveRows(activeRows, map[string]bool{record.JobID: true})
+		repairTargets := []*SchedulingProposal{proposal}
+		if err := s.chainAwareForwardRepair(repairTargets, chainRepairPassBudget(repairTargets), liveTentative, nil); err != nil {
+			return err
+		}
+		if err := s.validateProposalSlotsStrict(record.JobID, proposal); err != nil {
+			return err
+		}
+		createdPlanJobs, createdPlanSteps, childJobIDs, dependencyLinks, err := s.createDependentJobsAndApply(tx, proposal, record.ProposalID)
+		if err != nil {
+			return err
+		}
+		createdJobIDs = append(createdJobIDs, childJobIDs...)
+		createdDependencyLinks = append(createdDependencyLinks, dependencyLinks...)
+		remappedActions := remapActionJobIDs(proposal.InventoryActions, record.JobID, createdPlanJobs, createdPlanSteps)
+		if err := s.allocateProposalReservations(tx, remappedActions, plannedDependentPlanKeys(proposal.DependentJobs)); err != nil {
+			return err
+		}
 		normalizedSlots, err := normalizeLegacySplitFallbackSlots(proposal.ProposedSlots, txStepRepo, txProcessRepo)
 		if err != nil {
 			return err
 		}
+		// Normalize can rewrite slice timings (legacy fallback) and dependent-child creation above
+		// may add machine occupancy in this same transaction. Re-repair against current tx state.
+		normalizedRepair := &SchedulingProposal{
+			JobID:         record.JobID,
+			ProposedSlots: append([]ProposedSlot(nil), normalizedSlots...),
+		}
+		activeRowsAfterDeps, err := txSlotRepo.ListActiveByJobIDs(nil)
+		if err != nil {
+			return err
+		}
+		liveTentativeAfterDeps := tentativeSlotsFromActiveRows(activeRowsAfterDeps, map[string]bool{record.JobID: true})
+		repairTargetsAfterDeps := []*SchedulingProposal{normalizedRepair}
+		if err := s.chainAwareForwardRepair(repairTargetsAfterDeps, chainRepairPassBudget(repairTargetsAfterDeps), liveTentativeAfterDeps, nil); err != nil {
+			return err
+		}
+		if err := s.validateProposalSlotsStrict(record.JobID, normalizedRepair); err != nil {
+			return err
+		}
+		normalizedSlots = normalizedRepair.ProposedSlots
 		grouped := make(map[string][]dto.CreateSlotRequest)
 		order := make([]string, 0)
 		seen := make(map[string]bool)
@@ -1115,19 +1425,109 @@ func (s *AIPredictiveService) ApplyProposalByIDWithOpts(proposalID, appliedBy, i
 			}
 			return si.StepSequence < sj.StepSequence
 		})
+		var chainPrevEnd *time.Time
 		for _, jobStepID := range order {
 			ignoreMinSplitQty := isTemporalSliceRequestGroup(grouped[jobStepID])
+			sort.SliceStable(grouped[jobStepID], func(i, j int) bool {
+				return grouped[jobStepID][i].StartTime < grouped[jobStepID][j].StartTime
+			})
+			var previousEnd *time.Time
+			stepMaxEnd := time.Time{}
 			// Pre-validate each proposed slot so we can return a precise, actionable
 			// error message instead of a generic validation string.
-			for _, rs := range grouped[jobStepID] {
+			for i := range grouped[jobStepID] {
+				rs := &grouped[jobStepID][i]
 				start, parseErr := time.Parse(time.RFC3339, rs.StartTime)
 				if parseErr != nil {
 					return newSchedulingActionError(422, "invalid proposed slot start time: "+rs.StartTime)
+				}
+				if chainPrevEnd != nil && chainPrevEnd.After(start) {
+					start = alignSuccessorStart(*chainPrevEnd)
+					rs.StartTime = start.Format(time.RFC3339)
+				}
+				if previousEnd != nil && previousEnd.After(start) {
+					start = alignSuccessorStart(*previousEnd)
+					rs.StartTime = start.Format(time.RFC3339)
 				}
 				end := start.Add(time.Duration(rs.DurationMins) * time.Minute)
 				validation, vErr := txScheduling.ValidateSlotWithOptions(jobStepID, rs.MachineID, start, end, rs.Quantity, "", SlotValidationOptions{IgnoreMinSplitQty: ignoreMinSplitQty})
 				if vErr != nil {
 					return vErr
+				}
+				if !validation.Valid {
+					// One bounded fallback: shift this request to next feasible start on same machine.
+					// This addresses residual overlaps that can appear after per-proposal repair.
+					if len(validation.Reasons) > 0 {
+						reasonLower := strings.ToLower(validation.Reasons[0])
+						if strings.Contains(reasonLower, "overlapping") ||
+							strings.Contains(reasonLower, "outside") ||
+							strings.Contains(reasonLower, "calendar") ||
+							strings.Contains(reasonLower, "previous process step completes") {
+							processStep, psErr := s.scheduling.GetProcessStepForJobStep(jobStepID)
+							if psErr == nil && processStep != nil {
+								activeRowsNow, arErr := txSlotRepo.ListActiveByJobIDs(nil)
+								if arErr == nil {
+									busyNow := tentativeSlotsFromActiveRows(activeRowsNow, map[string]bool{record.JobID: true})
+									tryStart := start
+									if previousEnd != nil && previousEnd.After(tryStart) {
+										tryStart = *previousEnd
+									}
+									repairedStart, ok, _, _ := s.scheduling.findFeasibleMachineStart(
+										jobStepID,
+										rs.MachineID,
+										processStep,
+										tryStart,
+										time.Duration(rs.DurationMins)*time.Minute,
+										maxInt(rs.Quantity, 1),
+										"",
+										busyNow,
+										func() *time.Time {
+											if previousEnd != nil && chainPrevEnd != nil {
+												if previousEnd.After(*chainPrevEnd) {
+													return previousEnd
+												}
+												return chainPrevEnd
+											}
+											if previousEnd != nil {
+												return previousEnd
+											}
+											return chainPrevEnd
+										}(),
+										alignSuccessorStart(time.Now().UTC().Add(time.Duration(maxHorizonDays)*24*time.Hour)),
+									)
+									if !ok {
+									}
+									if ok {
+										repairedEnd := repairedStart.Add(time.Duration(rs.DurationMins) * time.Minute)
+										recheck, reErr := txScheduling.ValidateSlotWithOptions(jobStepID, rs.MachineID, repairedStart, repairedEnd, rs.Quantity, "", SlotValidationOptions{IgnoreMinSplitQty: ignoreMinSplitQty})
+										if reErr != nil || !recheck.Valid {
+											// Secondary bounded fallback: authoritative incremental scan using tx validator.
+											scanStart := alignSuccessorStart(start.Add(30 * time.Minute))
+											scanCap := alignSuccessorStart(time.Now().UTC().Add(time.Duration(maxHorizonDays) * 24 * time.Hour))
+											for scanSteps := 0; scanSteps < 4096 && !scanStart.After(scanCap); scanSteps++ {
+												scanEnd := scanStart.Add(time.Duration(rs.DurationMins) * time.Minute)
+												scanCheck, scanErr := txScheduling.ValidateSlotWithOptions(jobStepID, rs.MachineID, scanStart, scanEnd, rs.Quantity, "", SlotValidationOptions{IgnoreMinSplitQty: ignoreMinSplitQty})
+												if scanErr == nil && scanCheck.Valid {
+													repairedStart = scanStart
+													repairedEnd = scanEnd
+													recheck = scanCheck
+													reErr = nil
+													break
+												}
+												scanStart = alignSuccessorStart(scanStart.Add(30 * time.Minute))
+											}
+										}
+										if reErr == nil && recheck.Valid {
+											start = repairedStart
+											end = repairedEnd
+											rs.StartTime = repairedStart.Format(time.RFC3339)
+											validation = recheck
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 				if !validation.Valid {
 					if len(validation.Reasons) > 0 && strings.Contains(strings.ToLower(validation.Reasons[0]), "outside resource work calendar") {
@@ -1144,6 +1544,15 @@ func (s *AIPredictiveService) ApplyProposalByIDWithOpts(proposalID, appliedBy, i
 					}
 					return newSchedulingActionError(422, strings.Join(validation.Reasons, "; "))
 				}
+				prev := end
+				previousEnd = &prev
+				if end.After(stepMaxEnd) {
+					stepMaxEnd = end
+				}
+			}
+			if !stepMaxEnd.IsZero() {
+				next := stepMaxEnd
+				chainPrevEnd = &next
 			}
 			created, err := txSlotService.SplitStep(jobStepID, grouped[jobStepID])
 			if err != nil {
@@ -1183,14 +1592,16 @@ func (s *AIPredictiveService) ApplyProposalByIDWithOpts(proposalID, appliedBy, i
 		zap.String("idempotency_key", idempotencyKey),
 	)
 	return &AppliedProposalResult{
-		ProposalID:       record.ProposalID,
-		JobID:            record.JobID,
-		AppliedAt:        derefTime(record.AppliedAt),
-		AppliedSlotCount: len(createdIDs),
-		CreatedSlots:     createdIDs,
-		Message:          "Proposal applied successfully. Review created slots before dispatch.",
-		IdempotencyKey:   idempotencyKey,
-		Proposal:         proposal,
+		ProposalID:             record.ProposalID,
+		JobID:                  record.JobID,
+		AppliedAt:              derefTime(record.AppliedAt),
+		AppliedSlotCount:       len(createdIDs),
+		CreatedSlots:           createdIDs,
+		CreatedJobIDs:          createdJobIDs,
+		CreatedDependencyLinks: createdDependencyLinks,
+		Message:                "Proposal applied successfully. Review created slots before dispatch.",
+		IdempotencyKey:         idempotencyKey,
+		Proposal:               proposal,
 	}, nil
 }
 
@@ -1247,21 +1658,59 @@ func normalizeLegacySplitFallbackSlots(slots []ProposedSlot, stepRepo *repositor
 		if len(allocations) != len(indexes) {
 			return nil, newSchedulingActionError(422, fmt.Sprintf("proposal step %s has invalid legacy split quantities and cannot be auto-repaired; regenerate the proposal before apply", jobStepID))
 		}
+		alignedSlices := normalizeLegacySequentialSlices(indexes, out)
 		for i, idx := range indexes {
 			out[idx].QuantityPlanned = allocations[i]
 			out[idx].AllocationPercent = mathRound(float64(allocations[i])*100/float64(jobStep.QuantityTarget), 2)
+			out[idx].ScheduledStart = alignedSlices[i].ScheduledStart
+			out[idx].ScheduledEnd = alignedSlices[i].ScheduledEnd
+			if out[idx].ScheduledEnd.After(out[idx].ScheduledStart) {
+				out[idx].EstimatedDurationMins = int(out[idx].ScheduledEnd.Sub(out[idx].ScheduledStart).Minutes())
+			}
 		}
 	}
 	return out, nil
+}
+
+func normalizeLegacySequentialSlices(indexes []int, slots []ProposedSlot) []ProposedSlot {
+	normalized := make([]ProposedSlot, len(indexes))
+	if len(indexes) == 0 {
+		return normalized
+	}
+	cursor := roundUpToHalfHour(slots[indexes[0]].ScheduledStart)
+	if cursor.IsZero() {
+		cursor = slots[indexes[0]].ScheduledStart
+	}
+	for i, idx := range indexes {
+		slot := slots[idx]
+		duration := slot.ScheduledEnd.Sub(slot.ScheduledStart)
+		if slot.EstimatedDurationMins > 0 {
+			duration = time.Duration(slot.EstimatedDurationMins) * time.Minute
+		}
+		if duration <= 0 {
+			duration = schedulerSlotGranularity
+		}
+		duration = ceilDurationTo30Min(duration)
+		slot.ScheduledStart = cursor
+		slot.ScheduledEnd = cursor.Add(duration)
+		slot.EstimatedDurationMins = int(duration / time.Minute)
+		normalized[i] = slot
+		cursor = slot.ScheduledEnd
+	}
+	return normalized
 }
 
 func (s *AIPredictiveService) ensureProposalFresh(record *domain.AIProposal) error {
 	if record == nil {
 		return newSchedulingActionError(404, "proposal not found")
 	}
-	_, _, currentHash, err := s.buildProposalSnapshot(record.JobID)
+	current, err := s.BuildProposalWithOptions(record.JobID, true)
 	if err != nil {
-		return err
+		return newSchedulingActionError(500, fmt.Sprintf("freshness check failed during schedule rebuild for job %s: %s", record.JobID, err.Error()))
+	}
+	currentHash := ""
+	if current != nil {
+		currentHash = current.SnapshotHash
 	}
 	if currentHash == record.InputHash {
 		return nil
@@ -1306,6 +1755,7 @@ func (s *AIPredictiveService) decodeProposalRecord(record *domain.AIProposal) (*
 	proposal.ObjectiveScore = record.ObjectiveScore
 	proposal.FallbackReason = record.FallbackReason
 	proposal.SnapshotHash = record.InputHash
+	normalizeFeasibleDependentJobPlans(proposal)
 	return proposal, nil
 }
 

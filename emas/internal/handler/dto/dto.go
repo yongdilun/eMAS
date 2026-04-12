@@ -251,7 +251,7 @@ type AddProcessStepMaterialRequest struct {
 	MaterialID      string  `json:"material_id"`       // required if product_id not set
 	ProductID       string  `json:"product_id"`        // required if material_id not set
 	Role            string  `json:"role"`              // "input" or "output"
-	QuantityPerUnit float64 `json:"quantity_per_unit"`  // required
+	QuantityPerUnit float64 `json:"quantity_per_unit"` // required
 	Unit            string  `json:"unit"`
 }
 
@@ -313,17 +313,19 @@ type SchedulingSlotValidationRequest struct {
 }
 
 type ProposalDecisionRequest struct {
-	Notes               string `json:"notes"`
-	Reason              string `json:"reason"`
-	IdempotencyKey      string `json:"idempotency_key"`
-	SkipStalenessCheck  bool   `json:"skip_staleness_check"` // true when applying from batch (Apply All); proposals 2+ would otherwise fail staleness
+	Notes                   string `json:"notes"`
+	Reason                  string `json:"reason"`
+	IdempotencyKey          string `json:"idempotency_key"`
+	SkipStalenessCheck      bool   `json:"skip_staleness_check"` // true when applying from batch (Apply All); proposals 2+ would otherwise fail staleness
+	IncludeInventoryActions *bool  `json:"include_inventory_actions,omitempty"`
 }
 
 // BatchProposalsRequest for POST /ai/scheduling/batch-proposals
 type BatchProposalsRequest struct {
-	JobIDs  []string `json:"job_ids"`  // explicit job IDs; if empty and Scope set, use scope
-	Scope   string   `json:"scope"`    // "all_unscheduled" = all jobs with status planned/scheduled and no active slots
-	OrderBy string   `json:"order_by"` // "edd" | "epo" | "fifo" (default: "epo")
+	JobIDs                  []string `json:"job_ids"`  // explicit job IDs; if empty and Scope set, use scope
+	Scope                   string   `json:"scope"`    // "all_unscheduled" = all jobs with status planned/scheduled and no active slots
+	OrderBy                 string   `json:"order_by"` // "edd" | "epo" | "fifo" (default: "epo")
+	IncludeInventoryActions bool     `json:"include_inventory_actions"`
 }
 
 // RescheduleAllRequest for POST /ai/scheduling/reschedule-all
@@ -334,10 +336,10 @@ type RescheduleAllRequest struct {
 
 // VerifyOverlapsRequest for POST /ai/scheduling/verify-overlaps
 type VerifyOverlapsRequest struct {
-	ProposalIDs []string                `json:"proposal_ids"` // fetch proposals from DB (scope=proposals)
-	Proposals   []VerifyOverlapsProposal `json:"proposals"`   // or pass inline (e.g. data.proposals from batch-proposals)
-	Scope       string                  `json:"scope"`       // "proposals" (default) | "applied" - verify proposals vs applied slots
-	JobIDs      []string                `json:"job_ids"`     // optional when scope=applied; if empty, check all jobs with active slots
+	ProposalIDs []string                 `json:"proposal_ids"` // fetch proposals from DB (scope=proposals)
+	Proposals   []VerifyOverlapsProposal `json:"proposals"`    // or pass inline (e.g. data.proposals from batch-proposals)
+	Scope       string                   `json:"scope"`        // "proposals" (default) | "applied" - verify proposals vs applied slots
+	JobIDs      []string                 `json:"job_ids"`      // optional when scope=applied; if empty, check all jobs with active slots
 }
 
 // VerifyOverlapsProposal is one proposal with slots (matches batch-proposals item)
@@ -353,6 +355,41 @@ type VerifyOverlapsSlot struct {
 	MachineID      string    `json:"machine_id"`
 	ScheduledStart time.Time `json:"scheduled_start"`
 	ScheduledEnd   time.Time `json:"scheduled_end"`
+}
+
+type InventorySnapshotInput struct {
+	MaterialID string    `json:"material_id" binding:"required"`
+	Version    string    `json:"version" binding:"required"`
+	ComputedAt time.Time `json:"computed_at"`
+}
+
+type ReplenishmentArrivalItem struct {
+	// OptionType: omit or "replenish" (default) = material expected arrival; "schedule_production" = planned subproduct stock (product_id in material_id).
+	OptionType        string                  `json:"option_type,omitempty"`
+	MaterialID        string                  `json:"material_id" binding:"required"`
+	Quantity          float64                 `json:"quantity" binding:"required,gt=0"`
+	ArriveAt          time.Time               `json:"arrive_at" binding:"required"`
+	Notes             string                  `json:"notes"`
+	InventorySnapshot *InventorySnapshotInput `json:"inventory_snapshot,omitempty"`
+}
+
+type ApplyReplenishmentRequest struct {
+	Suggestions []ReplenishmentArrivalItem `json:"suggestions" binding:"required,min=1"`
+}
+
+// ApplyReplenishmentBatchRequest is for POST /ai/scheduling/apply-replenishment-batch (no proposal id).
+// Send either "suggestions" or "arrivals" (same item shape as per-proposal apply-replenishment).
+type ApplyReplenishmentBatchRequest struct {
+	Suggestions []ReplenishmentArrivalItem `json:"suggestions"`
+	Arrivals    []ReplenishmentArrivalItem `json:"arrivals"`
+}
+
+type ReplenishAndReplanRequest struct {
+	Arrivals            []ReplenishmentArrivalItem `json:"arrivals" binding:"required,min=1"`
+	Attempt             int                        `json:"attempt"`
+	PreviousDeficits    map[string]float64         `json:"previous_deficits"`
+	PreviousGlobalScore float64                    `json:"previous_global_score"`
+	AllowPartial        bool                       `json:"allow_partial"`
 }
 
 // --- Maintenance DTOs ---

@@ -38,7 +38,11 @@ func (h *AISchedulingHandler) Assist(c *gin.Context) {
 
 func (h *AISchedulingHandler) Proposal(c *gin.Context) {
 	jobID := c.Param("id")
-	data, err := h.service.BuildProposal(jobID)
+	includeInventoryActions := true
+	if v := strings.TrimSpace(strings.ToLower(c.Query("include_inventory_actions"))); v != "" {
+		includeInventoryActions = v == "true" || v == "1"
+	}
+	data, err := h.service.BuildProposalWithOptions(jobID, includeInventoryActions)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -48,7 +52,11 @@ func (h *AISchedulingHandler) Proposal(c *gin.Context) {
 
 func (h *AISchedulingHandler) GenerateProposal(c *gin.Context) {
 	jobID := c.Param("id")
-	data, err := h.service.GenerateProposal(jobID, actorFromContext(c))
+	includeInventoryActions := true
+	if v := strings.TrimSpace(strings.ToLower(c.Query("include_inventory_actions"))); v != "" {
+		includeInventoryActions = v == "true" || v == "1"
+	}
+	data, err := h.service.GenerateProposalWithOptions(jobID, actorFromContext(c), includeInventoryActions)
 	if err != nil {
 		c.JSON(statusForSchedulingErr(err), dto.Response{Success: false, Error: err.Error()})
 		return
@@ -76,13 +84,10 @@ func (h *AISchedulingHandler) GenerateBatchProposals(c *gin.Context) {
 	if orderBy != "edd" && orderBy != "epo" && orderBy != "fifo" && orderBy != "readiness" {
 		orderBy = "epo"
 	}
-	timeoutMs := featureflags.BatchTimeoutMs()
-	if timeoutMs <= 0 {
-		timeoutMs = 60000
+	opts := &service.ScheduleJobSetOpts{
+		IncludeInventoryActions: req.IncludeInventoryActions,
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(timeoutMs)*time.Millisecond)
-	defer cancel()
-	proposals, summary, err := h.service.ScheduleJobSet(ctx, jobIDs, actorFromContext(c), orderBy, nil)
+	proposals, summary, err := h.service.ScheduleJobSet(c.Request.Context(), jobIDs, actorFromContext(c), orderBy, opts)
 	if err != nil {
 		if (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) && len(proposals) > 0 {
 			c.JSON(http.StatusOK, dto.Response{
@@ -126,13 +131,7 @@ func (h *AISchedulingHandler) RescheduleAll(c *gin.Context) {
 	if orderBy != "edd" && orderBy != "epo" && orderBy != "fifo" && orderBy != "readiness" {
 		orderBy = "epo"
 	}
-	timeoutMs := featureflags.BatchTimeoutMs()
-	if timeoutMs <= 0 {
-		timeoutMs = 60000
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(timeoutMs)*time.Millisecond)
-	defer cancel()
-	proposals, summary, err := h.service.RescheduleAll(ctx, orderBy, actorFromContext(c), req.DryRun)
+	proposals, summary, err := h.service.RescheduleAll(c.Request.Context(), orderBy, actorFromContext(c), req.DryRun)
 	if err != nil {
 		if (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) && len(proposals) > 0 {
 			c.JSON(http.StatusOK, dto.Response{
@@ -363,6 +362,142 @@ func (h *AISchedulingHandler) Explanation(c *gin.Context) {
 
 func (h *AISchedulingHandler) Metrics(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: h.service.GetMetrics()})
+}
+
+func (h *AISchedulingHandler) ShortageAnalysis(c *gin.Context) {
+	jobID := c.Param("id")
+	proposal, err := h.service.AnalyzeShortagesForProposal(jobID)
+	if err != nil {
+		c.JSON(statusForSchedulingErr(err), dto.Response{Success: false, Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dto.Response{
+		Success: true,
+		Data: map[string]interface{}{
+			"job_id":                    proposal.JobID,
+			"shortages":                 proposal.MaterialShortages,
+			"replenishment_suggestions": proposal.ShortageResolutions,
+			"resolution_options":        proposal.ShortageResolutions,
+			"global_score":              proposal.GlobalScore,
+		},
+	})
+}
+
+func (h *AISchedulingHandler) ApplyReplenishment(c *gin.Context) {
+	var req dto.ApplyReplenishmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: "invalid request body"})
+		return
+	}
+	items := make([]service.ReplenishmentArrivalInput, 0, len(req.Suggestions))
+	for _, item := range req.Suggestions {
+		var snapshot *service.InventorySnapshot
+		if item.InventorySnapshot != nil {
+			snapshot = &service.InventorySnapshot{
+				MaterialID: item.InventorySnapshot.MaterialID,
+				Version:    item.InventorySnapshot.Version,
+				ComputedAt: item.InventorySnapshot.ComputedAt,
+			}
+		}
+		items = append(items, service.ReplenishmentArrivalInput{
+			OptionType:        item.OptionType,
+			MaterialID:        item.MaterialID,
+			Quantity:          item.Quantity,
+			ArriveAt:          item.ArriveAt,
+			Notes:             item.Notes,
+			InventorySnapshot: snapshot,
+		})
+	}
+	data, err := h.service.ApplyReplenishment(c.Request.Context(), items)
+	if err != nil {
+		c.JSON(statusForSchedulingErr(err), dto.Response{Success: false, Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
+}
+
+// ApplyReplenishmentBatch applies multiple replenishment / schedule_production lines in one call
+// without a proposal id (same service logic as proposals/:id/apply-replenishment).
+func (h *AISchedulingHandler) ApplyReplenishmentBatch(c *gin.Context) {
+	var req dto.ApplyReplenishmentBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: "invalid request body"})
+		return
+	}
+	raw := req.Suggestions
+	if len(raw) == 0 {
+		raw = req.Arrivals
+	}
+	if len(raw) == 0 {
+		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: "provide non-empty suggestions or arrivals array"})
+		return
+	}
+	items := make([]service.ReplenishmentArrivalInput, 0, len(raw))
+	for _, item := range raw {
+		var snapshot *service.InventorySnapshot
+		if item.InventorySnapshot != nil {
+			snapshot = &service.InventorySnapshot{
+				MaterialID: item.InventorySnapshot.MaterialID,
+				Version:    item.InventorySnapshot.Version,
+				ComputedAt: item.InventorySnapshot.ComputedAt,
+			}
+		}
+		items = append(items, service.ReplenishmentArrivalInput{
+			OptionType:        item.OptionType,
+			MaterialID:        item.MaterialID,
+			Quantity:          item.Quantity,
+			ArriveAt:          item.ArriveAt,
+			Notes:             item.Notes,
+			InventorySnapshot: snapshot,
+		})
+	}
+	data, err := h.service.ApplyReplenishment(c.Request.Context(), items)
+	if err != nil {
+		c.JSON(statusForSchedulingErr(err), dto.Response{Success: false, Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
+}
+
+func (h *AISchedulingHandler) ReplenishAndReplan(c *gin.Context) {
+	jobID := c.Param("id")
+	var req dto.ReplenishAndReplanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: "invalid request body"})
+		return
+	}
+	items := make([]service.ReplenishmentArrivalInput, 0, len(req.Arrivals))
+	for _, item := range req.Arrivals {
+		var snapshot *service.InventorySnapshot
+		if item.InventorySnapshot != nil {
+			snapshot = &service.InventorySnapshot{
+				MaterialID: item.InventorySnapshot.MaterialID,
+				Version:    item.InventorySnapshot.Version,
+				ComputedAt: item.InventorySnapshot.ComputedAt,
+			}
+		}
+		items = append(items, service.ReplenishmentArrivalInput{
+			OptionType:        item.OptionType,
+			MaterialID:        item.MaterialID,
+			Quantity:          item.Quantity,
+			ArriveAt:          item.ArriveAt,
+			Notes:             item.Notes,
+			InventorySnapshot: snapshot,
+		})
+	}
+	data, err := h.service.ReplenishAndReplan(c.Request.Context(), jobID, actorFromContext(c), service.ReplenishAndReplanInput{
+		Arrivals:            items,
+		Attempt:             req.Attempt,
+		PreviousDeficits:    req.PreviousDeficits,
+		PreviousGlobalScore: req.PreviousGlobalScore,
+		AllowPartial:        req.AllowPartial,
+	})
+	if err != nil {
+		status := statusForSchedulingErr(err)
+		c.JSON(status, dto.Response{Success: false, Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: data})
 }
 
 func buildLateJobsMessage(lateCount, totalGenerated int) string {

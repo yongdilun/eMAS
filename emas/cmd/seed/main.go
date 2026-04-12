@@ -110,6 +110,12 @@ func seedSchedulingSettings(db *gorm.DB) {
 	_ = settingsRepo.PutString("scheduling.work_end_time", "23:30")
 	_ = settingsRepo.PutString("scheduling.work_days", "0,1,2,3,4,5,6")
 	_ = settingsRepo.PutString("scheduling.public_holidays", "[]")
+	_ = settingsRepo.PutInt("scheduling.subproduct.max_dependency_depth", 4)
+	_ = settingsRepo.PutInt("scheduling.subproduct.max_generated_subjobs_per_root", 12)
+	_ = settingsRepo.PutInt("scheduling.subproduct.max_total_generated_nodes_per_batch", 64)
+	// Demo seeds should prefer "late but still schedulable" over failing early when
+	// child subjobs push a parent suffix multiple times.
+	_ = settingsRepo.PutInt("scheduling.subproduct.max_parent_reflow_passes_per_root", 12)
 }
 
 func seedMachines(db *gorm.DB) {
@@ -331,15 +337,17 @@ func seedResources(db *gorm.DB) {
 	for _, r := range reqs {
 		_ = db.Where(domain.StepResourceRequirement{ID: r.ID}).FirstOrCreate(&r)
 	}
-	// ResourceCalendar: available 08:00–17:00 weekdays (use base date)
+	// Drop and re-seed resource calendars so changes to hours/coverage take effect.
+	_ = db.Exec("DELETE FROM resource_calendar WHERE id LIKE 'RC-RES-OP-%'").Error
+	// ResourceCalendar: available 08:00–20:00 every day for 90 days.
+	// Extended to 20:00 (12-hour shift) so large topup batches (up to ~2880 units
+	// at standard throughput) fit within a single shift window.
+	// Covers all 7 days so no weekday gap hits the 85-day apply-time scan.
 	base := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 90; i++ {
 		day := base.AddDate(0, 0, i)
-		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
-			continue
-		}
 		start := time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, day.Location())
-		end := time.Date(day.Year(), day.Month(), day.Day(), 17, 0, 0, 0, day.Location())
+		end := time.Date(day.Year(), day.Month(), day.Day(), 20, 0, 0, 0, day.Location())
 		for _, res := range resources {
 			id := fmt.Sprintf("RC-%s-%d", res.ResourceID, i)
 			cal := domain.ResourceCalendar{ID: id, ResourceID: res.ResourceID, StartTime: start, EndTime: end, AvailabilityType: "work"}
@@ -349,25 +357,7 @@ func seedResources(db *gorm.DB) {
 }
 
 func seedWIPInventory(db *gorm.DB) {
-	now := time.Now()
-	// WIP at job step output: JS-SEED-001-2 produces intermediate for step 3; STP-P008-2 produces valve spool (P-008) for P-001 assembly
-	// Job steps are created per job. JOB-SEED-001 has steps JS-SEED-1-1..5. The format is JS-SEED-{suffix}-{stepNum} where suffix is "001" -> "1"
-	// Actually: fmt.Sprintf("JS-SEED-%s-%d", strings.TrimPrefix(spec.jobID, "JOB-SEED-"), i+1) => JS-SEED-001-1, JS-SEED-001-2, ...
-	// So for JOB-SEED-001, step 2 (STP-P001-2 CNC Finish Milling) produces output that feeds step 3. But ProcessStepMaterial shows step 5 produces P-001.
-	// For P-008: STP-P008-3 is inspection; the output of the valve spool comes from the process. The ProcessStepMaterial for P-001 step 5 consumes P-008.
-	// So P-008 is produced by the P-008 process (PRC-008). The job steps for a P-008 job would be STP-P008-1, STP-P008-2, STP-P008-3. Step 3 is final.
-	// WIP at a job step = output of that step available for next step. For a multi-step job, step N output might feed step N+1.
-	// P-001 step 5 consumes P-007 and P-008 (from other jobs). So WIP would be at job steps that produce P-007 or P-008.
-	// Seed: Add WIP at JS-SEED-011-2 (P-008 job, step 2 = grinding) - output is nearly finished valve spool. Or at a step that outputs product.
-	// Actually WIPInventory has JobStepID, ProductID, Quantity. So we're saying "at this job step, we have X quantity of product Y available".
-	// For testing: add WIP at JS-SEED-001-2 (arbitrary) with ProductID P-008, 500 pcs - simulates partial output from a prior P-008 job available for P-001 assembly.
-	wipItems := []domain.WIPInventory{
-		{ID: "WIP-SEED-001", JobStepID: "JS-SEED-001-5", ProductID: strPtr("P-008"), Quantity: 500, Unit: "pcs", Location: "WIP-A1", UpdatedAt: now},
-		{ID: "WIP-SEED-002", JobStepID: "JS-SEED-001-5", ProductID: strPtr("P-007"), Quantity: 300, Unit: "set", Location: "WIP-A1", UpdatedAt: now},
-	}
-	for _, w := range wipItems {
-		_ = db.Where(domain.WIPInventory{ID: w.ID}).FirstOrCreate(&w)
-	}
+	_ = db.Exec("DELETE FROM wip_inventory WHERE id LIKE 'WIP-SEED-%'").Error
 }
 
 func seedCapabilities(db *gorm.DB, steps map[string]string) {
@@ -430,10 +420,12 @@ func seedFormulas(db *gorm.DB) {
 
 func seedMaterials(db *gorm.DB) {
 	now := time.Now()
-	// Stock levels increased to cover aggregate demand from all seed jobs for easier testing
+	// Keep deterministic shortage scenarios for recommendation testing:
+	// - MAT-002 and MAT-010 are intentionally constrained.
+	// - We upsert with Assign so rerunning seed always resets to these values.
 	materials := []domain.InventoryMaterials{
 		{MaterialID: "MAT-001", MaterialName: "Carbon Steel Bar Ø50mm", Unit: "kg", CurrentStock: 30000, MinStock: 200, StorageLocation: "Rack-A1", Status: domain.InventoryStatusInStock, LastUpdated: now},
-		{MaterialID: "MAT-002", MaterialName: "Stainless Steel Sheet 2mm", Unit: "kg", CurrentStock: 2500, MinStock: 150, StorageLocation: "Rack-A2", Status: domain.InventoryStatusInStock, LastUpdated: now},
+		{MaterialID: "MAT-002", MaterialName: "Stainless Steel Sheet 2mm", Unit: "kg", CurrentStock: 300, MinStock: 150, StorageLocation: "Rack-A2", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-003", MaterialName: "Alloy Steel Billet 4140", Unit: "kg", CurrentStock: 30000, MinStock: 300, StorageLocation: "Rack-A3", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-004", MaterialName: "Chrome Steel Rod Ø60mm", Unit: "kg", CurrentStock: 25000, MinStock: 100, StorageLocation: "Rack-B1", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-005", MaterialName: "Epoxy Coating Agent", Unit: "L", CurrentStock: 15000, MinStock: 50, StorageLocation: "Chem-01", Status: domain.InventoryStatusInStock, LastUpdated: now},
@@ -441,23 +433,44 @@ func seedMaterials(db *gorm.DB) {
 		{MaterialID: "MAT-007", MaterialName: "Chrome Plating Solution", Unit: "L", CurrentStock: 2000, MinStock: 80, StorageLocation: "Chem-03", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-008", MaterialName: "Aluminium Alloy A380", Unit: "kg", CurrentStock: 30000, MinStock: 400, StorageLocation: "Rack-C1", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-009", MaterialName: "Cast Iron EN-GJL-250", Unit: "kg", CurrentStock: 20000, MinStock: 250, StorageLocation: "Rack-C2", Status: domain.InventoryStatusInStock, LastUpdated: now},
-		{MaterialID: "MAT-010", MaterialName: "M8 Hex Bolt (Box 500)", Unit: "pcs", CurrentStock: 60000, MinStock: 500, StorageLocation: "Bin-D1", Status: domain.InventoryStatusInStock, LastUpdated: now},
+		{MaterialID: "MAT-010", MaterialName: "M8 Hex Bolt (Box 500)", Unit: "pcs", CurrentStock: 9000, MinStock: 500, StorageLocation: "Bin-D1", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-011", MaterialName: "O-Ring Kit (Hydraulic)", Unit: "set", CurrentStock: 25000, MinStock: 30, StorageLocation: "Bin-D2", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-012", MaterialName: "Powder Coat (RAL 7016)", Unit: "kg", CurrentStock: 3000, MinStock: 40, StorageLocation: "Chem-04", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-013", MaterialName: "Bearing SKF 6205", Unit: "pcs", CurrentStock: 5000, MinStock: 50, StorageLocation: "Bin-E1", Status: domain.InventoryStatusInStock, LastUpdated: now},
 		{MaterialID: "MAT-014", MaterialName: "Hydraulic Seal Set", Unit: "set", CurrentStock: 25000, MinStock: 20, StorageLocation: "Bin-E2", Status: domain.InventoryStatusInStock, LastUpdated: now},
 	}
 	for _, m := range materials {
-		_ = db.Where(domain.InventoryMaterials{MaterialID: m.MaterialID}).FirstOrCreate(&m)
+		_ = db.Where("material_id = ?", m.MaterialID).Assign(m).FirstOrCreate(&domain.InventoryMaterials{})
 	}
 }
 
 func seedExpectedArrivals(db *gorm.DB) {
 	now := time.Now()
+	_ = db.Exec("DELETE FROM inventory_expected_arrivals WHERE arrival_id LIKE 'ARR-SEED-%'").Error
 	arrivals := []domain.InventoryExpectedArrival{
 		{ArrivalID: "ARR-SEED-001", MaterialID: "MAT-007", Quantity: 200, ExpectedArriveAt: now.AddDate(0, 0, 7), Status: domain.ExpectedArrivalStatusPending, Notes: "Chrome plating solution - PO #4521", CreatedAt: now},
 		{ArrivalID: "ARR-SEED-002", MaterialID: "MAT-002", Quantity: 100, ExpectedArriveAt: now.AddDate(0, 0, 14), Status: domain.ExpectedArrivalStatusPending, Notes: "Stainless sheet restock", CreatedAt: now},
 		{ArrivalID: "ARR-SEED-003", MaterialID: "MAT-005", Quantity: 80, ExpectedArriveAt: now.AddDate(0, 0, 5), Status: domain.ExpectedArrivalStatusPending, Notes: "Epoxy coating - urgent", CreatedAt: now},
+		// M8 Hex Bolts (MAT-010) are consumed heavily by P-007 child-job production (8 pcs/unit).
+		// Multiple jobs each spawn 3-5 child jobs producing P-007, exhausting the 60k stock.
+		// These arrivals arrive before the job execution window (April 13+) and are counted
+		// as available stock by materialAvailabilityForPlanning's pre-at arrival logic.
+		{ArrivalID: "ARR-SEED-004", MaterialID: "MAT-010", Quantity: 12000, ExpectedArriveAt: now.AddDate(0, 0, 35), Status: domain.ExpectedArrivalStatusPending, Notes: "M8 Hex Bolt restock - delayed PO #5100", CreatedAt: now},
+		{ArrivalID: "ARR-SEED-005", MaterialID: "MAT-010", Quantity: 12000, ExpectedArriveAt: now.AddDate(0, 0, 50), Status: domain.ExpectedArrivalStatusPending, Notes: "M8 Hex Bolt restock - delayed PO #5101", CreatedAt: now},
+		// Stainless Steel Sheet (MAT-002) is consumed by P-008 child jobs (0.5 kg/unit) and
+		// P-001 parent steps (0.08 kg/unit). Large P-008 child-job quantities from JOB-SEED-001,
+		// 007, 013 exhaust the 2500 kg stock before later proposals apply.
+		{ArrivalID: "ARR-SEED-006", MaterialID: "MAT-002", Quantity: 1000, ExpectedArriveAt: now.AddDate(0, 0, 40), Status: domain.ExpectedArrivalStatusPending, Notes: "Stainless Steel Sheet restock - delayed PO #5102", CreatedAt: now},
+		// Stress-batch arrivals (for jobs 019–026):
+		// New P-001/P-004 jobs generate additional P-007 child jobs (8 MAT-010/unit each).
+		// Four extra P-001/P-004 jobs with ~350-420 units apiece push total MAT-010 demand
+		// well beyond the 140k (60k stock + 80k from ARR-004/005) already earmarked for jobs 001–018.
+		{ArrivalID: "ARR-SEED-007", MaterialID: "MAT-010", Quantity: 20000, ExpectedArriveAt: now.AddDate(0, 0, 65), Status: domain.ExpectedArrivalStatusPending, Notes: "M8 Hex Bolt restock - delayed PO #5103 (stress batch)", CreatedAt: now},
+		{ArrivalID: "ARR-SEED-008", MaterialID: "MAT-010", Quantity: 20000, ExpectedArriveAt: now.AddDate(0, 0, 80), Status: domain.ExpectedArrivalStatusPending, Notes: "M8 Hex Bolt restock - delayed PO #5104 (stress batch buffer)", CreatedAt: now},
+		// New P-001 jobs 019+022 generate additional P-008 child jobs (0.5 kg MAT-002/unit each).
+		// Combined with JOB-SEED-026 direct P-008 production (580 units × 0.5 kg = 290 kg),
+		// the extra demand from stress jobs requires an additional MAT-002 top-up.
+		{ArrivalID: "ARR-SEED-009", MaterialID: "MAT-002", Quantity: 1500, ExpectedArriveAt: now.AddDate(0, 0, 70), Status: domain.ExpectedArrivalStatusPending, Notes: "Stainless Steel Sheet restock - delayed PO #5105 (stress batch)", CreatedAt: now},
 	}
 	for _, a := range arrivals {
 		_ = db.Where(domain.InventoryExpectedArrival{ArrivalID: a.ArrivalID}).FirstOrCreate(&a)
@@ -466,10 +479,14 @@ func seedExpectedArrivals(db *gorm.DB) {
 
 func seedProductInventory(db *gorm.DB) {
 	now := time.Now()
+	_ = db.Exec("DELETE FROM product_inventory WHERE inventory_id LIKE 'PINV-SEED-%'").Error
 	items := []domain.ProductInventory{
-		{InventoryID: "PINV-SEED-001", ProductID: "P-007", QuantityOnHand: 60, QuantityReserved: 12, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "WIP-A1", AvailableFrom: now, LastUpdated: now},
-		{InventoryID: "PINV-SEED-002", ProductID: "P-008", QuantityOnHand: 24, QuantityReserved: 8, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "WIP-A2", AvailableFrom: now.Add(12 * time.Hour), LastUpdated: now},
-		{InventoryID: "PINV-SEED-003", ProductID: "P-009", QuantityOnHand: 32, QuantityReserved: 4, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "WIP-B1", AvailableFrom: now, LastUpdated: now},
+		// Moderate shared buffers make the seed feel like a live shop floor instead
+		// of an immediate shortage simulation on every subproduct.
+		{InventoryID: "PINV-SEED-001", ProductID: "P-003", QuantityOnHand: 120, QuantityReserved: 20, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "FG-B1", AvailableFrom: now, LastUpdated: now},
+		{InventoryID: "PINV-SEED-002", ProductID: "P-007", QuantityOnHand: 90, QuantityReserved: 10, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "FG-A1", AvailableFrom: now, LastUpdated: now},
+		{InventoryID: "PINV-SEED-003", ProductID: "P-008", QuantityOnHand: 70, QuantityReserved: 8, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "FG-A2", AvailableFrom: now, LastUpdated: now},
+		{InventoryID: "PINV-SEED-004", ProductID: "P-009", QuantityOnHand: 80, QuantityReserved: 10, Status: domain.ProductInventoryStatusAvailable, StorageLocation: "FG-B2", AvailableFrom: now, LastUpdated: now},
 	}
 	for _, item := range items {
 		_ = db.Where(domain.ProductInventory{InventoryID: item.InventoryID}).FirstOrCreate(&item)
@@ -478,6 +495,7 @@ func seedProductInventory(db *gorm.DB) {
 
 func seedInventoryReservations(db *gorm.DB) {
 	now := time.Now()
+	_ = db.Exec("DELETE FROM inventory_reservations WHERE reservation_id LIKE 'RES-SEED-%'").Error
 	// Reduced reservations to avoid shortages; aligned with increased stock levels
 	items := []domain.InventoryReservation{
 		{ReservationID: "RES-SEED-001", MaterialID: "MAT-005", JobID: "JOB-SEED-001", ReservedQty: 100, NeededAt: now.Add(24 * time.Hour), Status: domain.InventoryReservationStatusPending, CreatedAt: now},
@@ -615,24 +633,32 @@ func seedJobs(db *gorm.DB) map[string][]string {
 	processRepo := repository.NewProcessRepository(db)
 	productRepo := repository.NewProductRepository(db)
 
-	// Keep seed reruns idempotent: delete seed-owned jobs and descendants (including AI proposals).
-	_ = db.Exec(`DELETE FROM ai_proposals WHERE job_id IN (SELECT job_id FROM jobs WHERE notes LIKE 'seed:%')`).Error
+	// Keep seed reruns idempotent: delete seed-owned jobs and scheduler-generated child jobs
+	// that were created from seed proposals, plus their descendants and reservations.
+	seedJobFilter := "notes LIKE 'seed:%' OR notes LIKE 'generated_by_scheduler:JOB-SEED-%'"
+	_ = db.Exec(`DELETE FROM ai_proposals WHERE job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `)`).Error
 	_ = db.Exec(`DELETE FROM quality_inspection_records 
 		WHERE job_step_id IN (
 			SELECT js.job_step_id FROM job_steps js
-			JOIN jobs j ON j.job_id = js.job_id WHERE j.notes LIKE 'seed:%'
+			JOIN jobs j ON j.job_id = js.job_id WHERE ` + seedJobFilter + `
 		)`).Error
 	_ = db.Exec(`DELETE FROM production_logs
 		WHERE slot_id IN (
 			SELECT s.slot_id FROM job_step_schedule_slots s
 			JOIN job_steps js ON js.job_step_id = s.job_step_id
-			JOIN jobs j ON j.job_id = js.job_id WHERE j.notes LIKE 'seed:%'
+			JOIN jobs j ON j.job_id = js.job_id WHERE ` + seedJobFilter + `
 		)`).Error
 	_ = db.Exec(`DELETE FROM job_step_schedule_slots WHERE job_step_id IN (
-			SELECT js.job_step_id FROM job_steps js JOIN jobs j ON j.job_id = js.job_id WHERE j.notes LIKE 'seed:%'
+			SELECT js.job_step_id FROM job_steps js JOIN jobs j ON j.job_id = js.job_id WHERE ` + seedJobFilter + `
 		)`).Error
-	_ = db.Exec(`DELETE FROM job_steps WHERE job_id IN (SELECT job_id FROM jobs WHERE notes LIKE 'seed:%')`).Error
-	_ = db.Exec(`DELETE FROM jobs WHERE notes LIKE 'seed:%'`).Error
+	_ = db.Exec(`DELETE FROM product_inventory_reservations WHERE job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `)`).Error
+	_ = db.Exec(`DELETE FROM inventory_reservations WHERE job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `)`).Error
+	// Clear planned production records written at apply time to bridge the plan-apply inventory gap.
+	// These are safe to delete in full: status='planned' is only set by the scheduling apply flow.
+	_ = db.Exec(`DELETE FROM product_inventory WHERE status = 'planned'`).Error
+	_ = db.Exec(`DELETE FROM job_dependencies WHERE parent_job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `) OR child_job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `)`).Error
+	_ = db.Exec(`DELETE FROM job_steps WHERE job_id IN (SELECT job_id FROM jobs WHERE ` + seedJobFilter + `)`).Error
+	_ = db.Exec(`DELETE FROM jobs WHERE ` + seedJobFilter).Error
 
 	jobSlots := map[string][]string{}
 	seedBaseDate := time.Now().UTC().Truncate(24 * time.Hour)
@@ -654,24 +680,38 @@ func seedJobs(db *gorm.DB) map[string][]string {
 			durationMins, qty int
 		}
 	}{
-		{"JOB-SEED-001", "P-001", "high", 14, domain.JobStatusPlanned, 1600, nil},
-		{"JOB-SEED-002", "P-002", "medium", 14, domain.JobStatusPlanned, 900, nil},
-		{"JOB-SEED-003", "P-003", "high", 14, domain.JobStatusPlanned, 1200, nil},
-		{"JOB-SEED-004", "P-004", "medium", 21, domain.JobStatusPlanned, 800, nil},
-		{"JOB-SEED-005", "P-005", "low", 21, domain.JobStatusPlanned, 1800, nil},
-		{"JOB-SEED-006", "P-006", "high", 14, domain.JobStatusPlanned, 500, nil},
-		{"JOB-SEED-007", "P-001", "medium", 14, domain.JobStatusPlanned, 1100, nil},
-		{"JOB-SEED-008", "P-002", "high", 14, domain.JobStatusPlanned, 1400, nil},
-		{"JOB-SEED-009", "P-003", "low", 21, domain.JobStatusPlanned, 900, nil},
-		{"JOB-SEED-010", "P-004", "medium", 21, domain.JobStatusPlanned, 700, nil},
-		{"JOB-SEED-011", "P-008", "high", 14, domain.JobStatusPlanned, 800, nil},
-		{"JOB-SEED-012", "P-009", "low", 21, domain.JobStatusPlanned, 900, nil},
-		{"JOB-SEED-013", "P-001", "high", 14, domain.JobStatusPlanned, 1000, nil},
-		{"JOB-SEED-014", "P-002", "medium", 14, domain.JobStatusPlanned, 850, nil},
-		{"JOB-SEED-015", "P-005", "high", 14, domain.JobStatusPlanned, 1400, nil},
-		{"JOB-SEED-016", "P-006", "medium", 21, domain.JobStatusPlanned, 600, nil},
-		{"JOB-SEED-017", "P-004", "low", 21, domain.JobStatusPlanned, 900, nil},
-		{"JOB-SEED-018", "P-008", "medium", 14, domain.JobStatusPlanned, 900, nil},
+		{"JOB-SEED-001", "P-001", "high", 14, domain.JobStatusPlanned, 320, nil},
+		{"JOB-SEED-002", "P-002", "medium", 14, domain.JobStatusPlanned, 420, nil},
+		{"JOB-SEED-003", "P-003", "high", 14, domain.JobStatusPlanned, 180, nil},
+		{"JOB-SEED-004", "P-004", "medium", 21, domain.JobStatusPlanned, 260, nil},
+		{"JOB-SEED-005", "P-005", "low", 21, domain.JobStatusPlanned, 520, nil},
+		{"JOB-SEED-006", "P-006", "high", 14, domain.JobStatusPlanned, 140, nil},
+		{"JOB-SEED-007", "P-001", "medium", 14, domain.JobStatusPlanned, 220, nil},
+		{"JOB-SEED-008", "P-002", "high", 14, domain.JobStatusPlanned, 360, nil},
+		{"JOB-SEED-009", "P-003", "low", 21, domain.JobStatusPlanned, 140, nil},
+		{"JOB-SEED-010", "P-004", "medium", 21, domain.JobStatusPlanned, 210, nil},
+		{"JOB-SEED-011", "P-008", "high", 14, domain.JobStatusPlanned, 180, nil},
+		{"JOB-SEED-012", "P-009", "low", 21, domain.JobStatusPlanned, 240, nil},
+		{"JOB-SEED-013", "P-001", "high", 14, domain.JobStatusPlanned, 180, nil},
+		{"JOB-SEED-014", "P-002", "medium", 14, domain.JobStatusPlanned, 260, nil},
+		{"JOB-SEED-015", "P-005", "high", 14, domain.JobStatusPlanned, 380, nil},
+		{"JOB-SEED-016", "P-006", "medium", 21, domain.JobStatusPlanned, 120, nil},
+		{"JOB-SEED-017", "P-004", "low", 21, domain.JobStatusPlanned, 180, nil},
+		{"JOB-SEED-018", "P-008", "medium", 14, domain.JobStatusPlanned, 160, nil},
+		// Hard-scheduling stress batch (019–026):
+		// Tight 8–11 day deadlines hit a machine schedule already packed by jobs 001–018.
+		// Assembly machines (M-ASM-*) and CNC machines get overloaded, forcing the scheduler
+		// to push completion PAST the deadline while remaining inside the 400-day horizon.
+		// Expected outcome: Feasible=true, EstimatedCompletion > Deadline ("late but feasible").
+		// Inventory is covered by arrivals ARR-SEED-007..009 added alongside these jobs.
+		{"JOB-SEED-019", "P-001", "high", 9, domain.JobStatusPlanned, 400, nil},   // Valve Body; needs P-007+P-008 child jobs; very tight
+		{"JOB-SEED-020", "P-004", "medium", 10, domain.JobStatusPlanned, 380, nil}, // Motor Housing; needs P-007 child jobs
+		{"JOB-SEED-021", "P-006", "high", 9, domain.JobStatusPlanned, 200, nil},    // Pump Casing; needs P-003+P-009 child jobs
+		{"JOB-SEED-022", "P-001", "medium", 8, domain.JobStatusPlanned, 300, nil},  // Valve Body; most aggressive deadline
+		{"JOB-SEED-023", "P-004", "high", 11, domain.JobStatusPlanned, 420, nil},   // Motor Housing; borderline — may just make it
+		{"JOB-SEED-024", "P-002", "low", 9, domain.JobStatusPlanned, 480, nil},     // Gear Set; simple BOM, pure machine-contention lateness
+		{"JOB-SEED-025", "P-005", "medium", 8, domain.JobStatusPlanned, 680, nil},  // Control Bracket; heavy MAT-010 direct use
+		{"JOB-SEED-026", "P-008", "high", 9, domain.JobStatusPlanned, 580, nil},    // Valve Spool; heavy MAT-002/MAT-004 use
 	}
 
 	now := time.Now()

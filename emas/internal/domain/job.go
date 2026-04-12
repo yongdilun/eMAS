@@ -15,6 +15,7 @@ const (
 	JobStatusPlanned   = "planned"
 	JobStatusScheduled = "scheduled"
 	JobStatusRunning   = "running"
+	JobStatusBlocked   = "blocked"
 	JobStatusPaused    = "paused"
 	JobStatusCompleted = "completed"
 	JobStatusCancelled = "cancelled"
@@ -48,6 +49,7 @@ const (
 	JobStepStatusPending   = "pending"
 	JobStepStatusScheduled = "scheduled"
 	JobStepStatusRunning   = "running"
+	JobStepStatusBlocked   = "blocked"
 	JobStepStatusCompleted = "completed"
 )
 

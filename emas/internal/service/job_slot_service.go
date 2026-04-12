@@ -48,7 +48,10 @@ func (s *JobSlotService) CreateJobStepsFromRouting(jobID string) ([]domain.JobSt
 		return nil, err
 	}
 	process, err := s.processRepo.GetProcessByProductID(job.ProductID)
-	if err != nil {
+	if err != nil || process == nil {
+		if err == nil {
+			err = errors.New("no process routing found for product")
+		}
 		return nil, err
 	}
 	processSteps, err := s.processRepo.ListStepsByProcessID(process.ProcessID)

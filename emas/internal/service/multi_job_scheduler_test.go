@@ -265,6 +265,43 @@ func Test_chainRepairPassBudget_HasMinimumFloor(t *testing.T) {
 	}
 }
 
+func Test_chainRepairHorizonEnd_UsesShiftedProposalAndTargetCompletion(t *testing.T) {
+	base := time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC)
+	lateCompletion := base.Add(75 * 24 * time.Hour)
+	proposal := &SchedulingProposal{
+		JobID: "JOB-1",
+		ProposedSlots: []ProposedSlot{
+			{ScheduledStart: base, ScheduledEnd: base.Add(2 * time.Hour)},
+			{ScheduledStart: lateCompletion.Add(-4 * time.Hour), ScheduledEnd: lateCompletion},
+		},
+	}
+	targetCompletion := base.Add(90 * 24 * time.Hour)
+
+	got := chainRepairHorizonEnd(proposal, base, &targetCompletion)
+	want := alignSuccessorStart(targetCompletion.UTC().Add(30 * 24 * time.Hour))
+	if !got.Equal(want) {
+		t.Fatalf("expected repair horizon to follow later target completion, got %s want %s", got, want)
+	}
+}
+
+func Test_chainRepairHorizonEnd_FallsBackToShiftedProposalWhenTargetMissing(t *testing.T) {
+	base := time.Date(2026, 4, 7, 8, 0, 0, 0, time.UTC)
+	shiftedEnd := base.Add(52 * 24 * time.Hour)
+	proposal := &SchedulingProposal{
+		JobID: "JOB-2",
+		ProposedSlots: []ProposedSlot{
+			{ScheduledStart: base, ScheduledEnd: base.Add(2 * time.Hour)},
+			{ScheduledStart: shiftedEnd.Add(-3 * time.Hour), ScheduledEnd: shiftedEnd},
+		},
+	}
+
+	got := chainRepairHorizonEnd(proposal, base, nil)
+	want := alignSuccessorStart(shiftedEnd.UTC().Add(30 * 24 * time.Hour))
+	if !got.Equal(want) {
+		t.Fatalf("expected repair horizon to follow shifted proposal completion, got %s want %s", got, want)
+	}
+}
+
 func Test_tentativesForChainRepair_ExcludesFutureSlotsInSameProposal(t *testing.T) {
 	base := time.Date(2026, 3, 24, 8, 0, 0, 0, time.UTC)
 	current := &SchedulingProposal{
@@ -420,7 +457,7 @@ func Test_firstProposalConflict_UsesProposalChainPrecedence(t *testing.T) {
 		},
 	}
 
-	conflictIdx, conflictReason, err := ai.firstProposalConflict(proposal)
+	conflictIdx, conflictReason, err := ai.firstProposalConflict(proposal, nil, nil)
 	if err != nil {
 		t.Fatalf("firstProposalConflict error: %v", err)
 	}

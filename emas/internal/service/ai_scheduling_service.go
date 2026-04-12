@@ -152,27 +152,195 @@ type ProposedSlot struct {
 	Reasoning             []string  `json:"reasoning"`
 }
 
+type ProposalExplanation struct {
+	Required          float64 `json:"required"`
+	Available         float64 `json:"available"`
+	PlannedProduction float64 `json:"planned_production"`
+}
+
+type InventorySnapshot struct {
+	MaterialID string    `json:"material_id"`
+	Version    string    `json:"version"`
+	ComputedAt time.Time `json:"computed_at"`
+}
+
+type ReplenishmentSuggestion struct {
+	MaterialID              string    `json:"material_id"`
+	MaterialName            string    `json:"material_name"`
+	SuggestedQty            float64   `json:"suggested_qty"`
+	SuggestedArriveAt       time.Time `json:"suggested_arrive_at"`
+	EarliestPossibleArrival time.Time `json:"earliest_possible_arrival"`
+	IsLeadTimeConstrained   bool      `json:"is_lead_time_constrained"`
+	SafetyBufferMins        int       `json:"safety_buffer_mins"`
+	LeadTimeHours           int       `json:"lead_time_hours"`
+	MergedFromCount         int       `json:"merged_from_count"`
+	Rationale               string    `json:"rationale"`
+}
+
+type ShortageResolutionOption struct {
+	RecommendationID      string                   `json:"recommendation_id,omitempty"`
+	MaterialID            string                   `json:"material_id"`
+	OptionType            string                   `json:"option_type"`
+	Priority              int                      `json:"priority"`
+	Description           string                   `json:"description"`
+	ImpactSummary         string                   `json:"impact_summary"`
+	Replenishment         *ReplenishmentSuggestion `json:"replenishment,omitempty"`
+	EarliestFeasibleStart *time.Time               `json:"earliest_feasible_start,omitempty"`
+	AffectedJobIDs        []string                 `json:"affected_job_ids,omitempty"`
+	// DependencyProductID links a material-level replenish option to a subproduct shortage (schedule_production row).
+	DependencyProductID string `json:"dependency_product_id,omitempty"`
+	IsActionable        bool   `json:"is_actionable"`
+	QualityFlags        []string `json:"quality_flags,omitempty"`
+}
+
+type PartialFeasibilityPlan struct {
+	FeasibleQty          float64    `json:"feasible_qty"`
+	DeferredQty          float64    `json:"deferred_qty"`
+	DeferredUntil        *time.Time `json:"deferred_until,omitempty"`
+	BlockingMaterials    []string   `json:"blocking_materials"`
+	DeferredPlanningNode string     `json:"deferred_planning_node_key"`
+}
+
+type DeferredPlanningNode struct {
+	PlanKey           string    `json:"plan_key"`
+	ParentJobID       string    `json:"parent_job_id"`
+	JobStepID         string    `json:"job_step_id"`
+	DeferredQty       float64   `json:"deferred_qty"`
+	EarliestStartAt   time.Time `json:"earliest_start_at"`
+	BlockingMaterials []string  `json:"blocking_materials"`
+	PlanningStatus    string    `json:"planning_status"`
+}
+
+type MaterialShortageInfo struct {
+	MaterialID               string                   `json:"material_id"`
+	MaterialName             string                   `json:"material_name"`
+	Unit                     string                   `json:"unit"`
+	JobStepID                string                   `json:"job_step_id"`
+	AllStepMaterialsFeasible bool                     `json:"all_step_materials_feasible"`
+	ShortageStartAt          time.Time                `json:"shortage_start_at"`
+	MaxDeficit               float64                  `json:"max_deficit"`
+	CurrentStock             float64                  `json:"current_stock"`
+	TotalReservedBefore      float64                  `json:"total_reserved_before"`
+	FeasibleQty              float64                  `json:"feasible_qty"`
+	AffectedJobIDs           []string                 `json:"affected_job_ids"`
+	AffectedStepIDs          []string                 `json:"affected_step_ids"`
+	Snapshot                 *InventorySnapshot       `json:"snapshot,omitempty"`
+	PerMaterialResolutions   []ShortageResolutionOption `json:"per_material_resolutions"`
+}
+
+// BatchMaterialReplenishmentLine is one consolidated raw-material recommendation for an
+// entire batch (batch-proposals / reschedule-all). It merges every proposal's
+// reserve_material actions into one timeline so recommended_qty reflects combined demand,
+// not a naive sum of per-job shortage cards.
+type BatchMaterialReplenishmentLine struct {
+	MaterialID              string    `json:"material_id"`
+	MaterialName            string    `json:"material_name"`
+	Unit                    string    `json:"unit,omitempty"`
+	RecommendedQty          float64   `json:"recommended_qty"`
+	SuggestedArriveAt       time.Time `json:"suggested_arrive_at"`
+	EarliestPossibleArrival time.Time `json:"earliest_possible_arrival"`
+	ShortageStartAt         time.Time `json:"shortage_start_at"`
+	OptionType              string    `json:"option_type"`
+	AffectedJobIDs          []string  `json:"affected_job_ids"`
+	Rationale               string    `json:"rationale"`
+}
+
+// BatchScheduleProductionLine is one consolidated schedule_production recommendation for the
+// whole batch (subproduct / FG planned inventory). Apply via apply-replenishment with
+// option_type=schedule_production, same as per-proposal shortage_resolutions rows.
+type BatchScheduleProductionLine struct {
+	ProductID               string    `json:"product_id"`
+	ProductName             string    `json:"product_name,omitempty"`
+	RecommendedQty          float64   `json:"recommended_qty"`
+	SuggestedArriveAt       time.Time `json:"suggested_arrive_at"`
+	EarliestPossibleArrival time.Time `json:"earliest_possible_arrival"`
+	OptionType              string    `json:"option_type"`
+	AffectedJobIDs          []string  `json:"affected_job_ids"`
+	Rationale               string    `json:"rationale"`
+}
+
+type ReplanConvergenceWarning struct {
+	MaterialID    string  `json:"material_id"`
+	DeficitBefore float64 `json:"deficit_before"`
+	DeficitAfter  float64 `json:"deficit_after"`
+	Attempts      int     `json:"attempts"`
+	Message       string  `json:"message"`
+}
+
+type DependentJobPlan struct {
+	PlanKey             string              `json:"plan_key"`
+	ParentJobID         string              `json:"parent_job_id"`
+	ConsumerJobStepID   string              `json:"consumer_job_step_id"`
+	ProductID           string              `json:"product_id"`
+	DependencyDepth     int                 `json:"dependency_depth"`
+	RequiredQty         float64             `json:"required_qty"`
+	PlannedQty          float64             `json:"planned_qty"`
+	ShortageQty         float64             `json:"shortage_qty"`
+	ExistingStock       float64             `json:"existing_stock"`
+	FutureStockQty      float64             `json:"future_stock_qty"`
+	FutureStockReadyAt  *time.Time          `json:"future_stock_ready_at,omitempty"`
+	EstimatedCompletion *time.Time          `json:"estimated_completion,omitempty"`
+	PlanningStatus      string              `json:"planning_status"`
+	ReasonCode          string              `json:"reason_code,omitempty"`
+	Reason              string              `json:"reason,omitempty"`
+	Explanation         ProposalExplanation `json:"explanation"`
+	ProposedSlots       []ProposedSlot      `json:"proposed_slots,omitempty"`
+	GeneratedJobID      string              `json:"generated_job_id,omitempty"`
+	GeneratedStepIDMap  map[string]string   `json:"generated_step_id_map,omitempty"`
+	ReplenishmentSuggestion *ReplenishmentSuggestion `json:"replenishment_suggestion,omitempty"`
+	ResolutionOptions       []ShortageResolutionOption `json:"resolution_options,omitempty"`
+	PartialFeasibility      *PartialFeasibilityPlan `json:"partial_feasibility,omitempty"`
+}
+
+type InventoryAction struct {
+	Sequence    int       `json:"sequence"`
+	ActionType  string    `json:"action_type"`
+	ResourceID  string    `json:"resource_id"`
+	JobID       string    `json:"job_id"`
+	JobStepID   string    `json:"job_step_id"`
+	Quantity    float64   `json:"quantity"`
+	EffectiveAt time.Time `json:"effective_at"`
+	ReasonCode  string    `json:"reason_code,omitempty"`
+	PlanKey     string    `json:"plan_key,omitempty"`
+}
+
+type CreatedDependencyLink struct {
+	DependencyID string `json:"dependency_id"`
+	ParentJobID  string `json:"parent_job_id"`
+	ChildJobID   string `json:"child_job_id"`
+	ProductID    string `json:"product_id"`
+}
+
 type SchedulingProposal struct {
-	ProposalID           string         `json:"proposal_id,omitempty"`
-	JobID                string         `json:"job_id"`
-	ProductID            string         `json:"product_id"`
-	Version              int            `json:"version,omitempty"`
-	Status               string         `json:"status,omitempty"`
-	Engine               string         `json:"engine,omitempty"`
-	EngineVersion        string         `json:"engine_version,omitempty"`
-	ObjectiveScore       float64        `json:"objective_score,omitempty"`
-	FallbackReason       string         `json:"fallback_reason,omitempty"`
-	SnapshotHash         string         `json:"snapshot_hash,omitempty"`
-	RolloutState         string         `json:"rollout_state,omitempty"`
-	ShadowEngine         string         `json:"shadow_engine,omitempty"`
-	ShadowObjectiveScore float64        `json:"shadow_objective_score,omitempty"`
-	GeneratedAt          time.Time      `json:"generated_at"`
-	Feasible             bool           `json:"feasible"`
-	EarliestStart        time.Time      `json:"earliest_start"`
-	EstimatedCompletion  *time.Time     `json:"estimated_completion,omitempty"`
-	Summary              []string       `json:"summary"`
-	BlockedReasons       []string       `json:"blocked_reasons,omitempty"`
-	ProposedSlots        []ProposedSlot `json:"proposed_slots"`
+	ProposalID           string             `json:"proposal_id,omitempty"`
+	JobID                string             `json:"job_id"`
+	ProductID            string             `json:"product_id"`
+	Version              int                `json:"version,omitempty"`
+	Status               string             `json:"status,omitempty"`
+	Engine               string             `json:"engine,omitempty"`
+	EngineVersion        string             `json:"engine_version,omitempty"`
+	ObjectiveScore       float64            `json:"objective_score,omitempty"`
+	FallbackReason       string             `json:"fallback_reason,omitempty"`
+	SnapshotHash         string             `json:"snapshot_hash,omitempty"`
+	RolloutState         string             `json:"rollout_state,omitempty"`
+	ShadowEngine         string             `json:"shadow_engine,omitempty"`
+	ShadowObjectiveScore float64            `json:"shadow_objective_score,omitempty"`
+	GeneratedAt          time.Time          `json:"generated_at"`
+	Feasible             bool               `json:"feasible"`
+	EarliestStart        time.Time          `json:"earliest_start"`
+	EstimatedCompletion  *time.Time         `json:"estimated_completion,omitempty"`
+	Summary              []string           `json:"summary"`
+	BlockedReasons       []string           `json:"blocked_reasons,omitempty"`
+	ProposedSlots        []ProposedSlot     `json:"proposed_slots"`
+	DependentJobs        []DependentJobPlan `json:"dependent_jobs,omitempty"`
+	InventoryActions     []InventoryAction  `json:"inventory_actions,omitempty"`
+	InventoryActionCount int                `json:"inventory_action_count,omitempty"`
+	MaterialShortages    []MaterialShortageInfo `json:"material_shortages,omitempty"`
+	ShortageResolutions  []ShortageResolutionOption `json:"shortage_resolutions,omitempty"`
+	PartialFeasibility   *PartialFeasibilityPlan `json:"partial_feasibility,omitempty"`
+	DeferredNodes        []DeferredPlanningNode `json:"deferred_nodes,omitempty"`
+	ConvergenceWarnings  []ReplanConvergenceWarning `json:"convergence_warnings,omitempty"`
+	GlobalScore          float64 `json:"global_score,omitempty"`
 
 	// Alternatives are additional distinct schedules for the same job generated via
 	// a heuristic portfolio; each alternative does not include nested alternatives.
@@ -236,14 +404,16 @@ type SlotRef struct {
 }
 
 type AppliedProposalResult struct {
-	ProposalID       string              `json:"proposal_id,omitempty"`
-	JobID            string              `json:"job_id"`
-	AppliedAt        time.Time           `json:"applied_at"`
-	AppliedSlotCount int                 `json:"applied_slot_count"`
-	CreatedSlots     []string            `json:"created_slots"`
-	Message          string              `json:"message"`
-	IdempotencyKey   string              `json:"idempotency_key,omitempty"`
-	Proposal         *SchedulingProposal `json:"proposal,omitempty"`
+	ProposalID             string                  `json:"proposal_id,omitempty"`
+	JobID                  string                  `json:"job_id"`
+	AppliedAt              time.Time               `json:"applied_at"`
+	AppliedSlotCount       int                     `json:"applied_slot_count"`
+	CreatedSlots           []string                `json:"created_slots"`
+	CreatedJobIDs          []string                `json:"created_job_ids,omitempty"`
+	CreatedDependencyLinks []CreatedDependencyLink `json:"created_dependency_links,omitempty"`
+	Message                string                  `json:"message"`
+	IdempotencyKey         string                  `json:"idempotency_key,omitempty"`
+	Proposal               *SchedulingProposal     `json:"proposal,omitempty"`
 }
 
 type AISchedulingAssist struct {
@@ -1270,9 +1440,8 @@ func (s *AIPredictiveService) EmitSchedulingEvent(eventType, payload string) err
 		return err
 	}
 	if featureflags.AutoRescheduleOnEvent() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(featureflags.BatchTimeoutMs())*time.Millisecond)
-		defer cancel()
-		_, _, _ = s.RescheduleAll(ctx, featureflags.BatchOrderBy(), "", false)
+		// Deadline is applied inside ScheduleJobSet from resolved job count (AdaptiveBatchTimeoutMs).
+		_, _, _ = s.RescheduleAll(context.Background(), featureflags.BatchOrderBy(), "", false)
 	}
 	return nil
 }

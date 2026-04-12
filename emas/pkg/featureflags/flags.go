@@ -60,6 +60,24 @@ func BatchTimeoutMs() int {
 	return 60000
 }
 
+// AdaptiveBatchTimeoutMs returns the batch context deadline length in milliseconds.
+// When jobCount > 0, enforces at least 30s + 3s per job so large batches do not
+// hit a flat AI_BATCH_TIMEOUT_MS cap mid-run (reschedule-all and scope=all_unscheduled
+// resolve jobs inside ScheduleJobSet and must use this count, not handler job_ids length).
+func AdaptiveBatchTimeoutMs(configuredMs int, jobCount int) int {
+	timeoutMs := configuredMs
+	if timeoutMs <= 0 {
+		timeoutMs = 60000
+	}
+	if jobCount > 0 {
+		minByBatch := 30000 + (jobCount * 3000)
+		if minByBatch > timeoutMs {
+			timeoutMs = minByBatch
+		}
+	}
+	return timeoutMs
+}
+
 func CompatibilityApplyEnabled() bool {
 	return envBool("AI_COMPAT_APPLY_ENABLED", false)
 }
