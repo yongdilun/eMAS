@@ -176,10 +176,34 @@ func NewStaticChatToolRegistry(db *gorm.DB, jobService *JobService, machineServi
 			ReadOnly:        true,
 			ConcurrencySafe: true,
 			Idempotent:      true,
+			Method:          "GET",
+			SideEffectLevel: "NONE",
 			InputSchema:     map[string]string{"job_id": "string"},
 			RequiredArgs:    []string{"job_id"},
 			Execute: func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 				return predictive.BuildAssist(chatArgString(args, "job_id"))
+			},
+		},
+		{
+			Name:            "jobs.create",
+			Description:     "Create a new job.",
+			Path:            "/api/v1/jobs",
+			Version:         1,
+			SchemaVersion:   1,
+			CapabilityTags:  []string{"job", "create", "new", "order"},
+			ReadOnly:        false,
+			ConcurrencySafe: true,
+			Idempotent:      false,
+			Method:          "POST",
+			SideEffectLevel: "LOW",
+			RequiresApproval: true,
+			IdempotencyScope: "approval",
+			InputSchema:     map[string]string{"product_id": "string", "quantity": "number", "priority": "string", "deadline": "string"},
+			RequiredArgs:    []string{"product_id", "quantity"},
+			Execute: func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+				// This is a placeholder for actual job creation logic.
+				// In a real implementation, you would bind args to domain.Job and call jobService.Create(job)
+				return map[string]interface{}{"status": "success", "message": "Job created (mock)"}, nil
 			},
 		},
 	}

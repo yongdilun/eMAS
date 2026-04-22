@@ -114,6 +114,37 @@ func (p *KeywordChatPlanner) Plan(query string, _ []domain.AIChatMessage, regist
 			{Name: "jobs.list", Args: map[string]interface{}{}},
 		}
 		plan.Confidence = 0.78
+	case containsAny(lower, "create job", "new job", "add job"):
+		// Basic parsing for args just for demonstration of Phase 1 capabilities
+		// Example: "Create a job for PRD-A, qty 100"
+		productID := "PRD-DEFAULT"
+		if matches := regexp.MustCompile(`(?i)prd-[a-z0-9]+`).FindString(raw); matches != "" {
+			productID = strings.ToUpper(matches)
+		}
+		// If product isn't explicitly mentioned, it's ambiguous
+		if productID == "PRD-DEFAULT" && !containsAny(lower, "prd-") {
+			plan.Action = "clarify"
+			plan.IntentSummary = "Need product ID for new job"
+			plan.Ambiguous = true
+			plan.Confidence = 0.5
+			plan.ClarificationPrompt = []string{
+				"Please specify the product ID (e.g., PRD-A) and quantity for the new job.",
+			}
+			plan.PlanExplanation = "Product ID is missing for job creation."
+		} else {
+			plan.Action = "create_job"
+			plan.IntentSummary = "Create a new job"
+			plan.ToolCalls = []ChatToolCall{
+				{
+					Name: "jobs.create",
+					Args: map[string]interface{}{
+						"product_id": productID,
+						"quantity":   100, // Hardcoded for simplicity in Phase 1 demo
+					},
+				},
+			}
+			plan.Confidence = 0.85
+		}
 	default:
 		plan.Action = "clarify"
 		plan.IntentSummary = "Need clarification"
@@ -143,8 +174,9 @@ func validateChatPlan(plan *ChatPlan, registry ToolRegistry) error {
 		if !ok {
 			return fmt.Errorf("unknown tool: %s", call.Name)
 		}
-		if !tool.ReadOnly {
-			return fmt.Errorf("tool %s is not read-only", call.Name)
+		if !tool.ReadOnly && !tool.RequiresApproval {
+			// Phase 1: We allow write tools, but they MUST require approval
+			return fmt.Errorf("write tool %s must require approval", call.Name)
 		}
 		for _, key := range tool.RequiredArgs {
 			if call.Args == nil || strings.TrimSpace(chatArgString(call.Args, key)) == "" {

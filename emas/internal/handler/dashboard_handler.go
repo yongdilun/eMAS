@@ -31,6 +31,15 @@ type KPIsResponse struct {
 	UtilizationChange float64 `json:"utilization_change"`
 }
 
+// @Summary Get KPIs
+// @Description Get KPIs
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=KPIsResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /dashboard/kpis [get]
 func (h *DashboardHandler) GetKPIs(c *gin.Context) {
 	resp := KPIsResponse{
 		OEEPct:           85.2,
@@ -61,6 +70,15 @@ type AlertItem struct {
 	MachineID *string `json:"machine_id,omitempty"`
 }
 
+// @Summary Get alerts
+// @Description Get alerts
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]AlertItem}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /dashboard/alerts [get]
 func (h *DashboardHandler) GetAlerts(c *gin.Context) {
 	status := c.Query("status")
 	var alerts []AlertItem

@@ -18,6 +18,15 @@ func NewSchedulingHandler(schedulingService *service.SchedulingService) *Schedul
 	return &SchedulingHandler{schedulingService: schedulingService}
 }
 
+// @Summary Explode demand
+// @Description Explode demand
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingExplosionResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/explosion [get]
 func (h *SchedulingHandler) Explosion(c *gin.Context) {
 	var req dto.SchedulingExplosionRequest
 	if c.Request.Method == http.MethodGet {
@@ -42,6 +51,15 @@ func (h *SchedulingHandler) Explosion(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Check readiness
+// @Description Check readiness
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingReadinessResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/readiness [get]
 func (h *SchedulingHandler) Readiness(c *gin.Context) {
 	productID := c.Query("product_id")
 	if productID == "" {
@@ -59,6 +77,15 @@ func (h *SchedulingHandler) Readiness(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Candidate machines
+// @Description Candidate machines
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingCandidateMachinesResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/candidate-machines [get]
 func (h *SchedulingHandler) CandidateMachines(c *gin.Context) {
 	stepID := c.Param("id")
 	start := time.Now()
@@ -81,6 +108,15 @@ func (h *SchedulingHandler) CandidateMachines(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Validate slot
+// @Description Validate slot
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingSlotValidationResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/validate-slot [post]
 func (h *SchedulingHandler) ValidateSlot(c *gin.Context) {
 	var req dto.SchedulingSlotValidationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -95,6 +131,15 @@ func (h *SchedulingHandler) ValidateSlot(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Estimate job completion
+// @Description Estimate job completion
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingJobCompletionResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/estimate-job-completion [get]
 func (h *SchedulingHandler) EstimateJobCompletion(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.schedulingService.EstimateJobEarliestCompletion(jobID)
@@ -105,6 +150,15 @@ func (h *SchedulingHandler) EstimateJobCompletion(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Export training dataset
+// @Description Export training dataset
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingTrainingDatasetResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/training-dataset [get]
 func (h *SchedulingHandler) TrainingDataset(c *gin.Context) {
 	data, err := h.schedulingService.ExportTrainingDataset()
 	if err != nil {
@@ -114,6 +168,15 @@ func (h *SchedulingHandler) TrainingDataset(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Training dataset stats
+// @Description Training dataset stats
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingTrainingDatasetStatsResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/training-dataset-stats [get]
 func (h *SchedulingHandler) TrainingDatasetStats(c *gin.Context) {
 	var since *time.Time
 	if raw := c.Query("since"); raw != "" {
@@ -132,6 +195,15 @@ func (h *SchedulingHandler) TrainingDatasetStats(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Backfill training dataset
+// @Description Backfill training dataset
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingBackfillTrainingDatasetResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/backfill-training-dataset [get]
 func (h *SchedulingHandler) BackfillTrainingDataset(c *gin.Context) {
 	if err := h.schedulingService.BackfillMLTrainingEvents(); err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Response{Success: false, Error: err.Error()})
@@ -140,6 +212,15 @@ func (h *SchedulingHandler) BackfillTrainingDataset(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: map[string]string{"message": "ml training events backfilled"}})
 }
 
+// @Summary Solver preview
+// @Description Solver preview
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingSolverPreviewResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/solver-preview [get]
 func (h *SchedulingHandler) SolverPreview(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.schedulingService.BuildSolverPreview(jobID)
@@ -150,6 +231,15 @@ func (h *SchedulingHandler) SolverPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Refresh work calendars
+// @Description Refresh work calendars
+// @Tags scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.SchedulingRefreshWorkCalendarsResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /scheduling/refresh-work-calendars [get]
 func (h *SchedulingHandler) RefreshWorkCalendars(c *gin.Context) {
 	if err := h.schedulingService.RefreshWorkCalendarsFromSettings(); err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Response{Success: false, Error: err.Error()})

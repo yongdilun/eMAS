@@ -17,6 +17,16 @@ func NewMaintenanceHandler(maintenanceService *service.MaintenanceService) *Main
 	return &MaintenanceHandler{maintenanceService: maintenanceService}
 }
 
+// @Summary Record maintenance
+// @Description Record maintenance
+// @Tags maintenance
+// @Accept json
+// @Produce json
+// @Param request body dto.RecordMaintenanceRequest true "Record Maintenance Request"
+// @Success 201 {object} dto.Response{data=domain.MaintenanceRecord}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /maintenance [post]
 func (h *MaintenanceHandler) RecordMaintenance(c *gin.Context) {
 	var req dto.RecordMaintenanceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -23,6 +23,15 @@ type HighRiskJob struct {
 	RiskLevel   string `json:"risk_level"`
 }
 
+// @Summary List high-risk jobs
+// @Description List high-risk jobs
+// @Tags predictive
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.HighRiskJob}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /predictive/high-risk-jobs [get]
 func (h *PredictiveHandler) HighRiskJobs(c *gin.Context) {
 	results, err := h.service.ListHighRiskJobs(10)
 	if err != nil {
@@ -39,6 +48,15 @@ type Recommendation struct {
 	Severity string `json:"severity,omitempty"`
 }
 
+// @Summary List recommendations
+// @Description List recommendations
+// @Tags predictive
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.Recommendation}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /predictive/recommendations [get]
 func (h *PredictiveHandler) Recommendations(c *gin.Context) {
 	recs, err := h.service.Recommendations()
 	if err != nil {
@@ -53,6 +71,15 @@ type ForecastPoint struct {
 	Value float64 `json:"value"`
 }
 
+// @Summary Forecast
+// @Description Forecast
+// @Tags predictive
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /predictive/forecast [get]
 func (h *PredictiveHandler) Forecast(c *gin.Context) {
 	forecastType := c.DefaultQuery("type", "delays")
 	series, err := h.service.Forecast(forecastType)
@@ -66,6 +93,15 @@ func (h *PredictiveHandler) Forecast(c *gin.Context) {
 	}})
 }
 
+// @Summary Confidence
+// @Description Confidence
+// @Tags predictive
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=domain.ConfidenceSummary}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /predictive/confidence [get]
 func (h *PredictiveHandler) Confidence(c *gin.Context) {
 	summary, err := h.service.Confidence()
 	if err != nil {

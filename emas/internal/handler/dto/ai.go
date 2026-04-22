@@ -16,9 +16,20 @@ type AICommandResponse struct {
 	SuggestedCalls []AISuggestedCall      `json:"suggested_calls,omitempty"`
 	Insights       interface{}            `json:"insights,omitempty"`
 	Guidance       []string               `json:"guidance,omitempty"`
-	ResultCards    []AIResultCard         `json:"result_cards,omitempty"`
-	BDIResult      *BDIResult             `json:"bdi_result,omitempty"`
-	Sources        []AISourceRef          `json:"sources,omitempty"`
+	ResultCards      []AIResultCard         `json:"result_cards,omitempty"`
+	BDIResult        *BDIResult             `json:"bdi_result,omitempty"`
+	PendingApprovals []AIApprovalRef        `json:"pending_approvals,omitempty"`
+	Sources          []AISourceRef          `json:"sources,omitempty"`
+}
+
+// AIApprovalRef provides details of a pending approval.
+type AIApprovalRef struct {
+	ID              string          `json:"id"`
+	ToolName        string          `json:"tool_name"`
+	RiskSummary     string          `json:"risk_summary"`
+	SideEffectLevel string          `json:"side_effect_level"`
+	ApproveCall     AISuggestedCall `json:"approve_call"`
+	RejectCall      AISuggestedCall `json:"reject_call"`
 }
 
 // BDIResult - Belief-Desire-Intention structured output.

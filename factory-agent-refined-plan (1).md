@@ -1263,12 +1263,12 @@ async def start_event_listener():
 ## 16. Implementation Phases
 
 ### Phase 0 — Foundation (Week 1–2)
-- [ ] Go CRUD API for all factory resources
-- [ ] OpenAPI 3.0 export endpoint
-- [ ] Strong idempotency middleware in Go (key + payload hash + DB backup log)
-- [ ] Postgres schema (all tables including DLQ, rate limit columns, capability tags)
-- [ ] FastAPI project scaffold + worker pool startup
-- [ ] Tool auto-generation script (OpenAPI → DB → tools.md with capability tags)
+- [x] Go CRUD API for all factory resources
+- [x] OpenAPI 3.0 export endpoint {change to swaggo}
+- [x] Strong idempotency middleware in Go (key + payload hash + DB backup log)
+- [x] Postgres schema (all tables including DLQ, rate limit columns, capability tags) {change to adapt mysql}
+- [x] FastAPI project scaffold + worker pool startup
+- [x] Tool auto-generation script (OpenAPI → DB → tools.md with capability tags)
 
 ### Phase 1 — Core Agent (Week 3–4)
 - [ ] LLM prompt template + plan JSON schema (with explainability fields)
@@ -1276,7 +1276,7 @@ async def start_event_listener():
 - [ ] Plan validation engine (all rules in section 10)
 - [ ] Session manager (CRUD + state transitions + rate limit counters)
 - [ ] Execution engine (transactional + exactly-once + AMBIGUOUS handling)
-- [ ] Approval system (create, notify, decide, resume)
+- [x] Approval system (create, notify, decide, resume)
 - [ ] Redis event pub/sub (including DLQ replay event)
 
 ### Phase 2 — Resilience (Week 5)

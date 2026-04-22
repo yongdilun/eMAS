@@ -19,12 +19,16 @@ type ProcessStepHandler struct {
 	processRepo *repository.ProcessRepository
 }
 
-// NewProcessStepHandler creates a ProcessStepHandler.
 func NewProcessStepHandler(psmRepo *repository.ProcessStepMaterialRepository, invRepo *repository.InventoryRepository, processRepo *repository.ProcessRepository) *ProcessStepHandler {
 	return &ProcessStepHandler{psmRepo: psmRepo, invRepo: invRepo, processRepo: processRepo}
 }
 
-// ProcessStepMaterialResponse is the DTO for process step material.
+// @Summary ProcessStepMaterialResponse is the DTO for process step material.
+// @Description ProcessStepMaterialResponse is the DTO for process step material.
+// @Tags process-step
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=ProcessStepMaterialResponse}
 type ProcessStepMaterialResponse struct {
 	ID             string  `json:"id"`
 	MaterialID     string  `json:"material_id"`
@@ -35,7 +39,17 @@ type ProcessStepMaterialResponse struct {
 	MaterialName   string  `json:"material_name,omitempty"`
 }
 
-// ListMaterials handles GET /process-steps/:step_id/materials.
+// @Summary List materials for a step
+// @Description List materials for a step
+// @Tags process-step
+// @Accept json
+// @Produce json
+// @Param step_id path string true "Step ID"
+// @Param role query string true "Role"
+// @Success 200 {object} dto.Response{data=[]domain.ProcessStepMaterial}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /process-steps/{step_id}/materials [get]
 // Query ?role=input|output|all — default "input" for JobDetailsPanel; "all" for Process Routing edit.
 func (h *ProcessStepHandler) ListMaterials(c *gin.Context) {
 	stepID := c.Param("step_id")
@@ -80,7 +94,17 @@ func (h *ProcessStepHandler) ListMaterials(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: resp})
 }
 
-// AddMaterial handles POST /process-steps/:step_id/materials.
+// @Summary Add a material to a step
+// @Description Add a material to a step
+// @Tags process-step
+// @Accept json
+// @Produce json
+// @Param step_id path string true "Step ID"
+// @Param request body dto.AddProcessStepMaterialRequest true "Add Process Step Material Request"
+// @Success 201 {object} dto.Response{data=domain.ProcessStepMaterial}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /process-steps/{step_id}/materials [post]
 func (h *ProcessStepHandler) AddMaterial(c *gin.Context) {
 	stepID := c.Param("step_id")
 	if stepID == "" {
@@ -134,7 +158,17 @@ func (h *ProcessStepHandler) AddMaterial(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: m})
 }
 
-// DeleteMaterial handles DELETE /process-steps/:step_id/materials/:id.
+// @Summary Delete a material from a step
+// @Description Delete a material from a step
+// @Tags process-step
+// @Accept json
+// @Produce json
+// @Param step_id path string true "Step ID"
+// @Param id path string true "Material ID"
+// @Success 200 {object} dto.Response
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /process-steps/{step_id}/materials/{id} [delete]
 func (h *ProcessStepHandler) DeleteMaterial(c *gin.Context) {
 	stepID := c.Param("step_id")
 	materialID := c.Param("id")

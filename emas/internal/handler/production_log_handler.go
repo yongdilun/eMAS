@@ -16,6 +16,16 @@ func NewProductionLogHandler(productionLogService *service.ProductionLogService)
 	return &ProductionLogHandler{productionLogService: productionLogService}
 }
 
+// @Summary Log production
+// @Description Log production
+// @Tags production-log
+// @Accept json
+// @Produce json
+// @Param request body dto.LogProductionRequest true "Log Production Request"
+// @Success 201 {object} dto.Response{data=domain.ProductionLog}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /production-log [post]
 func (h *ProductionLogHandler) LogProduction(c *gin.Context) {
 	var req dto.LogProductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

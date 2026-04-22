@@ -26,6 +26,16 @@ func NewAISchedulingHandler(service *service.AIPredictiveService) *AISchedulingH
 	return &AISchedulingHandler{service: service}
 }
 
+// @Summary Assist a job
+// @Description Assist a job
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/assist [get]
 func (h *AISchedulingHandler) Assist(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.service.BuildAssist(jobID)
@@ -36,6 +46,16 @@ func (h *AISchedulingHandler) Assist(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Generate a proposal
+// @Description Generate a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/proposal [get]
 func (h *AISchedulingHandler) Proposal(c *gin.Context) {
 	jobID := c.Param("id")
 	includeInventoryActions := true
@@ -50,6 +70,16 @@ func (h *AISchedulingHandler) Proposal(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Generate a proposal
+// @Description Generate a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/proposal [post]
 func (h *AISchedulingHandler) GenerateProposal(c *gin.Context) {
 	jobID := c.Param("id")
 	includeInventoryActions := true
@@ -64,6 +94,16 @@ func (h *AISchedulingHandler) GenerateProposal(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Generate batch proposals
+// @Description Generate batch proposals
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param request body dto.BatchProposalsRequest true "Batch Proposals Request"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/batch-proposals [post]
 func (h *AISchedulingHandler) GenerateBatchProposals(c *gin.Context) {
 	var req dto.BatchProposalsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -121,6 +161,16 @@ func (h *AISchedulingHandler) GenerateBatchProposals(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Reschedule all
+// @Description Reschedule all
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param request body dto.RescheduleAllRequest true "Reschedule All Request"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/reschedule-all [post]
 func (h *AISchedulingHandler) RescheduleAll(c *gin.Context) {
 	var req dto.RescheduleAllRequest
 	_ = c.ShouldBindJSON(&req)
@@ -165,6 +215,16 @@ func (h *AISchedulingHandler) RescheduleAll(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Verify overlaps
+// @Description Verify overlaps
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param request body dto.VerifyOverlapsRequest true "Verify Overlaps Request"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/verify-overlaps [post]
 func (h *AISchedulingHandler) VerifyOverlaps(c *gin.Context) {
 	var req dto.VerifyOverlapsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -215,6 +275,16 @@ func (h *AISchedulingHandler) VerifyOverlaps(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary List proposals
+// @Description List proposals
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/proposals [get]
 func (h *AISchedulingHandler) ListProposals(c *gin.Context) {
 	jobID := c.Param("id")
 	includeStale := c.Query("include_stale") == "true"
@@ -226,6 +296,16 @@ func (h *AISchedulingHandler) ListProposals(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Get a proposal
+// @Description Get a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Proposal ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/proposals/:id [get]
 func (h *AISchedulingHandler) GetProposal(c *gin.Context) {
 	proposalID := c.Param("id")
 	data, err := h.service.GetProposal(proposalID)
@@ -236,6 +316,16 @@ func (h *AISchedulingHandler) GetProposal(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Apply a proposal
+// @Description Apply a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/apply-proposal [post]
 func (h *AISchedulingHandler) ApplyProposal(c *gin.Context) {
 	c.Header("X-Deprecated", "true")
 	jobID := c.Param("id")
@@ -247,6 +337,16 @@ func (h *AISchedulingHandler) ApplyProposal(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Approve a proposal
+// @Description Approve a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Proposal ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/proposals/:id/approve [post]
 func (h *AISchedulingHandler) ApproveProposal(c *gin.Context) {
 	proposalID := c.Param("id")
 	var req dto.ProposalDecisionRequest
@@ -264,6 +364,16 @@ func (h *AISchedulingHandler) ApproveProposal(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Reject a proposal
+// @Description Reject a proposal
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Proposal ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/proposals/:id/reject [post]
 func (h *AISchedulingHandler) RejectProposal(c *gin.Context) {
 	proposalID := c.Param("id")
 	var req dto.ProposalDecisionRequest
@@ -276,6 +386,16 @@ func (h *AISchedulingHandler) RejectProposal(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Apply a proposal by ID
+// @Description Apply a proposal by ID
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Proposal ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/proposals/:id/apply [post]
 func (h *AISchedulingHandler) ApplyProposalByID(c *gin.Context) {
 	proposalID := c.Param("id")
 	var req dto.ProposalDecisionRequest
@@ -293,6 +413,16 @@ func (h *AISchedulingHandler) ApplyProposalByID(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Split suggestion
+// @Description Split suggestion
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job Step ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/job-steps/:id/split-suggestion [get]
 func (h *AISchedulingHandler) SplitSuggestion(c *gin.Context) {
 	jobStepID := c.Param("id")
 	data, err := h.service.SuggestSplit(jobStepID)
@@ -303,6 +433,16 @@ func (h *AISchedulingHandler) SplitSuggestion(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Delay risk
+// @Description Delay risk
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/delay-risk [get]
 func (h *AISchedulingHandler) DelayRisk(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.service.GetDelayRisk(jobID)
@@ -313,6 +453,16 @@ func (h *AISchedulingHandler) DelayRisk(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Machine ranking
+// @Description Machine ranking
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job Step ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/job-steps/:id/machine-ranking [get]
 func (h *AISchedulingHandler) MachineRanking(c *gin.Context) {
 	jobStepID := c.Param("id")
 	start := time.Now()
@@ -335,6 +485,16 @@ func (h *AISchedulingHandler) MachineRanking(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Bottleneck forecast
+// @Description Bottleneck forecast
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param days_ahead query int true "Days ahead"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/bottleneck-forecast [get]
 func (h *AISchedulingHandler) BottleneckForecast(c *gin.Context) {
 	daysAhead := 7
 	if v := c.Query("days_ahead"); v != "" {
@@ -350,6 +510,16 @@ func (h *AISchedulingHandler) BottleneckForecast(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Explanation
+// @Description Explanation
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/explanation [get]
 func (h *AISchedulingHandler) Explanation(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.service.ExplainJob(jobID)
@@ -360,10 +530,29 @@ func (h *AISchedulingHandler) Explanation(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Metrics
+// @Description Metrics
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/metrics [get]
 func (h *AISchedulingHandler) Metrics(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: h.service.GetMetrics()})
 }
 
+// @Summary Shortage analysis
+// @Description Shortage analysis
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/shortage-analysis [get]
 func (h *AISchedulingHandler) ShortageAnalysis(c *gin.Context) {
 	jobID := c.Param("id")
 	proposal, err := h.service.AnalyzeShortagesForProposal(jobID)
@@ -383,6 +572,16 @@ func (h *AISchedulingHandler) ShortageAnalysis(c *gin.Context) {
 	})
 }
 
+// @Summary Apply replenishment
+// @Description Apply replenishment
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/apply-replenishment [post]
 func (h *AISchedulingHandler) ApplyReplenishment(c *gin.Context) {
 	var req dto.ApplyReplenishmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -416,8 +615,16 @@ func (h *AISchedulingHandler) ApplyReplenishment(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
-// ApplyReplenishmentBatch applies multiple replenishment / schedule_production lines in one call
-// without a proposal id (same service logic as proposals/:id/apply-replenishment).
+// @Summary Apply replenishment batch
+// @Description Apply replenishment batch
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param request body dto.ApplyReplenishmentBatchRequest true "Apply Replenishment Batch Request"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/apply-replenishment-batch [post]
 func (h *AISchedulingHandler) ApplyReplenishmentBatch(c *gin.Context) {
 	var req dto.ApplyReplenishmentBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -459,6 +666,16 @@ func (h *AISchedulingHandler) ApplyReplenishmentBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Replenish and replan
+// @Description Replenish and replan
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/jobs/:id/replenish-and-replan [post]
 func (h *AISchedulingHandler) ReplenishAndReplan(c *gin.Context) {
 	jobID := c.Param("id")
 	var req dto.ReplenishAndReplanRequest
@@ -500,10 +717,31 @@ func (h *AISchedulingHandler) ReplenishAndReplan(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: data})
 }
 
+// @Summary Build late jobs message
+// @Description Build late jobs message
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param lateCount query int true "Late count"
+// @Param totalGenerated query int true "Total generated"
+// @Success 200 {object} dto.Response{data=string}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/late-jobs-message [get]
 func buildLateJobsMessage(lateCount, totalGenerated int) string {
 	return fmt.Sprintf("%d of %d jobs are estimated to complete after their deadline. Higher-priority jobs were scheduled first; lower-priority jobs may be late.", lateCount, totalGenerated)
 }
 
+// @Summary Actor from context
+// @Description Actor from context
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param c context.Context true "Context"
+// @Success 200 {object} dto.Response{data=string}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/actor-from-context [get]
 func actorFromContext(c *gin.Context) string {
 	if v, ok := c.Get(middleware.ContextUserIDKey); ok {
 		if s, ok := v.(string); ok && s != "" {
@@ -513,6 +751,16 @@ func actorFromContext(c *gin.Context) string {
 	return c.GetHeader("X-User-Id")
 }
 
+// @Summary Status for scheduling error
+// @Description Status for scheduling error
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param err error true "Error"
+// @Success 200 {object} dto.Response{data=int}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/status-for-scheduling-error [get]
 func statusForSchedulingErr(err error) int {
 	var actionErr *service.SchedulingActionError
 	if errors.As(err, &actionErr) {
@@ -524,8 +772,16 @@ func statusForSchedulingErr(err error) int {
 	return http.StatusInternalServerError
 }
 
-// EmitSchedulingEvent handles POST /scheduling/events - emits machine_down, job_delay, urgent_insert.
-// Gap 5: validates payload shape by type. Payload must be a JSON string.
+// @Summary Emit scheduling event
+// @Description Emit scheduling event
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param request body struct { Type string `json:"type"`; Payload string `json:"payload"` } true "Scheduling Event Request"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/events [post]
 func (h *AISchedulingHandler) EmitSchedulingEvent(c *gin.Context) {
 	var req struct {
 		Type    string `json:"type"`
@@ -551,7 +807,17 @@ func (h *AISchedulingHandler) EmitSchedulingEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: map[string]interface{}{"message": "event emitted"}})
 }
 
-// validateEventPayload checks payload has required fields per event type.
+// @Summary Validate event payload
+// @Description Validate event payload
+// @Tags ai scheduling
+// @Accept json
+// @Produce json
+// @Param eventType string true "Event Type"
+// @Param payload string true "Payload"
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/scheduling/validate-event-payload [get]
 func validateEventPayload(eventType, payload string) error {
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(payload), &m); err != nil {

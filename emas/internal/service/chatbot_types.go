@@ -50,9 +50,17 @@ type ChatToolDefinition struct {
 	Version         int
 	SchemaVersion   int
 	CapabilityTags  []string
-	ReadOnly        bool
+	ReadOnly        bool // Deprecated by SideEffectLevel, but keep for compatibility if needed
 	ConcurrencySafe bool
 	Idempotent      bool
+	
+	// Phase 1 additions
+	Method           string                                       // GET, POST, PUT, PATCH, DELETE
+	SideEffectLevel  string                                       // NONE, LOW, HIGH, DESTRUCTIVE
+	RequiresApproval bool                                         // Set true if Method != GET
+	IdempotencyScope string                                       // "turn", "approval", "custom"
+	IdempotencyKeyFn func(args map[string]interface{}) string     // Optional override
+	
 	InputSchema     map[string]string
 	RequiredArgs    []string
 	Execute         func(context.Context, map[string]interface{}) (interface{}, error)

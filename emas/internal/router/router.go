@@ -9,7 +9,11 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"gorm.io/gorm"
+
+	_ "emas/docs"
 )
 
 func Setup(db *gorm.DB) *gin.Engine {
@@ -22,6 +26,9 @@ func Setup(db *gorm.DB) *gin.Engine {
 		MaxAge:           12 * 60 * 60,
 	}))
 	r.Use(middleware.RequestContext())
+
+	// Swagger endpoint
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Repositories
 	jobRepo := repository.NewJobRepository(db)
@@ -72,7 +79,11 @@ func Setup(db *gorm.DB) *gin.Engine {
 	chatTurnRepo := repository.NewChatbotTurnAuditRepository(db)
 	chatSnapRepo := repository.NewChatbotToolExecutionSnapshotRepository(db)
 	chatExecutor := service.NewRegistryBackedReadOnlyExecutor(chatRegistry, chatSnapRepo)
-	chatbotSvc := service.NewChatbotService(convRepo, msgRepo, chatTurnRepo, chatPlanner, chatExecutor, chatRegistry)
+	
+	chatApprovalRepo := repository.NewChatbotApprovalRepository(db)
+	chatApprovalExec := service.NewApprovalExecutor(chatApprovalRepo, chatSnapRepo, chatRegistry)
+	
+	chatbotSvc := service.NewChatbotService(convRepo, msgRepo, chatTurnRepo, chatApprovalRepo, chatPlanner, chatExecutor, chatRegistry)
 
 	// Handlers
 	jobH := handler.NewJobHandler(jobSvc)
@@ -90,18 +101,22 @@ func Setup(db *gorm.DB) *gin.Engine {
 	dashboardH := handler.NewDashboardHandler(db, machineRepo, invRepo)
 	predictiveH := handler.NewPredictiveHandler(aiPredictiveSvc)
 	aiH := handler.NewAIHandler(aiCommandProcessor)
+	settingsH := handler.NewSettingsHandler(settingsRepo)
+	schedulingSettingsH := handler.NewSchedulingSettingsHandler(settingsRepo, schedulingSvc)
+	refH := handler.NewReferenceHandler(db)
+
+	chatApprovalH := handler.NewChatbotApprovalHandler(chatApprovalRepo, chatApprovalExec)
+
 	var chatService service.ChatConversationService = aiChatSvc
 	if featureflags.ChatbotV2Enabled() {
 		chatService = chatbotSvc
 	}
 	aiChatH := handler.NewAIChatHandler(chatService)
 	aiSchedulingH := handler.NewAISchedulingHandler(aiPredictiveSvc)
-	settingsH := handler.NewSettingsHandler(settingsRepo)
-	schedulingSettingsH := handler.NewSchedulingSettingsHandler(settingsRepo, schedulingSvc)
-	refH := handler.NewReferenceHandler(db)
 
 	// API v1
 	v1 := r.Group("/api/v1")
+	v1.Use(middleware.IdempotencyMiddleware(db))
 	{
 		// Jobs
 		v1.POST("/jobs", jobH.Create)
@@ -227,7 +242,13 @@ func Setup(db *gorm.DB) *gin.Engine {
 			v1.POST("/ai/chats", aiChatH.Create)
 			v1.GET("/ai/chats/:id", aiChatH.Get)
 			v1.POST("/ai/chats/:id/messages", aiChatH.SendMessage)
+			v1.GET("/ai/chats/:id/approvals", chatApprovalH.ListPending)
 		}
+
+		v1.POST("/ai/chatbot/approvals", chatApprovalH.Approve) // For testing creation? Not needed if created internally
+		v1.GET("/ai/chatbot/approvals/:id", chatApprovalH.Get)
+		v1.POST("/ai/chatbot/approvals/:id/approve", chatApprovalH.Approve)
+		v1.POST("/ai/chatbot/approvals/:id/reject", chatApprovalH.Reject)
 		v1.GET("/ai/scheduling/jobs/:id/assist", aiSchedulingH.Assist)
 		v1.GET("/ai/scheduling/jobs/:id/delay-risk", aiSchedulingH.DelayRisk)
 		v1.GET("/ai/scheduling/jobs/:id/explanation", aiSchedulingH.Explanation)

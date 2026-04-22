@@ -13,7 +13,6 @@ type AIHandler struct {
 	processor *service.AICommandProcessor
 }
 
-// NewAIHandler creates a new AI handler.
 func NewAIHandler(processor *service.AICommandProcessor) *AIHandler {
 	return &AIHandler{processor: processor}
 }
@@ -24,6 +23,16 @@ type AICommandRequest struct {
 	Debug           bool   `json:"debug"`
 }
 
+// @Summary Parse a command
+// @Description Parse a command
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Param request body AICommandRequest true "AI Command Request"
+// @Success 200 {object} dto.Response{data=dto.AICommandResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /ai/command [post]
 func (h *AIHandler) ParseCommand(c *gin.Context) {
 	var req AICommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

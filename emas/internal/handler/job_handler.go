@@ -21,6 +21,16 @@ func NewJobHandler(jobService *service.JobService) *JobHandler {
 	return &JobHandler{jobService: jobService}
 }
 
+// @Summary Create a job
+// @Description Create a job
+// @Tags job
+// @Accept json
+// @Produce json
+// @Param request body dto.CreateJobRequest true "Create Job Request"
+// @Success 201 {object} dto.Response{data=domain.Job}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /jobs [post]
 func (h *JobHandler) Create(c *gin.Context) {
 	var req dto.CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -35,6 +45,16 @@ func (h *JobHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: job})
 }
 
+// @Summary Get a job by ID
+// @Description Get a job by ID
+// @Tags job
+// @Accept json
+// @Produce json
+// @Param id path string true "Job ID"
+// @Success 200 {object} dto.Response{data=domain.Job}
+// @Failure 404 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /jobs/{id} [get]
 func (h *JobHandler) GetByID(c *gin.Context) {
 	id := c.Param("id")
 	job, err := h.jobService.GetByID(id)

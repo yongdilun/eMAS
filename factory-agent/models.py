@@ -1,0 +1,146 @@
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy.dialects.postgresql import UUID as PGUUID # if using pg
+from database import Base
+
+# We'll use String(36) for UUIDs to remain compatible with MySQL/SQLite
+def generate_uuid():
+    return str(uuid.uuid4())
+
+class Session(Base):
+    __tablename__ = "sessions"
+    session_id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(255), nullable=False)
+    status = Column(String(50), nullable=False, default="IDLE")
+    current_intent = Column(Text, nullable=True)
+    plan_id = Column(String(36), nullable=True)
+    plan_version = Column(Integer, default=0)
+    plan_hash = Column(String(255), nullable=True)
+    current_step_index = Column(Integer, default=0)
+    retry_count = Column(Integer, default=0)
+    step_count = Column(Integer, default=0)
+    replan_count = Column(Integer, default=0)
+    llm_call_count = Column(Integer, default=0)
+    session_started_at = Column(DateTime, default=datetime.utcnow)
+    error = Column(Text, nullable=True)
+    version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+class Message(Base):
+    __tablename__ = "messages"
+    message_id = Column(String(36), primary_key=True, default=generate_uuid)
+    session_id = Column(String(36), ForeignKey("sessions.session_id"), nullable=False)
+    role = Column(String(50), nullable=False)
+    content = Column(Text, nullable=False)
+    step_id = Column(String(36), nullable=True)
+    tool_name = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Plan(Base):
+    __tablename__ = "plans"
+    plan_id = Column(String(36), primary_key=True, default=generate_uuid)
+    session_id = Column(String(36), ForeignKey("sessions.session_id"), nullable=False)
+    version = Column(Integer, nullable=False)
+    dependency_graph = Column(JSON, nullable=True)
+    parallel_groups = Column(JSON, nullable=True)
+    plan_hash = Column(String(255), nullable=False)
+    plan_explanation = Column(Text, nullable=True)
+    risk_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String(50), default="llm")
+    invalidated_at = Column(DateTime, nullable=True)
+    invalidated_reason = Column(Text, nullable=True)
+
+class PlanStep(Base):
+    __tablename__ = "plan_steps"
+    step_id = Column(String(36), primary_key=True, default=generate_uuid)
+    plan_id = Column(String(36), ForeignKey("plans.plan_id"), nullable=False)
+    session_id = Column(String(36), nullable=False)
+    step_index = Column(Integer, nullable=False)
+    tool_name = Column(String(255), nullable=False)
+    args = Column(JSON, nullable=False)
+    status = Column(String(50), nullable=False, default="NOT_STARTED")
+    idempotency_key = Column(String(255), nullable=False, unique=True)
+    requires_approval = Column(Boolean, default=False)
+    approval_id = Column(String(36), nullable=True)
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+    last_error = Column(Text, nullable=True)
+    result = Column(JSON, nullable=True)
+    result_summary = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+class Tool(Base):
+    __tablename__ = "tools"
+    tool_id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(255), nullable=False, unique=True)
+    description = Column(Text, nullable=False)
+    endpoint = Column(String(255), nullable=False)
+    method = Column(String(50), nullable=False)
+    version = Column(Integer, default=1)
+    schema_version = Column(Integer, default=1)
+    input_schema = Column(JSON, nullable=False)
+    output_schema = Column(JSON, nullable=True)
+    is_read_only = Column(Boolean, default=False)
+    requires_approval = Column(Boolean, default=False)
+    side_effect_level = Column(String(50), default="NONE")
+    is_concurrency_safe = Column(Boolean, default=True)
+    is_idempotent = Column(Boolean, default=False)
+    is_strongly_idempotent = Column(Boolean, default=False)
+    capability_tags = Column(String(1000), default="[]") # Store as JSON string or text since SQLite lacks array
+    deprecated_at = Column(DateTime, nullable=True)
+    replacement_tool = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class Approval(Base):
+    __tablename__ = "approvals"
+    approval_id = Column(String(36), primary_key=True, default=generate_uuid)
+    session_id = Column(String(36), nullable=False)
+    step_id = Column(String(36), nullable=False)
+    tool_name = Column(String(255), nullable=False)
+    args = Column(JSON, nullable=False)
+    risk_summary = Column(Text, nullable=False)
+    side_effect_level = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=False, default="PENDING")
+    expires_at = Column(DateTime, nullable=False)
+    decided_by = Column(String(255), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ExecutionSnapshot(Base):
+    __tablename__ = "execution_snapshots"
+    snapshot_id = Column(String(36), primary_key=True, default=generate_uuid)
+    step_id = Column(String(36), nullable=False)
+    session_id = Column(String(36), nullable=False)
+    tool_name = Column(String(255), nullable=False)
+    tool_version = Column(Integer, nullable=False)
+    schema_version = Column(Integer, nullable=False)
+    input_args = Column(JSON, nullable=False)
+    plan_hash = Column(String(255), nullable=False)
+    plan_version = Column(Integer, nullable=False)
+    idempotency_key = Column(String(255), nullable=False)
+    http_status = Column(Integer, nullable=True)
+    response_body = Column(JSON, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    executed_at = Column(DateTime, default=datetime.utcnow)
+
+class DeadLetter(Base):
+    __tablename__ = "dead_letters"
+    dlq_id = Column(String(36), primary_key=True, default=generate_uuid)
+    session_id = Column(String(36), nullable=False)
+    step_id = Column(String(36), nullable=True)
+    failure_type = Column(String(255), nullable=False)
+    reason = Column(Text, nullable=False)
+    payload = Column(JSON, nullable=False, default={})
+    status = Column(String(50), nullable=False, default="PENDING")
+    replayed_at = Column(DateTime, nullable=True)
+    replayed_by = Column(String(255), nullable=True)
+    dismissed_at = Column(DateTime, nullable=True)
+    dismissed_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

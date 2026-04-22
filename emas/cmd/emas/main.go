@@ -10,6 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// @title eMas Factory API
+// @version 1.0
+// @description Factory operations API.
+// @host localhost:8080
+// @BasePath /api/v1
 func main() {
 	_ = logger.Init()
 

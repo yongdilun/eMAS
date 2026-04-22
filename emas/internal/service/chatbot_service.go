@@ -20,29 +20,32 @@ import (
 // - read-only execution only
 // - audit + tool snapshot persistence
 type ChatbotService struct {
-	convRepo ConversationRepository
-	msgRepo  *repository.AIChatMessageRepository
-	turnRepo TurnAuditRepository
-	planner  ChatPlanner
-	executor ReadOnlyToolExecutor
-	registry ToolRegistry
+	convRepo     ConversationRepository
+	msgRepo      *repository.AIChatMessageRepository
+	turnRepo     TurnAuditRepository
+	approvalRepo repository.ChatbotApprovalRepository
+	planner      ChatPlanner
+	executor     ReadOnlyToolExecutor
+	registry     ToolRegistry
 }
 
 func NewChatbotService(
 	convRepo ConversationRepository,
 	msgRepo *repository.AIChatMessageRepository,
 	turnRepo TurnAuditRepository,
+	approvalRepo repository.ChatbotApprovalRepository,
 	planner ChatPlanner,
 	executor ReadOnlyToolExecutor,
 	registry ToolRegistry,
 ) *ChatbotService {
 	return &ChatbotService{
-		convRepo: convRepo,
-		msgRepo:  msgRepo,
-		turnRepo: turnRepo,
-		planner:  planner,
-		executor: executor,
-		registry: registry,
+		convRepo:     convRepo,
+		msgRepo:      msgRepo,
+		turnRepo:     turnRepo,
+		approvalRepo: approvalRepo,
+		planner:      planner,
+		executor:     executor,
+		registry:     registry,
 	}
 }
 
@@ -167,19 +170,84 @@ func (s *ChatbotService) SendMessage(conversationID, query, requestID string) (*
 			_ = s.turnRepo.Update(audit)
 		}
 	} else {
-		timeoutMs := featureflags.ChatbotTurnTimeoutMs()
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
-		defer cancel()
-		executions, err := s.executor.Execute(ctx, conversationID, audit.ID, plan.ToolCalls)
-		if err != nil {
-			if s.turnRepo != nil {
-				audit.Status = "execution_failed"
-				audit.Error = err.Error()
-				_ = s.turnRepo.Update(audit)
+		// Phase 1: Separate read-only tools and write tools
+		var readCalls []ChatToolCall
+		var writeCalls []ChatToolCall
+
+		for _, call := range plan.ToolCalls {
+			if def, ok := s.registry.Get(call.Name); ok {
+				if def.RequiresApproval {
+					writeCalls = append(writeCalls, call)
+				} else {
+					readCalls = append(readCalls, call)
+				}
 			}
-			return nil, nil, err
 		}
+
+		// Execute read-only tools immediately
+		var executions []ChatToolExecutionResult
+		if len(readCalls) > 0 {
+			timeoutMs := featureflags.ChatbotTurnTimeoutMs()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+			defer cancel()
+			var errExec error
+			executions, errExec = s.executor.Execute(ctx, conversationID, audit.ID, readCalls)
+			if errExec != nil {
+				if s.turnRepo != nil {
+					audit.Status = "execution_failed"
+					audit.Error = errExec.Error()
+					_ = s.turnRepo.Update(audit)
+				}
+				return nil, nil, errExec
+			}
+		}
+
+		// Create pending approvals for write tools
+		var pendingApprovals []dto.AIApprovalRef
+		for _, call := range writeCalls {
+			def, _ := s.registry.Get(call.Name)
+			
+			// Compute risk summary (could be enriched later)
+			riskSummary := fmt.Sprintf("Execute %s with side effects: %s", def.Name, def.SideEffectLevel)
+
+			argsJSON, _ := json.Marshal(call.Args)
+			idempotencyKey := id.New() // default, could use func
+			if def.IdempotencyKeyFn != nil {
+				idempotencyKey = def.IdempotencyKeyFn(call.Args)
+			}
+
+			approval := domain.ChatbotApproval{
+				ID:              id.NewPrefixed("CHAPPR-"),
+				ConversationID:  conversationID,
+				TurnAuditID:     audit.ID,
+				RequestID:       requestID,
+				ToolName:        def.Name,
+				Method:          def.Method,
+				Path:            def.Path,
+				ArgsJSON:        string(argsJSON),
+				RiskSummary:     riskSummary,
+				SideEffectLevel: def.SideEffectLevel,
+				Status:          "PENDING",
+				IdempotencyKey:  idempotencyKey,
+				RequestedBy:     "system", // Ideally from X-User-ID context
+				CreatedAt:       now,
+			}
+
+			if s.approvalRepo != nil {
+				_ = s.approvalRepo.Create(&approval)
+			}
+
+			pendingApprovals = append(pendingApprovals, dto.AIApprovalRef{
+				ID:              approval.ID,
+				ToolName:        approval.ToolName,
+				RiskSummary:     approval.RiskSummary,
+				SideEffectLevel: approval.SideEffectLevel,
+			})
+		}
+
 		resp = composeChatbotResponse(plan, executions)
+		resp.PendingApprovals = pendingApprovals
+
 		if s.turnRepo != nil {
 			audit.Status = "completed"
 			_ = s.turnRepo.Update(audit)

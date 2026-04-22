@@ -1,0 +1,351 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Factory operations API.",
+        "title": "eMas Factory API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/machines": {
+            "get": {
+                "description": "Retrieve a list of all machines",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "machines"
+                ],
+                "summary": "List all machines",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/dto.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/domain.Machine"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a new machine in the factory",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "machines"
+                ],
+                "summary": "Create a machine",
+                "parameters": [
+                    {
+                        "description": "Machine Create Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateMachineRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/dto.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/domain.Machine"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/machines/{id}": {
+            "get": {
+                "description": "Retrieve details of a specific machine",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "machines"
+                ],
+                "summary": "Get machine by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Machine ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/dto.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/domain.Machine"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Updates an existing machine's details",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "machines"
+                ],
+                "summary": "Update a machine",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Machine ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Machine Update Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateMachineRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/dto.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/domain.Machine"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "domain.Machine": {
+            "type": "object",
+            "properties": {
+                "capacityPerHour": {
+                    "type": "integer"
+                },
+                "defaultChangeoverTime": {
+                    "type": "integer"
+                },
+                "defaultCleaningTime": {
+                    "type": "integer"
+                },
+                "defaultSetupTime": {
+                    "type": "integer"
+                },
+                "lastMaintenanceDate": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "machineID": {
+                    "type": "string"
+                },
+                "machineName": {
+                    "type": "string"
+                },
+                "machineType": {
+                    "description": "CNC / Press / Coating etc",
+                    "type": "string"
+                },
+                "maintenanceIntervalDays": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "utilizationRate": {
+                    "type": "number"
+                }
+            }
+        },
+        "dto.CreateMachineRequest": {
+            "type": "object",
+            "required": [
+                "machine_id",
+                "machine_name",
+                "machine_type"
+            ],
+            "properties": {
+                "capacity_per_hour": {
+                    "type": "integer"
+                },
+                "default_changeover_time": {
+                    "type": "integer"
+                },
+                "default_cleaning_time": {
+                    "type": "integer"
+                },
+                "default_setup_time": {
+                    "type": "integer"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "machine_id": {
+                    "type": "string"
+                },
+                "machine_name": {
+                    "type": "string"
+                },
+                "machine_type": {
+                    "type": "string"
+                },
+                "maintenance_interval_days": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.Response": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "dto.UpdateMachineRequest": {
+            "type": "object",
+            "properties": {
+                "capacity_per_hour": {
+                    "type": "integer"
+                },
+                "default_changeover_time": {
+                    "type": "integer"
+                },
+                "default_cleaning_time": {
+                    "type": "integer"
+                },
+                "default_setup_time": {
+                    "type": "integer"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "machine_name": {
+                    "type": "string"
+                },
+                "machine_type": {
+                    "type": "string"
+                },
+                "maintenance_interval_days": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

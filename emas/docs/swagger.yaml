@@ -1,0 +1,221 @@
+basePath: /api/v1
+definitions:
+  domain.Machine:
+    properties:
+      capacityPerHour:
+        type: integer
+      defaultChangeoverTime:
+        type: integer
+      defaultCleaningTime:
+        type: integer
+      defaultSetupTime:
+        type: integer
+      lastMaintenanceDate:
+        type: string
+      location:
+        type: string
+      machineID:
+        type: string
+      machineName:
+        type: string
+      machineType:
+        description: CNC / Press / Coating etc
+        type: string
+      maintenanceIntervalDays:
+        type: integer
+      status:
+        type: string
+      utilizationRate:
+        type: number
+    type: object
+  dto.CreateMachineRequest:
+    properties:
+      capacity_per_hour:
+        type: integer
+      default_changeover_time:
+        type: integer
+      default_cleaning_time:
+        type: integer
+      default_setup_time:
+        type: integer
+      location:
+        type: string
+      machine_id:
+        type: string
+      machine_name:
+        type: string
+      machine_type:
+        type: string
+      maintenance_interval_days:
+        type: integer
+    required:
+    - machine_id
+    - machine_name
+    - machine_type
+    type: object
+  dto.Response:
+    properties:
+      data: {}
+      error:
+        type: string
+      success:
+        type: boolean
+    type: object
+  dto.UpdateMachineRequest:
+    properties:
+      capacity_per_hour:
+        type: integer
+      default_changeover_time:
+        type: integer
+      default_cleaning_time:
+        type: integer
+      default_setup_time:
+        type: integer
+      location:
+        type: string
+      machine_name:
+        type: string
+      machine_type:
+        type: string
+      maintenance_interval_days:
+        type: integer
+      status:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Factory operations API.
+  title: eMas Factory API
+  version: "1.0"
+paths:
+  /machines:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve a list of all machines
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.Machine'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: List all machines
+      tags:
+      - machines
+    post:
+      consumes:
+      - application/json
+      description: Creates a new machine in the factory
+      parameters:
+      - description: Machine Create Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateMachineRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Machine'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: Create a machine
+      tags:
+      - machines
+  /machines/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve details of a specific machine
+      parameters:
+      - description: Machine ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Machine'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: Get machine by ID
+      tags:
+      - machines
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing machine's details
+      parameters:
+      - description: Machine ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Machine Update Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateMachineRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Machine'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: Update a machine
+      tags:
+      - machines
+swagger: "2.0"

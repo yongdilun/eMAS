@@ -29,6 +29,17 @@ func NewMachineHandler(machineService *service.MachineService, eventEmitter Sche
 	return &MachineHandler{machineService: machineService, eventEmitter: eventEmitter}
 }
 
+// Create godoc
+// @Summary Create a machine
+// @Description Creates a new machine in the factory
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Param request body dto.CreateMachineRequest true "Machine Create Request"
+// @Success 201 {object} dto.Response{data=domain.Machine}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines [post]
 func (h *MachineHandler) Create(c *gin.Context) {
 	var req dto.CreateMachineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -43,6 +54,16 @@ func (h *MachineHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: machine})
 }
 
+// GetByID godoc
+// @Summary Get machine by ID
+// @Description Retrieve details of a specific machine
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Param id path string true "Machine ID"
+// @Success 200 {object} dto.Response{data=domain.Machine}
+// @Failure 404 {object} dto.Response
+// @Router /machines/{id} [get]
 func (h *MachineHandler) GetByID(c *gin.Context) {
 	id := c.Param("id")
 	machine, err := h.machineService.GetByID(id)
@@ -53,6 +74,15 @@ func (h *MachineHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: machine})
 }
 
+// List godoc
+// @Summary List all machines
+// @Description Retrieve a list of all machines
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.Machine}
+// @Failure 500 {object} dto.Response
+// @Router /machines [get]
 func (h *MachineHandler) List(c *gin.Context) {
 	machines, err := h.machineService.ListAll()
 	if err != nil {
@@ -62,6 +92,18 @@ func (h *MachineHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: machines})
 }
 
+// Update godoc
+// @Summary Update a machine
+// @Description Updates an existing machine's details
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Param id path string true "Machine ID"
+// @Param request body dto.UpdateMachineRequest true "Machine Update Request"
+// @Success 200 {object} dto.Response{data=domain.Machine}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/{id} [put]
 func (h *MachineHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req dto.UpdateMachineRequest
@@ -77,6 +119,17 @@ func (h *MachineHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: machine})
 }
 
+// @Summary Assign a capability to a machine
+// @Description Assign a capability to a machine
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Param id path string true "Machine ID"
+// @Param request body dto.AssignCapabilityRequest true "Assign Capability Request"
+// @Success 201 {object} dto.Response{data=domain.Capability}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/:id/capabilities [post]
 func (h *MachineHandler) AssignCapability(c *gin.Context) {
 	machineID := c.Param("id")
 	var req dto.AssignCapabilityRequest
@@ -92,6 +145,16 @@ func (h *MachineHandler) AssignCapability(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: cap})
 }
 
+// @Summary Record downtime
+// @Description Record downtime
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Param request body dto.RecordDowntimeRequest true "Record Downtime Request"
+// @Success 201 {object} dto.Response{data=domain.MachineDowntime}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/downtime [post]
 func (h *MachineHandler) RecordDowntime(c *gin.Context) {
 	var req dto.RecordDowntimeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -117,6 +180,15 @@ func (h *MachineHandler) RecordDowntime(c *gin.Context) {
 	c.JSON(http.StatusCreated, dto.Response{Success: true, Data: record})
 }
 
+// @Summary Get maintenance alerts
+// @Description Get maintenance alerts
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.MachineMaintenanceAlert}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/maintenance-alerts [get]
 func (h *MachineHandler) MaintenanceAlerts(c *gin.Context) {
 	daysAhead := 7
 	if v := c.Query("days_ahead"); v != "" {
@@ -132,6 +204,15 @@ func (h *MachineHandler) MaintenanceAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: machines})
 }
 
+// @Summary Get utilization
+// @Description Get utilization
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=map[string]interface{}}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/utilization [get]
 func (h *MachineHandler) Utilization(c *gin.Context) {
 	machines, err := h.machineService.ListAll()
 	if err != nil {
@@ -172,6 +253,15 @@ func (h *MachineHandler) Utilization(c *gin.Context) {
 	}})
 }
 
+// @Summary Get reroute recommendations
+// @Description Get reroute recommendations
+// @Tags machines
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=[]domain.MachineRerouteRecommendation}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /machines/reroute-recommendations [get]
 func (h *MachineHandler) RerouteRecommendations(c *gin.Context) {
 	machineID := c.Query("machine_id")
 	if machineID == "" {

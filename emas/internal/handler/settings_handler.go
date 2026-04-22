@@ -26,6 +26,15 @@ type SettingsHandler struct {
 	settingsRepo *repository.SystemSettingsRepository
 }
 
+// @Summary New settings handler
+// @Description New settings handler
+// @Tags settings
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=SettingsHandler}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /settings/new [get]
 func NewSettingsHandler(settingsRepo *repository.SystemSettingsRepository) *SettingsHandler {
 	return &SettingsHandler{settingsRepo: settingsRepo}
 }
@@ -68,6 +77,15 @@ type SettingsResponse struct {
 	Integrations  []string `json:"integrations"`
 }
 
+// @Summary Get settings
+// @Description Get settings
+// @Tags settings
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.Response{data=SettingsResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /settings/get [get]
 func (h *SettingsHandler) Get(c *gin.Context) {
 	res := SettingsResponse{
 		Theme:         defaultTheme,
@@ -93,6 +111,16 @@ func (h *SettingsHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: res})
 }
 
+// @Summary Update settings
+// @Description Update settings
+// @Tags settings
+// @Accept json
+// @Produce json
+// @Param request body UpdateSettingsRequest true "Update Settings Request"
+// @Success 200 {object} dto.Response{data=SettingsResponse}
+// @Failure 400 {object} dto.Response
+// @Failure 500 {object} dto.Response
+// @Router /settings/update [put]
 func (h *SettingsHandler) Update(c *gin.Context) {
 	var req struct {
 		Theme         *string       `json:"theme"`
