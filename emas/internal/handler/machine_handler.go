@@ -126,10 +126,10 @@ func (h *MachineHandler) Update(c *gin.Context) {
 // @Produce json
 // @Param id path string true "Machine ID"
 // @Param request body dto.AssignCapabilityRequest true "Assign Capability Request"
-// @Success 201 {object} dto.Response{data=domain.Capability}
+// @Success 201 {object} dto.Response{data=domain.MachineCapabilities}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /machines/:id/capabilities [post]
+// @Router /machines/{id}/capabilities [post]
 func (h *MachineHandler) AssignCapability(c *gin.Context) {
 	machineID := c.Param("id")
 	var req dto.AssignCapabilityRequest
@@ -185,7 +185,7 @@ func (h *MachineHandler) RecordDowntime(c *gin.Context) {
 // @Tags machines
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.MachineMaintenanceAlert}
+// @Success 200 {object} dto.Response{data=[]domain.Machine}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /machines/maintenance-alerts [get]
@@ -258,7 +258,7 @@ func (h *MachineHandler) Utilization(c *gin.Context) {
 // @Tags machines
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.MachineRerouteRecommendation}
+// @Success 200 {object} dto.Response{data=map[string][]string}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /machines/reroute-recommendations [get]

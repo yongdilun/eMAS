@@ -1,5 +1,245 @@
 basePath: /api/v1
 definitions:
+  domain.ChatbotApproval:
+    properties:
+      args_json:
+        type: string
+      conversation_id:
+        type: string
+      created_at:
+        type: string
+      decided_at:
+        type: string
+      decided_by:
+        type: string
+      execution_error:
+        type: string
+      id:
+        type: string
+      idempotency_key:
+        type: string
+      method:
+        type: string
+      path:
+        type: string
+      request_id:
+        type: string
+      requested_by:
+        type: string
+      result_snapshot_id:
+        type: string
+      risk_summary:
+        type: string
+      side_effect_level:
+        type: string
+      status:
+        description: PENDING, APPROVED, REJECTED, EXECUTED, EXPIRED, FAILED
+        type: string
+      tool_name:
+        type: string
+      turn_audit_id:
+        type: string
+    type: object
+  domain.Formula:
+    properties:
+      createdAt:
+        type: string
+      effectiveFrom:
+        type: string
+      effectiveTo:
+        type: string
+      formulaID:
+        type: string
+      formulaName:
+        type: string
+      instructions:
+        type: string
+      safetyNotes:
+        type: string
+      version:
+        type: integer
+    type: object
+  domain.FormulaIngredients:
+    properties:
+      component_type:
+        type: string
+      formula_id:
+        type: string
+      ingredient_id:
+        type: string
+      lead_time_hours:
+        description: 0 = instant
+        type: integer
+      material_id:
+        type: string
+      percentage:
+        type: number
+      product_id:
+        type: string
+      quantity_per_unit:
+        type: number
+      scrap_rate:
+        type: number
+      source:
+        description: '"make" | "buy"'
+        type: string
+      unit:
+        type: string
+    type: object
+  domain.InventoryExpectedArrival:
+    properties:
+      arrivalID:
+        type: string
+      createdAt:
+        type: string
+      expectedArriveAt:
+        type: string
+      materialID:
+        type: string
+      notes:
+        type: string
+      quantity:
+        type: number
+      receivedAt:
+        type: string
+      referenceJobID:
+        type: string
+      status:
+        type: string
+    type: object
+  domain.InventoryMaterials:
+    properties:
+      currentStock:
+        type: number
+      lastUpdated:
+        type: string
+      materialID:
+        type: string
+      materialName:
+        type: string
+      minStock:
+        type: number
+      reorderLevel:
+        type: number
+      status:
+        type: string
+      storageLocation:
+        type: string
+      unit:
+        type: string
+    type: object
+  domain.InventoryReservation:
+    properties:
+      createdAt:
+        type: string
+      jobID:
+        type: string
+      jobStepID:
+        type: string
+      materialID:
+        type: string
+      neededAt:
+        type: string
+      reservationID:
+        type: string
+      reservedQty:
+        type: number
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain.Job:
+    properties:
+      created_at:
+        type: string
+      deadline:
+        type: string
+      deadline_status:
+        $ref: '#/definitions/domain.JobDeadlineStatus'
+      job_id:
+        type: string
+      notes:
+        type: string
+      priority:
+        type: string
+      product_id:
+        type: string
+      quantity_completed:
+        type: integer
+      quantity_total:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  domain.JobDeadlineStatus:
+    properties:
+      is_late:
+        type: boolean
+      late_by:
+        description: 'human-readable: "2 days", "4 hours", "on time"'
+        type: string
+    type: object
+  domain.JobStepScheduleSlots:
+    properties:
+      actual_end:
+        type: string
+      actual_start:
+        type: string
+      allocation_percent:
+        type: number
+      batch_sequence:
+        type: integer
+      buffer_time_minutes:
+        type: integer
+      changeover_time_minutes:
+        type: integer
+      cleaning_time_minutes:
+        type: integer
+      is_parallel:
+        type: boolean
+      job_step_id:
+        type: string
+      machine_id:
+        type: string
+      preparation_time_minutes:
+        type: integer
+      processing_time_minutes:
+        type: integer
+      proposal_id:
+        type: string
+      quantity_planned:
+        type: integer
+      scheduled_end:
+        type: string
+      scheduled_start:
+        type: string
+      slot_id:
+        type: string
+      split_group_id:
+        type: string
+      status:
+        type: string
+    type: object
+  domain.JobSteps:
+    properties:
+      job_id:
+        type: string
+      job_step_id:
+        type: string
+      quantity_completed:
+        type: integer
+      quantity_target:
+        type: integer
+      status:
+        type: string
+      step_id:
+        type: string
+      step_sequence:
+        type: integer
+    type: object
   domain.Machine:
     properties:
       capacityPerHour:
@@ -28,7 +268,599 @@ definitions:
       utilizationRate:
         type: number
     type: object
-  dto.CreateMachineRequest:
+  domain.MachineCapabilities:
+    properties:
+      capabilityID:
+        type: string
+      efficiencyFactor:
+        description: speed modifier for this step
+        type: number
+      machineID:
+        type: string
+      stepID:
+        type: string
+    type: object
+  domain.MachineDowntime:
+    properties:
+      cause:
+        type: string
+      downtimeID:
+        type: string
+      durationMinutes:
+        type: integer
+      endTime:
+        type: string
+      jobStepSlotID:
+        type: string
+      machineID:
+        type: string
+      startTime:
+        type: string
+    type: object
+  domain.MaintenanceRecords:
+    properties:
+      description:
+        type: string
+      endTime:
+        type: string
+      machineID:
+        type: string
+      maintenanceID:
+        type: string
+      maintenanceType:
+        type: string
+      startTime:
+        type: string
+      technician:
+        type: string
+    type: object
+  domain.ProcessStepMaterial:
+    properties:
+      id:
+        type: string
+      materialID:
+        type: string
+      productID:
+        type: string
+      quantityPerUnit:
+        type: number
+      role:
+        description: input | output
+        type: string
+      stepID:
+        type: string
+      unit:
+        type: string
+    type: object
+  domain.ProcessSteps:
+    properties:
+      allow_parallel_execution:
+        type: boolean
+      batch_size:
+        description: 0 = no batch constraint
+        type: integer
+      default_changeover_time:
+        description: minutes
+        type: integer
+      default_cleaning_time:
+        description: minutes
+        type: integer
+      default_preparation_time:
+        description: minutes
+        type: integer
+      default_processing_time:
+        description: minutes
+        type: integer
+      is_batch_process:
+        description: true if step runs in batches
+        type: boolean
+      machine_type_required:
+        type: string
+      max_parallel_machines:
+        type: integer
+      min_batch_size:
+        description: minimum batch when splitting
+        type: integer
+      min_split_qty:
+        type: integer
+      min_wait_minutes:
+        description: e.g. cooling time before next step
+        type: integer
+      notes:
+        type: string
+      predecessor_step_ids:
+        description: JSON array of step_ids; empty = infer from StepSequence
+        type: string
+      process_id:
+        type: string
+      quality_check_required:
+        type: boolean
+      step_id:
+        type: string
+      step_name:
+        type: string
+      step_sequence:
+        type: integer
+      step_type:
+        description: matches reference_step_types.name
+        type: string
+      transfer_batch_size:
+        type: integer
+      transfer_minutes:
+        description: transport time to next step
+        type: integer
+    type: object
+  domain.ProductInventory:
+    properties:
+      availableFrom:
+        type: string
+      inventoryID:
+        type: string
+      lastUpdated:
+        type: string
+      productID:
+        type: string
+      quantityOnHand:
+        type: number
+      quantityReserved:
+        type: number
+      status:
+        type: string
+      storageLocation:
+        type: string
+    type: object
+  domain.ProductProcess:
+    properties:
+      description:
+        type: string
+      effectiveFrom:
+        type: string
+      effectiveTo:
+        type: string
+      isPrimary:
+        description: primary vs alternative routing
+        type: boolean
+      processID:
+        type: string
+      processName:
+        type: string
+      productID:
+        type: string
+      sequence:
+        description: order when multiple (0=primary)
+        type: integer
+      version:
+        type: integer
+    type: object
+  domain.ProductionLogs:
+    properties:
+      downtimeMinutes:
+        description: Gap 7 - downtime during slot for OEE
+        type: integer
+      endTime:
+        type: string
+      operatorNotes:
+        type: string
+      productionID:
+        type: string
+      quantityProduced:
+        type: integer
+      quantityScrap:
+        type: integer
+      slotID:
+        type: string
+      startTime:
+        type: string
+    type: object
+  domain.QualityInspectionRecords:
+    properties:
+      defectCount:
+        type: integer
+      inspectionID:
+        type: string
+      inspectionTime:
+        type: string
+      inspectorName:
+        type: string
+      jobStepID:
+        type: string
+      notes:
+        type: string
+      result:
+        description: pass, fail
+        type: string
+    type: object
+  domain.ReferenceLocation:
+    properties:
+      bay:
+        type: string
+      display:
+        description: computed in app
+        type: string
+      id:
+        type: integer
+      zone:
+        type: string
+    type: object
+  domain.ReferenceMachineType:
+    properties:
+      description:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
+  domain.ReferenceProductType:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
+  domain.ReferenceStepType:
+    properties:
+      default_machine_type:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
+  domain.ReferenceStorageLocation:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      type:
+        description: shelf, rack, cold, hazardous, floor, dock
+        type: string
+    type: object
+  emas_internal_handler_dto.AIApprovalRef:
+    properties:
+      approve_call:
+        $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+      id:
+        type: string
+      reject_call:
+        $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+      risk_summary:
+        type: string
+      side_effect_level:
+        type: string
+      tool_name:
+        type: string
+    type: object
+  emas_internal_handler_dto.AICommandResponse:
+    properties:
+      action:
+        type: string
+      ambiguous:
+        type: boolean
+      bdi_result:
+        $ref: '#/definitions/emas_internal_handler_dto.BDIResult'
+      clarifications:
+        items:
+          type: string
+        type: array
+      confidence:
+        type: number
+      entities:
+        additionalProperties: true
+        type: object
+      executed:
+        type: boolean
+      executed_call:
+        $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+      executed_calls:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+        type: array
+      execution_mode:
+        type: string
+      guidance:
+        items:
+          type: string
+        type: array
+      insights: {}
+      intent:
+        type: string
+      message:
+        type: string
+      pending_approvals:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AIApprovalRef'
+        type: array
+      result_cards:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AIResultCard'
+        type: array
+      sources:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AISourceRef'
+        type: array
+      suggested_calls:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+        type: array
+    type: object
+  emas_internal_handler_dto.AIResultCard:
+    properties:
+      actions:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCall'
+        type: array
+      bullets:
+        items:
+          type: string
+        type: array
+      kind:
+        type: string
+      metrics:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.AIResultMetric'
+        type: array
+      summary:
+        type: string
+      title:
+        type: string
+      tone:
+        type: string
+    type: object
+  emas_internal_handler_dto.AIResultMetric:
+    properties:
+      label:
+        type: string
+      value:
+        type: string
+    type: object
+  emas_internal_handler_dto.AISourceRef:
+    properties:
+      description:
+        type: string
+      kind:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      read_only:
+        type: boolean
+    type: object
+  emas_internal_handler_dto.AISuggestedCall:
+    properties:
+      body:
+        additionalProperties: true
+        type: object
+      method:
+        type: string
+      path:
+        type: string
+      purpose:
+        type: string
+      requires_approval:
+        type: boolean
+      ui:
+        $ref: '#/definitions/emas_internal_handler_dto.AISuggestedCallUI'
+    type: object
+  emas_internal_handler_dto.AISuggestedCallUI:
+    properties:
+      display:
+        description: primary | secondary | hidden_if_result_card_exists
+        type: string
+      priority:
+        description: high | normal | low
+        type: string
+    type: object
+  emas_internal_handler_dto.AddFormulaIngredientRequest:
+    properties:
+      material_id:
+        description: required if product_id not set
+        type: string
+      percentage:
+        type: number
+      product_id:
+        description: required if material_id not set (sub-product)
+        type: string
+      quantity:
+        description: backward compat, maps to quantity_per_unit
+        type: number
+      quantity_per_unit:
+        description: required; qty per 1 unit of parent
+        type: number
+      scrap_rate:
+        description: 0-1
+        type: number
+      unit:
+        type: string
+    type: object
+  emas_internal_handler_dto.AddProcessStepMaterialRequest:
+    properties:
+      material_id:
+        description: required if product_id not set
+        type: string
+      product_id:
+        description: required if material_id not set
+        type: string
+      quantity_per_unit:
+        description: required
+        type: number
+      role:
+        description: '"input" or "output"'
+        type: string
+      unit:
+        type: string
+    type: object
+  emas_internal_handler_dto.ApplyReplenishmentBatchRequest:
+    properties:
+      arrivals:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.ReplenishmentArrivalItem'
+        type: array
+      suggestions:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.ReplenishmentArrivalItem'
+        type: array
+    type: object
+  emas_internal_handler_dto.AssignCapabilityRequest:
+    properties:
+      efficiency_factor:
+        type: number
+      step_id:
+        type: string
+    required:
+    - step_id
+    type: object
+  emas_internal_handler_dto.BDIBeliefs:
+    properties:
+      entities:
+        additionalProperties: true
+        type: object
+      resource:
+        type: string
+    type: object
+  emas_internal_handler_dto.BDIDesire:
+    properties:
+      confidence:
+        type: number
+      intent:
+        type: string
+    type: object
+  emas_internal_handler_dto.BDIExecutableCall:
+    properties:
+      body:
+        additionalProperties: true
+        type: object
+      method:
+        type: string
+      path:
+        type: string
+      purpose:
+        type: string
+      requires_approval:
+        type: boolean
+    type: object
+  emas_internal_handler_dto.BDIIntention:
+    properties:
+      action:
+        type: string
+      executable_calls:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.BDIExecutableCall'
+        type: array
+    type: object
+  emas_internal_handler_dto.BDIResult:
+    properties:
+      beliefs:
+        $ref: '#/definitions/emas_internal_handler_dto.BDIBeliefs'
+      desire:
+        $ref: '#/definitions/emas_internal_handler_dto.BDIDesire'
+      intention:
+        $ref: '#/definitions/emas_internal_handler_dto.BDIIntention'
+    type: object
+  emas_internal_handler_dto.BatchProposalsRequest:
+    properties:
+      include_inventory_actions:
+        type: boolean
+      job_ids:
+        description: explicit job IDs; if empty and Scope set, use scope
+        items:
+          type: string
+        type: array
+      order_by:
+        description: '"edd" | "epo" | "fifo" (default: "epo")'
+        type: string
+      scope:
+        description: '"all_unscheduled" = all jobs with status planned/scheduled and
+          no active slots'
+        type: string
+    type: object
+  emas_internal_handler_dto.ConsumeMaterialRequest:
+    properties:
+      material_id:
+        type: string
+      quantity:
+        type: number
+      reference_job_id:
+        type: string
+      slot_id:
+        type: string
+    required:
+    - material_id
+    - quantity
+    type: object
+  emas_internal_handler_dto.CreateFormulaRequest:
+    properties:
+      formula_id:
+        type: string
+      formula_name:
+        type: string
+      instructions:
+        type: string
+      safety_notes:
+        type: string
+      version:
+        type: integer
+    required:
+    - formula_id
+    - formula_name
+    type: object
+  emas_internal_handler_dto.CreateInventoryReservationRequest:
+    properties:
+      job_id:
+        type: string
+      job_step_id:
+        type: string
+      material_id:
+        type: string
+      needed_at:
+        type: string
+      reserved_qty:
+        type: number
+    required:
+    - material_id
+    - reserved_qty
+    type: object
+  emas_internal_handler_dto.CreateJobRequest:
+    properties:
+      deadline:
+        description: RFC3339
+        type: string
+      notes:
+        type: string
+      priority:
+        type: string
+      product_id:
+        type: string
+      quantity_total:
+        type: integer
+      slots:
+        description: optional split slots
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateSlotRequest'
+        type: array
+    required:
+    - product_id
+    - quantity_total
+    type: object
+  emas_internal_handler_dto.CreateJobStepsRequest:
+    properties:
+      job_id:
+        type: string
+    required:
+    - job_id
+    type: object
+  emas_internal_handler_dto.CreateLocationRequest:
+    properties:
+      bay:
+        type: string
+      zone:
+        type: string
+    required:
+    - zone
+    type: object
+  emas_internal_handler_dto.CreateMachineRequest:
     properties:
       capacity_per_hour:
         type: integer
@@ -53,7 +885,292 @@ definitions:
     - machine_name
     - machine_type
     type: object
-  dto.Response:
+  emas_internal_handler_dto.CreateMachineTypeRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  emas_internal_handler_dto.CreateMaterialRequest:
+    properties:
+      current_stock:
+        type: number
+      material_id:
+        type: string
+      material_name:
+        type: string
+      min_stock:
+        type: number
+      reorder_level:
+        type: number
+      storage_location:
+        type: string
+      unit:
+        type: string
+    required:
+    - material_id
+    - material_name
+    type: object
+  emas_internal_handler_dto.CreateProcessRequest:
+    properties:
+      description:
+        type: string
+      process_id:
+        type: string
+      process_name:
+        type: string
+      product_id:
+        type: string
+      version:
+        type: integer
+    required:
+    - process_id
+    - process_name
+    - product_id
+    type: object
+  emas_internal_handler_dto.CreateProcessStepRequest:
+    properties:
+      allow_parallel_execution:
+        type: boolean
+      default_changeover_time:
+        type: integer
+      default_cleaning_time:
+        type: integer
+      default_preparation_time:
+        type: integer
+      default_processing_time:
+        type: integer
+      machine_type_required:
+        type: string
+      max_parallel_machines:
+        type: integer
+      min_split_qty:
+        type: integer
+      notes:
+        type: string
+      quality_check_required:
+        type: boolean
+      step_id:
+        type: string
+      step_name:
+        type: string
+      step_sequence:
+        type: integer
+      step_type:
+        type: string
+      transfer_batch_size:
+        type: integer
+    required:
+    - step_name
+    type: object
+  emas_internal_handler_dto.CreateProductInventoryRequest:
+    properties:
+      available_from:
+        type: string
+      product_id:
+        type: string
+      quantity_on_hand:
+        minimum: 0
+        type: number
+      quantity_reserved:
+        type: number
+      status:
+        type: string
+      storage_location:
+        type: string
+    required:
+    - product_id
+    - quantity_on_hand
+    type: object
+  emas_internal_handler_dto.CreateProductTypeRequest:
+    properties:
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  emas_internal_handler_dto.CreateSlotRequest:
+    properties:
+      allocation_percent:
+        type: number
+      batch_sequence:
+        type: integer
+      buffer_mins:
+        type: integer
+      cleaning_mins:
+        type: integer
+      duration_mins:
+        type: integer
+      is_parallel:
+        type: boolean
+      job_step_id:
+        description: optional, for split
+        type: string
+      machine_id:
+        type: string
+      prep_mins:
+        type: integer
+      processing_mins:
+        type: integer
+      proposal_id:
+        type: string
+      quantity:
+        type: integer
+      split_group_id:
+        type: string
+      start_time:
+        description: RFC3339
+        type: string
+    required:
+    - duration_mins
+    - machine_id
+    - quantity
+    - start_time
+    type: object
+  emas_internal_handler_dto.CreateStepTypeRequest:
+    properties:
+      default_machine_type:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  emas_internal_handler_dto.CreateStorageLocationRequest:
+    properties:
+      name:
+        type: string
+      type:
+        type: string
+    required:
+    - name
+    type: object
+  emas_internal_handler_dto.InventorySnapshotInput:
+    properties:
+      computed_at:
+        type: string
+      material_id:
+        type: string
+      version:
+        type: string
+    required:
+    - material_id
+    - version
+    type: object
+  emas_internal_handler_dto.LogProductionRequest:
+    properties:
+      downtime_minutes:
+        description: Gap 7 - downtime during slot for OEE
+        type: integer
+      end_time:
+        type: string
+      operator_notes:
+        type: string
+      quantity_produced:
+        type: integer
+      quantity_scrap:
+        type: integer
+      slot_id:
+        type: string
+      start_time:
+        type: string
+    required:
+    - slot_id
+    type: object
+  emas_internal_handler_dto.ReceiveMaterialRequest:
+    properties:
+      material_id:
+        type: string
+      quantity:
+        type: number
+    required:
+    - material_id
+    - quantity
+    type: object
+  emas_internal_handler_dto.RecordDowntimeRequest:
+    properties:
+      cause:
+        type: string
+      end_time:
+        type: string
+      job_step_slot_id:
+        type: string
+      machine_id:
+        type: string
+      start_time:
+        type: string
+    required:
+    - machine_id
+    type: object
+  emas_internal_handler_dto.RecordInspectionRequest:
+    properties:
+      defect_count:
+        type: integer
+      inspector_name:
+        type: string
+      job_step_id:
+        type: string
+      notes:
+        type: string
+      result:
+        description: pass, fail
+        type: string
+    required:
+    - job_step_id
+    type: object
+  emas_internal_handler_dto.RecordMaintenanceRequest:
+    properties:
+      description:
+        type: string
+      end_time:
+        type: string
+      machine_id:
+        type: string
+      maintenance_type:
+        type: string
+      start_time:
+        type: string
+      technician:
+        type: string
+    required:
+    - machine_id
+    type: object
+  emas_internal_handler_dto.ReplenishmentArrivalItem:
+    properties:
+      arrive_at:
+        type: string
+      inventory_snapshot:
+        $ref: '#/definitions/emas_internal_handler_dto.InventorySnapshotInput'
+      material_id:
+        type: string
+      notes:
+        type: string
+      option_type:
+        description: 'OptionType: omit or "replenish" (default) = material expected
+          arrival; "schedule_production" = planned subproduct stock (product_id in
+          material_id).'
+        type: string
+      quantity:
+        type: number
+    required:
+    - arrive_at
+    - material_id
+    - quantity
+    type: object
+  emas_internal_handler_dto.RescheduleAllRequest:
+    properties:
+      dry_run:
+        description: 'if true: preview only, no cancel/delete/persist; returns proposals
+          without side effects'
+        type: boolean
+      order_by:
+        description: '"edd" | "epo" | "fifo" | "readiness" (default: "epo")'
+        type: string
+    type: object
+  emas_internal_handler_dto.Response:
     properties:
       data: {}
       error:
@@ -61,7 +1178,44 @@ definitions:
       success:
         type: boolean
     type: object
-  dto.UpdateMachineRequest:
+  emas_internal_handler_dto.ScheduleExpectedArrivalRequest:
+    properties:
+      expected_arrive_at:
+        type: string
+      material_id:
+        type: string
+      notes:
+        type: string
+      quantity:
+        type: number
+    required:
+    - expected_arrive_at
+    - material_id
+    - quantity
+    type: object
+  emas_internal_handler_dto.SchedulingEventRequest:
+    properties:
+      payload:
+        type: string
+      type:
+        type: string
+    required:
+    - payload
+    - type
+    type: object
+  emas_internal_handler_dto.SplitStepRequest:
+    properties:
+      job_step_id:
+        type: string
+      splits:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateSlotRequest'
+        type: array
+    required:
+    - job_step_id
+    - splits
+    type: object
+  emas_internal_handler_dto.UpdateMachineRequest:
     properties:
       capacity_per_hour:
         type: integer
@@ -82,6 +1236,256 @@ definitions:
       status:
         type: string
     type: object
+  emas_internal_handler_dto.UpdateMachineTypeRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  emas_internal_handler_dto.UpdateSlotRequest:
+    properties:
+      actual_end:
+        type: string
+      actual_start:
+        description: Production / execution (Gap 2 - Start, Pause, Resume, Complete)
+        type: string
+      allocation_percent:
+        type: number
+      batch_sequence:
+        type: integer
+      is_parallel:
+        type: boolean
+      machine_id:
+        type: string
+      quantity_planned:
+        type: integer
+      scheduled_end:
+        type: string
+      scheduled_start:
+        type: string
+      status:
+        type: string
+    type: object
+  emas_internal_handler_dto.VerifyOverlapsProposal:
+    properties:
+      job_id:
+        type: string
+      proposal_id:
+        type: string
+      proposed_slots:
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.VerifyOverlapsSlot'
+        type: array
+    type: object
+  emas_internal_handler_dto.VerifyOverlapsRequest:
+    properties:
+      job_ids:
+        description: optional when scope=applied; if empty, check all jobs with active
+          slots
+        items:
+          type: string
+        type: array
+      proposal_ids:
+        description: fetch proposals from DB (scope=proposals)
+        items:
+          type: string
+        type: array
+      proposals:
+        description: or pass inline (e.g. data.proposals from batch-proposals)
+        items:
+          $ref: '#/definitions/emas_internal_handler_dto.VerifyOverlapsProposal'
+        type: array
+      scope:
+        description: '"proposals" (default) | "applied" - verify proposals vs applied
+          slots'
+        type: string
+    type: object
+  emas_internal_handler_dto.VerifyOverlapsSlot:
+    properties:
+      job_step_id:
+        type: string
+      machine_id:
+        type: string
+      scheduled_end:
+        type: string
+      scheduled_start:
+        type: string
+    type: object
+  handler.AICommandRequest:
+    properties:
+      debug:
+        type: boolean
+      execute_readonly:
+        type: boolean
+      query:
+        type: string
+    required:
+    - query
+    type: object
+  handler.AlertItem:
+    properties:
+      machine_id:
+        type: string
+      time:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  handler.KPIsResponse:
+    properties:
+      downtime_change:
+        type: number
+      downtime_hrs:
+        type: number
+      oee_change:
+        type: number
+      oee_pct:
+        type: number
+      production_change:
+        type: number
+      production_units:
+        type: integer
+      utilization_change:
+        type: number
+      utilization_pct:
+        type: number
+    type: object
+  handler.SchedulingSettingsResponse:
+    properties:
+      auto_reschedule_on_event:
+        type: boolean
+      deviation_penalty_weight:
+        type: number
+      lateness_weight:
+        type: number
+      lock_in_window_minutes:
+        type: integer
+      objective:
+        type: string
+      public_holidays:
+        items:
+          type: string
+        type: array
+      setup_weight:
+        type: number
+      slack_weight:
+        type: number
+      split_strategy:
+        type: string
+      updated_at:
+        type: string
+      work_days:
+        type: string
+      work_end_time:
+        type: string
+      work_start_time:
+        type: string
+    type: object
+  handler.SettingsResponse:
+    properties:
+      ai_enabled:
+        type: boolean
+      integrations:
+        items:
+          type: string
+        type: array
+      language:
+        type: string
+      notifications:
+        type: boolean
+      theme:
+        type: string
+    type: object
+  handler.UpdateSchedulingSettingsRequest:
+    properties:
+      auto_reschedule_on_event:
+        type: boolean
+      deviation_penalty_weight:
+        type: number
+      lateness_weight:
+        type: number
+      lock_in_window_minutes:
+        type: integer
+      objective:
+        type: string
+      public_holidays:
+        items:
+          type: string
+        type: array
+      setup_weight:
+        type: number
+      slack_weight:
+        type: number
+      split_strategy:
+        type: string
+      work_days:
+        type: string
+      work_end_time:
+        type: string
+      work_start_time:
+        type: string
+    type: object
+  repository.IngredientWithNames:
+    properties:
+      component_type:
+        type: string
+      formula_id:
+        type: string
+      ingredient_id:
+        type: string
+      material_id:
+        type: string
+      material_name:
+        type: string
+      product_id:
+        type: string
+      product_name:
+        type: string
+      quantity_per_unit:
+        type: number
+      scrap_rate:
+        type: number
+      unit:
+        type: string
+    type: object
+  service.AIRecommendation:
+    properties:
+      action:
+        type: string
+      icon:
+        type: string
+      severity:
+        type: string
+      title:
+        type: string
+    type: object
+  service.ConfidenceSummary:
+    properties:
+      confidence_pct:
+        type: number
+      last_trained:
+        type: string
+      model:
+        type: string
+    type: object
+  service.HighRiskJobPrediction:
+    properties:
+      delay_minutes:
+        type: integer
+      issue:
+        type: string
+      job_id:
+        type: string
+      machine_name:
+        type: string
+      risk_level:
+        type: string
+      risk_score:
+        type: number
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -89,6 +1493,1760 @@ info:
   title: eMas Factory API
   version: "1.0"
 paths:
+  /ai/command:
+    post:
+      consumes:
+      - application/json
+      description: Parse a command
+      parameters:
+      - description: AI Command Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.AICommandRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/emas_internal_handler_dto.AICommandResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Parse a command
+      tags:
+      - ai
+  /ai/metrics:
+    get:
+      consumes:
+      - application/json
+      description: Metrics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Metrics
+      tags:
+      - ai scheduling
+  /ai/scheduling/apply-replenishment-batch:
+    post:
+      consumes:
+      - application/json
+      description: Apply replenishment batch
+      parameters:
+      - description: Apply Replenishment Batch Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.ApplyReplenishmentBatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Apply replenishment batch
+      tags:
+      - ai scheduling
+  /ai/scheduling/batch-proposals:
+    post:
+      consumes:
+      - application/json
+      description: Generate batch proposals
+      parameters:
+      - description: Batch Proposals Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.BatchProposalsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Generate batch proposals
+      tags:
+      - ai scheduling
+  /ai/scheduling/bottleneck-forecast:
+    get:
+      consumes:
+      - application/json
+      description: Bottleneck forecast
+      parameters:
+      - description: Days ahead
+        in: query
+        name: days_ahead
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Bottleneck forecast
+      tags:
+      - ai scheduling
+  /ai/scheduling/job-steps/{id}/machine-ranking:
+    get:
+      consumes:
+      - application/json
+      description: Machine ranking
+      parameters:
+      - description: Job Step ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Machine ranking
+      tags:
+      - ai scheduling
+  /ai/scheduling/job-steps/{id}/split-suggestion:
+    get:
+      consumes:
+      - application/json
+      description: Split suggestion
+      parameters:
+      - description: Job Step ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Split suggestion
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/apply-proposal:
+    post:
+      consumes:
+      - application/json
+      description: Apply a proposal
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Apply a proposal
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/apply-replenishment:
+    post:
+      consumes:
+      - application/json
+      description: Apply replenishment
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Apply replenishment
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/assist:
+    get:
+      consumes:
+      - application/json
+      description: Assist a job
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Assist a job
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/delay-risk:
+    get:
+      consumes:
+      - application/json
+      description: Delay risk
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delay risk
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/explanation:
+    get:
+      consumes:
+      - application/json
+      description: Explanation
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Explanation
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/proposal:
+    get:
+      consumes:
+      - application/json
+      description: Generate a proposal
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Generate a proposal
+      tags:
+      - ai scheduling
+    post:
+      consumes:
+      - application/json
+      description: Generate a proposal
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Generate a proposal
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/proposals:
+    get:
+      consumes:
+      - application/json
+      description: List proposals
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List proposals
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/replenish-and-replan:
+    post:
+      consumes:
+      - application/json
+      description: Replenish and replan
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Replenish and replan
+      tags:
+      - ai scheduling
+  /ai/scheduling/jobs/{id}/shortage-analysis:
+    get:
+      consumes:
+      - application/json
+      description: Shortage analysis
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Shortage analysis
+      tags:
+      - ai scheduling
+  /ai/scheduling/proposals/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get a proposal
+      parameters:
+      - description: Proposal ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a proposal
+      tags:
+      - ai scheduling
+  /ai/scheduling/proposals/{id}/apply:
+    post:
+      consumes:
+      - application/json
+      description: Apply a proposal by ID
+      parameters:
+      - description: Proposal ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Apply a proposal by ID
+      tags:
+      - ai scheduling
+  /ai/scheduling/proposals/{id}/approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve a proposal
+      parameters:
+      - description: Proposal ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Approve a proposal
+      tags:
+      - ai scheduling
+  /ai/scheduling/proposals/{id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a proposal
+      parameters:
+      - description: Proposal ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Reject a proposal
+      tags:
+      - ai scheduling
+  /ai/scheduling/reschedule-all:
+    post:
+      consumes:
+      - application/json
+      description: Reschedule all
+      parameters:
+      - description: Reschedule All Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.RescheduleAllRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Reschedule all
+      tags:
+      - ai scheduling
+  /ai/scheduling/verify-overlaps:
+    post:
+      consumes:
+      - application/json
+      description: Verify overlaps
+      parameters:
+      - description: Verify Overlaps Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.VerifyOverlapsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Verify overlaps
+      tags:
+      - ai scheduling
+  /chatbot/approval/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get an approval by ID
+      parameters:
+      - description: Approval ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ChatbotApproval'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get an approval by ID
+      tags:
+      - chatbot approval
+  /chatbot/approval/{id}/approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve an approval
+      parameters:
+      - description: Approval ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Approve an approval
+      tags:
+      - chatbot approval
+  /chatbot/approval/{id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject an approval
+      parameters:
+      - description: Approval ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ChatbotApproval'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Reject an approval
+      tags:
+      - chatbot approval
+  /chatbot/approval/pending:
+    get:
+      consumes:
+      - application/json
+      description: List pending approvals
+      parameters:
+      - description: Chat ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ChatbotApproval'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List pending approvals
+      tags:
+      - chatbot approval
+  /dashboard/alerts:
+    get:
+      consumes:
+      - application/json
+      description: Get alerts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/handler.AlertItem'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get alerts
+      tags:
+      - dashboard
+  /dashboard/kpis:
+    get:
+      consumes:
+      - application/json
+      description: Get KPIs
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/handler.KPIsResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get KPIs
+      tags:
+      - dashboard
+  /formula:
+    get:
+      consumes:
+      - application/json
+      description: List all formulas
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.Formula'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List all formulas
+      tags:
+      - formula
+    post:
+      consumes:
+      - application/json
+      description: Create a formula
+      parameters:
+      - description: Create Formula Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateFormulaRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Formula'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a formula
+      tags:
+      - formula
+  /formula/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a formula
+      parameters:
+      - description: Formula ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a formula
+      tags:
+      - formula
+    get:
+      consumes:
+      - application/json
+      description: Get a formula by ID
+      parameters:
+      - description: Formula ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Formula'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a formula by ID
+      tags:
+      - formula
+  /formula/{id}/ingredients:
+    get:
+      consumes:
+      - application/json
+      description: List ingredients for a formula
+      parameters:
+      - description: Formula ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/repository.IngredientWithNames'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List ingredients for a formula
+      tags:
+      - formula
+    post:
+      consumes:
+      - application/json
+      description: Add an ingredient to a formula
+      parameters:
+      - description: Formula ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Add Formula Ingredient Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.AddFormulaIngredientRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.FormulaIngredients'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Add an ingredient to a formula
+      tags:
+      - formula
+  /inventory/consume:
+    post:
+      consumes:
+      - application/json
+      description: Consume a material
+      parameters:
+      - description: Consume Material Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.ConsumeMaterialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Consume a material
+      tags:
+      - inventory
+  /inventory/expected-arrivals:
+    get:
+      consumes:
+      - application/json
+      description: List expected arrivals
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.InventoryExpectedArrival'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List expected arrivals
+      tags:
+      - inventory
+    post:
+      consumes:
+      - application/json
+      description: Schedule an expected arrival
+      parameters:
+      - description: Schedule Expected Arrival Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.ScheduleExpectedArrivalRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.InventoryExpectedArrival'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Schedule an expected arrival
+      tags:
+      - inventory
+  /inventory/materials:
+    get:
+      consumes:
+      - application/json
+      description: List materials
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.InventoryMaterials'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List materials
+      tags:
+      - inventory
+    post:
+      consumes:
+      - application/json
+      description: Create a material
+      parameters:
+      - description: Create Material Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateMaterialRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.InventoryMaterials'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a material
+      tags:
+      - inventory
+  /inventory/materials/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get a material by ID
+      parameters:
+      - description: Material ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.InventoryMaterials'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a material by ID
+      tags:
+      - inventory
+  /inventory/product-stock:
+    get:
+      consumes:
+      - application/json
+      description: List product inventory
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ProductInventory'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List product inventory
+      tags:
+      - inventory
+    post:
+      consumes:
+      - application/json
+      description: Create a product inventory
+      parameters:
+      - description: Create Product Inventory Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateProductInventoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProductInventory'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a product inventory
+      tags:
+      - inventory
+  /inventory/receive:
+    post:
+      consumes:
+      - application/json
+      description: Receive a material
+      parameters:
+      - description: Receive Material Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.ReceiveMaterialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Receive a material
+      tags:
+      - inventory
+  /inventory/reservations:
+    post:
+      consumes:
+      - application/json
+      description: Create a reservation
+      parameters:
+      - description: Create Reservation Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateInventoryReservationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.InventoryReservation'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a reservation
+      tags:
+      - inventory
+  /job-steps:
+    post:
+      consumes:
+      - application/json
+      description: Create job steps from routing
+      parameters:
+      - description: Create Job Steps Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateJobStepsRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.JobSteps'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create job steps from routing
+      tags:
+      - job slot
+  /job-steps/{id}/slots:
+    get:
+      consumes:
+      - application/json
+      description: List slots by job step ID
+      parameters:
+      - description: Job Step ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.JobStepScheduleSlots'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List slots by job step ID
+      tags:
+      - job slot
+  /job-steps/split:
+    post:
+      consumes:
+      - application/json
+      description: Split a step
+      parameters:
+      - description: Split Step Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.SplitStepRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.JobStepScheduleSlots'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Split a step
+      tags:
+      - job slot
+  /jobs:
+    post:
+      consumes:
+      - application/json
+      description: Create a job
+      parameters:
+      - description: Create Job Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateJobRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Job'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a job
+      tags:
+      - job
+  /jobs/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get a job by ID
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.Job'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a job by ID
+      tags:
+      - job
+  /jobs/{id}/slots:
+    get:
+      consumes:
+      - application/json
+      description: List slots by job ID
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.JobStepScheduleSlots'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List slots by job ID
+      tags:
+      - job slot
   /machines:
     get:
       consumes:
@@ -101,7 +3259,7 @@ paths:
           description: OK
           schema:
             allOf:
-            - $ref: '#/definitions/dto.Response'
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
             - properties:
                 data:
                   items:
@@ -111,7 +3269,7 @@ paths:
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
       summary: List all machines
       tags:
       - machines
@@ -125,7 +3283,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/dto.CreateMachineRequest'
+          $ref: '#/definitions/emas_internal_handler_dto.CreateMachineRequest'
       produces:
       - application/json
       responses:
@@ -133,7 +3291,7 @@ paths:
           description: Created
           schema:
             allOf:
-            - $ref: '#/definitions/dto.Response'
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
             - properties:
                 data:
                   $ref: '#/definitions/domain.Machine'
@@ -141,11 +3299,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
       summary: Create a machine
       tags:
       - machines
@@ -167,7 +3325,7 @@ paths:
           description: OK
           schema:
             allOf:
-            - $ref: '#/definitions/dto.Response'
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
             - properties:
                 data:
                   $ref: '#/definitions/domain.Machine'
@@ -175,7 +3333,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
       summary: Get machine by ID
       tags:
       - machines
@@ -194,7 +3352,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/dto.UpdateMachineRequest'
+          $ref: '#/definitions/emas_internal_handler_dto.UpdateMachineRequest'
       produces:
       - application/json
       responses:
@@ -202,7 +3360,7 @@ paths:
           description: OK
           schema:
             allOf:
-            - $ref: '#/definitions/dto.Response'
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
             - properties:
                 data:
                   $ref: '#/definitions/domain.Machine'
@@ -210,12 +3368,1949 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/dto.Response'
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
       summary: Update a machine
       tags:
       - machines
+  /machines/{id}/capabilities:
+    post:
+      consumes:
+      - application/json
+      description: Assign a capability to a machine
+      parameters:
+      - description: Machine ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Assign Capability Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.AssignCapabilityRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.MachineCapabilities'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Assign a capability to a machine
+      tags:
+      - machines
+  /machines/downtime:
+    post:
+      consumes:
+      - application/json
+      description: Record downtime
+      parameters:
+      - description: Record Downtime Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.RecordDowntimeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.MachineDowntime'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Record downtime
+      tags:
+      - machines
+  /machines/maintenance-alerts:
+    get:
+      consumes:
+      - application/json
+      description: Get maintenance alerts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.Machine'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get maintenance alerts
+      tags:
+      - machines
+  /machines/reroute-recommendations:
+    get:
+      consumes:
+      - application/json
+      description: Get reroute recommendations
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties:
+                    items:
+                      type: string
+                    type: array
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get reroute recommendations
+      tags:
+      - machines
+  /machines/utilization:
+    get:
+      consumes:
+      - application/json
+      description: Get utilization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get utilization
+      tags:
+      - machines
+  /maintenance:
+    post:
+      consumes:
+      - application/json
+      description: Record maintenance
+      parameters:
+      - description: Record Maintenance Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.RecordMaintenanceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.MaintenanceRecords'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Record maintenance
+      tags:
+      - maintenance
+  /predictive/confidence:
+    get:
+      consumes:
+      - application/json
+      description: Confidence
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/service.ConfidenceSummary'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Confidence
+      tags:
+      - predictive
+  /predictive/forecast:
+    get:
+      consumes:
+      - application/json
+      description: Forecast
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Forecast
+      tags:
+      - predictive
+  /predictive/high-risk-jobs:
+    get:
+      consumes:
+      - application/json
+      description: List high-risk jobs
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/service.HighRiskJobPrediction'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List high-risk jobs
+      tags:
+      - predictive
+  /predictive/recommendations:
+    get:
+      consumes:
+      - application/json
+      description: List recommendations
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/service.AIRecommendation'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List recommendations
+      tags:
+      - predictive
+  /process-steps/{step_id}/materials:
+    get:
+      consumes:
+      - application/json
+      description: List materials for a step
+      parameters:
+      - description: Step ID
+        in: path
+        name: step_id
+        required: true
+        type: string
+      - description: Role
+        in: query
+        name: role
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ProcessStepMaterial'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List materials for a step
+      tags:
+      - process-step
+    post:
+      consumes:
+      - application/json
+      description: Add a material to a step
+      parameters:
+      - description: Step ID
+        in: path
+        name: step_id
+        required: true
+        type: string
+      - description: Add Process Step Material Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.AddProcessStepMaterialRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProcessStepMaterial'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Add a material to a step
+      tags:
+      - process-step
+  /process-steps/{step_id}/materials/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a material from a step
+      parameters:
+      - description: Step ID
+        in: path
+        name: step_id
+        required: true
+        type: string
+      - description: Material ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a material from a step
+      tags:
+      - process-step
+  /processes:
+    get:
+      consumes:
+      - application/json
+      description: List processes
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ProductProcess'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List processes
+      tags:
+      - process
+    post:
+      consumes:
+      - application/json
+      description: Create a process
+      parameters:
+      - description: Create Process Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateProcessRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProductProcess'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a process
+      tags:
+      - process
+  /processes/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a process
+      tags:
+      - process
+    get:
+      consumes:
+      - application/json
+      description: Get a process by ID
+      parameters:
+      - description: Process ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProductProcess'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a process by ID
+      tags:
+      - process
+  /processes/{id}/steps:
+    get:
+      consumes:
+      - application/json
+      description: List steps by process ID
+      parameters:
+      - description: Process ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ProcessSteps'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List steps by process ID
+      tags:
+      - process
+    post:
+      consumes:
+      - application/json
+      description: Add a step to a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Create Process Step Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateProcessStepRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProcessSteps'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Add a step to a process
+      tags:
+      - process
+  /processes/product/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get a process by product ID
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProductProcess'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a process by product ID
+      tags:
+      - process
+  /production-log:
+    post:
+      consumes:
+      - application/json
+      description: Log production
+      parameters:
+      - description: Log Production Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.LogProductionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ProductionLogs'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Log production
+      tags:
+      - production-log
+  /quality/inspections:
+    post:
+      consumes:
+      - application/json
+      description: Record an inspection
+      parameters:
+      - description: Record Inspection Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.RecordInspectionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.QualityInspectionRecords'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Record an inspection
+      tags:
+      - quality
+  /reference/locations:
+    get:
+      consumes:
+      - application/json
+      description: List locations
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ReferenceLocation'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List locations
+      tags:
+      - reference
+    post:
+      consumes:
+      - application/json
+      description: Create a location
+      parameters:
+      - description: Create Location Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateLocationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceLocation'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a location
+      tags:
+      - reference
+  /reference/locations/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a location
+      parameters:
+      - description: Location ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a location
+      tags:
+      - reference
+  /reference/machine-types:
+    get:
+      consumes:
+      - application/json
+      description: List machine types
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ReferenceMachineType'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List machine types
+      tags:
+      - reference
+    post:
+      consumes:
+      - application/json
+      description: Create a machine type
+      parameters:
+      - description: Create Machine Type Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateMachineTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceMachineType'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a machine type
+      tags:
+      - reference
+  /reference/machine-types/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a machine type
+      parameters:
+      - description: Machine Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a machine type
+      tags:
+      - reference
+    put:
+      consumes:
+      - application/json
+      description: Update a machine type
+      parameters:
+      - description: Machine Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update Machine Type Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.UpdateMachineTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceMachineType'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Update a machine type
+      tags:
+      - reference
+  /reference/product-types:
+    get:
+      consumes:
+      - application/json
+      description: List product types
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ReferenceProductType'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List product types
+      tags:
+      - reference
+    post:
+      consumes:
+      - application/json
+      description: Create a product type
+      parameters:
+      - description: Create Product Type Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateProductTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceProductType'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a product type
+      tags:
+      - reference
+  /reference/product-types/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a product type
+      parameters:
+      - description: Product Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a product type
+      tags:
+      - reference
+  /reference/step-types:
+    post:
+      consumes:
+      - application/json
+      description: Create a step type
+      parameters:
+      - description: Create Step Type Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateStepTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceStepType'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a step type
+      tags:
+      - reference
+  /reference/step-types/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a step type
+      parameters:
+      - description: Step Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a step type
+      tags:
+      - reference
+  /reference/storage-locations:
+    get:
+      consumes:
+      - application/json
+      description: List storage locations
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/domain.ReferenceStorageLocation'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: List storage locations
+      tags:
+      - reference
+    post:
+      consumes:
+      - application/json
+      description: Create a storage location
+      parameters:
+      - description: Create Storage Location Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.CreateStorageLocationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.ReferenceStorageLocation'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Create a storage location
+      tags:
+      - reference
+  /reference/storage-locations/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a storage location
+      parameters:
+      - description: Storage Location ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Delete a storage location
+      tags:
+      - reference
+  /reports/bottleneck-forecast:
+    get:
+      consumes:
+      - application/json
+      description: Bottleneck forecast
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Bottleneck forecast
+      tags:
+      - reports
+  /reports/inventory-trends:
+    get:
+      consumes:
+      - application/json
+      description: Inventory trends
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Inventory trends
+      tags:
+      - reports
+  /reports/job-completion:
+    get:
+      consumes:
+      - application/json
+      description: Job completion
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Job completion
+      tags:
+      - reports
+  /reports/machine-utilization:
+    get:
+      consumes:
+      - application/json
+      description: Machine utilization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Machine utilization
+      tags:
+      - reports
+  /reports/maintenance-efficiency:
+    get:
+      consumes:
+      - application/json
+      description: Maintenance efficiency
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Maintenance efficiency
+      tags:
+      - reports
+  /reports/oee-trends:
+    get:
+      consumes:
+      - application/json
+      description: OEE trends
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: OEE trends
+      tags:
+      - reports
+  /reports/parse-date-range:
+    get:
+      consumes:
+      - application/json
+      description: Parse date range
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  type: string
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Parse date range
+      tags:
+      - reports
+  /reports/production-output-per-slot:
+    get:
+      consumes:
+      - application/json
+      description: Production output per slot
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Production output per slot
+      tags:
+      - reports
+  /reports/quality-trends:
+    get:
+      consumes:
+      - application/json
+      description: Quality trends
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Quality trends
+      tags:
+      - reports
+  /scheduling/backfill-training-dataset:
+    get:
+      consumes:
+      - application/json
+      description: Backfill training dataset
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Backfill training dataset
+      tags:
+      - scheduling
+  /scheduling/candidate-machines:
+    get:
+      consumes:
+      - application/json
+      description: Candidate machines
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Candidate machines
+      tags:
+      - scheduling
+  /scheduling/estimate-job-completion:
+    get:
+      consumes:
+      - application/json
+      description: Estimate job completion
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Estimate job completion
+      tags:
+      - scheduling
+  /scheduling/events:
+    post:
+      consumes:
+      - application/json
+      description: Emit scheduling event
+      parameters:
+      - description: Scheduling Event Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.SchedulingEventRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Emit scheduling event
+      tags:
+      - ai scheduling
+  /scheduling/explosion:
+    get:
+      consumes:
+      - application/json
+      description: Explode demand
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Explode demand
+      tags:
+      - scheduling
+  /scheduling/is-time-before:
+    get:
+      consumes:
+      - application/json
+      description: Is time before
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  type: boolean
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Is time before
+      tags:
+      - scheduling
+  /scheduling/is-valid-iso-date:
+    get:
+      consumes:
+      - application/json
+      description: Is valid ISO date
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  type: boolean
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Is valid ISO date
+      tags:
+      - scheduling
+  /scheduling/readiness:
+    get:
+      consumes:
+      - application/json
+      description: Check readiness
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Check readiness
+      tags:
+      - scheduling
+  /scheduling/refresh-work-calendars:
+    get:
+      consumes:
+      - application/json
+      description: Refresh work calendars
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Refresh work calendars
+      tags:
+      - scheduling
+  /scheduling/settings:
+    put:
+      consumes:
+      - application/json
+      description: Update scheduling settings
+      parameters:
+      - description: Update Scheduling Settings Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateSchedulingSettingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/handler.SchedulingSettingsResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Update scheduling settings
+      tags:
+      - scheduling
+  /scheduling/solver-preview:
+    get:
+      consumes:
+      - application/json
+      description: Solver preview
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Solver preview
+      tags:
+      - scheduling
+  /scheduling/training-dataset:
+    get:
+      consumes:
+      - application/json
+      description: Export training dataset
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Export training dataset
+      tags:
+      - scheduling
+  /scheduling/training-dataset-stats:
+    get:
+      consumes:
+      - application/json
+      description: Training dataset stats
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Training dataset stats
+      tags:
+      - scheduling
+  /scheduling/validate-slot:
+    post:
+      consumes:
+      - application/json
+      description: Validate slot
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Validate slot
+      tags:
+      - scheduling
+  /scheduling/validate-work-days:
+    get:
+      consumes:
+      - application/json
+      description: Validate work days
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data: {}
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Validate work days
+      tags:
+      - scheduling
+  /settings/get:
+    get:
+      consumes:
+      - application/json
+      description: Get settings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/handler.SettingsResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get settings
+      tags:
+      - settings
+  /settings/update:
+    put:
+      consumes:
+      - application/json
+      description: Update settings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/handler.SettingsResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Update settings
+      tags:
+      - settings
+  /slots/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Get a slot by ID
+      parameters:
+      - description: Slot ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.JobStepScheduleSlots'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Get a slot by ID
+      tags:
+      - job slot
+    put:
+      consumes:
+      - application/json
+      description: Update a slot
+      parameters:
+      - description: Slot ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update Slot Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/emas_internal_handler_dto.UpdateSlotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/emas_internal_handler_dto.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/domain.JobStepScheduleSlots'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/emas_internal_handler_dto.Response'
+      summary: Update a slot
+      tags:
+      - job slot
 swagger: "2.0"

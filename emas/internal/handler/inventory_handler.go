@@ -26,7 +26,7 @@ func NewInventoryHandler(inventoryService *service.InventoryService) *InventoryH
 // @Accept json
 // @Produce json
 // @Param request body dto.CreateMaterialRequest true "Create Material Request"
-// @Success 201 {object} dto.Response{data=domain.Material}
+// @Success 201 {object} dto.Response{data=domain.InventoryMaterials}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /inventory/materials [post]
@@ -96,7 +96,7 @@ func (h *InventoryHandler) Receive(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Material ID"
-// @Success 200 {object} dto.Response{data=domain.Material}
+// @Success 200 {object} dto.Response{data=domain.InventoryMaterials}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /inventory/materials/{id} [get]
@@ -115,7 +115,7 @@ func (h *InventoryHandler) GetMaterial(c *gin.Context) {
 // @Tags inventory
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.Material}
+// @Success 200 {object} dto.Response{data=[]domain.InventoryMaterials}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /inventory/materials [get]

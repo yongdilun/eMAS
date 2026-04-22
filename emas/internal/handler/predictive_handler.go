@@ -28,7 +28,7 @@ type HighRiskJob struct {
 // @Tags predictive
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.HighRiskJob}
+// @Success 200 {object} dto.Response{data=[]service.HighRiskJobPrediction}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /predictive/high-risk-jobs [get]
@@ -53,7 +53,7 @@ type Recommendation struct {
 // @Tags predictive
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.Recommendation}
+// @Success 200 {object} dto.Response{data=[]service.AIRecommendation}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /predictive/recommendations [get]
@@ -98,7 +98,7 @@ func (h *PredictiveHandler) Forecast(c *gin.Context) {
 // @Tags predictive
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=domain.ConfidenceSummary}
+// @Success 200 {object} dto.Response{data=service.ConfidenceSummary}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /predictive/confidence [get]

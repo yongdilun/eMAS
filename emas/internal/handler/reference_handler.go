@@ -49,10 +49,7 @@ func (h *ReferenceHandler) ListMachineTypes(c *gin.Context) {
 // @Failure 500 {object} dto.Response
 // @Router /reference/machine-types [post]
 func (h *ReferenceHandler) CreateMachineType(c *gin.Context) {
-	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Description string `json:"description"`
-	}
+	var req dto.CreateMachineTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -86,17 +83,14 @@ func (h *ReferenceHandler) CreateMachineType(c *gin.Context) {
 // @Success 200 {object} dto.Response{data=domain.ReferenceMachineType}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/machine-types/:id [put]
+// @Router /reference/machine-types/{id} [put]
 func (h *ReferenceHandler) UpdateMachineType(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: "invalid id"})
 		return
 	}
-	var req struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-	}
+	var req dto.UpdateMachineTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -140,10 +134,10 @@ func (h *ReferenceHandler) UpdateMachineType(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Machine Type ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/machine-types/:id [delete]
+// @Router /reference/machine-types/{id} [delete]
 func (h *ReferenceHandler) DeleteMachineType(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -202,9 +196,7 @@ func (h *ReferenceHandler) ListProductTypes(c *gin.Context) {
 // @Failure 500 {object} dto.Response
 // @Router /reference/product-types [post]
 func (h *ReferenceHandler) CreateProductType(c *gin.Context) {
-	var req struct {
-		Name string `json:"name" binding:"required"`
-	}
+	var req dto.CreateProductTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -234,10 +226,10 @@ func (h *ReferenceHandler) CreateProductType(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Product Type ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/product-types/:id [delete]
+// @Router /reference/product-types/{id} [delete]
 func (h *ReferenceHandler) DeleteProductType(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -262,6 +254,13 @@ func (h *ReferenceHandler) DeleteProductType(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true})
 }
 
+func displayForLocation(zone string, bay *string) string {
+	if bay == nil || *bay == "" {
+		return zone
+	}
+	return zone + " – " + *bay
+}
+
 // @Summary List locations
 // @Description List locations
 // @Tags reference
@@ -271,24 +270,6 @@ func (h *ReferenceHandler) DeleteProductType(c *gin.Context) {
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reference/locations [get]
-
-func displayForLocation(zone string, bay *string) string {
-	if bay == nil || *bay == "" {
-		return zone
-	}
-	return zone + " – " + *bay
-}
-
-// @Summary Create a location
-// @Description Create a location
-// @Tags reference
-// @Accept json
-// @Produce json
-// @Param request body dto.CreateLocationRequest true "Create Location Request"
-// @Success 201 {object} dto.Response{data=domain.ReferenceLocation}
-// @Failure 400 {object} dto.Response
-// @Failure 500 {object} dto.Response
-// @Router /reference/locations [post]
 func (h *ReferenceHandler) ListLocations(c *gin.Context) {
 	var items []domain.ReferenceLocation
 	if err := h.db.Order("zone ASC, bay ASC").Find(&items).Error; err != nil {
@@ -308,21 +289,18 @@ func (h *ReferenceHandler) ListLocations(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: result})
 }
 
-// @Summary Delete a location
-// @Description Delete a location
+// @Summary Create a location
+// @Description Create a location
 // @Tags reference
 // @Accept json
 // @Produce json
-// @Param id path string true "Location ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Param request body dto.CreateLocationRequest true "Create Location Request"
+// @Success 201 {object} dto.Response{data=domain.ReferenceLocation}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/locations/:id [delete]
+// @Router /reference/locations [post]
 func (h *ReferenceHandler) CreateLocation(c *gin.Context) {
-	var req struct {
-		Zone string  `json:"zone" binding:"required"`
-		Bay  *string `json:"bay"`
-	}
+	var req dto.CreateLocationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -348,10 +326,10 @@ func (h *ReferenceHandler) CreateLocation(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Location ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/locations/:id [delete]
+// @Router /reference/locations/{id} [delete]
 func (h *ReferenceHandler) DeleteLocation(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -406,10 +384,7 @@ func (h *ReferenceHandler) ListStorageLocations(c *gin.Context) {
 // @Failure 500 {object} dto.Response
 // @Router /reference/storage-locations [post]
 func (h *ReferenceHandler) CreateStorageLocation(c *gin.Context) {
-	var req struct {
-		Name string `json:"name" binding:"required"`
-		Type string `json:"type"`
-	}
+	var req dto.CreateStorageLocationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -442,10 +417,10 @@ func (h *ReferenceHandler) CreateStorageLocation(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Storage Location ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/storage-locations/:id [delete]
+// @Router /reference/storage-locations/{id} [delete]
 func (h *ReferenceHandler) DeleteStorageLocation(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -500,10 +475,7 @@ func (h *ReferenceHandler) ListStepTypes(c *gin.Context) {
 // @Failure 500 {object} dto.Response
 // @Router /reference/step-types [post]
 func (h *ReferenceHandler) CreateStepType(c *gin.Context) {
-	var req struct {
-		Name               string  `json:"name" binding:"required"`
-		DefaultMachineType *string `json:"default_machine_type"`
-	}
+	var req dto.CreateStepTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.Response{Success: false, Error: err.Error()})
 		return
@@ -533,10 +505,10 @@ func (h *ReferenceHandler) CreateStepType(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Step Type ID"
-// @Success 200 {object} dto.Response{success=true}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reference/step-types/:id [delete]
+// @Router /reference/step-types/{id} [delete]
 func (h *ReferenceHandler) DeleteStepType(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

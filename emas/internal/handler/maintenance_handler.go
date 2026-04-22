@@ -23,7 +23,7 @@ func NewMaintenanceHandler(maintenanceService *service.MaintenanceService) *Main
 // @Accept json
 // @Produce json
 // @Param request body dto.RecordMaintenanceRequest true "Record Maintenance Request"
-// @Success 201 {object} dto.Response{data=domain.MaintenanceRecord}
+// @Success 201 {object} dto.Response{data=domain.MaintenanceRecords}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /maintenance [post]

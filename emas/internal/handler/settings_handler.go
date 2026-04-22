@@ -26,15 +26,6 @@ type SettingsHandler struct {
 	settingsRepo *repository.SystemSettingsRepository
 }
 
-// @Summary New settings handler
-// @Description New settings handler
-// @Tags settings
-// @Accept json
-// @Produce json
-// @Success 200 {object} dto.Response{data=SettingsHandler}
-// @Failure 400 {object} dto.Response
-// @Failure 500 {object} dto.Response
-// @Router /settings/new [get]
 func NewSettingsHandler(settingsRepo *repository.SystemSettingsRepository) *SettingsHandler {
 	return &SettingsHandler{settingsRepo: settingsRepo}
 }
@@ -116,7 +107,6 @@ func (h *SettingsHandler) Get(c *gin.Context) {
 // @Tags settings
 // @Accept json
 // @Produce json
-// @Param request body UpdateSettingsRequest true "Update Settings Request"
 // @Success 200 {object} dto.Response{data=SettingsResponse}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

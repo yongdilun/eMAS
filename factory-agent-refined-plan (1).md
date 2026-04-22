@@ -1271,13 +1271,15 @@ async def start_event_listener():
 - [x] Tool auto-generation script (OpenAPI → DB → tools.md with capability tags)
 
 ### Phase 1 — Core Agent (Week 3–4)
-- [ ] LLM prompt template + plan JSON schema (with explainability fields)
-- [ ] Tool scope filter (intent → relevant tools subset)
-- [ ] Plan validation engine (all rules in section 10)
-- [ ] Session manager (CRUD + state transitions + rate limit counters)
-- [ ] Execution engine (transactional + exactly-once + AMBIGUOUS handling)
+- [x] LLM prompt template + plan JSON schema (with explainability fields)
+- [x] Tool scope filter (intent → relevant tools subset)
+- [x] Plan validation engine (all rules in section 10)
+- [x] Session manager (CRUD + state transitions + rate limit counters)
+- [x] Execution engine (transactional + exactly-once + AMBIGUOUS handling)
 - [x] Approval system (create, notify, decide, resume)
-- [ ] Redis event pub/sub (including DLQ replay event)
+- [x] Redis event pub/sub (including DLQ replay event)
+
+_Repo note: Phase 1 baseline is implemented in `factory-agent/agent/*` and wired in `factory-agent/main.py`. Exactly-once uses `plan_steps.idempotency_key` + `execution_snapshots` replay; AMBIGUOUS moves the session to `BLOCKED` and creates a `dead_letters` entry._
 
 ### Phase 2 — Resilience (Week 5)
 - [ ] Error classification + decision tree (with strong idempotency retry gate)
@@ -1481,4 +1483,3 @@ CREATE INDEX idx_dlq_status                 ON dead_letters(status);
 CREATE INDEX idx_dlq_session_id             ON dead_letters(session_id);
 CREATE INDEX idx_tools_capability_tags      ON tools USING GIN(capability_tags);
 ```
-

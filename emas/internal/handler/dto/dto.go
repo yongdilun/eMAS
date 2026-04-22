@@ -119,6 +119,42 @@ type CreateMachineRequest struct {
 	MaintenanceIntervalDays int    `json:"maintenance_interval_days"`
 }
 
+// --- Scheduling events ---
+type SchedulingEventRequest struct {
+	Type    string `json:"type" binding:"required"`
+	Payload string `json:"payload" binding:"required"`
+}
+
+// --- Reference / lookup DTOs ---
+type CreateMachineTypeRequest struct {
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+}
+
+type UpdateMachineTypeRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+}
+
+type CreateProductTypeRequest struct {
+	Name string `json:"name" binding:"required"`
+}
+
+type CreateLocationRequest struct {
+	Zone string  `json:"zone" binding:"required"`
+	Bay  *string `json:"bay"`
+}
+
+type CreateStorageLocationRequest struct {
+	Name string `json:"name" binding:"required"`
+	Type string `json:"type"`
+}
+
+type CreateStepTypeRequest struct {
+	Name               string  `json:"name" binding:"required"`
+	DefaultMachineType *string `json:"default_machine_type"`
+}
+
 type UpdateMachineRequest struct {
 	MachineName             *string `json:"machine_name"`
 	MachineType             *string `json:"machine_type"`

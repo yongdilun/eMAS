@@ -46,7 +46,7 @@ func (h *JobSlotHandler) CreateJobSteps(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param request body dto.SplitStepRequest true "Split Step Request"
-// @Success 201 {object} dto.Response{data=[]domain.Slot}
+// @Success 201 {object} dto.Response{data=[]domain.JobStepScheduleSlots}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /job-steps/split [post]
@@ -71,10 +71,10 @@ func (h *JobSlotHandler) SplitStep(c *gin.Context) {
 // @Produce json
 // @Param id path string true "Slot ID"
 // @Param request body dto.UpdateSlotRequest true "Update Slot Request"
-// @Success 200 {object} dto.Response{data=domain.Slot}
+// @Success 200 {object} dto.Response{data=domain.JobStepScheduleSlots}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /slots/:id [put]
+// @Router /slots/{id} [put]
 func (h *JobSlotHandler) UpdateSlot(c *gin.Context) {
 	id := c.Param("id")
 	var req dto.UpdateSlotRequest
@@ -96,10 +96,10 @@ func (h *JobSlotHandler) UpdateSlot(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Slot ID"
-// @Success 200 {object} dto.Response{data=domain.Slot}
+// @Success 200 {object} dto.Response{data=domain.JobStepScheduleSlots}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /slots/:id [get]
+// @Router /slots/{id} [get]
 func (h *JobSlotHandler) GetSlot(c *gin.Context) {
 	id := c.Param("id")
 	slot, err := h.slotService.GetSlot(id)
@@ -116,10 +116,10 @@ func (h *JobSlotHandler) GetSlot(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Job Step ID"
-// @Success 200 {object} dto.Response{data=[]domain.Slot}
+// @Success 200 {object} dto.Response{data=[]domain.JobStepScheduleSlots}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /job-steps/:id/slots [get]
+// @Router /job-steps/{id}/slots [get]
 func (h *JobSlotHandler) ListSlotsByJobStep(c *gin.Context) {
 	jobStepID := c.Param("id")
 	slots, err := h.slotService.ListSlotsByJobStepID(jobStepID)
@@ -136,10 +136,10 @@ func (h *JobSlotHandler) ListSlotsByJobStep(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Job ID"
-// @Success 200 {object} dto.Response{data=[]domain.Slot}
+// @Success 200 {object} dto.Response{data=[]domain.JobStepScheduleSlots}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /jobs/:id/slots [get]
+// @Router /jobs/{id}/slots [get]
 func (h *JobSlotHandler) ListSlotsByJob(c *gin.Context) {
 	jobID := c.Param("id")
 	slots, err := h.slotService.ListSlotsByJobID(jobID)

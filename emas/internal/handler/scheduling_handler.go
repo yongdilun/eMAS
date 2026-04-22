@@ -23,7 +23,7 @@ func NewSchedulingHandler(schedulingService *service.SchedulingService) *Schedul
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingExplosionResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/explosion [get]
@@ -56,7 +56,7 @@ func (h *SchedulingHandler) Explosion(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingReadinessResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/readiness [get]
@@ -82,7 +82,7 @@ func (h *SchedulingHandler) Readiness(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingCandidateMachinesResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/candidate-machines [get]
@@ -113,7 +113,7 @@ func (h *SchedulingHandler) CandidateMachines(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingSlotValidationResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/validate-slot [post]
@@ -136,7 +136,7 @@ func (h *SchedulingHandler) ValidateSlot(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingJobCompletionResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/estimate-job-completion [get]
@@ -155,7 +155,7 @@ func (h *SchedulingHandler) EstimateJobCompletion(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingTrainingDatasetResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/training-dataset [get]
@@ -173,7 +173,7 @@ func (h *SchedulingHandler) TrainingDataset(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingTrainingDatasetStatsResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/training-dataset-stats [get]
@@ -200,7 +200,7 @@ func (h *SchedulingHandler) TrainingDatasetStats(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingBackfillTrainingDatasetResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/backfill-training-dataset [get]
@@ -217,7 +217,7 @@ func (h *SchedulingHandler) BackfillTrainingDataset(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingSolverPreviewResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/solver-preview [get]
@@ -236,7 +236,7 @@ func (h *SchedulingHandler) SolverPreview(c *gin.Context) {
 // @Tags scheduling
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.SchedulingRefreshWorkCalendarsResponse}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /scheduling/refresh-work-calendars [get]

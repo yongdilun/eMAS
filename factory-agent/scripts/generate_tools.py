@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-OPENAPI_URL = 'http://localhost:8080/swagger/doc.json'
-TOOLS_MD_PATH = 'tools.md'
+DEFAULT_OPENAPI_URL = 'http://localhost:8080/swagger/doc.json'
+OPENAPI_URL = os.environ.get('OPENAPI_URL', DEFAULT_OPENAPI_URL)
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+LOCAL_SWAGGER_JSON_PATH = os.path.join(REPO_ROOT, 'emas', 'docs', 'swagger.json')
+TOOLS_MD_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools.md'))
+
+SKIP_DB = ('--no-db' in sys.argv) or (os.environ.get('SKIP_DB', '').strip() == '1')
+FORCE_LOCAL = ('--local' in sys.argv) or (os.environ.get('OPENAPI_LOCAL', '').strip() == '1')
 
 def build_tool_markdown(tool: Tool) -> str:
     input_schema_str = json.dumps(tool.input_schema, indent=2)
@@ -37,15 +44,38 @@ def build_tool_markdown(tool: Tool) -> str:
 '''
 
 async def generate():
-    # Fetch OpenAPI spec
-    print(f'Fetching OpenAPI spec from {OPENAPI_URL}...')
-    try:
-        response = requests.get(OPENAPI_URL)
-        response.raise_for_status()
-        spec = response.json()
-    except Exception as e:
-        print(f'Failed to fetch OpenAPI spec: {e}')
-        return
+    # Fetch OpenAPI spec (HTTP first, then local swagger.json fallback)
+    spec = None
+    if FORCE_LOCAL:
+        if not os.path.exists(LOCAL_SWAGGER_JSON_PATH):
+            print(f'No local Swagger spec found at {LOCAL_SWAGGER_JSON_PATH}')
+            return
+        print(f'Reading local Swagger spec at {LOCAL_SWAGGER_JSON_PATH}...')
+        try:
+            with open(LOCAL_SWAGGER_JSON_PATH, 'r', encoding='utf-8') as f:
+                spec = json.load(f)
+        except Exception as e:
+            print(f'Failed to read local Swagger spec: {e}')
+            return
+    else:
+        print(f'Fetching OpenAPI spec from {OPENAPI_URL}...')
+        try:
+            response = requests.get(OPENAPI_URL, timeout=10)
+            response.raise_for_status()
+            spec = response.json()
+        except Exception as e:
+            print(f'Failed to fetch OpenAPI spec from HTTP: {e}')
+            if os.path.exists(LOCAL_SWAGGER_JSON_PATH):
+                print(f'Falling back to local Swagger spec at {LOCAL_SWAGGER_JSON_PATH}...')
+                try:
+                    with open(LOCAL_SWAGGER_JSON_PATH, 'r', encoding='utf-8') as f:
+                        spec = json.load(f)
+                except Exception as e2:
+                    print(f'Failed to read local Swagger spec: {e2}')
+                    return
+            else:
+                print(f'No local Swagger spec found at {LOCAL_SWAGGER_JSON_PATH}')
+                return
 
     tools_to_save = []
     
@@ -90,13 +120,17 @@ async def generate():
             )
             tools_to_save.append(tool)
 
-    # Save to database
-    print('Saving tools to database...')
-    async with AsyncSessionLocal() as db_session:
-        # Clear old tools for simplicity in this script
-        await db_session.execute(text('DELETE FROM tools'))
-        db_session.add_all(tools_to_save)
-        await db_session.commit()
+    if not SKIP_DB:
+        # Save to database (best-effort; still generate tools.md even if DB fails)
+        print('Saving tools to database...')
+        try:
+            async with AsyncSessionLocal() as db_session:
+                # Clear old tools for simplicity in this script
+                await db_session.execute(text('DELETE FROM tools'))
+                db_session.add_all(tools_to_save)
+                await db_session.commit()
+        except Exception as e:
+            print(f'Failed to save tools to database (continuing to tools.md): {e}')
 
     # Generate tools.md
     print(f'Generating {TOOLS_MD_PATH}...')

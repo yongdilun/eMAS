@@ -14,17 +14,6 @@ type ChatbotApprovalHandler struct {
 	executor     service.ApprovalExecutor
 }
 
-// @Summary NewChatbotApprovalHandler creates a new chatbot approval handler.
-// @Description NewChatbotApprovalHandler creates a new chatbot approval handler.
-// @Tags chatbot approval
-// @Accept json
-// @Produce json
-// @Param approvalRepo repository.ChatbotApprovalRepository true "Approval Repository"
-// @Param executor service.ApprovalExecutor true "Approval Executor"
-// @Success 200 {object} dto.Response{data=ChatbotApprovalHandler}
-// @Failure 400 {object} dto.Response
-// @Failure 500 {object} dto.Response
-// @Router /chatbot/approval [post]
 func NewChatbotApprovalHandler(
 	approvalRepo repository.ChatbotApprovalRepository,
 	executor service.ApprovalExecutor,

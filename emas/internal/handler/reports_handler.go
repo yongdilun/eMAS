@@ -51,7 +51,7 @@ func (h *ReportsHandler) parseDateRange(c *gin.Context) (start, end time.Time, o
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{SlotID string `json:"slot_id"` MachineID string `json:"machine_id"` Date string `json:"date"` QuantityProduced int `json:"quantity_produced"` QuantityScrap int `json:"quantity_scrap"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/production-output-per-slot [get]
@@ -88,7 +88,7 @@ func (h *ReportsHandler) ProductionOutputPerSlot(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{MachineID string `json:"machine_id"` StepID string `json:"step_id"` TotalMinutes float64 `json:"total_minutes"` SlotCount int `json:"slot_count"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/machine-utilization [get]
@@ -121,7 +121,7 @@ func (h *ReportsHandler) MachineUtilization(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{JobID string `json:"job_id"` SlotID string `json:"slot_id"` QuantityPlanned int `json:"quantity_planned"` QuantityProduced int `json:"quantity_produced"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/job-completion [get]
@@ -156,7 +156,7 @@ func (h *ReportsHandler) JobCompletion(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{MaterialID string `json:"material_id"` Date string `json:"date"` NetQty float64 `json:"net_qty"` TxCount int `json:"tx_count"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/inventory-trends [get]
@@ -191,7 +191,7 @@ func (h *ReportsHandler) InventoryTrends(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{Date string `json:"date"` PassCount int `json:"pass_count"` FailCount int `json:"fail_count"` DefectSum int `json:"defect_sum"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/quality-trends [get]
@@ -223,7 +223,7 @@ func (h *ReportsHandler) QualityTrends(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{MachineID string `json:"machine_id"` ShiftName string `json:"shift_name"` Date string `json:"date"` Availability float64 `json:"availability"` Performance float64 `json:"performance"` Quality float64 `json:"quality"` OEE float64 `json:"oee"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/oee-trends [get]
@@ -277,7 +277,7 @@ func (h *ReportsHandler) OEETrends(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{MachineID string `json:"machine_id"` StepID string `json:"step_id"` QueueCount int `json:"queue_count"` Utilization float64 `json:"utilization"` Forecast string `json:"forecast"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/bottleneck-forecast [get]
@@ -304,7 +304,7 @@ func (h *ReportsHandler) BottleneckForecast(c *gin.Context) {
 // @Tags reports
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]struct{MachineID string `json:"machine_id"` PlannedCount int `json:"planned_count"` CompletedCount int `json:"completed_count"` AvgDuration float64 `json:"avg_duration_minutes"`}}
+// @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /reports/maintenance-efficiency [get]

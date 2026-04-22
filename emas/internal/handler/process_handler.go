@@ -22,7 +22,7 @@ func NewProcessHandler(processService *service.ProcessService) *ProcessHandler {
 // @Accept json
 // @Produce json
 // @Param request body dto.CreateProcessRequest true "Create Process Request"
-// @Success 201 {object} dto.Response{data=domain.Process}
+// @Success 201 {object} dto.Response{data=domain.ProductProcess}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /processes [post]
@@ -46,7 +46,7 @@ func (h *ProcessHandler) Create(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Process ID"
-// @Success 200 {object} dto.Response{data=domain.Process}
+// @Success 200 {object} dto.Response{data=domain.ProductProcess}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /processes/{id} [get]
@@ -66,7 +66,7 @@ func (h *ProcessHandler) GetByID(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Product ID"
-// @Success 200 {object} dto.Response{data=domain.Process}
+// @Success 200 {object} dto.Response{data=domain.ProductProcess}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /processes/product/{id} [get]
@@ -85,7 +85,7 @@ func (h *ProcessHandler) GetByProduct(c *gin.Context) {
 // @Tags process
 // @Accept json
 // @Produce json
-// @Success 200 {object} dto.Response{data=[]domain.Process}
+// @Success 200 {object} dto.Response{data=[]domain.ProductProcess}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /processes [get]

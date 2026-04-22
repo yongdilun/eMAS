@@ -22,7 +22,7 @@ func NewProductionLogHandler(productionLogService *service.ProductionLogService)
 // @Accept json
 // @Produce json
 // @Param request body dto.LogProductionRequest true "Log Production Request"
-// @Success 201 {object} dto.Response{data=domain.ProductionLog}
+// @Success 201 {object} dto.Response{data=domain.ProductionLogs}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
 // @Router /production-log [post]
