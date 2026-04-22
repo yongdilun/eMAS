@@ -108,6 +108,16 @@ type ScheduleJobSetOpts struct {
 // sorted by orderBy (edd/epo/fifo/readiness), and each proposal is persisted
 // (unless opts.PersistProposals is false).
 func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []string, generatedBy, orderBy string, opts *ScheduleJobSetOpts) ([]*SchedulingProposal, *BatchProposalSummary, error) {
+	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_SCHEDULE_JOB_SET_ENTER", map[string]any{
+		"requested_job_count": len(jobIDs),
+		"order_by":            orderBy,
+		"persist_proposals":   opts != nil && opts.PersistProposals,
+	})
+	logger.L().Error("DIAGNOSTIC_SCHEDULE_JOB_SET_ENTER",
+		zap.String("msg", "Entered ScheduleJobSet"),
+		zap.Int("requested_job_count", len(jobIDs)),
+		zap.String("order_by", orderBy),
+		zap.Bool("persist_proposals", opts != nil && opts.PersistProposals))
 	if opts == nil {
 		opts = &ScheduleJobSetOpts{PersistProposals: true}
 	}
@@ -156,6 +166,40 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		excludedList = append(excludedList, jid)
 	}
 	batchState.ledger.excludedJobIDs = excludedList
+
+	// --- PREDICTIVE BOM PRE-PASS: Inject virtual stock ---
+	// This 1-pass optimization calculates the total raw material requirements for all
+	// jobs in the batch, then injects virtual stock into the shared ledger. This prevents
+	// the scheduler from hitting shortage blocks on the deep BOM during the main loop.
+	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_PREPASS_CHECKPOINT_1", map[string]any{
+		"job_count": len(jobs),
+	})
+	logger.L().Error("DIAGNOSTIC_PREPASS_CHECKPOINT_1", zap.String("msg", "About to start predictive BOM prepass"), zap.Int("job_count", len(jobs)))
+	
+	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "predictive_bom_prepass_starting", map[string]any{
+		"batch_job_count": len(jobs),
+	})
+	logger.L().Info("predictive_bom_prepass_starting",
+		zap.Int("batch_job_count", len(jobs)))
+	
+	// --- PREDICTIVE BOM PRE-PASS: Inject virtual stock ---
+	batchDemand := s.calculateGrossBatchDemand(jobs)
+	s.injectPredictiveShortages(batchDemand, batchState.ledger)
+	// -------------------------------------------------------
+	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_AFTER_injectPredictiveShortages", map[string]any{
+		"virtual_arrivals": len(batchState.ledger.virtualArrivals),
+	})
+	logger.L().Error("DIAGNOSTIC_AFTER_injectPredictiveShortages", zap.String("msg", "Returned from injectPredictiveShortages"), zap.Int("virtual_arrivals", len(batchState.ledger.virtualArrivals)))
+	
+	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "predictive_bom_prepass_complete", map[string]any{
+		"virtual_arrivals_count": len(batchState.ledger.virtualArrivals),
+	})
+	logger.L().Info("predictive_bom_prepass_complete",
+		zap.Int("virtual_arrivals_count", len(batchState.ledger.virtualArrivals)))
+	// -------------------------------------------------------
+
+	// Now the scheduler runs. Because the ledger is pre-seeded with the exact 
+	// virtual stock needed for the whole deep BOM, it won't hit any shortage blocks!
 	for rootIndex, job := range jobs {
 		select {
 		case <-ctx.Done():
@@ -723,7 +767,7 @@ func (s *AIPredictiveService) chainAwareForwardRepair(proposals []*SchedulingPro
 					slot.ScheduledStart = start
 					slot.ScheduledEnd = start.Add(ceilDurationTo30Min(duration))
 				}
-				logger.L().Info("proposal_stage_chain_repair",
+				logger.L().Debug("proposal_stage_chain_repair",
 					zap.String("job_id", p.JobID),
 					zap.String("job_step_id", slot.JobStepID),
 					zap.String("machine_id", slot.MachineID),

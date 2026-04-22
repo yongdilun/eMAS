@@ -497,8 +497,9 @@ func (s *AIPredictiveService) analyzeProposalMaterialShortages(proposal *Schedul
 			return nil, nil, 0, err
 		}
 		for _, action := range actions {
-			// NEW: If it has a sequence, the ledger already deducted it in buildMaterialTimeline.
-			if ledger != nil && action.Sequence > 0 {
+			// FIX: Ensure the ledger ACTUALLY contains the sequence before skipping.
+			// This prevents dropping phantom demand when evaluating against a fresh baseLedger.
+			if ledger != nil && action.Sequence > 0 && ledger.hasSequence(action.Sequence) {
 				continue
 			}
 			events = append(events, shortageTimelineEvent{
@@ -723,95 +724,202 @@ func (s *AIPredictiveService) analyzeProposalMaterialShortages(proposal *Schedul
 	return shortages, resolutions, roundDisplayQty(global), nil
 }
 
-// buildBatchMaterialReplenishmentAggregate returns one replenishment line per raw material by
-// merging every proposal's reserve_material actions into a single timeline (same family as
-// analyzeProposalMaterialShortages, without naive summing of per-job max deficits).
 func (s *AIPredictiveService) buildBatchMaterialReplenishmentAggregate(proposals []*SchedulingProposal, ledger *tentativeInventoryLedger) []BatchMaterialReplenishmentLine {
-	if s == nil || len(proposals) == 0 || s.scheduling == nil || s.scheduling.inventoryRepo == nil {
+	if s == nil || len(proposals) == 0 {
 		return nil
 	}
-	byMaterial := make(map[string][]InventoryAction)
-	affectedRoots := make(map[string]map[string]struct{})
+	
+	actionsByMat := make(map[string][]InventoryAction)
+	affectedRoots := make(map[string][]string)
+	
 	for _, p := range proposals {
 		if p == nil {
 			continue
 		}
 		for _, act := range p.InventoryActions {
-			if act.ActionType != inventoryActionReserveMaterial {
-				continue
-			}
-			mid := strings.TrimSpace(act.ResourceID)
-			if mid == "" {
-				continue
-			}
-			byMaterial[mid] = append(byMaterial[mid], act)
-			if affectedRoots[mid] == nil {
-				affectedRoots[mid] = make(map[string]struct{})
-			}
-			root := ledgerRootJobID(act.JobID)
-			if root == "" {
-				root = act.JobID
-			}
-			if root != "" {
-				affectedRoots[mid][root] = struct{}{}
+			if act.ActionType == inventoryActionReserveMaterial {
+				mid := strings.TrimSpace(act.ResourceID)
+				actionsByMat[mid] = append(actionsByMat[mid], act)
+				affectedRoots[mid] = appendUniqueString(affectedRoots[mid], p.JobID)
 			}
 		}
 	}
-	for _, p := range proposals {
-		if p == nil {
-			continue
-		}
-		for _, sh := range p.MaterialShortages {
-			mid := strings.TrimSpace(sh.MaterialID)
-			if mid == "" || !isLikelyRawMaterialID(mid) {
-				continue
-			}
-			if _, ok := byMaterial[mid]; !ok {
-				byMaterial[mid] = nil
-			}
-			if affectedRoots[mid] == nil {
-				affectedRoots[mid] = make(map[string]struct{})
-			}
-			if strings.TrimSpace(p.JobID) != "" {
-				affectedRoots[mid][p.JobID] = struct{}{}
-			}
-			for _, jid := range sh.AffectedJobIDs {
-				if strings.TrimSpace(jid) != "" {
-					affectedRoots[mid][jid] = struct{}{}
-				}
-			}
-		}
-	}
+	
 	now := time.Now().UTC()
-	out := make([]BatchMaterialReplenishmentLine, 0, len(byMaterial))
-	// #region agent log
-	h1Boosts := make([]map[string]any, 0, 4)
-	// #endregion
-	for materialID, actions := range byMaterial {
-		// FIX: Pass the ledger so old DB reservations for these jobs are excluded
-		// and virtual seed arrivals are included in the batch timeline!
+	out := make([]BatchMaterialReplenishmentLine, 0, len(actionsByMat))
+	
+	for materialID, actions := range actionsByMat {
 		opening, events, err := s.buildMaterialTimeline(materialID, now, ledger)
 		if err != nil {
 			continue
 		}
-		for _, a := range actions {
+		
+		for _, act := range actions {
 			events = append(events, shortageTimelineEvent{
-				At:    normalizeMaterialEventTime(a.EffectiveAt),
-				Delta: -a.Quantity,
+				At:    normalizeMaterialEventTime(act.EffectiveAt),
+				Delta: -act.Quantity,
 			})
 		}
+		
 		sort.Slice(events, func(i, j int) bool {
 			if events[i].At.Equal(events[j].At) {
 				return events[i].Delta > events[j].Delta
 			}
 			return events[i].At.Before(events[j].At)
 		})
+		
+		minBalance := opening
+		running := opening
+		var shortageAt *time.Time
+		
+		for _, event := range events {
+			running += event.Delta
+			if running < minBalance {
+				minBalance = running
+			}
+			if running < 0 && shortageAt == nil {
+				t := event.At
+				shortageAt = &t
+			}
+		}
+		
+		maxDeficit := roundDisplayQty(math.Max(-minBalance, 0))
+		if maxDeficit <= 0 {
+			continue
+		}
+		
 		mat, err := s.scheduling.inventoryRepo.GetMaterialByID(materialID)
 		if err != nil {
 			continue
 		}
+		
+		startAt := normalizeMaterialEventTime(now)
+		if shortageAt != nil {
+			startAt = *shortageAt
+		}
+		
+		earliestPossible := normalizeMaterialEventTime(now.Add(time.Duration(mat.ReorderLevel) * time.Hour))
+		safeAt := normalizeMaterialEventTime(startAt.Add(-24 * time.Hour))
+		suggested := safeAt
+		if earliestPossible.After(suggested) {
+			suggested = earliestPossible
+		}
+		
+		primaryType := "replenish"
+		if earliestPossible.After(startAt) {
+			primaryType = "delay_jobs"
+		}
+		
+		out = append(out, BatchMaterialReplenishmentLine{
+			MaterialID:              materialID,
+			MaterialName:            mat.MaterialName,
+			Unit:                    mat.Unit,
+			RecommendedQty:          maxDeficit,
+			SuggestedArriveAt:       suggested,
+			EarliestPossibleArrival: earliestPossible,
+			ShortageStartAt:         startAt,
+			OptionType:              primaryType,
+			AffectedJobIDs:          affectedRoots[materialID],
+			Rationale:               "Batch unified timeline deficit calculation.",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].MaterialID < out[j].MaterialID })
+	return out
+}
+
+func (s *AIPredictiveService) buildBatchScheduleProductionAggregate(proposals []*SchedulingProposal, ledger *tentativeInventoryLedger) []BatchScheduleProductionLine {
+	if s == nil || len(proposals) == 0 {
+		return nil
+	}
+	
+	actionsByProd := make(map[string][]InventoryAction)
+	affectedRoots := make(map[string][]string)
+	
+	for _, p := range proposals {
+		if p == nil {
+			continue
+		}
+		for _, act := range p.InventoryActions {
+			if act.ActionType == inventoryActionReserveProduct || act.ActionType == inventoryActionProduceProduct {
+				pid := strings.TrimSpace(act.ResourceID)
+				actionsByProd[pid] = append(actionsByProd[pid], act)
+				if act.ActionType == inventoryActionReserveProduct {
+					affectedRoots[pid] = appendUniqueString(affectedRoots[pid], p.JobID)
+				}
+			}
+		}
+	}
+	
+	now := time.Now().UTC()
+	out := make([]BatchScheduleProductionLine, 0)
+	
+	for productID, actions := range actionsByProd {
+		records, _ := s.scheduling.inventoryRepo.ListProductInventoryByProductID(productID)
+		pendingRes, _ := s.scheduling.inventoryRepo.ListProductReservations(productID, domain.InventoryReservationStatusPending)
+		
+		type evt struct {
+			At    time.Time
+			Delta float64
+		}
+		events := make([]evt, 0)
+		
+		opening := 0.0
+		if ledger != nil {
+			opening += ledger.productBaseline[productID]
+		}
+		for _, rec := range records {
+			when := normalizeMaterialEventTime(rec.AvailableFrom)
+			avail := math.Max(rec.QuantityOnHand-rec.QuantityReserved, 0)
+			if !when.After(now) {
+				opening += avail
+			} else {
+				events = append(events, evt{At: when, Delta: avail})
+			}
+		}
+		for _, res := range pendingRes {
+			when := normalizeMaterialEventTime(res.NeededAt)
+			if !when.After(now) {
+				opening -= res.ReservedQty
+			} else {
+				events = append(events, evt{At: when, Delta: -res.ReservedQty})
+			}
+		}
+		if ledger != nil {
+			for _, entry := range ledger.activeEntries {
+				if entry.Action.ResourceID != productID {
+					continue
+				}
+				when := normalizeMaterialEventTime(entry.EffectiveAt)
+				delta := 0.0
+				if entry.Action.ActionType == inventoryActionReserveProduct { delta = -entry.Action.Quantity }
+				if entry.Action.ActionType == inventoryActionProduceProduct { delta = entry.Action.Quantity }
+				if delta == 0 { continue }
+				if !when.After(now) {
+					opening += delta
+				} else {
+					events = append(events, evt{At: when, Delta: delta})
+				}
+			}
+		}
+		
+		for _, act := range actions {
+			when := normalizeMaterialEventTime(act.EffectiveAt)
+			delta := 0.0
+			if act.ActionType == inventoryActionReserveProduct { delta = -act.Quantity }
+			if act.ActionType == inventoryActionProduceProduct { delta = act.Quantity }
+			if delta == 0 { continue }
+			events = append(events, evt{At: when, Delta: delta})
+		}
+		
+		sort.Slice(events, func(i, j int) bool {
+			if events[i].At.Equal(events[j].At) {
+				return events[i].Delta > events[j].Delta
+			}
+			return events[i].At.Before(events[j].At)
+		})
+		
+		minBalance := opening
 		running := opening
-		minBalance := running
 		var shortageAt *time.Time
 		for _, event := range events {
 			running += event.Delta
@@ -823,214 +931,34 @@ func (s *AIPredictiveService) buildBatchMaterialReplenishmentAggregate(proposals
 				shortageAt = &t
 			}
 		}
+		
 		maxDeficit := roundDisplayQty(math.Max(-minBalance, 0))
-
-		// FIX 3: Safely restore the floor! Because the combined mathematical timeline
-		// can resolve to 0 when supply >= demand, but sequential priority starvation
-		// causes actual job failures. This ensures the reported deficit survives.
-		floor := batchMaterialShortageFloorFromProposals(proposals, materialID)
-		if floor > maxDeficit {
-			maxDeficit = floor
-		}
-
 		if maxDeficit <= 0 {
 			continue
 		}
-
-		// FIX: Prioritize the earliest reported shortage start time across the individual jobs.
-		// The mathematical zero-crossing of the merged timeline (`shortageAt`) arrives too late
-		// when a high-priority future job steals stock from a low-priority earlier job.
+		
+		name := productID
+		if pr, err := s.scheduling.productRepo.GetByID(productID); err == nil {
+			name = pr.ProductName
+		}
+		
 		startAt := normalizeMaterialEventTime(now)
-		if t0, ok := batchMaterialShortageMinStart(proposals, materialID); ok {
-			startAt = normalizeMaterialEventTime(t0)
-		} else if shortageAt != nil {
+		if shortageAt != nil {
 			startAt = *shortageAt
 		}
-
-		leadTimeHours := 0 // Note: Ensure you fetch this from your DB if available!
-		earliestPossible := normalizeMaterialEventTime(now.Add(time.Duration(leadTimeHours) * time.Hour))
-
-		// FIX 2: AGGRESSIVE EARLY SUGGESTION
-		// Push the requested arrival a full 24 hours BEFORE the first shortage hits
-		// (instead of just 30 mins) to ensure true "earliest better" safety.
-		safeAt := normalizeMaterialEventTime(startAt.Add(-24 * time.Hour))
-
-		suggested := safeAt
-		if earliestPossible.After(suggested) {
-			// If lead time prevents 24h early arrival, default to the earliest physical possibility
-			suggested = earliestPossible
-		}
-		primaryType := "replenish"
-		if earliestPossible.After(startAt) {
-			primaryType = "delay_jobs"
-		}
-		jobs := make([]string, 0, len(affectedRoots[materialID]))
-		for jid := range affectedRoots[materialID] {
-			if strings.TrimSpace(jid) == "" {
-				continue
-			}
-			jobs = append(jobs, jid)
-		}
-		sort.Strings(jobs)
-		out = append(out, BatchMaterialReplenishmentLine{
-			MaterialID:              materialID,
-			MaterialName:            mat.MaterialName,
-			Unit:                    mat.Unit,
-			RecommendedQty:          maxDeficit,
-			SuggestedArriveAt:       suggested,
-			EarliestPossibleArrival: earliestPossible,
-			ShortageStartAt:         startAt,
-			OptionType:              primaryType,
-			AffectedJobIDs:          jobs,
-			Rationale:               "Batch-level peak deficit for this material given all proposals' planned material reservations in this response (single merged timeline).",
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].MaterialID < out[j].MaterialID
-	})
-	// #region agent log
-	if len(h1Boosts) > 0 {
-		agentDebugNDJSON("H1", "shortage_analysis.buildBatchMaterialReplenishmentAggregate", "aggregate_raw_material_floor_boost", map[string]any{"boosts": h1Boosts})
-	}
-	// #endregion
-	return out
-}
-
-// buildBatchScheduleProductionAggregate merges schedule_production rows from every proposal's
-// shortage_resolutions so bulk apply can create planned FG/subproduct inventory once per product.
-func (s *AIPredictiveService) buildBatchScheduleProductionAggregate(proposals []*SchedulingProposal, ledger *tentativeInventoryLedger) []BatchScheduleProductionLine {
-	if s == nil || len(proposals) == 0 {
-		return nil
-	}
-	type agg struct {
-		qty           float64
-		suggested     time.Time
-		earliest      time.Time
-		haveSuggested bool
-		haveEarliest  bool
-		jobs          map[string]struct{}
-	}
-	byProduct := make(map[string]*agg)
-	for _, p := range proposals {
-		if p == nil {
-			continue
-		}
-		for _, opt := range p.ShortageResolutions {
-			if !strings.EqualFold(strings.TrimSpace(opt.OptionType), "schedule_production") {
-				continue
-			}
-			if opt.Replenishment == nil {
-				continue
-			}
-			pid := strings.TrimSpace(opt.MaterialID)
-			if pid == "" {
-				continue
-			}
-			a := byProduct[pid]
-			if a == nil {
-				a = &agg{jobs: make(map[string]struct{})}
-				byProduct[pid] = a
-			}
-			a.qty += opt.Replenishment.SuggestedQty
-			sa := normalizeMaterialEventTime(opt.Replenishment.SuggestedArriveAt)
-			if !a.haveSuggested || sa.Before(a.suggested) {
-				a.suggested = sa
-				a.haveSuggested = true
-			}
-			ea := normalizeMaterialEventTime(opt.Replenishment.EarliestPossibleArrival)
-			if !a.haveEarliest || ea.Before(a.earliest) {
-				a.earliest = ea
-				a.haveEarliest = true
-			}
-			if strings.TrimSpace(p.JobID) != "" {
-				a.jobs[p.JobID] = struct{}{}
-			}
-			for _, jid := range opt.AffectedJobIDs {
-				if strings.TrimSpace(jid) != "" {
-					a.jobs[jid] = struct{}{}
-				}
-			}
-		}
-	}
-	floorMeta := batchNonRawMaterialShortageFloorMeta(proposals)
-	// #region agent log
-	h2Boosts := make([]map[string]any, 0, 4)
-	// #endregion
-	for pid, fm := range floorMeta {
-		if fm == nil || roundDisplayQty(fm.totalSum) <= 0 {
-			continue
-		}
-		if byProduct[pid] == nil {
-			byProduct[pid] = &agg{jobs: make(map[string]struct{})}
-		}
-	}
-	out := make([]BatchScheduleProductionLine, 0, len(byProduct))
-	for productID, a := range byProduct {
-		fm := floorMeta[productID]
-		if fm != nil {
-			for jid := range fm.jobs {
-				a.jobs[jid] = struct{}{}
-			}
-			if fm.haveMinStart {
-				sa := normalizeMaterialEventTime(fm.minShortageStart)
-				if !a.haveSuggested || sa.Before(a.suggested) {
-					a.suggested = sa
-					a.haveSuggested = true
-				}
-				if !a.haveEarliest || sa.Before(a.earliest) {
-					a.earliest = sa
-					a.haveEarliest = true
-				}
-			}
-
-			// FIX: Apply the discovered floor quantity to the aggregate tracker
-			if fm.totalSum > a.qty {
-				a.qty = fm.totalSum
-			}
-		}
-		qty := roundDisplayQty(a.qty)
-		// FIX: Do not override qty with floor. Floor sums cumulative deficits!
-		if qty <= 0 {
-			continue
-		}
-		name := productID
-		if s.scheduling != nil && s.scheduling.productRepo != nil {
-			if pr, err := s.scheduling.productRepo.GetByID(productID); err == nil && strings.TrimSpace(pr.ProductName) != "" {
-				name = pr.ProductName
-			}
-		}
-		jobs := make([]string, 0, len(a.jobs))
-		for jid := range a.jobs {
-			jobs = append(jobs, jid)
-		}
-		sort.Strings(jobs)
-		suggested := a.suggested
-		if !a.haveSuggested {
-			suggested = normalizeMaterialEventTime(time.Now().UTC())
-		}
-		earliest := a.earliest
-		if !a.haveEarliest {
-			earliest = normalizeMaterialEventTime(time.Now().UTC())
-		}
+		
 		out = append(out, BatchScheduleProductionLine{
 			ProductID:               productID,
 			ProductName:             name,
-			RecommendedQty:          qty,
-			SuggestedArriveAt:       suggested,
-			EarliestPossibleArrival: earliest,
+			RecommendedQty:          maxDeficit,
+			SuggestedArriveAt:       startAt,
+			EarliestPossibleArrival: startAt,
 			OptionType:              "schedule_production",
-			AffectedJobIDs:          jobs,
-			Rationale:               "Batch sum of schedule_production recommendations for this product across proposals (subproduct/FG shortage).",
+			AffectedJobIDs:          affectedRoots[productID],
+			Rationale:               "Batch unified timeline deficit calculation for subproducts.",
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].ProductID < out[j].ProductID
-	})
-	// #region agent log
-	if len(h2Boosts) > 0 {
-		agentDebugNDJSON("H2", "shortage_analysis.buildBatchScheduleProductionAggregate", "aggregate_schedule_production_floor_boost", map[string]any{"boosts": h2Boosts})
-	}
-	// #endregion
+	sort.Slice(out, func(i, j int) bool { return out[i].ProductID < out[j].ProductID })
 	return out
 }
 
@@ -1274,15 +1202,15 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 			targetCompletion = completionTargets[orig.JobID]
 		}
 
-		// Evaluate using the SHARED state so successful reservations drain the ledger
-		// for the next job in the loop.
-		if err := s.decorateProposalWithInventoryPlan(job, preview, candidate, tentativeSlots, sharedBatchState, 0, targetCompletion); err != nil {
+		// FIX 2: Clone state to prevent failed jobs from draining the shared seed ledger
+		attemptState := sharedBatchState.clone()
+
+		if err := s.decorateProposalWithInventoryPlan(job, preview, candidate, tentativeSlots, attemptState, 0, targetCompletion); err != nil {
 			reEvaluated = append(reEvaluated, orig)
 			continue
 		}
 
-		// Analyze shortages with the shared ledger's current state
-		if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(candidate, sharedBatchState.ledger); err == nil {
+		if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(candidate, attemptState.ledger); err == nil {
 			candidate.MaterialShortages = shortages
 			candidate.ShortageResolutions = resolutions
 			candidate.GlobalScore = score
@@ -1302,6 +1230,12 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 				}
 			}
 			candidate.BlockedReasons = newBlocked
+		}
+
+		// FIX 2.1: Only commit the ledger drain if the job actually survived the reflow
+		if candidate.Feasible {
+			sharedBatchState.ledger = attemptState.ledger
+			sharedBatchState.totalGeneratedNodes = attemptState.totalGeneratedNodes
 		}
 
 		reEvaluated = append(reEvaluated, candidate)

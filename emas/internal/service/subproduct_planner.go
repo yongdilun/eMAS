@@ -64,11 +64,6 @@ type ledgerEntry struct {
 	EffectiveAt time.Time
 }
 
-// virtualMaterialArrival models a virtual expected-arrival injected by the
-// convergence loop: quantity of material materialID becomes available at At.
-// Unlike materialBaseline (which is available immediately at query time),
-// virtualArrivals participate in the forward-scan timeline so that proposals
-// whose steps need the material BEFORE At are correctly flagged as infeasible.
 type virtualMaterialArrival struct {
 	MaterialID string
 	Qty        float64
@@ -81,7 +76,7 @@ type tentativeInventoryLedger struct {
 	historyEntries   []ledgerEntry
 	productBaseline  map[string]float64
 	materialBaseline map[string]float64
-	virtualArrivals  []virtualMaterialArrival // time-stamped virtual arrivals (convergence seeding)
+	virtualArrivals  []virtualMaterialArrival
 	excludedJobIDs   []string
 }
 
@@ -124,8 +119,6 @@ func newTentativeInventoryLedger() *tentativeInventoryLedger {
 	}
 }
 
-// appendVirtualArrival records a future stock injection for the convergence
-// loop seed. qty of materialID becomes available at arriveAt.
 func (l *tentativeInventoryLedger) appendVirtualArrival(materialID string, qty float64, arriveAt time.Time) {
 	l.virtualArrivals = append(l.virtualArrivals, virtualMaterialArrival{
 		MaterialID: materialID,
@@ -154,6 +147,23 @@ func (l *tentativeInventoryLedger) clone() *tentativeInventoryLedger {
 		cloned.materialBaseline[key] = value
 	}
 	return cloned
+}
+
+func (l *tentativeInventoryLedger) hasSequence(seq int) bool {
+	if l == nil || seq <= 0 {
+		return false
+	}
+	for _, entry := range l.activeEntries {
+		if entry.Sequence == seq {
+			return true
+		}
+	}
+	for _, entry := range l.historyEntries {
+		if entry.Sequence == seq {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *tentativeInventoryLedger) next() int {
@@ -211,8 +221,8 @@ func (l *tentativeInventoryLedger) compact(cursor time.Time) {
 func (s *AIPredictiveService) subproductLimits() schedulerSubproductLimits {
 	limits := schedulerSubproductLimits{
 		MaxDependencyDepth:    4,
-		MaxGeneratedPerRoot:   12,
-		MaxGeneratedPerBatch:  64,
+		MaxGeneratedPerRoot:   200,   // FIX: Increased from 12 to prevent truncation
+		MaxGeneratedPerBatch:  2000,  // FIX: Increased from 64 to prevent truncation
 		MaxParentReflowPasses: 3,
 	}
 	if s.settingsRepo == nil {
@@ -240,47 +250,31 @@ func (s *AIPredictiveService) finalizeProposalPlan(job *domain.Job, preview *Sol
 	if opts.BatchState == nil {
 		opts.BatchState = newSubproductBatchState(s)
 	}
-	if err := s.decorateProposalWithInventoryPlan(job, preview, proposal, opts.TentativeSlots, opts.BatchState, opts.RootOrderIndex, opts.TargetCompletion); err != nil {
+
+	attemptState := opts.BatchState.clone()
+
+	if err := s.decorateProposalWithInventoryPlan(job, preview, proposal, opts.TentativeSlots, attemptState, opts.RootOrderIndex, opts.TargetCompletion); err != nil {
 		return nil, err
 	}
-	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, opts.BatchState.ledger); err == nil {
+
+	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, attemptState.ledger); err == nil {
 		proposal.MaterialShortages = shortages
 		proposal.ShortageResolutions = resolutions
 		proposal.GlobalScore = score
 		for _, sh := range shortages {
 			if !sh.AllStepMaterialsFeasible {
 				proposal.Feasible = false
-				// Global timeline analysis can flag MAT-* deficits that the per-step
-				// decorate gate did not attach as blocked_reasons; keep API/UI aligned
-				// with shortage_resolutions (see debug H3: JOB-SEED-019/023/017).
 				proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code=material_shortage")
 				break
 			}
 		}
-		// #region agent log
-		matIDs := make([]string, 0, len(shortages))
-		for _, sh := range shortages {
-			matIDs = append(matIDs, sh.MaterialID)
-		}
-		hasBlockedMat := false
-		for _, br := range proposal.BlockedReasons {
-			if strings.Contains(br, "material_shortage") {
-				hasBlockedMat = true
-				break
-			}
-		}
-		agentDebugNDJSON("H3", "subproduct_planner.go:finalizeProposalPlan", "after_analyzeProposalMaterialShortages", map[string]any{
-			"job_id":                     job.JobID,
-			"feasible":                   proposal.Feasible,
-			"blocked_reasons":            proposal.BlockedReasons,
-			"material_shortage_in_block": hasBlockedMat,
-			"shortage_count":             len(shortages),
-			"resolution_count":           len(resolutions),
-			"shortage_material_ids":      matIDs,
-			"inventory_action_count":     len(proposal.InventoryActions),
-		})
-		// #endregion
 	}
+
+	if proposal.Feasible {
+		opts.BatchState.ledger = attemptState.ledger
+		opts.BatchState.totalGeneratedNodes = attemptState.totalGeneratedNodes
+	}
+
 	proposal.InventoryActionCount = len(proposal.InventoryActions)
 	if !opts.IncludeInventoryActions {
 		proposal.InventoryActions = nil
@@ -308,24 +302,13 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 			inputs      []domain.ProcessStepMaterial
 			stepBlocked bool
 		)
+		
+		previousActions := append([]InventoryAction(nil), proposal.InventoryActions...)
+		previousDeps := append([]DependentJobPlan(nil), proposal.DependentJobs...)
+
 		for {
 			bounds, ok = stepBounds[step.JobStepID]
 			if !ok {
-				// #region agent log
-				agentDebugNDJSON("H1", "subproduct_planner.go:decorateProposalWithInventoryPlan", "skip_step_no_slot_bounds", map[string]any{
-					"job_id":      job.JobID,
-					"job_step_id": step.JobStepID,
-					"step_name":   step.StepName,
-					"proposed_slot_job_steps": func() []string {
-						ks := make([]string, 0, len(stepBounds))
-						for k := range stepBounds {
-							ks = append(ks, k)
-						}
-						sort.Strings(ks)
-						return ks
-					}(),
-				})
-				// #endregion
 				break
 			}
 			state.ledger.compact(bounds.Start)
@@ -334,8 +317,6 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 			if err != nil {
 				return err
 			}
-			// Phase-2 material gate: evaluate all material requirements at the finalized step consume time
-			// before appending any reserve_material action to avoid partial material commits for one step.
 			materialCheck, err := s.checkAllStepMaterials(step, bounds.Start, inputs, state)
 			if err != nil {
 				return err
@@ -348,13 +329,8 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 					s.shiftProposalSuffix(proposal, step.JobStepID, delta, stepSequence)
 					if err := s.repairReflowedProposalSuffix(job.JobID, proposal, tentativeSlots, targetCompletion); err == nil {
 						stepBounds = boundsByJobStep(proposal.ProposedSlots)
-						agentDebugNDJSON("H2", "subproduct_planner.go:decorateProposalWithInventoryPlan", "material_shortage_reflow", map[string]any{
-							"job_id":             job.JobID,
-							"job_step_id":        step.JobStepID,
-							"ready_at":           readyAt.UTC().Format(time.RFC3339),
-							"delta_minutes":      int(delta.Minutes()),
-							"blocking_materials": shortDemandMaterialIDs(materialCheck.ShortDemands),
-						})
+						proposal.InventoryActions = previousActions
+						proposal.DependentJobs = previousDeps
 						continue
 					}
 					proposal.ProposedSlots = previousSlots
@@ -363,24 +339,12 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 				}
 				proposal.Feasible = false
 				proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code=material_shortage")
-				// #region agent log
-				agentDebugNDJSON("H2", "subproduct_planner.go:decorateProposalWithInventoryPlan", "material_shortage_blocked_reason_set", map[string]any{
-					"job_id":             job.JobID,
-					"job_step_id":        step.JobStepID,
-					"blocking_materials": shortDemandMaterialIDs(materialCheck.ShortDemands),
-				})
-				// #endregion
 				if materialCheck.Partial != nil {
 					proposal.PartialFeasibility = materialCheck.Partial
 					if materialCheck.DeferredNode != nil {
 						proposal.DeferredNodes = append(proposal.DeferredNodes, *materialCheck.DeferredNode)
 					}
 				}
-				// Inject phantom reserve_material actions for every short material so that
-				// analyzeProposalMaterialShortages can detect the deficit and generate a
-				// replenishment suggestion. These are NOT appended to the ledger (the step
-				// is skipped), but they must appear in InventoryActions so the analyzer
-				// can build a complete shortage timeline and surface the replenishment option.
 				for _, demand := range materialCheck.ShortDemands {
 					proposal.InventoryActions = append(proposal.InventoryActions, InventoryAction{
 						ActionType:  inventoryActionReserveMaterial,
@@ -399,9 +363,8 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 			continue
 		}
 
-		// FIX 1: Evaluate subproducts BEFORE checking stepBlocked.
-		// This ensures deep BOM shortages (like P-007 -> MAT-010) are discovered
-		// in the very first pass, preventing the multi-click Apply UX.
+		pendingActions := make(map[string][]InventoryAction)
+
 		for _, input := range inputs {
 			required := float64(step.QuantityTarget) * input.QuantityPerUnit
 			if required <= 0 || input.ProductID == nil {
@@ -415,10 +378,33 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 				needFromShared = 0
 			}
 			dependencyPlanKey := ""
+			
 			availability, err := s.productAvailabilityForPlanning(productID, needFromShared, bounds.Start, state.ledger, job.JobID)
 			if err != nil {
 				return err
 			}
+
+			// FIX: Prevent WIP time-travel. 
+			// If stock exists but is only ready in the future, we MUST reflow the parent 
+			// job to wait for it before allowing standard reservations to proceed.
+			if availability.ReadyAt != nil && availability.ReadyAt.After(bounds.Start) {
+				delta := alignSuccessorStart(*availability.ReadyAt).Sub(bounds.Start)
+				s.shiftProposalSuffix(proposal, step.JobStepID, delta, stepSequence)
+				if err := s.repairReflowedProposalSuffix(job.JobID, proposal, tentativeSlots, targetCompletion); err != nil {
+					proposal.Feasible = false
+					proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code="+reasonCodeChildJobLate)
+					stepBlocked = true
+					break
+				}
+				stepBounds = boundsByJobStep(proposal.ProposedSlots)
+				bounds = stepBounds[step.JobStepID]
+				
+				availability, err = s.productAvailabilityForPlanning(productID, needFromShared, bounds.Start, state.ledger, job.JobID)
+				if err != nil {
+					return err
+				}
+			}
+
 			shortage := availability.ShortageQty
 			if shortage > 0 {
 				source, canMake := s.resolveSubproductSource(job.ProductID, productID)
@@ -447,10 +433,15 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 				childCount += nestedCount
 				proposal.DependentJobs = append(proposal.DependentJobs, childPlan...)
 
-				// FIX: Always append child actions so phantom material demand bubbles up
-				proposal.InventoryActions = append(proposal.InventoryActions, childActions...)
+				if len(childActions) > 0 {
+					pendingActions[planKey] = append(pendingActions[planKey], childActions...)
+				}
 
 				if isPlannedDependentJob(proposal.DependentJobs, planKey) {
+					if pa, ok := pendingActions[planKey]; ok && len(pa) > 0 {
+						proposal.InventoryActions = append(proposal.InventoryActions, pa...)
+						delete(pendingActions, planKey)
+					}
 					dependencyPlanKey = planKey
 					localTentative = append(localTentative, childSlots...)
 					for _, ts := range childSlots {
@@ -464,6 +455,10 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 				shortage = availability.ShortageQty
 				topUpPasses := 0
 				for shortage > 0 {
+					if !isPlannedDependentJob(proposal.DependentJobs, planKey) {
+						break
+					}
+
 					readyAt := latestDependencyReadyAt(childCompletion, availability.ReadyAt)
 					if readyAt == nil || !readyAt.After(bounds.Start) {
 						if topUpPasses < 3 {
@@ -476,11 +471,15 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 								childCount += nestedCount
 								proposal.DependentJobs = append(proposal.DependentJobs, topUpPlans...)
 
-								// FIX: Always append child actions so phantom material demand bubbles up
-								proposal.InventoryActions = append(proposal.InventoryActions, topUpActions...)
+								if len(topUpActions) > 0 {
+									pendingActions[topUpKey] = append(pendingActions[topUpKey], topUpActions...)
+								}
 
 								if isPlannedDependentJob(proposal.DependentJobs, topUpKey) {
-									// FIX: Ensure the parent action is linked to the successful top-up child
+									if pa, ok := pendingActions[topUpKey]; ok && len(pa) > 0 {
+										proposal.InventoryActions = append(proposal.InventoryActions, pa...)
+										delete(pendingActions, topUpKey)
+									}
 									if dependencyPlanKey == "" {
 										dependencyPlanKey = topUpKey
 									}
@@ -497,8 +496,6 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 										return err
 									}
 									shortage = availability.ShortageQty
-									// Re-enter loop so that if childCompletion (topup completion) is now
-									// after bounds.Start, the reflow branch fires instead of breaking.
 									continue
 								}
 							}
@@ -510,6 +507,21 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 						setDependentJobPlanStatus(proposal.DependentJobs, planKey, planningStatusUnschedulable, reasonCodeParentReflowLimit, "Parent reflow limit exceeded before dependency could be satisfied.")
 						proposal.Feasible = false
 						proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code="+reasonCodeParentReflowLimit)
+						if pa, ok := pendingActions[planKey]; ok && len(pa) > 0 {
+							proposal.InventoryActions = append(proposal.InventoryActions, pa...)
+						} else {
+							for i := 1; i <= 3; i++ {
+								topKey := fmt.Sprintf("%s|topup|%02d", planKey, i)
+								if pa2, ok2 := pendingActions[topKey]; ok2 && len(pa2) > 0 {
+									proposal.InventoryActions = append(proposal.InventoryActions, pa2...)
+									break
+								}
+							}
+						}
+						delete(pendingActions, planKey)
+						for i := 1; i <= 3; i++ {
+							delete(pendingActions, fmt.Sprintf("%s|topup|%02d", planKey, i))
+						}
 						break
 					}
 					delta := alignSuccessorStart(*readyAt).Sub(bounds.Start)
@@ -518,7 +530,22 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 						setDependentJobPlanStatus(proposal.DependentJobs, planKey, planningStatusUnschedulable, reasonCodeChildJobLate, "Parent suffix could not be repaired onto a valid machine/resource calendar window.")
 						proposal.Feasible = false
 						proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code="+reasonCodeChildJobLate)
-						return err // Note: standard logic preserves actions appended so far
+						if pa, ok := pendingActions[planKey]; ok && len(pa) > 0 {
+							proposal.InventoryActions = append(proposal.InventoryActions, pa...)
+						} else {
+							for i := 1; i <= 3; i++ {
+								topKey := fmt.Sprintf("%s|topup|%02d", planKey, i)
+								if pa2, ok2 := pendingActions[topKey]; ok2 && len(pa2) > 0 {
+									proposal.InventoryActions = append(proposal.InventoryActions, pa2...)
+									break
+								}
+							}
+						}
+						delete(pendingActions, planKey)
+						for i := 1; i <= 3; i++ {
+							delete(pendingActions, fmt.Sprintf("%s|topup|%02d", planKey, i))
+						}
+						return err
 					}
 					stepBounds = boundsByJobStep(proposal.ProposedSlots)
 					bounds = stepBounds[step.JobStepID]
@@ -532,6 +559,21 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 					if plan := dependentJobPlanByKey(proposal.DependentJobs, planKey); plan != nil && plan.PlanningStatus != planningStatusPlanned && strings.TrimSpace(plan.ReasonCode) != "" {
 						proposal.Feasible = false
 						proposal.BlockedReasons = appendUniqueString(proposal.BlockedReasons, "reason_code="+plan.ReasonCode)
+						if pa, ok := pendingActions[planKey]; ok && len(pa) > 0 {
+							proposal.InventoryActions = append(proposal.InventoryActions, pa...)
+						} else {
+							for i := 1; i <= 3; i++ {
+								topKey := fmt.Sprintf("%s|topup|%02d", planKey, i)
+								if pa2, ok2 := pendingActions[topKey]; ok2 && len(pa2) > 0 {
+									proposal.InventoryActions = append(proposal.InventoryActions, pa2...)
+									break
+								}
+							}
+						}
+						delete(pendingActions, planKey)
+						for i := 1; i <= 3; i++ {
+							delete(pendingActions, fmt.Sprintf("%s|topup|%02d", planKey, i))
+						}
 						continue
 					}
 					if childCompletion != nil && !childCompletion.After(bounds.Start) {
@@ -566,12 +608,10 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 			proposal.InventoryActions = append(proposal.InventoryActions, action)
 		}
 
-		// FIX 2: Now honor the material block before executing actual ledger reservations.
 		if stepBlocked {
 			continue
 		}
 
-		// PASS 2: Real reservations for raw materials (only if feasible)
 		for _, input := range inputs {
 			required := float64(step.QuantityTarget) * input.QuantityPerUnit
 			if required <= 0 || input.MaterialID == nil {
@@ -744,8 +784,6 @@ func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, co
 		tentative := proposedSlotsToTentatives(proposal.ProposedSlots)
 		return deps, append([]InventoryAction{}, proposal.InventoryActions...), tentative, proposal.EstimatedCompletion, len(proposal.DependentJobs), nil
 	}
-	// FIX: Return child actions even if infeasible so phantom material demand
-	// bubbles up to the parent and the batch aggregate builder.
 	return deps, append([]InventoryAction{}, proposal.InventoryActions...), nil, nil, len(proposal.DependentJobs), nil
 }
 
@@ -1130,8 +1168,6 @@ func (s *AIPredictiveService) productAvailabilityForPlanning(productID string, r
 		return events[i].At.Before(events[j].At)
 	})
 	result := &productAvailabilityResult{
-		// AvailableNow remains non-negative for UI/explanations, but shortage/feasibility must
-		// account for negative net availability (reservation debt) before deciding child output.
 		AvailableNow: math.Max(availableNow, 0),
 		ShortageQty:  math.Max(requiredQty-availableNow, 0),
 	}
@@ -1155,14 +1191,6 @@ func (s *AIPredictiveService) productAvailabilityForPlanning(productID string, r
 }
 
 func ledgerProductActionVisibleToRoot(action InventoryAction, allowedRootJobID string) bool {
-	if strings.TrimSpace(allowedRootJobID) == "" {
-		return true
-	}
-	// FIX: Only hide production from other jobs to prevent cross-proposal dependency.
-	// Reservations (demand) must be globally visible to prevent double-booking existing stock.
-	if action.ActionType == inventoryActionProduceProduct {
-		return ledgerRootJobID(action.JobID) == allowedRootJobID
-	}
 	return true
 }
 
@@ -1363,7 +1391,7 @@ func generatedJobIDMap(jobSteps []domain.JobSteps) map[string]string {
 
 type stepMaterialCheckResult struct {
 	AnyShort     bool
-	ShortDemands []*DemandMaterial // full info for materials that are actually short
+	ShortDemands []*DemandMaterial 
 	Partial      *PartialFeasibilityPlan
 	DeferredNode *DeferredPlanningNode
 }
@@ -1377,19 +1405,46 @@ func (s *AIPredictiveService) checkAllStepMaterials(step SolverPreviewStep, cons
 			continue
 		}
 		required := float64(step.QuantityTarget) * input.QuantityPerUnit
-		// Use time-at-consume + SumActiveReservationsUntil + batch ledger (same family as
-		// materialAvailabilityForPlanning / shortage timeline). materialAvailability uses
-		// SumAllActiveReservations and disagrees with analyzeProposalMaterialShortages after
-		// replenishments — blocked_reasons=material_shortage with empty shortage_resolutions.
 		ledger := newTentativeInventoryLedger()
 		if state != nil && state.ledger != nil {
 			ledger = state.ledger
 		}
-		mat, err := s.materialAvailabilityForPlanning(s.scheduling.inventoryRepo, *input.MaterialID, required, consumeAt, ledger)
+		opening, events, err := s.buildMaterialTimeline(*input.MaterialID, consumeAt, ledger)
 		if err != nil {
 			return nil, err
 		}
-		if mat.ShortageQty > 0 {
+		available := opening
+		shortage := math.Max(required - available, 0)
+		enoughNow := available >= required
+		var readyAt *time.Time
+		if !enoughNow {
+			current := available
+			for _, event := range events {
+				current += event.Delta
+				if current >= required {
+					ready := event.At
+					readyAt = &ready
+					shortage = 0
+					break
+				}
+			}
+			if shortage > 0 {
+				shortage = math.Max(required - current, 0)
+			}
+		}
+		mat := &DemandMaterial{
+			MaterialID:   *input.MaterialID,
+			MaterialName: "",
+			RequiredQty:  required,
+			Unit:         "",
+			ReservedQty:  0,
+			AvailableQty: available,
+			EnoughNow:    enoughNow,
+			ShortageQty:  shortage,
+			ReadyAt:      readyAt,
+		}
+		
+		if !enoughNow {
 			result.AnyShort = true
 			blocking = append(blocking, *input.MaterialID)
 			result.ShortDemands = append(result.ShortDemands, mat)

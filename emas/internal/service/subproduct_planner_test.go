@@ -165,7 +165,7 @@ func TestNormalizeFeasibleDependentJobPlans_ClearsProvisionalLateStatus(t *testi
 	}
 }
 
-func TestProductAvailabilityForPlanning_IgnoresOtherRootLedgerOutput(t *testing.T) {
+func TestProductAvailabilityForPlanning_SeesOtherRootLedgerOutput(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	jobRepo := repository.NewJobRepository(db)
 	stepRepo := repository.NewJobStepRepository(db)
@@ -215,8 +215,8 @@ func TestProductAvailabilityForPlanning_IgnoresOtherRootLedgerOutput(t *testing.
 	if err != nil {
 		t.Fatalf("availability with root filter: %v", err)
 	}
-	if hidden.AvailableNow != 0 {
-		t.Fatalf("expected other-root output to be hidden, got %.2f", hidden.AvailableNow)
+	if hidden.AvailableNow < 5 {
+		t.Fatalf("expected other-root output to be visible for shared batch scheduling, got %.2f", hidden.AvailableNow)
 	}
 }
 
