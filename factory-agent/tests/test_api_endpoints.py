@@ -1,5 +1,10 @@
 import pytest
 from datetime import datetime
+import base64
+import hashlib
+import hmac
+import json
+import time
 
 import httpx
 from fastapi import FastAPI
@@ -23,11 +28,26 @@ class FakeEventBus:
         return
 
 
-async def _make_app(sessionmaker_override):
+def _sign_test_jwt(payload: dict, secret: str) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+    encoded_header = b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    encoded_payload = b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    encoded_sig = b64url(signature)
+    return f"{encoded_header}.{encoded_payload}.{encoded_sig}"
+
+
+async def _make_app(sessionmaker_override, enqueue_session=None, jwt_required=False, jwt_secret=None):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         redis_url=None,
         go_api_base_url="http://testserver",
+        admin_api_key="test-admin-key",
         worker_count=0,
         session_queue_size=10,
         max_plan_steps=10,
@@ -36,6 +56,9 @@ async def _make_app(sessionmaker_override):
         max_llm_calls=20,
         max_session_duration_s=1800,
         http_timeout_s=1.0,
+        jwt_required=jwt_required,
+        jwt_secret=jwt_secret,
+        jwt_clock_skew_s=30,
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()
@@ -47,7 +70,14 @@ async def _make_app(sessionmaker_override):
             yield s
 
     app.dependency_overrides[database.get_db] = override_get_db
-    app.include_router(build_router(settings=settings, tool_registry=tool_registry, event_bus=event_bus))
+    app.include_router(
+        build_router(
+            settings=settings,
+            tool_registry=tool_registry,
+            event_bus=event_bus,
+            enqueue_session=enqueue_session,
+        )
+    )
     return app, event_bus
 
 
@@ -601,3 +631,139 @@ async def test_replan_validation_failure_three_times_blocks_and_pushes_dlq(sessi
     dlq = (await db_session.execute(select(DeadLetter).where(DeadLetter.session_id == session_id))).scalars().first()
     assert dlq is not None
     assert dlq.failure_type == "replan_limit_reached"
+
+
+@pytest.mark.asyncio
+async def test_admin_dashboard_requires_x_admin_key(sessionmaker_override):
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        forbidden = await client.get("/admin/sessions", headers={"X-Admin-Key": "wrong-key"})
+        assert forbidden.status_code == 403
+        allowed = await client.get("/admin/sessions", headers={"X-Admin-Key": "test-admin-key"})
+        assert allowed.status_code == 200
+        assert isinstance(allowed.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_metrics_endpoint_exposes_prometheus_format(sessionmaker_override):
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/metrics")
+        assert res.status_code == 200
+        assert "text/plain" in res.headers.get("content-type", "")
+        assert "# HELP" in res.text
+        assert "plan_validation_failure_rate" in res.text
+        assert "db_connection_pool_usage" in res.text
+
+
+@pytest.mark.asyncio
+async def test_admin_dashboard_html_renders(sessionmaker_override):
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/admin/dashboard", headers={"X-Admin-Key": "test-admin-key"})
+        assert res.status_code == 200
+        assert "text/html" in res.headers.get("content-type", "")
+        assert "Factory Agent Dashboard" in res.text
+
+
+@pytest.mark.asyncio
+async def test_background_execute_returns_429_when_enqueue_fails(sessionmaker_override):
+    async def fail_enqueue(_session_id: str) -> None:
+        raise RuntimeError("session queue full")
+
+    app, _ = await _make_app(sessionmaker_override, enqueue_session=fail_enqueue)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        create = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = create.json()["session_id"]
+
+        res = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
+        assert res.status_code == 429
+        assert "queue full or enqueue failed" in res.text
+
+
+@pytest.mark.asyncio
+async def test_background_execute_rejects_duplicate_enqueue_for_same_session(sessionmaker_override):
+    queued: set[str] = set()
+
+    async def dedupe_enqueue(session_id: str) -> None:
+        if session_id in queued:
+            raise RuntimeError("session already queued or in progress")
+        queued.add(session_id)
+
+    app, _ = await _make_app(sessionmaker_override, enqueue_session=dedupe_enqueue)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        create = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = create.json()["session_id"]
+
+        first = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
+        assert first.status_code == 200
+
+        second = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
+        assert second.status_code == 429
+        assert "already queued or in progress" in second.text
+
+
+@pytest.mark.asyncio
+async def test_tampered_jwt_rejected_with_401(sessionmaker_override):
+    secret = "phase4-secret"
+    app, _ = await _make_app(sessionmaker_override, jwt_required=True, jwt_secret=secret)
+    now = int(time.time())
+    valid_token = _sign_test_jwt({"sub": "u1", "exp": now + 300}, secret)
+    header_part, payload_part, sig_part = valid_token.split(".")
+    tampered_payload = payload_part[:-1] + ("a" if payload_part[-1] != "a" else "b")
+    tampered_token = f"{header_part}.{tampered_payload}.{sig_part}"
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        ok = await client.post("/sessions", json={"user_id": "u1"}, headers={"Authorization": f"Bearer {valid_token}"})
+        assert ok.status_code == 200
+
+        bad = await client.post(
+            "/sessions",
+            json={"user_id": "u1"},
+            headers={"Authorization": f"Bearer {tampered_token}"},
+        )
+        assert bad.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_json_injection_attempt_in_args_rejected_without_plan_write(sessionmaker_override, db_session):
+    from models import Plan
+
+    schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
+    await _seed_tool(
+        db_session,
+        name="post__inventory_update",
+        endpoint="/inventory",
+        method="POST",
+        input_schema=schema,
+        capability_tags='["inventory"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        create = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = create.json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "update inventory"})
+
+        res = await client.post(
+            f"/sessions/{session_id}/plans",
+            json={
+                "draft": {
+                    "plan_explanation": "attempt injection",
+                    "risk_summary": "write op",
+                    "steps": [
+                        {
+                            "step_index": 0,
+                            "tool_name": "post__inventory_update",
+                            "args": {"id": {"$gt": 0}},
+                        }
+                    ],
+                }
+            },
+        )
+        assert res.status_code == 400
+
+    plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
+    assert len(plan_rows) == 0

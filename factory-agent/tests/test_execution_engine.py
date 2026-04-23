@@ -3,6 +3,7 @@ from datetime import datetime
 
 import httpx
 import respx
+from sqlalchemy.exc import SQLAlchemyError
 
 from agent.config import Settings
 from agent.events import AgentEvent
@@ -680,7 +681,7 @@ async def test_execution_mid_step_user_message_queued_and_processed_after_step(d
     sess2 = await db_session.get(Session, session_id)
     step = (
         await db_session.execute(
-            select(PlanStep).where(PlanStep.plan_id == plan.plan_id).where(PlanStep.step_index == 0)
+            select(PlanStep).where(PlanStep.plan_id == plan_id).where(PlanStep.step_index == 0)
         )
     ).scalars().first()
     assert step is not None
@@ -688,3 +689,77 @@ async def test_execution_mid_step_user_message_queued_and_processed_after_step(d
     assert sess2.status == "PLANNING"
     assert sess2.replan_context is not None
     assert sess2.replan_context.get("user_message") == "also include maintenance schedule"
+
+
+@pytest.mark.asyncio
+async def test_db_failure_mid_step_resets_step_to_not_started(db_session):
+    settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        redis_url=None,
+        go_api_base_url="http://testserver",
+        worker_count=0,
+        session_queue_size=10,
+        max_plan_steps=10,
+        max_session_steps=50,
+        max_replans=5,
+        max_llm_calls=20,
+        max_session_duration_s=1800,
+        http_timeout_s=1.0,
+    )
+    event_bus = FakeEventBus()
+    engine = ExecutionEngine(settings, event_bus)
+
+    session_id = "sess-db-fail"
+    plan_id = "plan-db-fail"
+    plan_hash = "hash-db-fail"
+    plan_version = 1
+    sess, plan = await _seed_core(
+        db_session,
+        session_id=session_id,
+        plan_id=plan_id,
+        plan_hash=plan_hash,
+        plan_version=plan_version,
+    )
+    await _seed_step(
+        db_session,
+        plan_id=plan_id,
+        session_id=session_id,
+        step_index=0,
+        tool_name="get__machines",
+        args={},
+        plan_version=plan_version,
+    )
+    tools = {
+        "get__machines": ToolInfo(
+            name="get__machines",
+            description="",
+            endpoint="/machines",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            side_effect_level="NONE",
+            is_concurrency_safe=True,
+            is_strongly_idempotent=True,
+            capability_tags=[],
+        )
+    }
+
+    async def fail_call(**kwargs):
+        raise SQLAlchemyError("db unavailable")
+
+    engine._execute_tool_call = fail_call  # type: ignore[method-assign]
+    await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
+
+    from sqlalchemy import select
+    from models import PlanStep, Session
+
+    sess2 = await db_session.get(Session, session_id)
+    step = (
+        await db_session.execute(
+            select(PlanStep).where(PlanStep.plan_id == plan_id).where(PlanStep.step_index == 0)
+        )
+    ).scalars().first()
+    assert step is not None
+    assert step.status == "NOT_STARTED"
+    assert sess2.status == "EXECUTING"

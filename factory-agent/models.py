@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID # if using pg
 from database import Base
 
@@ -10,6 +10,10 @@ def generate_uuid():
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (
+        Index("idx_sessions_user_id", "user_id"),
+        Index("idx_sessions_status", "status"),
+    )
     session_id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(255), nullable=False)
     status = Column(String(50), nullable=False, default="IDLE")
@@ -33,6 +37,7 @@ class Session(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (Index("idx_messages_session_id", "session_id"),)
     message_id = Column(String(36), primary_key=True, default=generate_uuid)
     session_id = Column(String(36), ForeignKey("sessions.session_id"), nullable=False)
     role = Column(String(50), nullable=False)
@@ -58,6 +63,11 @@ class Plan(Base):
 
 class PlanStep(Base):
     __tablename__ = "plan_steps"
+    __table_args__ = (
+        Index("idx_plan_steps_session_id", "session_id"),
+        Index("idx_plan_steps_status", "status"),
+        Index("idx_plan_steps_idempotency", "idempotency_key"),
+    )
     step_id = Column(String(36), primary_key=True, default=generate_uuid)
     plan_id = Column(String(36), ForeignKey("plans.plan_id"), nullable=False)
     session_id = Column(String(36), nullable=False)
@@ -108,6 +118,10 @@ class ToolRegistryMeta(Base):
 
 class Approval(Base):
     __tablename__ = "approvals"
+    __table_args__ = (
+        Index("idx_approvals_session_id", "session_id"),
+        Index("idx_approvals_status", "status"),
+    )
     approval_id = Column(String(36), primary_key=True, default=generate_uuid)
     session_id = Column(String(36), nullable=False)
     step_id = Column(String(36), nullable=False)
@@ -124,6 +138,7 @@ class Approval(Base):
 
 class ExecutionSnapshot(Base):
     __tablename__ = "execution_snapshots"
+    __table_args__ = (Index("idx_snapshots_session_id", "session_id"),)
     snapshot_id = Column(String(36), primary_key=True, default=generate_uuid)
     step_id = Column(String(36), nullable=False)
     session_id = Column(String(36), nullable=False)
@@ -141,6 +156,10 @@ class ExecutionSnapshot(Base):
 
 class DeadLetter(Base):
     __tablename__ = "dead_letters"
+    __table_args__ = (
+        Index("idx_dlq_status", "status"),
+        Index("idx_dlq_session_id", "session_id"),
+    )
     dlq_id = Column(String(36), primary_key=True, default=generate_uuid)
     session_id = Column(String(36), nullable=False)
     step_id = Column(String(36), nullable=True)

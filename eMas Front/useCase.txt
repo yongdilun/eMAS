@@ -1,0 +1,509 @@
+1. Job Management — Create, Read, Update, Delete
+UC-J01. Create a new job via form
+
+Actor: Production planner
+Goal: Schedule a production job manually with optional split into multiple slots
+Steps:
+
+Navigate to Job Scheduling page
+
+Click "Create Schedule" or "Add Job"
+
+Fill in: Product ID/Name, Target Machine(s), Start Date/Time, Duration, Quantity, Priority, Notes
+
+Optionally split job into multiple slots with partial quantities
+
+Click Submit
+Expected: Job appears in Gantt chart; slots assigned to machines; system validates no conflicts
+
+UC-J02. Create a job via NLP
+
+Actor: Operator or planner
+Goal: Create a job using natural language with slot splitting and step assignment
+Steps:
+
+Open AI Assistant chat
+
+Type: "Create a job for 500 units of Valve Body Assembly on CNC Mill 01, split 200 units now and 300 later, deadline April 5, 2026"
+
+Review auto-filled form and suggested split schedule
+
+Submit
+Expected: NLP extracts entities → form pre-filled → slot schedule created → user confirms → job created
+
+UC-J03. Read/list all jobs
+
+Actor: Any user
+Goal: View all scheduled and historical jobs
+Steps:
+
+Navigate to Job Scheduling
+
+View Gantt chart with jobs and their split slots
+
+Scroll/zoom for different time ranges
+Expected: All jobs visible with slot-level details; completed steps highlighted; workflow connections shown
+
+UC-J04. Read job details (including split slots)
+
+Actor: Operator, planner
+Goal: See full details of a single job, step assignments, and slot schedule
+Steps:
+
+Click a job step or slot in Gantt
+
+View Job Details panel with: Job ID, product, total/slot quantities, machine assignments, step sequences, status, deadlines
+Expected: Complete job and step-slot information
+
+UC-J05. Update job (reschedule / slot adjustment)
+
+Actor: Planner
+Goal: Change job start time, machine, duration, or split slot quantities
+Steps:
+
+Select job in Gantt
+
+Modify start date/time, machine, duration, or slot quantity
+
+Save
+Expected: Job updated; slots rescheduled; conflict check runs
+
+UC-J06. Update job via NLP
+
+Actor: Operator
+Goal: Reschedule or change job using natural language
+Steps:
+
+Chat: "Reschedule Job #P-2404 slot 2 to tomorrow morning on CNC Mill 02"
+
+Confirm suggested change
+Expected: System updates slot schedule; user notified
+
+UC-J07. Delete/cancel a job
+
+Actor: Planner
+Goal: Cancel a job or specific slot
+Steps:
+
+Select job/slot
+
+Click "Cancel" or "Delete"
+
+Confirm
+Expected: Job/slot cancelled; machine freed
+
+UC-J08. Duplicate a job
+
+Actor: Planner
+Goal: Create a similar job for a different date/quantity with step/slot info
+Steps:
+
+Select existing job
+
+Click "Duplicate"
+
+Adjust date, quantity, or machine slots
+
+Save
+Expected: New job created with step/slot template copied
+
+2. Job Step & Scheduling — New Detailed Management
+UC-JS01. Create job steps from product routing
+
+Actor: Planner
+Goal: Automatically generate job steps from product routing/formula
+Steps:
+
+Select product for job
+
+System generates job steps and default machine assignments
+
+Planner reviews and adjusts step sequence or machines
+Expected: Job steps created; ready for slot assignment
+
+UC-JS02. Assign machines to job steps
+
+Actor: Planner
+Goal: Allocate machines to each step based on capabilities
+Steps:
+
+View job steps
+
+Assign machine (system suggests compatible machines)
+
+Save
+Expected: Machine-step mapping stored
+
+UC-JS03. Split step into multiple slots
+
+Actor: Planner
+Goal: Execute a step in multiple time slots
+Steps:
+
+Select step
+
+Input split quantities and times
+
+Assign machine for each slot
+
+Save
+Expected: Step scheduled in multiple slots; slots visible in Gantt
+
+UC-JS04. Update step slot schedule
+
+Actor: Planner
+Goal: Adjust step slot timing, machine, or quantity
+Steps:
+
+Edit slot in Gantt
+
+Modify machine/time/quantity
+
+Save
+Expected: Slot updated; system checks conflicts
+
+UC-JS05. View step slot completion
+
+Actor: Operator/Planner
+Goal: Track progress per slot
+Steps:
+
+Click slot
+
+View quantity completed vs planned
+
+Record production or scrap
+Expected: Accurate slot-level progress tracking
+
+3. Machine & Resources — CRUD & Detailed Tracking
+
+(Expanded to include capability, maintenance, downtime, and predictive scheduling)
+
+UC-M01. Create a new machine
+
+Actor: Admin
+Goal: Register a new machine with capability and calendar
+Steps:
+
+Click "Add Machine"
+
+Enter Name, ID, Type, Location, Capacity, Default setup/cleaning/changeover time, Maintenance interval
+
+Save
+Expected: Machine available for job step assignment
+
+UC-M02. Assign capabilities to machine
+
+Actor: Admin
+Goal: Define which steps the machine can perform
+Steps:
+
+Select machine
+
+Add supported step(s) with efficiency factor
+
+Save
+Expected: Machine capability table updated
+
+UC-M03. Record machine downtime
+
+Actor: Operator / Maintenance
+Goal: Track unplanned stoppages
+Steps:
+
+Select machine or slot
+
+Record start/end, cause
+Expected: Downtime logged; impact reflected in job schedule
+
+UC-M04. Predictive machine maintenance alert
+
+Actor: Maintenance / System
+Goal: Forecast maintenance based on usage and calendar
+Steps:
+
+System checks calendar, utilization, and last maintenance
+
+Generate alert
+Expected: Upcoming maintenance flagged in dashboard
+
+4. Product & BOM — CRUD & Integration
+UC-P01. Link product to formula and BOM
+
+Actor: Engineer / Planner
+Goal: Define all materials, quantities, and process routing
+Steps:
+
+Select product
+
+Attach formula(s), BOM items, routing steps
+
+Save
+Expected: Complete product definition ready for job creation
+
+UC-P02. Track material usage per job
+
+Actor: Operator / Planner
+Goal: Reduce stock as production progresses
+Steps:
+
+Start job slot
+
+System automatically consumes materials per BOM
+
+Logs transaction
+Expected: Inventory updated per slot execution
+
+5. Inventory & Storage — CRUD & Slot Consumption
+UC-S01. Track slot-level material consumption
+
+Actor: System / Operator
+Goal: Reduce inventory based on actual production
+Steps:
+
+Slot starts or completes
+
+Inventory updated for materials consumed
+
+Reorder alerts triggered if stock below threshold
+Expected: Real-time inventory accuracy
+
+UC-S02. Update stock via NLP
+
+Actor: Warehouse
+Goal: Quick inventory recording
+Steps:
+
+Chat: "Consume 50 kg of Aluminum Alloy for Job #P-2404 Slot 1"
+
+Confirm
+Expected: Inventory reduced; transaction logged
+
+6. Production Logging & Quality
+UC-PL01. Log production per slot
+
+Actor: Operator
+Goal: Record output, scrap, downtime per slot
+Steps:
+
+Enter quantity produced, scrap, downtime
+
+Submit
+Expected: Production log stored; slot progress updated
+
+UC-PL02. Record quality inspection
+
+Actor: QA
+Goal: Verify output per step or slot
+Steps:
+
+Select slot
+
+Enter inspection result, defect count, notes
+
+Submit
+Expected: Inspection record stored; linked to job step and product
+
+7. Graphs, Reports & Analytics — Expanded
+UC-GR01. View production output per slot
+
+Actor: Planner / Manager
+
+Goal: See how much output was completed per slot
+
+Steps: Navigate to Production Analytics → Select job/line → View output chart per slot
+
+Expected: Slot-level output visualized; trends and variances highlighted
+
+UC-GR02. Monitor machine utilization per step
+
+Actor: Planner / Maintenance
+
+Goal: Track how effectively machines are used per step
+
+Steps: Select machine → View utilization dashboard → Filter by step or date range
+
+Expected: Utilization percentages shown; under/over-utilized machines flagged
+
+UC-GR03. Compare planned vs actual job completion
+
+Actor: Planner / Manager
+
+Goal: Evaluate schedule adherence
+
+Steps: Select job → View Gantt/graph → Compare planned vs actual slot completion
+
+Expected: Variances highlighted; alerts for delays
+
+UC-GR04. Inventory trends per material
+
+Actor: Warehouse / Planner
+
+Goal: Monitor stock movements over time
+
+Steps: Navigate to Inventory Reports → Select material or category → View trends chart
+
+Expected: Stock-in/out trends visualized; reorder points highlighted
+
+UC-GR05. Quality inspection trends
+
+Actor: QA / Planner
+
+Goal: Identify defect patterns and process issues
+
+Steps: Select product/job/slot → View defect trends over time
+
+Expected: Defects per slot/step visualized; critical issues flagged
+
+UC-GR06. Predictive AI bottleneck forecasts
+
+Actor: Planner / AI System
+
+Goal: Anticipate production delays or constraints
+
+Steps: System analyzes historical job/step/machine data → Generate bottleneck forecasts
+
+Expected: Potential delays highlighted; suggested mitigations displayed
+
+UC-GR07. OEE trends per line/shift
+
+Actor: Manager / Planner
+
+Goal: Evaluate efficiency, quality, and availability
+
+Steps: Select line/shift → View Overall Equipment Effectiveness (OEE) dashboard
+
+Expected: Efficiency metrics displayed; historical comparisons available
+
+UC-GR08. Maintenance scheduling efficiency
+
+Actor: Maintenance / Planner
+
+Goal: Check impact of maintenance on production
+
+Steps: Select machine → View scheduled vs actual maintenance and resulting downtime
+
+Expected: Efficiency trends and schedule adherence visualized
+
+8. NLP-Only Operations — AI/BDI Integration
+UC-NLP01. Create/reschedule/cancel jobs via AI chat
+
+Actor: Planner / Operator
+
+Goal: Manage job schedules via natural language
+
+Steps: Chat: "Reschedule Job #P-2404 slot 2 to tomorrow morning" → Confirm
+
+Expected: Job/slot updated; system logs changes
+
+UC-NLP02. Query job, step, machine, inventory status
+
+Actor: Any user
+
+Goal: Quickly retrieve real-time data via chat
+
+Steps: Chat query → System returns current status
+
+Expected: Accurate data displayed; quick navigation link available
+
+UC-NLP03. Recommend reroutes based on downtime
+
+Actor: Planner / AI System
+
+Goal: Suggest alternate routing when machines fail
+
+Steps: System detects downtime → Chat suggests reroute → User approves
+
+Expected: Job schedule adjusted; machine conflicts avoided
+
+UC-NLP04. Generate production/quality/inventory reports
+
+Actor: Planner / QA / Warehouse
+
+Goal: Produce insights via chat
+
+Steps: Chat: "Show weekly inventory trend for Aluminum Alloy"
+
+Expected: Report generated and displayed
+
+UC-NLP05. Compare lines, forecast bottlenecks, suggest maintenance
+
+Actor: Planner / AI System
+
+Goal: Optimize production planning
+
+Steps: Chat query → System analyzes data → Recommendations displayed
+
+Expected: Decisions supported by AI insights
+
+9. Filtering & Sorting — Multi-Level
+UC-FS01. Filter jobs by date, machine, product, slot, status
+
+Actor: Planner / Operator
+
+Goal: Narrow down job list for analysis
+
+Steps: Open Job List → Apply filters → View filtered jobs
+
+Expected: Only jobs matching criteria displayed
+
+UC-FS02. Sort jobs by priority, completion %, quantity
+
+Actor: Planner / Manager
+
+Goal: Quickly rank jobs for decision-making
+
+Steps: Click sort option → Select attribute
+
+Expected: Jobs sorted accordingly
+
+UC-FS03. Filter inventory by stock status, material type
+
+Actor: Warehouse / Planner
+
+Goal: Identify critical inventory items
+
+Steps: Inventory module → Apply filters → View results
+
+Expected: Low-stock or specific material type displayed
+
+UC-FS04. Combine multiple filters
+
+Actor: Planner / Operator
+
+Goal: Create complex queries (e.g., jobs on CNC Mill 01, due this week, high priority)
+
+Steps: Apply multiple filters → Results updated dynamically
+
+Expected: Correct multi-filtered view displayed
+
+10. System Settings & Integration
+UC-SS01. Theme toggle, notifications, language selection
+
+Actor: Any user
+
+Goal: Personalize interface
+
+Steps: Settings → Select theme/language/notification preferences → Save
+
+Expected: Preferences applied system-wide
+
+UC-SS02. AI assistant contextual awareness
+
+Actor: User / System
+
+Goal: Ensure AI provides relevant suggestions per current module
+
+Steps: AI tracks user context → Suggests actions accordingly
+
+Expected: Accurate, context-aware recommendations
+
+UC-SS03. ERP / MES integration
+
+Actor: System / IT
+
+Goal: Synchronize production and inventory in real-time
+
+Steps: Connect ERP/MES → Map fields → Test sync
+
+Expected: Data updates automatically between systems

@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
 from database import AsyncSessionLocal, Base, engine
@@ -12,23 +12,34 @@ from models import Approval as ApprovalRow
 from models import DeadLetter as DeadLetterRow
 from models import PlanStep as PlanStepRow
 from models import Session as SessionRow
+from models import Tool as ToolRow
+from models import generate_uuid
 
 from agent.api import build_router
 from agent.config import get_settings
 from agent.events import AgentEvent, EventBus
 from agent.execution import ExecutionEngine
+from agent.metrics import metrics
+from agent.telemetry import log_event, log_step_status_changed, setup_logging
 from agent.tool_registry import ToolRegistry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     settings = get_settings()
     tool_registry = ToolRegistry()
     event_bus = EventBus(redis_url=settings.redis_url)
+    setattr(event_bus, "_fault_injected", False)
     executor = ExecutionEngine(settings, event_bus)
 
     session_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.session_queue_size)
+    queued_sessions: set[str] = set()
+    inflight_sessions: set[str] = set()
+    queue_lock = asyncio.Lock()
     worker_tasks: list[asyncio.Task] = []
+    busy_workers = 0
+    listener_task: asyncio.Task | None = None
 
     # Create DB tables
     async with engine.begin() as conn:
@@ -40,12 +51,61 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    async def refresh_operational_gauges(db) -> None:
+        active_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(SessionRow)
+                .where(SessionRow.status.in_(("PLANNING", "EXECUTING", "WAITING_APPROVAL", "BLOCKED")))
+            )
+        ).scalar_one()
+        pending_approvals = (
+            await db.execute(select(func.count()).select_from(ApprovalRow).where(ApprovalRow.status == "PENDING"))
+        ).scalar_one()
+        pending_dlq = (
+            await db.execute(select(func.count()).select_from(DeadLetterRow).where(DeadLetterRow.status == "PENDING"))
+        ).scalar_one()
+        ambiguous_steps = (
+            await db.execute(select(func.count()).select_from(PlanStepRow).where(PlanStepRow.status == "AMBIGUOUS"))
+        ).scalar_one()
+
+        metrics.set_gauge("active_sessions", float(active_count))
+        metrics.set_gauge("pending_approvals", float(pending_approvals))
+        metrics.set_gauge("dlq_pending_count", float(pending_dlq))
+        metrics.set_gauge("ambiguous_step_count", float(ambiguous_steps))
+        metrics.set_gauge("session_queue_depth", float(session_queue.qsize()))
+        utilization = 0.0 if settings.worker_count <= 0 else float(busy_workers) / float(settings.worker_count)
+        metrics.set_gauge("worker_pool_utilization", utilization)
+        metrics.set_gauge("redis_event_queue_depth", -1.0 if not settings.redis_url else 0.0)
+        pool = engine.sync_engine.pool
+        checked_out = float(pool.checkedout()) if hasattr(pool, "checkedout") else 0.0
+        size = float(pool.size()) if hasattr(pool, "size") else 0.0
+        db_usage = (checked_out / size) if size > 0 else 0.0
+        metrics.set_gauge("db_connection_pool_usage", db_usage)
+
     async def enqueue_session(session_id: str) -> None:
-        session_queue.put_nowait(session_id)
+        async with queue_lock:
+            if session_id in queued_sessions or session_id in inflight_sessions:
+                metrics.inc("sessions_rejected_429_total", labels={"reason": "duplicate_session"})
+                raise RuntimeError(f"session already queued or in progress: {session_id}")
+            try:
+                session_queue.put_nowait(session_id)
+            except asyncio.QueueFull as e:
+                metrics.inc("sessions_rejected_429_total", labels={"reason": "queue_full"})
+                raise RuntimeError("session queue full") from e
+            queued_sessions.add(session_id)
+            metrics.set_gauge("session_queue_depth", float(session_queue.qsize()))
 
     async def worker_loop(worker_id: int) -> None:
+        nonlocal busy_workers
         while True:
             session_id = await session_queue.get()
+            async with queue_lock:
+                queued_sessions.discard(session_id)
+                inflight_sessions.add(session_id)
+            busy_workers += 1
+            metrics.set_gauge("worker_pool_utilization", float(busy_workers) / float(max(settings.worker_count, 1)))
+            metrics.set_gauge("session_queue_depth", float(session_queue.qsize()))
             try:
                 async with AsyncSessionLocal() as db:
                     session = (
@@ -53,13 +113,306 @@ async def lifespan(app: FastAPI):
                     ).scalars().first()
                     if not session:
                         continue
+                    if settings.redis_url and not event_bus.healthy:
+                        session.status = "BLOCKED"
+                        session.error = "Redis unavailable - execution paused"
+                        session.updated_at = datetime.utcnow()
+                        await db.commit()
+                        await refresh_operational_gauges(db)
+                        continue
                     tools_by_name = await tool_registry.get_tools_by_name(db)
-                    await executor.execute_until_blocked(db, session=session, tools_by_name=tools_by_name)
+                    try:
+                        await executor.execute_until_blocked(db, session=session, tools_by_name=tools_by_name)
+                    except Exception as e:
+                        session.status = "BLOCKED"
+                        session.error = f"Worker execution error: {e}"
+                        session.updated_at = datetime.utcnow()
+                        await db.commit()
+                        log_event(
+                            "worker_session_error",
+                            level="ERROR",
+                            worker_id=worker_id,
+                            session_id=session_id,
+                            error=str(e),
+                        )
+                    await refresh_operational_gauges(db)
             finally:
+                async with queue_lock:
+                    inflight_sessions.discard(session_id)
+                busy_workers = max(0, busy_workers - 1)
+                metrics.set_gauge("worker_pool_utilization", float(busy_workers) / float(max(settings.worker_count, 1)))
                 session_queue.task_done()
+                metrics.set_gauge("session_queue_depth", float(session_queue.qsize()))
+
+    async def cold_start_recovery_sweep() -> None:
+        async with AsyncSessionLocal() as db:
+            stuck_sessions = (
+                await db.execute(
+                    select(SessionRow).where(SessionRow.status.in_(("EXECUTING", "PLANNING", "WAITING_APPROVAL")))
+                )
+            ).scalars().all()
+            recovered_count = 0
+            for session in stuck_sessions:
+                if not session.plan_id:
+                    session.status = "FAILED"
+                    session.error = "Recovered from cold start without plan"
+                    continue
+
+                in_progress_steps = (
+                    await db.execute(
+                        select(PlanStepRow)
+                        .where(PlanStepRow.session_id == session.session_id)
+                        .where(PlanStepRow.status == "IN_PROGRESS")
+                    )
+                ).scalars().all()
+
+                blocked_by_ambiguous = False
+                for step in in_progress_steps:
+                    tool = (
+                        await db.execute(select(ToolRow).where(ToolRow.name == step.tool_name))
+                    ).scalars().first()
+                    strongly_idempotent = bool(tool and tool.is_strongly_idempotent)
+                    if strongly_idempotent:
+                        step.status = "NOT_STARTED"
+                        step.started_at = None
+                        step.last_error = "Recovered from cold start (idempotent step reset)"
+                        log_step_status_changed(
+                            session_id=session.session_id,
+                            plan_id=session.plan_id,
+                            plan_version=session.plan_version,
+                            step_id=step.step_id,
+                            step_index=step.step_index,
+                            tool=step.tool_name,
+                            status=step.status,
+                            idempotency_key=step.idempotency_key,
+                            is_strongly_idempotent=True,
+                            required_approval=bool(step.requires_approval),
+                            session_step_count=session.step_count,
+                            session_llm_call_count=session.llm_call_count,
+                            session_replan_count=session.replan_count,
+                            session_duration_s=0,
+                            user_id=session.user_id,
+                        )
+                    else:
+                        step.status = "AMBIGUOUS"
+                        step.last_error = "Recovered from cold start (non-idempotent in-progress step)"
+                        blocked_by_ambiguous = True
+                        dlq = DeadLetterRow(
+                            dlq_id=generate_uuid(),
+                            session_id=session.session_id,
+                            step_id=step.step_id,
+                            failure_type="ambiguous_execution",
+                            reason="Cold-start recovery found non-idempotent IN_PROGRESS step",
+                            payload={"tool": step.tool_name, "step_index": step.step_index, "recovery": "cold_start"},
+                            status="PENDING",
+                        )
+                        db.add(dlq)
+                        metrics.inc("dlq_push_total", labels={"failure_type": "ambiguous_execution"})
+                        metrics.inc("dlq_push_rate", labels={"failure_type": "ambiguous_execution"})
+                        log_step_status_changed(
+                            session_id=session.session_id,
+                            plan_id=session.plan_id,
+                            plan_version=session.plan_version,
+                            step_id=step.step_id,
+                            step_index=step.step_index,
+                            tool=step.tool_name,
+                            status=step.status,
+                            idempotency_key=step.idempotency_key,
+                            is_strongly_idempotent=False,
+                            required_approval=bool(step.requires_approval),
+                            session_step_count=session.step_count,
+                            session_llm_call_count=session.llm_call_count,
+                            session_replan_count=session.replan_count,
+                            session_duration_s=0,
+                            user_id=session.user_id,
+                        )
+
+                if session.status == "WAITING_APPROVAL":
+                    waiting_step = (
+                        await db.execute(
+                            select(PlanStepRow)
+                            .where(PlanStepRow.session_id == session.session_id)
+                            .where(PlanStepRow.approval_id.is_not(None))
+                            .where(PlanStepRow.status.in_(("NOT_STARTED", "IN_PROGRESS")))
+                            .order_by(PlanStepRow.step_index.asc())
+                        )
+                    ).scalars().first()
+                    if waiting_step and waiting_step.approval_id:
+                        approval = (
+                            await db.execute(
+                                select(ApprovalRow).where(ApprovalRow.approval_id == waiting_step.approval_id)
+                            )
+                        ).scalars().first()
+                        if approval and approval.status == "APPROVED":
+                            waiting_step.status = "NOT_STARTED"
+                            waiting_step.started_at = None
+                            waiting_step.last_error = None
+                            log_step_status_changed(
+                                session_id=session.session_id,
+                                plan_id=session.plan_id,
+                                plan_version=session.plan_version,
+                                step_id=waiting_step.step_id,
+                                step_index=waiting_step.step_index,
+                                tool=waiting_step.tool_name,
+                                status=waiting_step.status,
+                                idempotency_key=waiting_step.idempotency_key,
+                                required_approval=True,
+                                session_step_count=session.step_count,
+                                session_llm_call_count=session.llm_call_count,
+                                session_replan_count=session.replan_count,
+                                session_duration_s=0,
+                                user_id=session.user_id,
+                            )
+                            session.status = "EXECUTING"
+                            session.error = None
+                            recovered_count += 1
+                        elif approval and approval.status == "REJECTED":
+                            waiting_step.status = "SKIPPED"
+                            waiting_step.last_error = approval.rejection_reason or "Rejected while server was down"
+                            waiting_step.completed_at = waiting_step.completed_at or datetime.utcnow()
+                            session.status = "IDLE"
+                            session.error = waiting_step.last_error
+                            log_step_status_changed(
+                                session_id=session.session_id,
+                                plan_id=session.plan_id,
+                                plan_version=session.plan_version,
+                                step_id=waiting_step.step_id,
+                                step_index=waiting_step.step_index,
+                                tool=waiting_step.tool_name,
+                                status=waiting_step.status,
+                                idempotency_key=waiting_step.idempotency_key,
+                                required_approval=True,
+                                session_step_count=session.step_count,
+                                session_llm_call_count=session.llm_call_count,
+                                session_replan_count=session.replan_count,
+                                session_duration_s=0,
+                                user_id=session.user_id,
+                            )
+                elif blocked_by_ambiguous:
+                    session.status = "BLOCKED"
+                    session.error = "Cold-start recovery requires operator review"
+                else:
+                    session.status = "EXECUTING"
+                    session.error = None
+                    recovered_count += 1
+                session.updated_at = datetime.utcnow()
+            await db.commit()
+            for session in stuck_sessions:
+                if session.status == "EXECUTING":
+                    with contextlib.suppress(Exception):
+                        await enqueue_session(session.session_id)
+            await refresh_operational_gauges(db)
+            log_event("cold_start_recovery_sweep", recovered_sessions=recovered_count)
+
+    async def reconcile_stuck_in_progress_steps() -> None:
+        while True:
+            await asyncio.sleep(10)
+            cutoff = datetime.utcnow() - timedelta(seconds=45)
+            async with AsyncSessionLocal() as db:
+                stuck_steps = (
+                    await db.execute(
+                        select(PlanStepRow)
+                        .where(PlanStepRow.status == "IN_PROGRESS")
+                        .where(PlanStepRow.started_at.is_not(None))
+                        .where(PlanStepRow.started_at < cutoff)
+                    )
+                ).scalars().all()
+                if not stuck_steps:
+                    continue
+                for step in stuck_steps:
+                    session = (
+                        await db.execute(select(SessionRow).where(SessionRow.session_id == step.session_id))
+                    ).scalars().first()
+                    if not session:
+                        continue
+                    tool = (
+                        await db.execute(select(ToolRow).where(ToolRow.name == step.tool_name))
+                    ).scalars().first()
+                    strongly_idempotent = bool(tool and tool.is_strongly_idempotent)
+                    if strongly_idempotent:
+                        step.status = "NOT_STARTED"
+                        step.started_at = None
+                        step.last_error = "Recovered from stale IN_PROGRESS step"
+                        session.status = "EXECUTING"
+                        session.error = None
+                        session.current_step_index = min(session.current_step_index or 0, step.step_index)
+                    else:
+                        step.status = "AMBIGUOUS"
+                        step.last_error = "Stale non-idempotent IN_PROGRESS step requires operator review"
+                        session.status = "BLOCKED"
+                        session.error = "Stale non-idempotent IN_PROGRESS step"
+                        db.add(
+                            DeadLetterRow(
+                                dlq_id=generate_uuid(),
+                                session_id=session.session_id,
+                                step_id=step.step_id,
+                                failure_type="ambiguous_execution",
+                                reason="Stale non-idempotent IN_PROGRESS step",
+                                payload={"tool": step.tool_name, "step_index": step.step_index, "recovery": "stuck_step"},
+                                status="PENDING",
+                            )
+                        )
+                        metrics.inc("dlq_push_total", labels={"failure_type": "ambiguous_execution"})
+                        metrics.inc("dlq_push_rate", labels={"failure_type": "ambiguous_execution"})
+                    session.updated_at = datetime.utcnow()
+                await db.commit()
+                for step in stuck_steps:
+                    if step.status == "NOT_STARTED":
+                        with contextlib.suppress(Exception):
+                            await enqueue_session(step.session_id)
+                await refresh_operational_gauges(db)
+                log_event("stuck_step_reconciliation", recovered=len(stuck_steps))
+
+    async def redis_health_monitor() -> None:
+        nonlocal listener_task
+        redis_was_healthy = event_bus.healthy
+        while True:
+            await asyncio.sleep(2)
+            if not settings.redis_url:
+                continue
+            if getattr(event_bus, "_fault_injected", False):
+                healthy = False
+                event_bus._healthy = False
+            else:
+                healthy = await event_bus.ping()
+                if not healthy:
+                    healthy = await event_bus.reconnect()
+            metrics.set_gauge("redis_event_queue_depth", 0.0 if healthy else -1.0)
+
+            if healthy:
+                if listener_task is None or listener_task.done():
+                    listener_task = asyncio.create_task(event_bus.listen(handle_event))
+                async with AsyncSessionLocal() as db:
+                    paused_sessions = (
+                        await db.execute(
+                            select(SessionRow)
+                            .where(SessionRow.status == "BLOCKED")
+                            .where(SessionRow.error == "Redis unavailable - execution paused")
+                        )
+                    ).scalars().all()
+                    if paused_sessions:
+                        for paused in paused_sessions:
+                            paused.status = "EXECUTING"
+                            paused.error = None
+                            paused.updated_at = datetime.utcnow()
+                        await db.commit()
+                        for paused in paused_sessions:
+                            with contextlib.suppress(Exception):
+                                await enqueue_session(paused.session_id)
+                        await refresh_operational_gauges(db)
+                        log_event("redis_recovered", resumed_sessions=len(paused_sessions))
+                    elif not redis_was_healthy:
+                        log_event("redis_recovered", resumed_sessions=0)
+
+            if (not healthy) and redis_was_healthy:
+                log_event("redis_unavailable", level="WARNING")
+
+            redis_was_healthy = healthy
 
     for i in range(max(0, settings.worker_count)):
         worker_tasks.append(asyncio.create_task(worker_loop(i)))
+
+    await cold_start_recovery_sweep()
 
     async def handle_event(event: AgentEvent) -> None:
         async with AsyncSessionLocal() as db:
@@ -88,6 +441,22 @@ async def lifespan(app: FastAPI):
                         step.status = "SKIPPED"
                         step.completed_at = datetime.utcnow()
                         step.last_error = approval.rejection_reason or f"Approval {approval_id} rejected"
+                        log_step_status_changed(
+                            session_id=session.session_id,
+                            plan_id=session.plan_id,
+                            plan_version=session.plan_version,
+                            step_id=step.step_id,
+                            step_index=step.step_index,
+                            tool=step.tool_name,
+                            status=step.status,
+                            idempotency_key=step.idempotency_key,
+                            required_approval=bool(step.requires_approval),
+                            session_step_count=session.step_count,
+                            session_llm_call_count=session.llm_call_count,
+                            session_replan_count=session.replan_count,
+                            session_duration_s=0,
+                            user_id=session.user_id,
+                        )
                     session.status = "IDLE"
                     session.error = approval.rejection_reason or f"Approval {approval_id} rejected"
                     session.updated_at = datetime.utcnow()
@@ -95,6 +464,7 @@ async def lifespan(app: FastAPI):
                 if approval.status == "APPROVED":
                     with contextlib.suppress(Exception):
                         await enqueue_session(session.session_id)
+                await refresh_operational_gauges(db)
                 return
 
             if event.event_type == "session_cancel":
@@ -117,10 +487,27 @@ async def lifespan(app: FastAPI):
                         step.status = "SKIPPED"
                         step.completed_at = step.completed_at or datetime.utcnow()
                         step.last_error = step.last_error or "Cancelled"
+                        log_step_status_changed(
+                            session_id=session.session_id,
+                            plan_id=session.plan_id,
+                            plan_version=session.plan_version,
+                            step_id=step.step_id,
+                            step_index=step.step_index,
+                            tool=step.tool_name,
+                            status=step.status,
+                            idempotency_key=step.idempotency_key,
+                            required_approval=bool(step.requires_approval),
+                            session_step_count=session.step_count,
+                            session_llm_call_count=session.llm_call_count,
+                            session_replan_count=session.replan_count,
+                            session_duration_s=0,
+                            user_id=session.user_id,
+                        )
                 session.status = "IDLE"
                 session.error = "Cancelled"
                 session.updated_at = datetime.utcnow()
                 await db.commit()
+                await refresh_operational_gauges(db)
                 return
 
             if event.event_type == "dlq_replay_requested":
@@ -142,6 +529,26 @@ async def lifespan(app: FastAPI):
                         step.started_at = None
                         step.completed_at = None
                         step.retry_count = 0
+                        session_for_log = (
+                            await db.execute(select(SessionRow).where(SessionRow.session_id == dlq.session_id))
+                        ).scalars().first()
+                        if session_for_log:
+                            log_step_status_changed(
+                                session_id=session_for_log.session_id,
+                                plan_id=session_for_log.plan_id,
+                                plan_version=session_for_log.plan_version,
+                                step_id=step.step_id,
+                                step_index=step.step_index,
+                                tool=step.tool_name,
+                                status=step.status,
+                                idempotency_key=step.idempotency_key,
+                                required_approval=bool(step.requires_approval),
+                                session_step_count=session_for_log.step_count,
+                                session_llm_call_count=session_for_log.llm_call_count,
+                                session_replan_count=session_for_log.replan_count,
+                                session_duration_s=0,
+                                user_id=session_for_log.user_id,
+                            )
                 dlq.status = "REPLAYED"
                 dlq.replayed_at = dlq.replayed_at or datetime.utcnow()
                 session = (
@@ -160,15 +567,20 @@ async def lifespan(app: FastAPI):
                 if session:
                     with contextlib.suppress(Exception):
                         await enqueue_session(session.session_id)
+                await refresh_operational_gauges(db)
                 return
 
-    listener_task: asyncio.Task | None = None
+    redis_monitor_task: asyncio.Task | None = None
+    stuck_step_task: asyncio.Task | None = None
     if settings.redis_url:
         listener_task = asyncio.create_task(event_bus.listen(handle_event))
+        redis_monitor_task = asyncio.create_task(redis_health_monitor())
+    stuck_step_task = asyncio.create_task(reconcile_stuck_in_progress_steps())
 
     app.state.settings = settings
     app.state.tool_registry = tool_registry
     app.state.event_bus = event_bus
+    app.state.redis_fault_injected = False
 
     app.state.session_queue = session_queue
     app.state.worker_tasks = worker_tasks
@@ -181,6 +593,7 @@ async def lifespan(app: FastAPI):
             enqueue_session=enqueue_session,
         )
     )
+    log_event("agent_server_started", worker_count=settings.worker_count, session_queue_size=settings.session_queue_size)
 
     yield
 
@@ -188,12 +601,21 @@ async def lifespan(app: FastAPI):
         listener_task.cancel()
         with contextlib.suppress(Exception):
             await listener_task
+    if redis_monitor_task:
+        redis_monitor_task.cancel()
+        with contextlib.suppress(Exception):
+            await redis_monitor_task
+    if stuck_step_task:
+        stuck_step_task.cancel()
+        with contextlib.suppress(Exception):
+            await stuck_step_task
     for t in worker_tasks:
         t.cancel()
     for t in worker_tasks:
         with contextlib.suppress(Exception):
             await t
     await event_bus.close()
+    log_event("agent_server_stopped")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -202,3 +624,9 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/_mock/slow")
+async def mock_slow(ms: int = 1000):
+    await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
+    return {"ok": True, "slept_ms": ms}

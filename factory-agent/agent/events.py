@@ -34,14 +34,42 @@ class EventBus:
         self._redis_url = redis_url
         self._channel = channel
         self._redis: Redis | None = None
+        self._healthy: bool = False
 
     async def connect(self) -> None:
         if not self._redis_url or Redis is None:
             self._redis = None
+            self._healthy = False
             return
         self._redis = Redis.from_url(self._redis_url, decode_responses=True)
         # cheap health check
         await self._redis.ping()
+        self._healthy = True
+
+    @property
+    def healthy(self) -> bool:
+        return self._healthy
+
+    async def ping(self) -> bool:
+        if self._redis is None:
+            self._healthy = False
+            return False
+        try:
+            await self._redis.ping()
+            self._healthy = True
+            return True
+        except Exception:
+            self._healthy = False
+            return False
+
+    async def reconnect(self) -> bool:
+        try:
+            await self.close()
+            await self.connect()
+            return self._healthy
+        except Exception:
+            self._healthy = False
+            return False
 
     async def close(self) -> None:
         if self._redis is not None:
@@ -50,11 +78,17 @@ class EventBus:
             else:  # pragma: no cover
                 await self._redis.close()
         self._redis = None
+        self._healthy = False
 
     async def publish(self, event: AgentEvent) -> None:
         if self._redis is None:
             return
-        await self._redis.publish(self._channel, event.model_dump_json())
+        try:
+            await self._redis.publish(self._channel, event.model_dump_json())
+            self._healthy = True
+        except Exception:
+            self._healthy = False
+            raise
 
     async def listen(self, handler: Callable[[AgentEvent], Awaitable[None]]) -> None:
         if self._redis is None:
@@ -73,6 +107,7 @@ class EventBus:
                     continue
                 await handler(event)
         finally:
+            self._healthy = False
             try:
                 await pubsub.unsubscribe(self._channel)
             except Exception:

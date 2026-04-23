@@ -1,0 +1,114 @@
+⚠️ Remaining hidden risks (important)
+1. 🔴 Timeline consistency still depends on “cursor vs slot race”
+
+Even with Fix 1:
+
+consumeAt = proposedSlots[i]
+
+Risk:
+
+slot not finalized yet → consumeAt becomes unstable
+Fix (recommended)
+
+You need a two-phase scheduling model:
+
+Phase 1: compute slot plan (no inventory write)
+Phase 2: lock slot → then compute EffectiveAt
+
+Otherwise:
+
+timing can drift during recursion
+2. 🔴 Ledger + DB dual truth race (still exists)
+
+Even with unified model:
+
+batch ledger is correct only inside one planning session
+
+Risk:
+
+concurrent batches still can overspend before apply
+Fix
+
+You still need ONE of:
+
+soft lock per material per batch
+OR optimistic concurrency versioning on inventory snapshot
+3. 🟡 Partial feasibility may create planning ambiguity
+
+You introduced:
+
+PartialFeasibilityPlan
+
+Risk:
+
+downstream scheduling engine may:
+double-schedule deferred qty
+or forget remainder entirely
+Fix
+
+You need explicit rule:
+
+DeferredQty MUST generate a follow-up dependent planning node
+
+(not just metadata)
+
+4. 🟡 “MaxDeficit” still depends on resolution order
+
+If timeline evaluation order shifts slightly:
+
+MaxDeficit can change
+Fix
+
+Make deficit computation:
+
+order-independent (pure projection over time grid)
+
+not step iteration order dependent.
+
+5. 🟡 Replan convergence is good but not global-safe
+
+You check:
+
+deficit before/after per material
+
+Risk:
+
+overall system still might oscillate across materials
+Fix (optional but strong)
+
+Add:
+
+global_score = sum(all material deficits weighted)
+must strictly decrease
+6. 🟡 Lead-time constraint may conflict with batch optimization
+
+Problem:
+
+one material forces delay_jobs
+others are replenishable
+
+Risk:
+
+system may over-prioritize delay_jobs globally
+Fix
+
+Make resolution per-material independent, not job-global.
+
+7. 🟡 “EffectiveAt normalization helper” must be single source of truth
+
+You rely on:
+
+alignSuccessorStart()
+
+Risk:
+
+if any path bypasses it → silent drift bug
+Fix
+
+Enforce:
+
+ALL material events MUST go through one function:
+
+normalizeMaterialEventTime()
+
+not scattered helpers.

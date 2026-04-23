@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +22,7 @@ from models import generate_uuid
 from .config import Settings
 from .events import AgentEvent, EventBus
 from .execution import ExecutionEngine, compute_idempotency_key
+from .metrics import metrics
 from .plan_validator import validate_plan
 from .schemas import (
     ApprovalDecisionRequest,
@@ -37,6 +41,8 @@ from .schemas import (
     ValidationErrorResponse,
 )
 from .session_manager import SessionManager, TransitionError, VersionConflictError
+from .security import JwtValidationError, validate_bearer_token
+from .telemetry import log_event, log_step_status_changed
 from .tool_registry import ToolRegistry
 from .tool_scope import filter_tools_for_intent
 
@@ -105,8 +111,45 @@ def build_router(
     session_mgr = SessionManager(settings)
     executor = ExecutionEngine(settings, event_bus)
 
+    def _session_duration_s(sess: SessionRow) -> int:
+        if not sess.session_started_at:
+            return 0
+        return int((datetime.utcnow() - sess.session_started_at).total_seconds())
+
+    def _log_step_status(sess: SessionRow, step: PlanStepRow, status: str) -> None:
+        log_step_status_changed(
+            session_id=sess.session_id,
+            plan_id=sess.plan_id,
+            plan_version=sess.plan_version,
+            step_id=step.step_id,
+            step_index=step.step_index,
+            tool=step.tool_name,
+            status=status,
+            idempotency_key=step.idempotency_key,
+            required_approval=bool(step.requires_approval),
+            session_step_count=sess.step_count,
+            session_llm_call_count=sess.llm_call_count,
+            session_replan_count=sess.replan_count,
+            session_duration_s=_session_duration_s(sess),
+            user_id=sess.user_id,
+        )
+
+    def require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
+        if x_admin_key != settings.admin_api_key:
+            raise HTTPException(status_code=403, detail="forbidden")
+
+    def require_jwt(authorization: str | None = Header(None, alias="Authorization")) -> dict[str, Any]:
+        try:
+            return validate_bearer_token(authorization, settings=settings)
+        except JwtValidationError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+
     @router.post("/sessions", response_model=SessionResponse)
-    async def create_session(req: SessionCreateRequest, db: AsyncSession = Depends(get_db)):
+    async def create_session(
+        req: SessionCreateRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         sess = await session_mgr.create_session(db, user_id=req.user_id)
         return _session_to_response(sess)
 
@@ -131,7 +174,12 @@ def build_router(
         return [tools_by_name[name] for name in names]
 
     @router.post("/sessions/{session_id}/messages", response_model=MessageResponse)
-    async def add_message(session_id: str, req: MessageCreateRequest, db: AsyncSession = Depends(get_db)):
+    async def add_message(
+        session_id: str,
+        req: MessageCreateRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
@@ -154,6 +202,7 @@ def build_router(
                         step.status = "SKIPPED"
                         step.completed_at = step.completed_at or datetime.utcnow()
                         step.last_error = step.last_error or "Cancelled by user message"
+                        _log_step_status(sess, step, step.status)
                 sess.status = "IDLE"
                 sess.error = "Cancelled by user message"
                 sess.pending_user_message = None
@@ -210,7 +259,13 @@ def build_router(
         response_model=PlanResponse,
         responses={400: {"model": ValidationErrorResponse}},
     )
-    async def create_plan(session_id: str, req: PlanCreateRequest, db: AsyncSession = Depends(get_db)):
+    async def create_plan(
+        session_id: str,
+        req: PlanCreateRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
+        started = time.perf_counter()
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
@@ -226,6 +281,8 @@ def build_router(
 
         validation = validate_plan(req.draft, tools_by_name, max_steps=settings.max_plan_steps)
         if not validation.ok:
+            metrics.inc("plan_validation_failure_total")
+            metrics.inc("plan_validation_failure_rate")
             if sess.status == "PLANNING":
                 context = dict(sess.replan_context or {})
                 failures = int(context.get("validation_failure_count", 0)) + 1
@@ -314,6 +371,7 @@ def build_router(
         sess.error = None
         sess.version += 1
         await db.commit()
+        metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
 
         return PlanResponse(
             plan_id=plan_row.plan_id,
@@ -333,6 +391,7 @@ def build_router(
         session_id: str,
         background: bool = Query(False, description="If true, enqueue execution to the worker pool (when enabled)."),
         expected_version: int | None = Query(None, ge=1, description="Optional optimistic-lock expected session version."),
+        _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         sess = await session_mgr.get_session(db, session_id=session_id)
@@ -367,7 +426,11 @@ def build_router(
         return _session_to_response(sess)
 
     @router.post("/sessions/{session_id}/cancel", response_model=SessionResponse)
-    async def cancel_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    async def cancel_session(
+        session_id: str,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
@@ -385,6 +448,7 @@ def build_router(
                 step.status = "SKIPPED"
                 step.completed_at = step.completed_at or datetime.utcnow()
                 step.last_error = step.last_error or "Cancelled"
+                _log_step_status(sess, step, step.status)
         sess.status = "IDLE"
         sess.error = "Cancelled"
         sess.updated_at = datetime.utcnow()
@@ -415,7 +479,12 @@ def build_router(
         return _approval_to_response(row)
 
     @router.post("/approvals/{approval_id}/approve", response_model=ApprovalResponse)
-    async def approve_approval(approval_id: str, req: ApprovalDecisionRequest, db: AsyncSession = Depends(get_db)):
+    async def approve_approval(
+        approval_id: str,
+        req: ApprovalDecisionRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
@@ -434,10 +503,16 @@ def build_router(
         return _approval_to_response(row)
 
     @router.post("/approvals/{approval_id}/reject", response_model=ApprovalResponse)
-    async def reject_approval(approval_id: str, req: ApprovalDecisionRequest, db: AsyncSession = Depends(get_db)):
+    async def reject_approval(
+        approval_id: str,
+        req: ApprovalDecisionRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
+        sess = await session_mgr.get_session(db, session_id=row.session_id)
         row.status = "REJECTED"
         row.decided_by = req.decided_by
         row.decided_at = datetime.utcnow()
@@ -448,7 +523,8 @@ def build_router(
             step.completed_at = datetime.utcnow()
             reason = req.rejection_reason or f"Approval {row.approval_id} rejected"
             step.last_error = reason
-        sess = await session_mgr.get_session(db, session_id=row.session_id)
+            if sess:
+                _log_step_status(sess, step, step.status)
         if sess:
             sess.status = "IDLE"
             sess.error = req.rejection_reason or f"Approval {row.approval_id} rejected"
@@ -497,7 +573,11 @@ def build_router(
         ]
 
     @router.post("/dlq/push", response_model=DeadLetterResponse)
-    async def push_dlq(req: DeadLetterPushRequest, db: AsyncSession = Depends(get_db)):
+    async def push_dlq(
+        req: DeadLetterPushRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         row = DeadLetterRow(
             dlq_id=generate_uuid(),
             session_id=req.session_id,
@@ -510,6 +590,8 @@ def build_router(
         db.add(row)
         await db.commit()
         await db.refresh(row)
+        metrics.inc("dlq_push_total", labels={"failure_type": req.failure_type})
+        metrics.inc("dlq_push_rate", labels={"failure_type": req.failure_type})
         return DeadLetterResponse(
             dlq_id=row.dlq_id,
             session_id=row.session_id,
@@ -526,10 +608,16 @@ def build_router(
         )
 
     @router.post("/dlq/{dlq_id}/replay")
-    async def replay_dlq(dlq_id: str, req: DeadLetterReplayRequest, db: AsyncSession = Depends(get_db)):
+    async def replay_dlq(
+        dlq_id: str,
+        req: DeadLetterReplayRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         row = (await db.execute(select(DeadLetterRow).where(DeadLetterRow.dlq_id == dlq_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="dlq entry not found")
+        sess = await session_mgr.get_session(db, session_id=row.session_id)
         if row.step_id:
             step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
             if step:
@@ -538,7 +626,8 @@ def build_router(
                 step.started_at = None
                 step.completed_at = None
                 step.retry_count = 0
-        sess = await session_mgr.get_session(db, session_id=row.session_id)
+                if sess:
+                    _log_step_status(sess, step, step.status)
         if sess:
             if row.step_id:
                 step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
@@ -553,6 +642,9 @@ def build_router(
         row.dismissed_at = None
         row.dismissed_reason = None
         await db.commit()
+        metrics.inc("dlq_replay_total")
+        metrics.inc("dlq_replay_success_total")
+        metrics.inc("dlq_replay_success_rate")
         await event_bus.publish(
             AgentEvent(
                 event_type="dlq_replay_requested",
@@ -564,11 +656,20 @@ def build_router(
         return {"ok": True}
 
     @router.post("/dlq/{dlq_id}/replay-request")
-    async def request_dlq_replay(dlq_id: str, db: AsyncSession = Depends(get_db)):
-        return await replay_dlq(dlq_id, DeadLetterReplayRequest(), db)
+    async def request_dlq_replay(
+        dlq_id: str,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
+        return await replay_dlq(dlq_id, DeadLetterReplayRequest(), {}, db)
 
     @router.post("/dlq/{dlq_id}/dismiss")
-    async def dismiss_dlq(dlq_id: str, req: DeadLetterDismissRequest, db: AsyncSession = Depends(get_db)):
+    async def dismiss_dlq(
+        dlq_id: str,
+        req: DeadLetterDismissRequest,
+        _: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
         row = (await db.execute(select(DeadLetterRow).where(DeadLetterRow.dlq_id == dlq_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="dlq entry not found")
@@ -580,7 +681,10 @@ def build_router(
         return {"ok": True}
 
     @router.post("/admin/regenerate-tools")
-    async def regenerate_tools(db: AsyncSession = Depends(get_db)):
+    async def regenerate_tools(
+        _: None = Depends(require_admin),
+        db: AsyncSession = Depends(get_db),
+    ):
         # Best-effort regeneration: fetch spec (HTTP then local fallback) and store tools.md hash in DB.
         from agent.toolgen import fetch_openapi_spec, tools_from_openapi, write_tools_md_and_meta
         import os
@@ -602,6 +706,153 @@ def build_router(
                 published_at=datetime.utcnow(),
             )
         )
+        log_event("tool_registry_regenerated", tool_count=result.tool_count, tools_md_hash=result.tools_md_hash)
         return {"ok": True, "tool_count": result.tool_count, "tools_md_hash": result.tools_md_hash}
+
+    @router.get("/metrics", response_class=PlainTextResponse)
+    async def get_metrics():
+        return PlainTextResponse(metrics.render_prometheus(), media_type="text/plain; version=0.0.4")
+
+    @router.get("/admin/sessions", dependencies=[Depends(require_admin)])
+    async def admin_list_sessions(
+        status: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+        db: AsyncSession = Depends(get_db),
+    ):
+        stmt = select(SessionRow).order_by(SessionRow.updated_at.desc()).limit(limit)
+        if status:
+            stmt = stmt.where(SessionRow.status == status)
+        rows = (await db.execute(stmt)).scalars().all()
+        return [_session_to_response(s) for s in rows]
+
+    @router.get("/admin/approvals/pending", dependencies=[Depends(require_admin)], response_model=list[ApprovalResponse])
+    async def admin_pending_approvals(db: AsyncSession = Depends(get_db)):
+        rows = (
+            await db.execute(select(ApprovalRow).where(ApprovalRow.status == "PENDING").order_by(ApprovalRow.created_at.asc()))
+        ).scalars().all()
+        return [_approval_to_response(r) for r in rows]
+
+    @router.get("/admin/dlq", dependencies=[Depends(require_admin)], response_model=list[DeadLetterResponse])
+    async def admin_list_dlq(
+        status: str | None = Query(None),
+        session_id: str | None = Query(None),
+        db: AsyncSession = Depends(get_db),
+    ):
+        stmt = select(DeadLetterRow)
+        if status:
+            stmt = stmt.where(DeadLetterRow.status == status)
+        if session_id:
+            stmt = stmt.where(DeadLetterRow.session_id == session_id)
+        rows = (
+            await db.execute(stmt.order_by(DeadLetterRow.created_at.desc()))
+        ).scalars().all()
+        return [
+            DeadLetterResponse(
+                dlq_id=r.dlq_id,
+                session_id=r.session_id,
+                step_id=r.step_id,
+                failure_type=r.failure_type,
+                reason=r.reason,
+                payload=r.payload,
+                status=r.status,
+                replayed_at=r.replayed_at,
+                replayed_by=r.replayed_by,
+                dismissed_at=r.dismissed_at,
+                dismissed_reason=r.dismissed_reason,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ]
+
+    @router.get("/admin/tools", dependencies=[Depends(require_admin)])
+    async def admin_list_tools(db: AsyncSession = Depends(get_db)):
+        tools_by_name = await tool_registry.get_tools_by_name(db)
+        return [tools_by_name[name] for name in sorted(tools_by_name.keys())]
+
+    @router.post("/admin/faults/redis/down", dependencies=[Depends(require_admin)])
+    async def admin_fault_redis_down():
+        # Fault injection hook for chaos testing (E4.3).
+        setattr(event_bus, "_fault_injected", True)
+        setattr(event_bus, "_healthy", False)
+        return {"ok": True, "redis_fault": "down"}
+
+    @router.post("/admin/faults/redis/up", dependencies=[Depends(require_admin)])
+    async def admin_fault_redis_up():
+        setattr(event_bus, "_fault_injected", False)
+        with contextlib.suppress(Exception):
+            await event_bus.reconnect()
+        return {"ok": True, "redis_fault": "up"}
+
+    @router.get("/admin/dashboard", dependencies=[Depends(require_admin)], response_class=HTMLResponse)
+    async def admin_dashboard(db: AsyncSession = Depends(get_db)):
+        sessions = (
+            await db.execute(select(SessionRow).order_by(SessionRow.updated_at.desc()).limit(200))
+        ).scalars().all()
+        approvals = (
+            await db.execute(select(ApprovalRow).where(ApprovalRow.status == "PENDING").order_by(ApprovalRow.created_at.asc()))
+        ).scalars().all()
+        dlq_rows = (
+            await db.execute(select(DeadLetterRow).where(DeadLetterRow.status == "PENDING").order_by(DeadLetterRow.created_at.desc()))
+        ).scalars().all()
+        tools_by_name = await tool_registry.get_tools_by_name(db)
+
+        session_rows = "".join(
+            f"<tr><td>{s.session_id}</td><td>{s.user_id}</td><td>{s.status}</td><td>{s.current_step_index}</td><td>{s.error or ''}</td></tr>"
+            for s in sessions
+        )
+        approval_rows = "".join(
+            f"<tr><td>{a.approval_id}</td><td>{a.session_id}</td><td>{a.tool_name}</td><td>{a.status}</td></tr>"
+            for a in approvals
+        )
+        dlq_html_rows = "".join(
+            f"<tr><td>{d.dlq_id}</td><td>{d.session_id}</td><td>{d.failure_type}</td><td>{d.reason}</td></tr>"
+            for d in dlq_rows
+        )
+        tool_rows = "".join(
+            f"<tr><td>{t.name}</td><td>{t.method}</td><td>{t.endpoint}</td><td>{'yes' if t.requires_approval else 'no'}</td></tr>"
+            for t in sorted(tools_by_name.values(), key=lambda x: x.name)
+        )
+
+        html = f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Factory Agent Admin Dashboard</title>
+  <style>
+    body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 24px; background: #f2f7fb; color: #112; }}
+    h1 {{ margin: 0 0 8px 0; }}
+    .grid {{ display: grid; grid-template-columns: 1fr; gap: 16px; }}
+    section {{ background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid #e7edf4; }}
+    th {{ background: #eef5ff; }}
+  </style>
+</head>
+<body>
+  <h1>Factory Agent Dashboard</h1>
+  <p>Sessions: {len(sessions)} | Pending approvals: {len(approvals)} | Pending DLQ: {len(dlq_rows)} | Tools: {len(tools_by_name)}</p>
+  <div class="grid">
+    <section>
+      <h2>Sessions</h2>
+      <table><thead><tr><th>Session</th><th>User</th><th>Status</th><th>Step</th><th>Error</th></tr></thead><tbody>{session_rows}</tbody></table>
+    </section>
+    <section>
+      <h2>Approval Queue</h2>
+      <table><thead><tr><th>Approval</th><th>Session</th><th>Tool</th><th>Status</th></tr></thead><tbody>{approval_rows}</tbody></table>
+    </section>
+    <section>
+      <h2>DLQ Viewer</h2>
+      <table><thead><tr><th>DLQ</th><th>Session</th><th>Failure Type</th><th>Reason</th></tr></thead><tbody>{dlq_html_rows}</tbody></table>
+    </section>
+    <section>
+      <h2>Tool Registry</h2>
+      <table><thead><tr><th>Name</th><th>Method</th><th>Endpoint</th><th>Approval</th></tr></thead><tbody>{tool_rows}</tbody></table>
+    </section>
+  </div>
+</body>
+</html>
+"""
+        return HTMLResponse(content=html)
 
     return router

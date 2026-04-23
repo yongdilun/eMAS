@@ -1291,12 +1291,12 @@ _Repo note: Phase 1 baseline is implemented in `factory-agent/agent/*` and wired
 - [x] Optimistic locking + concurrency control
 
 ### Phase 3 — Observability + Recovery (Week 6)
-- [ ] Structured logging (all events including DLQ pushes, rate limit hits)
-- [ ] Metrics (Prometheus or similar — all metrics in section 13.2)
-- [ ] ExecutionSnapshot audit trail
-- [ ] Memory compression (compact memory after N steps)
-- [ ] Cold start recovery sweep (startup hook — section 19)
-- [ ] Admin dashboard: session list, approval queue, DLQ viewer, tool registry
+- [x] Structured logging (all events including DLQ pushes, rate limit hits)
+- [x] Metrics (Prometheus or similar — all metrics in section 13.2)
+- [x] ExecutionSnapshot audit trail
+- [x] Memory compression (compact memory after N steps)
+- [x] Cold start recovery sweep (startup hook — section 19)
+- [x] Admin dashboard: session list, approval queue, DLQ viewer, tool registry
 
 ### Phase 4 — Hardening (Week 7–8)
 - [ ] Session queue + worker pool backpressure (section 20)
