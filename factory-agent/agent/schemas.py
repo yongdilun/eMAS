@@ -90,6 +90,8 @@ class SessionResponse(BaseModel):
     replan_count: int
     llm_call_count: int
     session_started_at: datetime
+    replan_context: dict[str, Any] | None = None
+    pending_user_message: str | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -182,4 +184,25 @@ class DeadLetterResponse(BaseModel):
     reason: str
     payload: dict[str, Any]
     status: str
+    replayed_at: datetime | None = None
+    replayed_by: str | None = None
+    dismissed_at: datetime | None = None
+    dismissed_reason: str | None = None
     created_at: datetime
+
+
+class DeadLetterDismissRequest(BaseModel):
+    dismissed_reason: str
+    dismissed_by: str | None = None
+
+
+class DeadLetterPushRequest(BaseModel):
+    session_id: str
+    step_id: str | None = None
+    failure_type: str
+    reason: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeadLetterReplayRequest(BaseModel):
+    replayed_by: str | None = None

@@ -132,11 +132,28 @@ async def lifespan(app: FastAPI):
                 ).scalars().first()
                 if not dlq:
                     return
-                dlq.status = "REPLAY_REQUESTED"
+                if dlq.step_id:
+                    step = (
+                        await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == dlq.step_id))
+                    ).scalars().first()
+                    if step:
+                        step.status = "NOT_STARTED"
+                        step.last_error = None
+                        step.started_at = None
+                        step.completed_at = None
+                        step.retry_count = 0
+                dlq.status = "REPLAYED"
+                dlq.replayed_at = dlq.replayed_at or datetime.utcnow()
                 session = (
                     await db.execute(select(SessionRow).where(SessionRow.session_id == dlq.session_id))
                 ).scalars().first()
                 if session:
+                    if dlq.step_id:
+                        step = (
+                            await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == dlq.step_id))
+                        ).scalars().first()
+                        if step is not None:
+                            session.current_step_index = min(session.current_step_index or 0, step.step_index)
                     session.status = "EXECUTING"
                     session.error = None
                 await db.commit()

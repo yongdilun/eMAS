@@ -1282,13 +1282,13 @@ async def start_event_listener():
 _Repo note: Phase 1 baseline is implemented in `factory-agent/agent/*` and wired in `factory-agent/main.py`. Exactly-once uses `plan_steps.idempotency_key` + `execution_snapshots` replay; AMBIGUOUS moves the session to `BLOCKED` and creates a `dead_letters` entry._
 
 ### Phase 2 — Resilience (Week 5)
-- [ ] Error classification + decision tree (with strong idempotency retry gate)
-- [ ] Retry with exponential backoff
-- [ ] Replan trigger + context builder
-- [ ] DLQ manager (push, list, replay, dismiss endpoints)
-- [ ] Rate limiter (hard limits enforced at loop entry + inside loop)
-- [ ] Mid-execution user message handling
-- [ ] Optimistic locking + concurrency control
+- [x] Error classification + decision tree (with strong idempotency retry gate)
+- [x] Retry with exponential backoff
+- [x] Replan trigger + context builder
+- [x] DLQ manager (push, list, replay, dismiss endpoints)
+- [x] Rate limiter (hard limits enforced at loop entry + inside loop)
+- [x] Mid-execution user message handling
+- [x] Optimistic locking + concurrency control
 
 ### Phase 3 — Observability + Recovery (Week 6)
 - [ ] Structured logging (all events including DLQ pushes, rate limit hits)

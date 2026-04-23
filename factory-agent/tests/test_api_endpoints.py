@@ -412,3 +412,192 @@ async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_ov
         )
     ).scalars().all()
     assert [s.status for s in steps] == ["DONE", "DONE"]
+
+
+@pytest.mark.asyncio
+async def test_dlq_dismiss_and_replay_endpoints(sessionmaker_override, db_session):
+    from models import DeadLetter, generate_uuid
+
+    dlq_id = generate_uuid()
+    db_session.add(
+        DeadLetter(
+            dlq_id=dlq_id,
+            session_id="sess-dlq",
+            step_id=None,
+            failure_type="unrecoverable_error",
+            reason="boom",
+            payload={},
+            status="PENDING",
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        dismissed = await client.post(f"/dlq/{dlq_id}/dismiss", json={"dismissed_reason": "handled", "dismissed_by": "ops"})
+        assert dismissed.status_code == 200
+        replayed = await client.post(f"/dlq/{dlq_id}/replay", json={"replayed_by": "ops"})
+        assert replayed.status_code == 200
+        listed = await client.get("/dlq", params={"status": "REPLAYED"})
+        assert listed.status_code == 200
+        assert any(row["dlq_id"] == dlq_id for row in listed.json())
+
+
+@pytest.mark.asyncio
+async def test_execute_expected_version_conflict_returns_409(sessionmaker_override, db_session):
+    from models import Session, generate_uuid
+
+    session_id = generate_uuid()
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="IDLE",
+            version=2,
+            session_started_at=datetime.utcnow(),
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.post(f"/sessions/{session_id}/execute", params={"expected_version": 1})
+        assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_waiting_approval_user_message_triggers_replan_context(sessionmaker_override, db_session):
+    from models import Session
+
+    await _seed_session_plan_with_steps(
+        db_session,
+        session_id="sess-replan-msg",
+        plan_id="plan-replan-msg",
+        plan_hash="hash-replan-msg",
+        plan_version=1,
+        steps=[{"step_index": 0, "tool_name": "post__inventory_update", "args": {"id": 1}, "status": "NOT_STARTED"}],
+    )
+    sess = await db_session.get(Session, "sess-replan-msg")
+    sess.status = "WAITING_APPROVAL"
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.post(
+            "/sessions/sess-replan-msg/messages",
+            json={"role": "user", "content": "also include maintenance schedule"},
+        )
+        assert res.status_code == 200
+        session = await client.get("/sessions/sess-replan-msg")
+        assert session.status_code == 200
+        body = session.json()
+        assert body["status"] == "PLANNING"
+        assert body["replan_context"] is not None
+
+
+@pytest.mark.asyncio
+async def test_dlq_replay_resets_step_and_marks_session_executing(sessionmaker_override, db_session):
+    from models import DeadLetter, PlanStep, Session, generate_uuid
+
+    session_id = "sess-replay-reset"
+    plan_id = "plan-replay-reset"
+    step_id = generate_uuid()
+    await _seed_session_plan_with_steps(
+        db_session,
+        session_id=session_id,
+        plan_id=plan_id,
+        plan_hash="hash-replay-reset",
+        plan_version=1,
+        steps=[
+            {
+                "step_id": step_id,
+                "step_index": 0,
+                "tool_name": "post__inventory_update",
+                "args": {"id": 1},
+                "status": "AMBIGUOUS",
+            }
+        ],
+    )
+    sess = await db_session.get(Session, session_id)
+    sess.status = "BLOCKED"
+    dlq_id = generate_uuid()
+    db_session.add(
+        DeadLetter(
+            dlq_id=dlq_id,
+            session_id=session_id,
+            step_id=step_id,
+            failure_type="ambiguous_execution",
+            reason="timeout",
+            payload={},
+            status="PENDING",
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        replayed = await client.post(f"/dlq/{dlq_id}/replay", json={"replayed_by": "ops"})
+        assert replayed.status_code == 200
+
+    db_session.expire_all()
+    sess2 = await db_session.get(Session, session_id)
+    step = (await db_session.execute(select(PlanStep).where(PlanStep.step_id == step_id))).scalars().first()
+    assert sess2.status == "EXECUTING"
+    assert step.status == "NOT_STARTED"
+
+
+@pytest.mark.asyncio
+async def test_replan_validation_failure_three_times_blocks_and_pushes_dlq(sessionmaker_override, db_session):
+    from models import DeadLetter, Session, Tool, generate_uuid
+
+    session_id = "sess-validate-fail"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="PLANNING",
+            current_intent="machine work",
+            replan_context={"original_intent": "machine work"},
+            session_started_at=datetime.utcnow(),
+        )
+    )
+    # Seed one scoped tool so failure is from schema validation, not scope denial.
+    db_session.add(
+        Tool(
+            tool_id=generate_uuid(),
+            name="get__machines",
+            description="get machines",
+            endpoint="/machines",
+            method="GET",
+            version=1,
+            schema_version=1,
+            input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+            output_schema={"type": "object"},
+            is_read_only=True,
+            requires_approval=False,
+            side_effect_level="NONE",
+            is_concurrency_safe=True,
+            is_strongly_idempotent=True,
+            capability_tags='["machine"]',
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    bad_draft = {
+        "plan_explanation": "bad",
+        "risk_summary": "bad",
+        "steps": [{"step_index": 0, "tool_name": "get__machines", "args": {}}],
+    }
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        for _ in range(3):
+            res = await client.post(f"/sessions/{session_id}/plans", json={"draft": bad_draft})
+            assert res.status_code == 400
+
+        session = await client.get(f"/sessions/{session_id}")
+        assert session.status_code == 200
+        assert session.json()["status"] == "BLOCKED"
+
+    dlq = (await db_session.execute(select(DeadLetter).where(DeadLetter.session_id == session_id))).scalars().first()
+    assert dlq is not None
+    assert dlq.failure_type == "replan_limit_reached"

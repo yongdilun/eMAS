@@ -23,6 +23,8 @@ class Session(Base):
     replan_count = Column(Integer, default=0)
     llm_call_count = Column(Integer, default=0)
     session_started_at = Column(DateTime, default=datetime.utcnow)
+    replan_context = Column(JSON, nullable=True)
+    pending_user_message = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
     version = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)

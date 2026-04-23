@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Message as MessageRow
@@ -15,6 +15,14 @@ from .config import Settings
 
 @dataclass(frozen=True)
 class TransitionError(Exception):
+    message: str
+
+    def __str__(self) -> str:  # pragma: no cover
+        return self.message
+
+
+@dataclass(frozen=True)
+class VersionConflictError(Exception):
     message: str
 
     def __str__(self) -> str:  # pragma: no cover
@@ -96,3 +104,42 @@ class SessionManager:
             if datetime.utcnow() > deadline:
                 raise TransitionError("Session exceeded MAX_SESSION_DURATION_S")
 
+    def identify_limit_hit(self, session: SessionRow) -> str | None:
+        if session.step_count >= self._settings.max_session_steps:
+            return "MAX_SESSION_STEPS"
+        if session.replan_count >= self._settings.max_replans:
+            return "MAX_REPLANS"
+        if session.llm_call_count >= self._settings.max_llm_calls:
+            return "MAX_LLM_CALLS"
+        if session.session_started_at:
+            deadline = session.session_started_at + timedelta(seconds=self._settings.max_session_duration_s)
+            if datetime.utcnow() > deadline:
+                return "MAX_SESSION_DURATION_S"
+        return None
+
+    async def update_with_version(
+        self,
+        db: AsyncSession,
+        *,
+        session_id: str,
+        expected_version: int,
+        values: dict,
+    ) -> SessionRow:
+        values = dict(values)
+        values["version"] = expected_version + 1
+        values["updated_at"] = datetime.utcnow()
+        stmt = (
+            update(SessionRow)
+            .where(SessionRow.session_id == session_id)
+            .where(SessionRow.version == expected_version)
+            .values(**values)
+        )
+        result = await db.execute(stmt)
+        if result.rowcount != 1:
+            await db.rollback()
+            raise VersionConflictError("Session version conflict")
+        await db.commit()
+        refreshed = await self.get_session(db, session_id=session_id)
+        if not refreshed:  # pragma: no cover
+            raise VersionConflictError("Session not found after versioned update")
+        return refreshed
