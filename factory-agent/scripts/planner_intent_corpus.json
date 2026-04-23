@@ -1,0 +1,17 @@
+[
+  "check machine status for line 1",
+  "update inventory quantity for item 42",
+  "show pending approvals",
+  "reschedule job 1001 to tomorrow",
+  "cancel job 1002",
+  "read inventory availability for sku A-100",
+  "approve approval request id 123",
+  "reject approval request id 124 with reason not safe",
+  "what tools can I use right now",
+  "delete obsolete inventory record id 77",
+  "list machine downtime for this week",
+  "create a production order for product P-01",
+  "pause machine 7 now",
+  "resume machine 7 now",
+  "I need help but I am not sure what to do"
+]

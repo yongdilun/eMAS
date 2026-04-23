@@ -114,8 +114,8 @@ class MessageResponse(BaseModel):
 
 
 class PlanCreateRequest(BaseModel):
-    # If provided, the server validates & stores it. If omitted, planner can be invoked later.
-    draft: PlanDraft
+    # If provided, the server validates & stores it. If omitted, planner is invoked server-side.
+    draft: PlanDraft | None = None
 
 
 class PlanResponse(BaseModel):

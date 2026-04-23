@@ -1,0 +1,32 @@
+{
+  "corpus_size": 15,
+  "results": [
+    {
+      "raw": {
+        "backend": "langchain",
+        "total_intents": 15,
+        "validator_pass_count": 15,
+        "unknown_tool_count": 0,
+        "clarification_count": 0,
+        "infeasible_count": 0,
+        "total_steps": 25,
+        "write_step_count": 6,
+        "missing_approval_flags_count": 0,
+        "errors": 0,
+        "error_samples": []
+      },
+      "rates": {
+        "backend": "langchain",
+        "total_intents": 15,
+        "validator_pass_rate": 1.0,
+        "unknown_tool_rate": 0.0,
+        "clarification_rate": 0.0,
+        "average_step_count": 1.6666666666666667,
+        "infeasible_rate": 0.0,
+        "missing_approval_flags_rate": 0.0,
+        "errors": 0,
+        "error_samples": []
+      }
+    }
+  ]
+}

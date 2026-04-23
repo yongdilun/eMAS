@@ -42,7 +42,14 @@ def _sign_test_jwt(payload: dict, secret: str) -> str:
     return f"{encoded_header}.{encoded_payload}.{encoded_sig}"
 
 
-async def _make_app(sessionmaker_override, enqueue_session=None, jwt_required=False, jwt_secret=None):
+async def _make_app(
+    sessionmaker_override,
+    enqueue_session=None,
+    jwt_required=False,
+    jwt_secret=None,
+    planner_adapter=None,
+    planner_fallback_to_legacy=True,
+):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         redis_url=None,
@@ -59,6 +66,7 @@ async def _make_app(sessionmaker_override, enqueue_session=None, jwt_required=Fa
         jwt_required=jwt_required,
         jwt_secret=jwt_secret,
         jwt_clock_skew_s=30,
+        planner_fallback_to_legacy=planner_fallback_to_legacy,
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()
@@ -76,6 +84,7 @@ async def _make_app(sessionmaker_override, enqueue_session=None, jwt_required=Fa
             tool_registry=tool_registry,
             event_bus=event_bus,
             enqueue_session=enqueue_session,
+            planner_adapter=planner_adapter,
         )
     )
     return app, event_bus
@@ -256,6 +265,257 @@ async def test_create_plan_persists_plan_and_steps(sessionmaker_override, db_ses
         body = r2.json()
         assert body["session_id"] == session_id
         assert body["plan_hash"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {}},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    class FakePlanner:
+        async def generate_plan(self, *, intent, scoped_tools, context=None, force_backend=None):
+            del scoped_tools, context, force_backend
+            return type(
+                "X",
+                (),
+                {
+                    "draft": PlanDraft(
+                        plan_explanation=f"Auto plan for {intent}",
+                        risk_summary="read-only",
+                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
+                    ),
+                    "backend_used": "legacy",
+                    "llm_calls": 0,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = r.json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        assert created.json()["created_by"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, db_session):
+    from models import Plan
+
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    class FakePlanner:
+        async def generate_plan(self, *, intent, scoped_tools, context=None, force_backend=None):
+            del intent, scoped_tools, context, force_backend
+            return type(
+                "X",
+                (),
+                {
+                    "draft": PlanDraft(
+                        plan_explanation="bad schema args",
+                        risk_summary="read-only",
+                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
+                    ),
+                    "backend_used": "langchain",
+                    "llm_calls": 1,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = r.json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+        res = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert res.status_code == 400
+
+    plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
+    assert len(plan_rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_generated_write_plan_sets_requires_approval_and_waits_approval(sessionmaker_override, db_session):
+    from models import Approval, PlanStep
+
+    await _seed_tool(
+        db_session,
+        name="post__inventory_update",
+        endpoint="/inventory",
+        method="POST",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["inventory", "update"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    class FakePlanner:
+        async def generate_plan(self, *, intent, scoped_tools, context=None, force_backend=None):
+            del intent, scoped_tools, context, force_backend
+            return type(
+                "X",
+                (),
+                {
+                    "draft": PlanDraft(
+                        plan_explanation="write inventory",
+                        risk_summary="write op",
+                        steps=[PlanStepDraft(step_index=0, tool_name="post__inventory_update", args={"id": 9})],
+                    ),
+                    "backend_used": "langchain",
+                    "llm_calls": 1,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "update inventory"})
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+
+        execute = await client.post(f"/sessions/{session_id}/execute")
+        assert execute.status_code == 200
+        assert execute.json()["status"] == "WAITING_APPROVAL"
+
+    step = (
+        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
+    ).scalars().first()
+    assert step is not None
+    assert step.requires_approval is True
+    approvals = (await db_session.execute(select(Approval).where(Approval.session_id == session_id))).scalars().all()
+    assert len(approvals) == 1
+
+
+@pytest.mark.asyncio
+async def test_langchain_invalid_output_fallback_enabled_uses_legacy_and_persists_only_valid_plan(sessionmaker_override, db_session):
+    from models import PlanStep
+
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    class FakePlanner:
+        def __init__(self):
+            self.fallback_called = False
+
+        async def generate_plan(self, *, intent, scoped_tools, context=None, force_backend=None):
+            del intent, scoped_tools, context
+            if force_backend == "legacy":
+                self.fallback_called = True
+                return type(
+                    "X",
+                    (),
+                    {
+                        "draft": PlanDraft(
+                            plan_explanation="fallback plan",
+                            risk_summary="read-only",
+                            steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={"id": 1})],
+                        ),
+                        "backend_used": "legacy",
+                        "llm_calls": 0,
+                    },
+                )()
+            return type(
+                "X",
+                (),
+                {
+                    "draft": PlanDraft(
+                        plan_explanation="invalid langchain",
+                        risk_summary="bad",
+                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
+                    ),
+                    "backend_used": "langchain",
+                    "llm_calls": 1,
+                },
+            )()
+
+    planner = FakePlanner()
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=planner, planner_fallback_to_legacy=True)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        assert created.json()["created_by"] == "legacy"
+
+    assert planner.fallback_called is True
+    steps = (
+        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
+    ).scalars().all()
+    assert len(steps) == 1
+    assert steps[0].tool_name == "get__machines"
+
+
+@pytest.mark.asyncio
+async def test_langchain_invalid_output_fallback_disabled_rejected_and_not_executable(sessionmaker_override, db_session):
+    from models import Plan
+
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    class FakePlanner:
+        async def generate_plan(self, *, intent, scoped_tools, context=None, force_backend=None):
+            del intent, scoped_tools, context, force_backend
+            return type(
+                "X",
+                (),
+                {
+                    "draft": PlanDraft(
+                        plan_explanation="invalid langchain",
+                        risk_summary="bad",
+                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
+                    ),
+                    "backend_used": "langchain",
+                    "llm_calls": 1,
+                },
+            )()
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=FakePlanner(),
+        planner_fallback_to_legacy=False,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 400
+
+        execute = await client.post(f"/sessions/{session_id}/execute")
+        assert execute.status_code == 200
+        assert execute.json()["plan_id"] is None
+
+    plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
+    assert len(plan_rows) == 0
 
 
 @pytest.mark.asyncio

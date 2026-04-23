@@ -13,6 +13,7 @@ class MetricDef:
 
 METRIC_DEFS: dict[str, MetricDef] = {
     "plan_generation_latency_ms": MetricDef("histogram", "Latency of plan generation in milliseconds."),
+    "plan_backend_used_total": MetricDef("counter", "Count of planner backend selections."),
     "plan_validation_failure_rate": MetricDef("counter", "Plan validation failure events."),
     "plan_validation_failure_total": MetricDef("counter", "Count of plan validation failures."),
     "replan_rate": MetricDef("counter", "Replan events."),

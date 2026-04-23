@@ -34,6 +34,15 @@ class Settings:
     memory_compaction_step_interval: int = 5
     memory_keep_recent_messages: int = 6
 
+    # Planner / summary backend selection
+    planner_backend: str = "legacy"  # legacy|langchain
+    summary_backend: str = "legacy"  # legacy|langchain
+    planner_model: str = "Qwen3.5-9B"
+    summary_model: str = "Qwen3.5-9B"
+    planner_fallback_to_legacy: bool = True
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
+
 
 def get_settings() -> Settings:
     database_url = os.getenv(
@@ -69,4 +78,12 @@ def get_settings() -> Settings:
         jwt_clock_skew_s=int(os.getenv("JWT_CLOCK_SKEW_S", "30")),
         memory_compaction_step_interval=int(os.getenv("MEMORY_COMPACTION_STEP_INTERVAL", "5")),
         memory_keep_recent_messages=int(os.getenv("MEMORY_KEEP_RECENT_MESSAGES", "6")),
+        planner_backend=os.getenv("PLANNER_BACKEND", "legacy").strip().lower(),
+        summary_backend=os.getenv("SUMMARY_BACKEND", "legacy").strip().lower(),
+        planner_model=os.getenv("PLANNER_MODEL", os.getenv("LLM_MODEL", "Qwen3.5-9B")).strip(),
+        summary_model=os.getenv("SUMMARY_MODEL", os.getenv("LLM_MODEL", "Qwen3.5-9B")).strip(),
+        planner_fallback_to_legacy=os.getenv("PLANNER_FALLBACK_TO_LEGACY", "1").strip().lower()
+        in {"1", "true", "yes"},
+        openai_base_url=(os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or None),
+        openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or None),
     )

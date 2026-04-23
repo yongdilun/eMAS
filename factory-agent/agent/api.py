@@ -23,6 +23,7 @@ from .config import Settings
 from .events import AgentEvent, EventBus
 from .execution import ExecutionEngine, compute_idempotency_key
 from .metrics import metrics
+from .planner import PlannerAdapter, PlannerBackendError
 from .plan_validator import validate_plan
 from .schemas import (
     ApprovalDecisionRequest,
@@ -106,10 +107,12 @@ def build_router(
     tool_registry: ToolRegistry,
     event_bus: EventBus,
     enqueue_session: Any | None = None,
+    planner_adapter: PlannerAdapter | None = None,
 ) -> APIRouter:
     router = APIRouter()
     session_mgr = SessionManager(settings)
     executor = ExecutionEngine(settings, event_bus)
+    planner = planner_adapter or PlannerAdapter(settings=settings, tool_registry=tool_registry)
 
     def _session_duration_s(sess: SessionRow) -> int:
         if not sess.session_started_at:
@@ -273,38 +276,86 @@ def build_router(
         tools_by_name = await tool_registry.get_tools_by_name(db)
         intent = sess.current_intent or ""
         scoped = filter_tools_for_intent(intent=intent, tools_by_name=tools_by_name)
+        backend_used = "legacy" if req.draft is None else "client"
+        draft = req.draft
+
+        if draft is None:
+            if not intent.strip():
+                raise HTTPException(status_code=400, detail={"errors": ["Cannot auto-generate plan without a current intent."]})
+            scoped_tools = [tools_by_name[name] for name in scoped.tool_names if name in tools_by_name]
+            try:
+                generated = await planner.generate_plan(
+                    intent=intent,
+                    scoped_tools=scoped_tools,
+                    context=sess.replan_context,
+                )
+            except PlannerBackendError as e:
+                raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
+            draft = generated.draft
+            backend_used = generated.backend_used
+            sess.llm_call_count += generated.llm_calls
+            sess.version += 1
+            await db.commit()
+            metrics.inc("plan_backend_used_total", labels={"backend_used": backend_used})
+            log_event(
+                "planner_generation_succeeded",
+                session_id=session_id,
+                backend_used=backend_used,
+                llm_calls=generated.llm_calls,
+                scoped_tool_count=len(scoped_tools),
+            )
 
         # Validate plan against full registry (schema correctness), but ensure steps use only scoped tools.
-        invalid_scoped = [s.tool_name for s in req.draft.steps if s.tool_name not in scoped.tool_names]
+        invalid_scoped = [s.tool_name for s in draft.steps if s.tool_name not in scoped.tool_names]
         if invalid_scoped:
             raise HTTPException(status_code=400, detail={"errors": [f"Tool not allowed by scope: {t}" for t in invalid_scoped]})
 
-        validation = validate_plan(req.draft, tools_by_name, max_steps=settings.max_plan_steps)
+        validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
         if not validation.ok:
-            metrics.inc("plan_validation_failure_total")
-            metrics.inc("plan_validation_failure_rate")
-            if sess.status == "PLANNING":
-                context = dict(sess.replan_context or {})
-                failures = int(context.get("validation_failure_count", 0)) + 1
-                context["validation_failure_count"] = failures
-                context["last_validation_errors"] = validation.errors
-                sess.replan_context = context
-                sess.error = "Plan validation failed"
-                sess.version += 1
-                if failures >= 3:
-                    sess.status = "BLOCKED"
-                    dlq = DeadLetterRow(
-                        dlq_id=generate_uuid(),
-                        session_id=session_id,
-                        step_id=None,
-                        failure_type="replan_limit_reached",
-                        reason="Plan validation failed 3 consecutive times",
-                        payload={"errors": validation.errors, "validation_failure_count": failures},
-                        status="PENDING",
-                    )
-                    db.add(dlq)
-                await db.commit()
-            raise HTTPException(status_code=400, detail={"errors": validation.errors})
+            if (
+                req.draft is None
+                and backend_used == "langchain"
+                and settings.planner_fallback_to_legacy
+            ):
+                scoped_tools = [tools_by_name[name] for name in scoped.tool_names if name in tools_by_name]
+                fallback = await planner.generate_plan(
+                    intent=intent,
+                    scoped_tools=scoped_tools,
+                    context=sess.replan_context,
+                    force_backend="legacy",
+                )
+                draft = fallback.draft
+                backend_used = fallback.backend_used
+                validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
+                metrics.inc("plan_backend_used_total", labels={"backend_used": "legacy_fallback"})
+                log_event("planner_fallback_used", session_id=session_id, fallback_backend="legacy")
+            if validation.ok:
+                pass
+            else:
+                metrics.inc("plan_validation_failure_total")
+                metrics.inc("plan_validation_failure_rate")
+                if sess.status == "PLANNING":
+                    context = dict(sess.replan_context or {})
+                    failures = int(context.get("validation_failure_count", 0)) + 1
+                    context["validation_failure_count"] = failures
+                    context["last_validation_errors"] = validation.errors
+                    sess.replan_context = context
+                    sess.error = "Plan validation failed"
+                    sess.version += 1
+                    if failures >= 3:
+                        sess.status = "BLOCKED"
+                        dlq = DeadLetterRow(
+                            dlq_id=generate_uuid(),
+                            session_id=session_id,
+                            step_id=None,
+                            failure_type="replan_limit_reached",
+                            reason="Plan validation failed 3 consecutive times",
+                            payload={"errors": validation.errors, "validation_failure_count": failures},
+                            status="PENDING",
+                        )
+                        db.add(dlq)
+                    await db.commit()
+                raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
         # Invalidate existing plan if any
         if sess.plan_id:
@@ -327,17 +378,17 @@ def build_router(
             dependency_graph=validation.normalized_dependency_graph,
             parallel_groups=validation.normalized_parallel_groups,
             plan_hash=validation.plan_hash,
-            plan_explanation=req.draft.plan_explanation,
-            risk_summary=req.draft.risk_summary,
+            plan_explanation=draft.plan_explanation,
+            risk_summary=draft.risk_summary,
             created_at=datetime.utcnow(),
-            created_by="llm",
+            created_by=backend_used,
         )
         db.add(plan_row)
         await db.commit()
         await db.refresh(plan_row)
 
         # Store steps
-        for step in req.draft.steps:
+        for step in draft.steps:
             tool = tools_by_name.get(step.tool_name)
             step_row = PlanStepRow(
                 step_id=generate_uuid(),
