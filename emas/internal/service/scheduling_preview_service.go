@@ -53,7 +53,7 @@ func (s *SchedulingService) BuildSolverPreviewWithEarliestStart(jobID string, ea
 }
 
 func (s *SchedulingService) buildSolverPreview(jobID string, tentativeSlots []TentativeSlot, earliestFloor *time.Time) (*SolverPreview, error) {
-	job, err := s.jobRepo.GetByID(jobID)
+	job, err := s.getJobByID(jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,13 +118,13 @@ func (s *SchedulingService) buildSolverPreview(jobID string, tentativeSlots []Te
 	}
 	processStepByID := make(map[string]*domain.ProcessSteps)
 	for _, jobStep := range steps {
-		if ps, err := s.processRepo.GetStepByID(jobStep.StepID); err == nil {
+		if ps, err := s.getProcessStepByID(jobStep.StepID); err == nil {
 			processStepByID[jobStep.StepID] = ps
 		}
 	}
 	orderedSteps := topologicalStepOrder(steps, processStepByID)
 	for _, jobStep := range orderedSteps {
-		processStep, err := s.processRepo.GetStepByID(jobStep.StepID)
+		processStep, err := s.getProcessStepByID(jobStep.StepID)
 		if err != nil {
 			return nil, err
 		}

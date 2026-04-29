@@ -998,6 +998,11 @@ func (s *AIPredictiveService) buildBatchScheduleProductionAggregate(proposals []
 
 const maxConvergencePasses = 5
 
+type convergenceProposalCache struct {
+	jobs     map[string]*domain.Job
+	previews map[string]*SolverPreview
+}
+
 // convergeBatchShortageAggregates is the entry point called from ScheduleJobSet.
 func (s *AIPredictiveService) convergeBatchShortageAggregates(
 	proposals []*SchedulingProposal,
@@ -1005,21 +1010,44 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 	completionTargets map[string]*time.Time,
 	excludedJobIDs []string,
 ) ([]BatchMaterialReplenishmentLine, []BatchScheduleProductionLine, int) {
+	started := time.Now()
+	cache := &convergenceProposalCache{
+		jobs:     make(map[string]*domain.Job, len(proposals)),
+		previews: make(map[string]*SolverPreview, len(proposals)),
+	}
 	// FIX: Create a base ledger just for exclusions so the initial aggregates
 	// don't double-deduct existing DB reservations.
 	baseLedger := newTentativeInventoryLedger()
 	baseLedger.excludedJobIDs = excludedJobIDs
 
+	initialAggStarted := time.Now()
 	matAgg := s.buildBatchMaterialReplenishmentAggregate(proposals, baseLedger)
 	prodAgg := s.buildBatchScheduleProductionAggregate(proposals, baseLedger)
+	logBatchTiming("convergence_initial_aggregate_build",
+		zap.Int("proposal_count", len(proposals)),
+		zap.Int("material_aggregate_count", len(matAgg)),
+		zap.Int("production_aggregate_count", len(prodAgg)),
+		zap.Duration("elapsed", time.Since(initialAggStarted)),
+	)
 
 	if len(proposals) == 0 {
+		logBatchTiming("convergence_total",
+			zap.Int("proposal_count", 0),
+			zap.Int("passes", 0),
+			zap.Duration("elapsed", time.Since(started)),
+		)
 		return matAgg, prodAgg, 0
 	}
 
 	// Fast path: if every proposal is already feasible, there is nothing to
 	// converge — return the (empty) aggregate immediately.
 	if infeasibleCountInReEvaluated(proposals) == 0 {
+		logBatchTiming("convergence_total",
+			zap.Int("proposal_count", len(proposals)),
+			zap.Int("passes", 0),
+			zap.Int("final_infeasible", 0),
+			zap.Duration("elapsed", time.Since(started)),
+		)
 		return matAgg, prodAgg, 0
 	}
 
@@ -1027,7 +1055,15 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 	var lastReEvaluated []*SchedulingProposal
 
 	for pass := 0; pass < maxConvergencePasses; pass++ {
+		passStarted := time.Now()
 		if allAggregatesZero(matAgg, prodAgg) {
+			logBatchTiming("convergence_pass",
+				zap.Int("pass", pass+1),
+				zap.String("result", "all_aggregates_zero"),
+				zap.Int("material_aggregate_count", len(matAgg)),
+				zap.Int("production_aggregate_count", len(prodAgg)),
+				zap.Duration("elapsed", time.Since(passStarted)),
+			)
 			break
 		}
 
@@ -1040,7 +1076,9 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 		// before. A currently-feasible proposal can become infeasible in the next
 		// real run (the cascade: MAT-002 fixed → subproduct reflows → MAT-010 short).
 		// Skipping feasible proposals misses that cascade entirely.
-		reEvaluated := s.reEvaluateProposalsWithLedger(proposals, seedLedger, tentativeSlots, completionTargets)
+		reEvalStarted := time.Now()
+		reEvaluated := s.reEvaluateProposalsWithLedger(proposals, seedLedger, tentativeSlots, completionTargets, cache)
+		reEvalElapsed := time.Since(reEvalStarted)
 		lastReEvaluated = reEvaluated
 
 		// Check if the current seedLedger made everything feasible BEFORE we scrub.
@@ -1051,6 +1089,7 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 		// ShortageResolutions only contain the DELTA (unmet) demand.
 		// To prevent mergeMatAggMax from incorrectly doing MAX(absolute, delta),
 		// we recalculate the shortages against the real baseLedger.
+		rescrubStarted := time.Now()
 		for _, p := range reEvaluated {
 			if p == nil {
 				continue
@@ -1060,11 +1099,14 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 			p.ShortageResolutions = resolutions
 			p.GlobalScore = score
 		}
+		rescrubElapsed := time.Since(rescrubStarted)
 
 		// Now pass baseLedger to the builders. This guarantees they see the full,
 		// un-masked absolute demand of the entire reflowed timeline.
+		aggregateRebuildStarted := time.Now()
 		nextMatAgg := s.buildBatchMaterialReplenishmentAggregate(reEvaluated, baseLedger)
 		nextProdAgg := s.buildBatchScheduleProductionAggregate(reEvaluated, baseLedger)
+		aggregateRebuildElapsed := time.Since(aggregateRebuildStarted)
 
 		// Monotonically merge: take max per material/product so we never regress.
 		// This ensures the recommendation always covers BOTH the original shortage
@@ -1073,8 +1115,21 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 		nextProdAgg = mergeProdAggMax(prodAgg, nextProdAgg)
 
 		convIter = pass + 1
+		stable := batchAggStable(matAgg, nextMatAgg, prodAgg, nextProdAgg)
+		logBatchTiming("convergence_pass",
+			zap.Int("pass", pass+1),
+			zap.Int("re_evaluated_count", len(reEvaluated)),
+			zap.Int("re_infeasible", reInfeasible),
+			zap.Int("material_aggregate_count", len(nextMatAgg)),
+			zap.Int("production_aggregate_count", len(nextProdAgg)),
+			zap.Bool("stable", stable),
+			zap.Duration("re_evaluate_elapsed", reEvalElapsed),
+			zap.Duration("rescrub_elapsed", rescrubElapsed),
+			zap.Duration("aggregate_rebuild_elapsed", aggregateRebuildElapsed),
+			zap.Duration("elapsed", time.Since(passStarted)),
+		)
 
-		if reInfeasible == 0 || batchAggStable(matAgg, nextMatAgg, prodAgg, nextProdAgg) {
+		if reInfeasible == 0 || stable {
 			matAgg = nextMatAgg
 			prodAgg = nextProdAgg
 			break
@@ -1100,12 +1155,27 @@ func (s *AIPredictiveService) convergeBatchShortageAggregates(
 	// and the cross-job competition.
 	// ──────────────────────────────────────────────────────────────────────────
 	if len(lastReEvaluated) > 0 {
+		finalCompetitiveStarted := time.Now()
 		competitiveMatAgg := s.buildBatchMaterialReplenishmentAggregate(lastReEvaluated, baseLedger)
 		competitiveProdAgg := s.buildBatchScheduleProductionAggregate(lastReEvaluated, baseLedger)
 		matAgg = mergeMatAggMax(matAgg, competitiveMatAgg)
 		prodAgg = mergeProdAggMax(prodAgg, competitiveProdAgg)
+		logBatchTiming("convergence_final_competitive_pass",
+			zap.Int("re_evaluated_count", len(lastReEvaluated)),
+			zap.Int("competitive_material_aggregate_count", len(competitiveMatAgg)),
+			zap.Int("competitive_production_aggregate_count", len(competitiveProdAgg)),
+			zap.Duration("elapsed", time.Since(finalCompetitiveStarted)),
+		)
 	}
 
+	logBatchTiming("convergence_total",
+		zap.Int("proposal_count", len(proposals)),
+		zap.Int("passes", convIter),
+		zap.Int("final_material_aggregate_count", len(matAgg)),
+		zap.Int("final_production_aggregate_count", len(prodAgg)),
+		zap.Int("final_infeasible", infeasibleCountInReEvaluated(lastReEvaluated)),
+		zap.Duration("elapsed", time.Since(started)),
+	)
 	return matAgg, prodAgg, convIter
 }
 
@@ -1172,7 +1242,9 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 	seedLedger *tentativeInventoryLedger,
 	tentativeSlots []TentativeSlot,
 	completionTargets map[string]*time.Time,
+	cache *convergenceProposalCache,
 ) []*SchedulingProposal {
+	started := time.Now()
 	if s == nil || s.scheduling == nil {
 		return proposals
 	}
@@ -1186,25 +1258,58 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 		ledger: seedLedger, // DO NOT CLONE!
 	}
 
+	if cache == nil {
+		cache = &convergenceProposalCache{
+			jobs:     make(map[string]*domain.Job, len(proposals)),
+			previews: make(map[string]*SolverPreview, len(proposals)),
+		}
+	}
+	if cache.jobs == nil {
+		cache.jobs = make(map[string]*domain.Job, len(proposals))
+	}
+	if cache.previews == nil {
+		cache.previews = make(map[string]*SolverPreview, len(proposals))
+	}
+
 	reEvaluated := make([]*SchedulingProposal, 0, len(proposals))
+	reusedOriginal := 0
+	previewFailures := 0
+	decorateFailures := 0
+	feasibleCommitted := 0
+	previewCacheHits := 0
 	for _, orig := range proposals {
 		if orig == nil {
 			reEvaluated = append(reEvaluated, orig)
+			reusedOriginal++
 			continue
 		}
 
-		job, err := s.jobRepo.GetByID(orig.JobID)
-		if err != nil || job == nil {
-			reEvaluated = append(reEvaluated, orig)
-			continue
+		job := cache.jobs[orig.JobID]
+		if job == nil {
+			loaded, err := s.scheduling.getJobByID(orig.JobID)
+			if err != nil || loaded == nil {
+				reEvaluated = append(reEvaluated, orig)
+				reusedOriginal++
+				continue
+			}
+			job = loaded
+			cache.jobs[orig.JobID] = job
 		}
 
-		preview, err := s.scheduling.BuildSolverPreviewWithTentativeSlotsAndFloor(
-			orig.JobID, tentativeSlots, nil,
-		)
-		if err != nil || preview == nil {
-			reEvaluated = append(reEvaluated, orig)
-			continue
+		preview := cache.previews[orig.JobID]
+		if preview == nil {
+			loaded, err := s.scheduling.BuildSolverPreviewWithTentativeSlotsAndFloor(
+				orig.JobID, tentativeSlots, nil,
+			)
+			if err != nil || loaded == nil {
+				reEvaluated = append(reEvaluated, orig)
+				previewFailures++
+				continue
+			}
+			preview = loaded
+			cache.previews[orig.JobID] = preview
+		} else {
+			previewCacheHits++
 		}
 
 		candidate := shallowCloneProposal(orig)
@@ -1219,6 +1324,7 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 
 		if err := s.decorateProposalWithInventoryPlan(job, preview, candidate, tentativeSlots, attemptState, 0, targetCompletion); err != nil {
 			reEvaluated = append(reEvaluated, orig)
+			decorateFailures++
 			continue
 		}
 
@@ -1248,10 +1354,21 @@ func (s *AIPredictiveService) reEvaluateProposalsWithLedger(
 		if candidate.Feasible {
 			sharedBatchState.ledger = attemptState.ledger
 			sharedBatchState.totalGeneratedNodes = attemptState.totalGeneratedNodes
+			feasibleCommitted++
 		}
 
 		reEvaluated = append(reEvaluated, candidate)
 	}
+	logBatchTiming("re_evaluate_proposals_with_ledger",
+		zap.Int("proposal_count", len(proposals)),
+		zap.Int("re_evaluated_count", len(reEvaluated)),
+		zap.Int("reused_original", reusedOriginal),
+		zap.Int("preview_failures", previewFailures),
+		zap.Int("decorate_failures", decorateFailures),
+		zap.Int("feasible_committed", feasibleCommitted),
+		zap.Int("preview_cache_hits", previewCacheHits),
+		zap.Duration("elapsed", time.Since(started)),
+	)
 	return reEvaluated
 }
 

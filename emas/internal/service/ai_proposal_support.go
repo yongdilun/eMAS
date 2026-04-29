@@ -251,9 +251,22 @@ func (s *AIPredictiveService) BuildProposalWithOptions(jobID string, includeInve
 }
 
 func (s *AIPredictiveService) buildProposalForPreview(job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
+	started := time.Now()
+	previewSteps := 0
+	if preview != nil {
+		previewSteps = len(preview.Steps)
+	}
 	mode := s.primaryEngineMode()
 	proposal, err := s.buildWithEngine(job, preview, mode, tentativeSlots, targetCompletion)
 	if err == nil {
+		logger.L().Info("batch_reschedule_timing",
+			zap.String("stage", "build_proposal_for_preview"),
+			zap.String("job_id", job.JobID),
+			zap.String("engine_mode", mode),
+			zap.Int("preview_steps", previewSteps),
+			zap.Int("tentative_slots", len(tentativeSlots)),
+			zap.Duration("elapsed", time.Since(started)),
+		)
 		return proposal, nil
 	}
 	if mode == "preview-solver" || mode == "solver" || mode == "real-solver" {
@@ -265,6 +278,15 @@ func (s *AIPredictiveService) buildProposalForPreview(job *domain.Job, preview *
 			return nil, fallbackErr
 		}
 		fallback.FallbackReason = err.Error()
+		logger.L().Info("batch_reschedule_timing",
+			zap.String("stage", "build_proposal_for_preview"),
+			zap.String("job_id", job.JobID),
+			zap.String("engine_mode", mode),
+			zap.String("result", "heuristic_fallback"),
+			zap.Int("preview_steps", previewSteps),
+			zap.Int("tentative_slots", len(tentativeSlots)),
+			zap.Duration("elapsed", time.Since(started)),
+		)
 		return fallback, nil
 	}
 	return nil, err
@@ -363,6 +385,14 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 	start := time.Now()
 	scenarios := make([]Scenario, 0, 9)
 	seen := make([]*SchedulingProposal, 0, 9)
+	sharedHeuristicContext := newHeuristicContext(time.Now())
+
+	runStrategy := func(ctx context.Context, st HeuristicStrategy) (*SchedulingProposal, error) {
+		if contextual, ok := st.(contextualHeuristicStrategy); ok {
+			return contextual.GenerateWithContext(ctx, s, job, preview, tentativeSlots, targetCompletion, sharedHeuristicContext)
+		}
+		return st.Generate(ctx, s, job, preview, tentativeSlots, targetCompletion)
+	}
 
 	addCandidate := func(p *SchedulingProposal, strategyID, scenarioID, variant string) {
 		if p == nil || !p.Feasible || len(p.ProposedSlots) == 0 {
@@ -424,7 +454,7 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 			perStrategy = remaining
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perStrategy)
-		p, err := st.Generate(ctx, s, job, preview, tentativeSlots, targetCompletion)
+		p, err := runStrategy(ctx, st)
 		cancel()
 		if err != nil || p == nil {
 			continue
@@ -436,7 +466,7 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 		// Variant B: second-best (only defined for earliest-finish right now)
 		if st.ID() == "greedy_earliest_finish" {
 			ctx2, cancel2 := context.WithTimeout(context.Background(), perStrategy)
-			p2, _ := GreedySecondBestFinish{}.Generate(ctx2, s, job, preview, tentativeSlots, targetCompletion)
+			p2, _ := runStrategy(ctx2, GreedySecondBestFinish{})
 			cancel2()
 			addCandidate(p2, "greedy_second_best_finish", fmt.Sprintf("%s/B", st.ID()), "second_best")
 		}
@@ -455,7 +485,7 @@ func (s *AIPredictiveService) buildHeuristicProposal(job *domain.Job, preview *S
 		// when the portfolio budget is exhausted.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		p, _ := GreedyEarliestFinish{}.Generate(ctx, s, job, preview, tentativeSlots, targetCompletion)
+		p, _ := runStrategy(ctx, GreedyEarliestFinish{})
 		if p == nil {
 			return nil, newSchedulingActionError(422, "reason_code=no_feasible_slot heuristic scheduler could not find any feasible slot for job "+job.JobID)
 		}
@@ -691,6 +721,7 @@ func (s *AIPredictiveService) buildProposalSnapshot(jobID string) (*SolverPrevie
 // buildProposalSnapshotWithTentative builds snapshot for batch scheduling,
 // using tentative slots from earlier jobs in the batch when computing preview.
 func (s *AIPredictiveService) buildProposalSnapshotWithTentative(jobID string, tentativeSlots []TentativeSlot, earliestFloor *time.Time) (*SolverPreview, string, string, error) {
+	started := time.Now()
 	job, err := s.jobRepo.GetByID(jobID)
 	if err != nil {
 		return nil, "", "", err
@@ -729,6 +760,14 @@ func (s *AIPredictiveService) buildProposalSnapshotWithTentative(jobID string, t
 		return nil, "", "", err
 	}
 	sum := sha256.Sum256(raw)
+	logger.L().Info("batch_reschedule_timing",
+		zap.String("stage", "build_proposal_snapshot_with_tentative"),
+		zap.String("job_id", jobID),
+		zap.Int("tentative_slots", len(tentativeSlots)),
+		zap.Int("preview_steps", len(preview.Steps)),
+		zap.Int("existing_slots", len(slots)),
+		zap.Duration("elapsed", time.Since(started)),
+	)
 	return preview, string(raw), hex.EncodeToString(sum[:]), nil
 }
 

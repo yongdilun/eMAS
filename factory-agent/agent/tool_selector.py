@@ -30,6 +30,8 @@ class ToolSelector:
         return (self._settings.tool_selector_backend or "auto").strip().lower()
 
     def _can_use_llm_reranker(self) -> bool:
+        if not self._settings.tool_selector_reranker_enabled:
+            return False
         backend = self._backend_mode()
         if backend == "retrieval":
             return False
@@ -259,8 +261,10 @@ class ToolSelector:
         kwargs: dict[str, Any] = {
             "model": self._settings.tool_selector_model,
             "temperature": 0,
-            "timeout": 30,
+            "timeout": self._settings.tool_selector_reranker_timeout_s,
             "max_retries": 0,
+            "max_tokens": self._settings.tool_selector_reranker_max_tokens,
+            "model_kwargs": {"response_format": {"type": "json_object"}},
         }
         if self._settings.openai_base_url:
             kwargs["base_url"] = self._settings.openai_base_url

@@ -16,6 +16,12 @@ import (
 	"go.uber.org/zap"
 )
 
+func logBatchTiming(stage string, fields ...zap.Field) {
+	base := []zap.Field{zap.String("stage", stage)}
+	base = append(base, fields...)
+	logger.L().Info("batch_reschedule_timing", base...)
+}
+
 // RescheduleAll cancels active slots and deletes proposals for planned/scheduled
 // jobs, then regenerates proposals via ScheduleJobSet. Returns same shape as batch-proposals.
 // When dryRun is true: no cancel, no delete, no persist; returns proposals as preview only.
@@ -107,6 +113,12 @@ type ScheduleJobSetOpts struct {
 // sorted by orderBy (edd/epo/fifo/readiness), and each proposal is persisted
 // (unless opts.PersistProposals is false).
 func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []string, generatedBy, orderBy string, opts *ScheduleJobSetOpts) ([]*SchedulingProposal, *BatchProposalSummary, error) {
+	batchStarted := time.Now()
+	if s.scheduling != nil {
+		cloned := *s
+		cloned.scheduling = s.scheduling.WithRuntimeCache()
+		s = &cloned
+	}
 	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_SCHEDULE_JOB_SET_ENTER", map[string]any{
 		"requested_job_count": len(jobIDs),
 		"order_by":            orderBy,
@@ -181,8 +193,14 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		zap.Int("batch_job_count", len(jobs)))
 
 	// --- PREDICTIVE BOM PRE-PASS: Inject virtual stock ---
+	prepassStarted := time.Now()
 	batchDemand := s.calculateGrossBatchDemand(jobs)
 	s.injectPredictiveShortages(batchDemand, batchState.ledger)
+	logBatchTiming("predictive_bom_prepass",
+		zap.Int("job_count", len(jobs)),
+		zap.Int("virtual_arrivals", len(batchState.ledger.virtualArrivals)),
+		zap.Duration("elapsed", time.Since(prepassStarted)),
+	)
 	// -------------------------------------------------------
 	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_AFTER_injectPredictiveShortages", map[string]any{
 		"virtual_arrivals": len(batchState.ledger.virtualArrivals),
@@ -205,20 +223,27 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		default:
 		}
 
+		jobStarted := time.Now()
+		previewStarted := time.Now()
+
 		preview, snapshotJSON, snapshotHash, err := s.buildProposalSnapshotWithTentative(job.JobID, tentativeSlots, opts.EarliestStartFloor)
 		if err != nil {
 			summary.Blocked++
 			logger.L().Warn("batch_proposal_preview_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			continue
 		}
+		previewElapsed := time.Since(previewStarted)
 
 		targetCompletion := completionTargets[job.JobID]
+		proposalStarted := time.Now()
 		proposal, err := s.buildProposalForPreview(&job, preview, tentativeSlots, targetCompletion)
 		if err != nil {
 			summary.Blocked++
 			logger.L().Warn("batch_proposal_build_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			continue
 		}
+		proposalElapsed := time.Since(proposalStarted)
+		finalizeStarted := time.Now()
 		proposal, err = s.finalizeProposalPlan(&job, preview, proposal, proposalBuildOptions{
 			BatchState:              batchState,
 			RootOrderIndex:          rootIndex,
@@ -231,12 +256,16 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 			logger.L().Warn("batch_subproduct_plan_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			continue
 		}
+		finalizeElapsed := time.Since(finalizeStarted)
+		enrichStarted := time.Now()
 		snapshotJSON, snapshotHash, err = enrichSnapshotWithProposalPlan(snapshotJSON, proposal)
 		if err != nil {
 			summary.Blocked++
 			logger.L().Warn("batch_snapshot_enrich_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			continue
 		}
+		enrichElapsed := time.Since(enrichStarted)
+		validateStarted := time.Now()
 		if err := s.validateProposalSlotsStrict(job.JobID, proposal); err != nil {
 			// buildProposalForPreview can emit slots that drift past the global work template (e.g. 17:05
 			// vs settings 08:00–17:00) or past shift after heuristics. Repair before failing the batch.
@@ -251,9 +280,13 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				return nil, nil, err
 			}
 		}
+		validateElapsed := time.Since(validateStarted)
 
 		version := 1
+		persistElapsed := time.Duration(0)
+		persistStarted := time.Time{}
 		if opts.PersistProposals && s.proposalRepo != nil {
+			persistStarted = time.Now()
 			var verErr error
 			version, verErr = s.proposalRepo.NextVersion(job.JobID)
 			if verErr != nil {
@@ -306,6 +339,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				// non-fatal
 				logger.L().Warn("batch_proposal_stale_mark_failed", zap.String("job_id", job.JobID), zap.Error(err))
 			}
+			persistElapsed = time.Since(persistStarted)
 		}
 
 		proposals = append(proposals, proposal)
@@ -339,17 +373,43 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 			zap.String("engine", proposal.Engine),
 			zap.String("generated_by", defaultActor(generatedBy)),
 		)
+		logBatchTiming("job_pipeline",
+			zap.String("job_id", job.JobID),
+			zap.Int("root_order_index", rootIndex),
+			zap.Int("preview_steps", len(preview.Steps)),
+			zap.Int("proposed_slots", len(proposal.ProposedSlots)),
+			zap.Int("dependent_jobs", len(proposal.DependentJobs)),
+			zap.Duration("preview_elapsed", previewElapsed),
+			zap.Duration("proposal_elapsed", proposalElapsed),
+			zap.Duration("finalize_elapsed", finalizeElapsed),
+			zap.Duration("enrich_elapsed", enrichElapsed),
+			zap.Duration("validate_elapsed", validateElapsed),
+			zap.Duration("persist_elapsed", persistElapsed),
+			zap.Duration("job_elapsed", time.Since(jobStarted)),
+			zap.Int("tentative_slots_after", len(tentativeSlots)),
+		)
 	}
 
 	// Rebalance by deadline pressure before final conflict repair.
+	rebalanceStarted := time.Now()
 	rebalanceByDeadlinePressure(proposals, deadlineByJobID)
+	logBatchTiming("rebalance_by_deadline_pressure",
+		zap.Int("proposal_count", len(proposals)),
+		zap.Duration("elapsed", time.Since(rebalanceStarted)),
+	)
 	// Repair any machine overlaps (safety net when workload is high).
+	repairStarted := time.Now()
 	if repaired := repairOverlapsInProposals(proposals); repaired {
 		if err := s.repairAndValidateBatchProposals(proposals); err != nil {
 			return nil, nil, err
 		}
 	}
+	logBatchTiming("repair_overlaps",
+		zap.Int("proposal_count", len(proposals)),
+		zap.Duration("elapsed", time.Since(repairStarted)),
+	)
 	if opts.PersistProposals && s.proposalRepo != nil {
+		updateStarted := time.Now()
 		for _, p := range proposals {
 			record, err := s.proposalRepo.GetByID(p.ProposalID)
 			if err != nil {
@@ -370,6 +430,10 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				}
 			}
 		}
+		logBatchTiming("persist_final_proposal_updates",
+			zap.Int("proposal_count", len(proposals)),
+			zap.Duration("elapsed", time.Since(updateStarted)),
+		)
 	}
 	if machines := overlappingMachinesInProposals(proposals); len(machines) > 0 {
 		logProposalStage(proposals, "pre_linearize")
@@ -468,6 +532,15 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	for _, proposal := range proposals {
 		response = append(response, stripInventoryActionsForResponse(proposal, opts.IncludeInventoryActions))
 	}
+	logBatchTiming("schedule_job_set_total",
+		zap.Int("requested_jobs", len(jobIDs)),
+		zap.Int("resolved_jobs", len(jobs)),
+		zap.Int("generated", summary.Generated),
+		zap.Int("blocked", summary.Blocked),
+		zap.Int("skipped", summary.Skipped),
+		zap.Int("final_tentative_slots", len(tentativeSlots)),
+		zap.Duration("elapsed", time.Since(batchStarted)),
+	)
 	return response, summary, nil
 }
 

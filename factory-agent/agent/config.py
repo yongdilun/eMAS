@@ -51,6 +51,11 @@ class Settings:
     tool_selector_candidate_pool: int = 24
     tool_selector_max_score_gap: int = 8
     tool_selector_min_confidence: float = 0.35
+    tool_selector_reranker_enabled: bool = True
+    tool_selector_reranker_timeout_s: float = 3.0
+    tool_selector_reranker_max_tokens: int = 220
+    llm_json_timeout_s: float = 12.0
+    llm_json_max_tokens: int = 320
     openai_base_url: str | None = None
     openai_api_key: str | None = None
 
@@ -108,6 +113,12 @@ def get_settings() -> Settings:
         tool_selector_candidate_pool=int(os.getenv("TOOL_SELECTOR_CANDIDATE_POOL", "24")),
         tool_selector_max_score_gap=int(os.getenv("TOOL_SELECTOR_MAX_SCORE_GAP", "8")),
         tool_selector_min_confidence=float(os.getenv("TOOL_SELECTOR_MIN_CONFIDENCE", "0.35")),
+        tool_selector_reranker_enabled=os.getenv("TOOL_SELECTOR_RERANKER_ENABLED", "1").strip().lower()
+        in {"1", "true", "yes"},
+        tool_selector_reranker_timeout_s=float(os.getenv("TOOL_SELECTOR_RERANKER_TIMEOUT_S", "3")),
+        tool_selector_reranker_max_tokens=int(os.getenv("TOOL_SELECTOR_RERANKER_MAX_TOKENS", "220")),
+        llm_json_timeout_s=float(os.getenv("LLM_JSON_TIMEOUT_S", "12")),
+        llm_json_max_tokens=int(os.getenv("LLM_JSON_MAX_TOKENS", "320")),
         openai_base_url=(os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or None),
         openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or None),
     )

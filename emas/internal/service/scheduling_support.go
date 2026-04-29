@@ -194,15 +194,15 @@ func (s *SchedulingService) loadProductComponents(product *domain.Product) ([]do
 }
 
 func (s *SchedulingService) resolveStepContext(id string) (*domain.JobSteps, *domain.ProcessSteps, error) {
-	jobStep, jobErr := s.stepRepo.GetByID(id)
+	jobStep, jobErr := s.getJobStepByID(id)
 	if jobErr == nil {
-		processStep, err := s.processRepo.GetStepByID(jobStep.StepID)
+		processStep, err := s.getProcessStepByID(jobStep.StepID)
 		if err != nil {
 			return nil, nil, err
 		}
 		return jobStep, processStep, nil
 	}
-	processStep, err := s.processRepo.GetStepByID(id)
+	processStep, err := s.getProcessStepByID(id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -222,14 +222,14 @@ func (s *SchedulingService) validateMachineWindow(processStep *domain.ProcessSte
 		result.AddHardReason("slot duration must be a multiple of 30 minutes (reason_code=" + invalidSlotAlignmentReasonCode + ")")
 		return nil
 	}
-	machine, err := s.machineRepo.GetByID(machineID)
+	machine, err := s.getMachineByID(machineID)
 	if err != nil {
 		return err
 	}
 	if machine.Status == domain.MachineStatusOffline || machine.Status == domain.MachineStatusMaintenance {
 		result.AddHardReason("machine is not currently schedulable")
 	}
-	ok, _, err := s.capRepo.HasCapability(machineID, processStep.StepID)
+	ok, _, err := s.hasCapability(machineID, processStep.StepID)
 	if err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func (s *SchedulingService) validateMachineWindow(processStep *domain.ProcessSte
 	if len(maints) > 0 {
 		result.AddHardReason("slot overlaps maintenance")
 	}
-	calendars, err := s.machineRepo.ListCalendarByMachineID(machineID)
+	calendars, err := s.listMachineCalendars(machineID)
 	if err != nil {
 		return err
 	}
@@ -644,7 +644,7 @@ func (s *SchedulingService) validateStepPrecedence(jobStep *domain.JobSteps, sta
 	if err != nil {
 		return err
 	}
-	currentProcessStep, err := s.processRepo.GetStepByID(jobStep.StepID)
+	currentProcessStep, err := s.getProcessStepByID(jobStep.StepID)
 	if err != nil {
 		return err
 	}
@@ -682,7 +682,7 @@ func (s *SchedulingService) validateStepPrecedence(jobStep *domain.JobSteps, sta
 			continue
 		}
 		offset := time.Duration(0)
-		if processStep, err := s.processRepo.GetStepByID(prev.StepID); err == nil {
+		if processStep, err := s.getProcessStepByID(prev.StepID); err == nil {
 			offset = time.Duration(processStep.MinWaitMinutes+processStep.TransferMinutes) * time.Minute
 		}
 		earliestNextStart := alignSuccessorStart(latestEnd.Add(offset))
@@ -1178,12 +1178,12 @@ func (s *SchedulingService) candidateMachinesForProcessStep(processStep *domain.
 }
 
 func (s *SchedulingService) candidateMachinesForProcessStepWithTentative(processStep *domain.ProcessSteps, start, end time.Time, tentativeSlots []TentativeSlot) ([]CandidateMachine, error) {
-	ids, err := s.capRepo.ListMachinesByStepID(processStep.StepID)
+	ids, err := s.listMachinesByStepID(processStep.StepID)
 	if err != nil {
 		return nil, err
 	}
 	if len(ids) == 0 {
-		machines, err := s.machineRepo.ListAll()
+		machines, err := s.listAllMachines()
 		if err != nil {
 			return nil, err
 		}
@@ -1195,11 +1195,11 @@ func (s *SchedulingService) candidateMachinesForProcessStepWithTentative(process
 	}
 	out := make([]CandidateMachine, 0, len(ids))
 	for _, machineID := range ids {
-		machine, err := s.machineRepo.GetByID(machineID)
+		machine, err := s.getMachineByID(machineID)
 		if err != nil {
 			continue
 		}
-		ok, cap, err := s.capRepo.HasCapability(machineID, processStep.StepID)
+		ok, cap, err := s.hasCapability(machineID, processStep.StepID)
 		if err != nil {
 			return nil, err
 		}

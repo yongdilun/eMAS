@@ -21,6 +21,11 @@ type HeuristicStrategy interface {
 	Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error)
 }
 
+type contextualHeuristicStrategy interface {
+	HeuristicStrategy
+	GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error)
+}
+
 type heuristicContext struct {
 	now       time.Time
 	cache     map[candidateCacheKey][]CandidateMachine
@@ -34,6 +39,11 @@ type candidateCacheKey struct {
 	hash      uint64
 }
 
+type tentativeState struct {
+	slots []TentativeSlot
+	hash  uint64
+}
+
 func newHeuristicContext(now time.Time) *heuristicContext {
 	return &heuristicContext{
 		now:       now,
@@ -42,12 +52,21 @@ func newHeuristicContext(now time.Time) *heuristicContext {
 	}
 }
 
-func (h *heuristicContext) key(jobStepID string, start, end time.Time, tentative []TentativeSlot) candidateCacheKey {
+func newTentativeState(base []TentativeSlot) tentativeState {
+	cp := make([]TentativeSlot, len(base))
+	copy(cp, base)
+	return tentativeState{
+		slots: cp,
+		hash:  tentativeHash(cp),
+	}
+}
+
+func (h *heuristicContext) key(jobStepID string, start, end time.Time, tentativeHash uint64) candidateCacheKey {
 	return candidateCacheKey{
 		jobStepID: jobStepID,
 		startMin:  start.UTC().Truncate(time.Minute).Unix(),
 		endMin:    end.UTC().Truncate(time.Minute).Unix(),
-		hash:      tentativeHash(tentative),
+		hash:      tentativeHash,
 	}
 }
 
@@ -68,12 +87,38 @@ func tentativeHash(slots []TentativeSlot) uint64 {
 	return h
 }
 
-func (h *heuristicContext) candidatesWithCache(svc *AIPredictiveService, jobStepID string, start, end time.Time, tentative []TentativeSlot) ([]CandidateMachine, error) {
-	k := h.key(jobStepID, start, end, tentative)
+func appendTentativeHash(hash uint64, slot TentativeSlot) uint64 {
+	const prime uint64 = 1099511628211
+	for i := 0; i < len(slot.MachineID); i++ {
+		hash ^= uint64(slot.MachineID[i])
+		hash *= prime
+	}
+	hash ^= uint64(slot.ScheduledStart.UTC().Truncate(time.Minute).Unix())
+	hash *= prime
+	hash ^= uint64(slot.ScheduledEnd.UTC().Truncate(time.Minute).Unix())
+	hash *= prime
+	return hash
+}
+
+func (t *tentativeState) appendSlot(slot TentativeSlot) {
+	t.slots = append(t.slots, slot)
+	t.hash = appendTentativeHash(t.hash, slot)
+}
+
+func (t *tentativeState) appendProposedSlot(slot ProposedSlot) {
+	t.appendSlot(TentativeSlot{
+		MachineID:      slot.MachineID,
+		ScheduledStart: slot.ScheduledStart,
+		ScheduledEnd:   slot.ScheduledEnd,
+	})
+}
+
+func (h *heuristicContext) candidatesWithCache(svc *AIPredictiveService, jobStepID string, start, end time.Time, tentative tentativeState) ([]CandidateMachine, error) {
+	k := h.key(jobStepID, start, end, tentative.hash)
 	if cached, ok := h.cache[k]; ok {
 		return cached, nil
 	}
-	cs, err := svc.scheduling.CandidateMachinesForStepWithTentative(jobStepID, start, end, tentative)
+	cs, err := svc.scheduling.CandidateMachinesForStepWithTentative(jobStepID, start, end, tentative.slots)
 	if err != nil {
 		return nil, err
 	}
@@ -108,15 +153,6 @@ func buildBaseProposal(job *domain.Job, engineVersion string, now time.Time) *Sc
 		Summary:        make([]string, 0, 4),
 		BlockedReasons: make([]string, 0, 4),
 	}
-}
-
-func combinedTentative(base []TentativeSlot, slots []ProposedSlot) []TentativeSlot {
-	out := make([]TentativeSlot, 0, len(base)+len(slots))
-	out = append(out, base...)
-	for _, ps := range slots {
-		out = append(out, TentativeSlot{MachineID: ps.MachineID, ScheduledStart: ps.ScheduledStart, ScheduledEnd: ps.ScheduledEnd})
-	}
-	return out
 }
 
 func proposalsDistinct(a, b *SchedulingProposal) bool {
@@ -208,7 +244,9 @@ func (s GreedyEarliestFinish) Applicable(_ *domain.Job, _ *SolverPreview, _ []Te
 	return true
 }
 func (s GreedyEarliestFinish) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
-	h := newHeuristicContext(time.Now())
+	return s.GenerateWithContext(ctx, svc, job, preview, tentativeSlots, targetCompletion, newHeuristicContext(time.Now()))
+}
+func (s GreedyEarliestFinish) GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error) {
 	return generateWithCandidateSort(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByEarliestFinish(targetCompletion))
 }
 
@@ -224,7 +262,9 @@ func (s GreedySecondBestFinish) Applicable(_ *domain.Job, _ *SolverPreview, _ []
 	return true
 }
 func (s GreedySecondBestFinish) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
-	h := newHeuristicContext(time.Now())
+	return s.GenerateWithContext(ctx, svc, job, preview, tentativeSlots, targetCompletion, newHeuristicContext(time.Now()))
+}
+func (s GreedySecondBestFinish) GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error) {
 	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByEarliestFinish(targetCompletion), 1, 0, 0)
 }
 
@@ -240,7 +280,9 @@ func (s GreedyEarliestStart) Applicable(_ *domain.Job, _ *SolverPreview, _ []Ten
 	return true
 }
 func (s GreedyEarliestStart) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
-	h := newHeuristicContext(time.Now())
+	return s.GenerateWithContext(ctx, svc, job, preview, tentativeSlots, targetCompletion, newHeuristicContext(time.Now()))
+}
+func (s GreedyEarliestStart) GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error) {
 	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByEarliestStart(), 0, 0, schedulerSlotGranularity)
 }
 
@@ -256,7 +298,9 @@ func (s LeastLoadedMachine) Applicable(_ *domain.Job, _ *SolverPreview, _ []Tent
 	return true
 }
 func (s LeastLoadedMachine) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
-	h := newHeuristicContext(time.Now())
+	return s.GenerateWithContext(ctx, svc, job, preview, tentativeSlots, targetCompletion, newHeuristicContext(time.Now()))
+}
+func (s LeastLoadedMachine) GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error) {
 	h.computeLoadScoresOnce(svc)
 	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByLeastLoaded(h.loadScore), 0, 0, schedulerSlotGranularity)
 }
@@ -273,7 +317,9 @@ func (s DeadlineBiasedLastStep) Applicable(_ *domain.Job, _ *SolverPreview, _ []
 	return targetCompletion != nil
 }
 func (s DeadlineBiasedLastStep) Generate(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time) (*SchedulingProposal, error) {
-	h := newHeuristicContext(time.Now())
+	return s.GenerateWithContext(ctx, svc, job, preview, tentativeSlots, targetCompletion, newHeuristicContext(time.Now()))
+}
+func (s DeadlineBiasedLastStep) GenerateWithContext(ctx context.Context, svc *AIPredictiveService, job *domain.Job, preview *SolverPreview, tentativeSlots []TentativeSlot, targetCompletion *time.Time, h *heuristicContext) (*SchedulingProposal, error) {
 	return generateWithCandidateSortPick(ctx, svc, job, preview, tentativeSlots, targetCompletion, h, s.ID(), sortByDeadlineBiased(targetCompletion), 0, 0, schedulerSlotGranularity)
 }
 
@@ -996,6 +1042,7 @@ func generateWithCandidateSortPick(
 	p.EarliestStart = cursor
 	hp := defaultHorizonPolicy()
 	lastMachineID := ""
+	ct := newTentativeState(tentativeSlots)
 
 	for _, step := range preview.Steps {
 		select {
@@ -1007,7 +1054,6 @@ func generateWithCandidateSortPick(
 		default:
 		}
 
-		ct := combinedTentative(tentativeSlots, p.ProposedSlots)
 		stepCursor := cursor
 		if stepStartOffset > 0 {
 			stepCursor = alignSuccessorStart(stepCursor.Add(stepStartOffset))
@@ -1107,6 +1153,7 @@ func generateWithCandidateSortPick(
 						fmt.Sprintf("Machine %s is one of the best currently feasible candidates.", group[i].MachineName),
 					},
 				})
+				ct.appendProposedSlot(p.ProposedSlots[len(p.ProposedSlots)-1])
 			}
 			cursor = alignSuccessorStart(groupEnd.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))
 			p.Summary = append(p.Summary, fmt.Sprintf("Step %s was split across %d machines.", step.StepName, parallelCount))
@@ -1144,7 +1191,7 @@ func generateWithCandidateSortPick(
 			Duration:               stepDuration,
 			Quantity:               step.QuantityTarget,
 			ProcessStep:            processStep,
-			Tentative:              ct,
+			Tentative:              ct.slots,
 			HorizonEnd:             primaryCap,
 			MaxExpansions:          hp.maxExpansions,
 			GrowBy:                 hp.growBy,
@@ -1224,23 +1271,6 @@ func generateWithCandidateSortPick(
 			)
 			continue
 		}
-		if stagesTried > 1 && outcome.Ok {
-			logger.L().Info("proposal_stage_generation_retry_result",
-				zap.String("job_id", job.JobID),
-				zap.String("job_step_id", step.JobStepID),
-				zap.Int("stages_tried", stagesTried),
-				zap.String("placement_mode", placementMode),
-				zap.Int("primary_horizon_days", primaryHorizonDays),
-				zap.Int("max_horizon_days", maxHorizonDays),
-				zap.String("result", "feasible"),
-				zap.String("final_reason", ""),
-				zap.Strings("attempted_machine_ids", outcome.AttemptedMachineIDs),
-				zap.Int("attempted_count", outcome.AttemptedCount),
-				zap.Bool("early_exit", outcome.EarlyExit),
-				zap.String("selected_machine_id", outcome.SelectedMachineID),
-				zap.Any("attempts", outcome.Attempts),
-			)
-		}
 		start = alignSuccessorStart(outcome.Start)
 		if outcome.SelectedMachineID != "" {
 			for _, c := range candidatePool {
@@ -1254,19 +1284,6 @@ func generateWithCandidateSortPick(
 		if outcome.SplitUsed && len(outcome.SplitSlices) > 0 {
 			end = outcome.SplitSlices[len(outcome.SplitSlices)-1].End
 		}
-		logger.L().Info("proposal_stage_generation",
-			zap.String("job_id", job.JobID),
-			zap.String("job_step_id", step.JobStepID),
-			zap.String("machine_id", best.MachineID),
-			zap.String("scheduled_start", start.In(time.Local).Format(time.RFC3339)),
-			zap.String("scheduled_end", end.In(time.Local).Format(time.RFC3339)),
-			zap.Int("expanded_steps", expanded),
-			zap.Bool("split_fallback_used", outcome.SplitUsed),
-			zap.Int("slice_count", len(outcome.SplitSlices)),
-			zap.Int("covered_minutes", outcome.CoveredMinutes),
-			zap.Int("required_minutes", outcome.RequiredMinutes),
-			zap.Int("max_continuous_window_minutes", outcome.MaxContinuousWindowMins),
-		)
 		if outcome.SplitUsed && len(outcome.SplitSlices) > 0 {
 			allocations := allocateSplitSliceQuantities(step.QuantityTarget, outcome.SplitSlices)
 			if len(allocations) != len(outcome.SplitSlices) {
@@ -1309,6 +1326,7 @@ func generateWithCandidateSortPick(
 						fmt.Sprintf("Horizon diagnostics: expanded_steps=%d horizon_end=%s", expanded, adaptiveEnd.UTC().Format(time.RFC3339)),
 					},
 				})
+				ct.appendProposedSlot(p.ProposedSlots[len(p.ProposedSlots)-1])
 			}
 		} else {
 			p.ProposedSlots = append(p.ProposedSlots, ProposedSlot{
@@ -1333,6 +1351,7 @@ func generateWithCandidateSortPick(
 					fmt.Sprintf("Horizon diagnostics: expanded_steps=%d horizon_end=%s", expanded, adaptiveEnd.UTC().Format(time.RFC3339)),
 				},
 			})
+			ct.appendProposedSlot(p.ProposedSlots[len(p.ProposedSlots)-1])
 		}
 		lastMachineID = best.MachineID
 		cursor = alignSuccessorStart(end.Add(time.Duration(step.MinWaitMinutes+step.TransferMinutes) * time.Minute))

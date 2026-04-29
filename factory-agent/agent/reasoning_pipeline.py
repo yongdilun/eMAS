@@ -40,6 +40,20 @@ class ReasoningPipeline:
         candidate = (text or "").strip()
         if not candidate:
             return None
+        if candidate.startswith("```"):
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip()
+        if not candidate.startswith("{"):
+            start = candidate.find("{")
+            end = candidate.rfind("}")
+            if start >= 0 and end > start:
+                candidate = candidate[start : end + 1]
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
 
     def _normalize_field(self, value: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", (value or "").strip().lower())
@@ -135,25 +149,18 @@ class ReasoningPipeline:
             warnings=[],
             grounding_refs=[],
         )
-        if candidate.startswith("```"):
-            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
-            if match:
-                candidate = match.group(1).strip()
-        if not candidate.startswith("{"):
-            start = candidate.find("{")
-            end = candidate.rfind("}")
-            if start >= 0 and end > start:
-                candidate = candidate[start : end + 1]
-        try:
-            parsed = json.loads(candidate)
-            return parsed if isinstance(parsed, dict) else None
-        except Exception:
-            return None
 
     def _build_model(self):
         from langchain_openai import ChatOpenAI
 
-        kwargs: dict[str, Any] = {"model": self._settings.tool_result_summary_model, "temperature": 0}
+        kwargs: dict[str, Any] = {
+            "model": self._settings.tool_result_summary_model,
+            "temperature": 0,
+            "timeout": self._settings.llm_json_timeout_s,
+            "max_retries": 0,
+            "max_tokens": self._settings.llm_json_max_tokens,
+            "model_kwargs": {"response_format": {"type": "json_object"}},
+        }
         if self._settings.openai_base_url:
             kwargs["base_url"] = self._settings.openai_base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"

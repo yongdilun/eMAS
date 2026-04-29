@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -275,6 +276,26 @@ type SchedulingService struct {
 	wipRepo         *repository.WIPRepository
 	psmRepo         *repository.ProcessStepMaterialRepository
 	settingsRepo    *repository.SystemSettingsRepository
+	runtimeCache    *schedulingRuntimeCache
+}
+
+type schedulingRuntimeCache struct {
+	mu                 sync.RWMutex
+	jobSteps           map[string]*domain.JobSteps
+	processSteps       map[string]*domain.ProcessSteps
+	jobs               map[string]*domain.Job
+	machines           map[string]*domain.Machine
+	capabilityByKey    map[string]cachedCapability
+	machineIDsByStepID map[string][]string
+	machineCalendars   map[string][]domain.MachineCalendar
+	machineBaseBusy    map[string][]BusyInterval
+	allMachines        []domain.Machine
+	allMachinesLoaded  bool
+}
+
+type cachedCapability struct {
+	ok  bool
+	cap *domain.MachineCapabilities
 }
 
 func NewSchedulingService(
@@ -323,6 +344,28 @@ func NewSchedulingService(
 	}
 }
 
+func newSchedulingRuntimeCache() *schedulingRuntimeCache {
+	return &schedulingRuntimeCache{
+		jobSteps:           make(map[string]*domain.JobSteps),
+		processSteps:       make(map[string]*domain.ProcessSteps),
+		jobs:               make(map[string]*domain.Job),
+		machines:           make(map[string]*domain.Machine),
+		capabilityByKey:    make(map[string]cachedCapability),
+		machineIDsByStepID: make(map[string][]string),
+		machineCalendars:   make(map[string][]domain.MachineCalendar),
+		machineBaseBusy:    make(map[string][]BusyInterval),
+	}
+}
+
+func (s *SchedulingService) WithRuntimeCache() *SchedulingService {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.runtimeCache = newSchedulingRuntimeCache()
+	return &cp
+}
+
 // WithSlotRepo returns a copy of s with slotRepo replaced. Use when validating within a transaction
 // so slot queries see uncommitted slots (e.g. proposal apply creating step 1 then step 2).
 func (s *SchedulingService) WithSlotRepo(slotRepo *repository.JobSlotRepository) *SchedulingService {
@@ -347,6 +390,7 @@ func (s *SchedulingService) WithSlotRepo(slotRepo *repository.JobSlotRepository)
 		wipRepo:         s.wipRepo,
 		psmRepo:         s.psmRepo,
 		settingsRepo:    s.settingsRepo,
+		runtimeCache:    s.runtimeCache,
 	}
 }
 
@@ -378,7 +422,228 @@ func (s *SchedulingService) WithTransaction(tx *gorm.DB) *SchedulingService {
 		wipRepo:         repository.NewWIPRepository(tx),
 		psmRepo:         repository.NewProcessStepMaterialRepository(tx),
 		settingsRepo:    repository.NewSystemSettingsRepository(tx),
+		runtimeCache:    s.runtimeCache,
 	}
+}
+
+func (s *SchedulingService) getJobStepByID(id string) (*domain.JobSteps, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if step, ok := s.runtimeCache.jobSteps[id]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return step, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	step, err := s.stepRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.jobSteps[id] = step
+		s.runtimeCache.mu.Unlock()
+	}
+	return step, nil
+}
+
+func (s *SchedulingService) getProcessStepByID(id string) (*domain.ProcessSteps, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if step, ok := s.runtimeCache.processSteps[id]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return step, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	step, err := s.processRepo.GetStepByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.processSteps[id] = step
+		s.runtimeCache.mu.Unlock()
+	}
+	return step, nil
+}
+
+func (s *SchedulingService) getJobByID(id string) (*domain.Job, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if job, ok := s.runtimeCache.jobs[id]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return job, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	job, err := s.jobRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.jobs[id] = job
+		s.runtimeCache.mu.Unlock()
+	}
+	return job, nil
+}
+
+func (s *SchedulingService) getMachineByID(id string) (*domain.Machine, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if machine, ok := s.runtimeCache.machines[id]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return machine, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	machine, err := s.machineRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.machines[id] = machine
+		s.runtimeCache.mu.Unlock()
+	}
+	return machine, nil
+}
+
+func capabilityCacheKey(machineID, stepID string) string {
+	return machineID + "\x00" + stepID
+}
+
+func (s *SchedulingService) hasCapability(machineID, stepID string) (bool, *domain.MachineCapabilities, error) {
+	key := capabilityCacheKey(machineID, stepID)
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if capVal, ok := s.runtimeCache.capabilityByKey[key]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return capVal.ok, capVal.cap, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	ok, cap, err := s.capRepo.HasCapability(machineID, stepID)
+	if err != nil {
+		return false, nil, err
+	}
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.capabilityByKey[key] = cachedCapability{ok: ok, cap: cap}
+		s.runtimeCache.mu.Unlock()
+	}
+	return ok, cap, nil
+}
+
+func (s *SchedulingService) listMachinesByStepID(stepID string) ([]string, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if ids, ok := s.runtimeCache.machineIDsByStepID[stepID]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return ids, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	ids, err := s.capRepo.ListMachinesByStepID(stepID)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		cp := append([]string(nil), ids...)
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.machineIDsByStepID[stepID] = cp
+		s.runtimeCache.mu.Unlock()
+	}
+	return ids, nil
+}
+
+func (s *SchedulingService) listAllMachines() ([]domain.Machine, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if s.runtimeCache.allMachinesLoaded {
+			machines := append([]domain.Machine(nil), s.runtimeCache.allMachines...)
+			s.runtimeCache.mu.RUnlock()
+			return machines, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	machines, err := s.machineRepo.ListAll()
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		cp := append([]domain.Machine(nil), machines...)
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.allMachines = cp
+		s.runtimeCache.allMachinesLoaded = true
+		s.runtimeCache.mu.Unlock()
+	}
+	return machines, nil
+}
+
+func (s *SchedulingService) listMachineCalendars(machineID string) ([]domain.MachineCalendar, error) {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if calendars, ok := s.runtimeCache.machineCalendars[machineID]; ok {
+			s.runtimeCache.mu.RUnlock()
+			return calendars, nil
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	calendars, err := s.machineRepo.ListCalendarByMachineID(machineID)
+	if err != nil {
+		return nil, err
+	}
+	if s.runtimeCache != nil {
+		cp := append([]domain.MachineCalendar(nil), calendars...)
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.machineCalendars[machineID] = cp
+		s.runtimeCache.mu.Unlock()
+	}
+	return calendars, nil
+}
+
+func (s *SchedulingService) machineBaseBusyIntervals(machineID string) []BusyInterval {
+	if s.runtimeCache != nil {
+		s.runtimeCache.mu.RLock()
+		if intervals, ok := s.runtimeCache.machineBaseBusy[machineID]; ok {
+			cp := append([]BusyInterval(nil), intervals...)
+			s.runtimeCache.mu.RUnlock()
+			return cp
+		}
+		s.runtimeCache.mu.RUnlock()
+	}
+	intervals := make([]BusyInterval, 0)
+	slots, _ := s.slotRepo.ListByMachineID(machineID)
+	for _, slot := range slots {
+		if slot.Status == domain.SlotStatusCancelled {
+			continue
+		}
+		intervals = append(intervals, BusyInterval{slot.ScheduledStart, slot.ScheduledEnd})
+	}
+	downtimes, _ := s.downtimeRepo.ListByMachineID(machineID)
+	for _, dt := range downtimes {
+		intervals = append(intervals, BusyInterval{dt.StartTime, dt.EndTime})
+	}
+	maints, _ := s.maintenanceRepo.ListByMachineID(machineID)
+	for _, mt := range maints {
+		intervals = append(intervals, BusyInterval{mt.StartTime, mt.EndTime})
+	}
+	calendars, _ := s.listMachineCalendars(machineID)
+	for _, cal := range calendars {
+		if cal.AvailabilityType != "work" {
+			intervals = append(intervals, BusyInterval{cal.StartTime, cal.EndTime})
+		}
+	}
+	sort.Slice(intervals, func(i, j int) bool { return intervals[i].Start.Before(intervals[j].Start) })
+	if s.runtimeCache != nil {
+		cp := append([]BusyInterval(nil), intervals...)
+		s.runtimeCache.mu.Lock()
+		s.runtimeCache.machineBaseBusy[machineID] = cp
+		s.runtimeCache.mu.Unlock()
+	}
+	return intervals
 }
 
 func (s *SchedulingService) ExplodeDemand(productID string, quantity float64) (*SchedulingExplosion, error) {
@@ -502,7 +767,7 @@ func (s *SchedulingService) CandidateMachinesForStepWithTentative(stepID string,
 		return nil, err
 	}
 	productID := ""
-	if job, _ := s.jobRepo.GetByID(jobStep.JobID); job != nil {
+	if job, _ := s.getJobByID(jobStep.JobID); job != nil {
 		productID = job.ProductID
 	}
 	for i := range baseCandidates {
@@ -552,15 +817,15 @@ func (s *SchedulingService) ValidateSlotWithOptions(jobStepID, machineID string,
 		ScheduledStart: start,
 		ScheduledEnd:   end,
 	}
-	step, err := s.stepRepo.GetByID(jobStepID)
+	step, err := s.getJobStepByID(jobStepID)
 	if err != nil {
 		return nil, err
 	}
-	processStep, err := s.processRepo.GetStepByID(step.StepID)
+	processStep, err := s.getProcessStepByID(step.StepID)
 	if err != nil {
 		return nil, err
 	}
-	job, _ := s.jobRepo.GetByID(step.JobID)
+	job, _ := s.getJobByID(step.JobID)
 	toProductID := ""
 	if job != nil {
 		toProductID = job.ProductID
@@ -582,7 +847,7 @@ func (s *SchedulingService) ValidateSlotWithOptions(jobStepID, machineID string,
 }
 
 func (s *SchedulingService) EstimateJobEarliestCompletion(jobID string) (*CompletionEstimate, error) {
-	job, err := s.jobRepo.GetByID(jobID)
+	job, err := s.getJobByID(jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +865,7 @@ func (s *SchedulingService) EstimateJobEarliestCompletion(jobID string) (*Comple
 	}
 	start := cursor
 	for _, jobStep := range steps {
-		processStep, err := s.processRepo.GetStepByID(jobStep.StepID)
+		processStep, err := s.getProcessStepByID(jobStep.StepID)
 		if err != nil {
 			return nil, err
 		}
@@ -741,7 +1006,7 @@ func (s *SchedulingService) CaptureMLTrainingEventForProposalRecord(record *doma
 	for _, proposed := range proposal.ProposedSlots {
 		step := stepCache[proposed.JobStepID]
 		if step == nil {
-			loaded, err := s.stepRepo.GetByID(proposed.JobStepID)
+			loaded, err := s.getJobStepByID(proposed.JobStepID)
 			if err != nil {
 				return err
 			}
@@ -750,14 +1015,14 @@ func (s *SchedulingService) CaptureMLTrainingEventForProposalRecord(record *doma
 		}
 		processStep := processCache[step.StepID]
 		if processStep == nil {
-			loaded, err := s.processRepo.GetStepByID(step.StepID)
+			loaded, err := s.getProcessStepByID(step.StepID)
 			if err != nil {
 				return err
 			}
 			processStep = loaded
 			processCache[step.StepID] = processStep
 		}
-		job, err := s.jobRepo.GetByID(step.JobID)
+		job, err := s.getJobByID(step.JobID)
 		if err != nil {
 			return err
 		}
@@ -1860,31 +2125,12 @@ func (s *SchedulingService) machineWorkWindows(machineID string, from, to time.T
 }
 
 func (s *SchedulingService) machineBusyIntervals(machineID string, tentativeSlots []TentativeSlot) []BusyInterval {
-	intervals := make([]BusyInterval, 0)
-	slots, _ := s.slotRepo.ListByMachineID(machineID)
-	for _, slot := range slots {
-		if slot.Status == domain.SlotStatusCancelled {
-			continue
-		}
-		intervals = append(intervals, BusyInterval{slot.ScheduledStart, slot.ScheduledEnd})
-	}
+	base := s.machineBaseBusyIntervals(machineID)
+	intervals := make([]BusyInterval, 0, len(base)+len(tentativeSlots))
+	intervals = append(intervals, base...)
 	for _, ts := range tentativeSlots {
 		if ts.MachineID == machineID {
 			intervals = append(intervals, BusyInterval{ts.ScheduledStart, ts.ScheduledEnd})
-		}
-	}
-	downtimes, _ := s.downtimeRepo.ListByMachineID(machineID)
-	for _, dt := range downtimes {
-		intervals = append(intervals, BusyInterval{dt.StartTime, dt.EndTime})
-	}
-	maints, _ := s.maintenanceRepo.ListByMachineID(machineID)
-	for _, mt := range maints {
-		intervals = append(intervals, BusyInterval{mt.StartTime, mt.EndTime})
-	}
-	calendars, _ := s.machineRepo.ListCalendarByMachineID(machineID)
-	for _, cal := range calendars {
-		if cal.AvailabilityType != "work" {
-			intervals = append(intervals, BusyInterval{cal.StartTime, cal.EndTime})
 		}
 	}
 	sort.Slice(intervals, func(i, j int) bool { return intervals[i].Start.Before(intervals[j].Start) })

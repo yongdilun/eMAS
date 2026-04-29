@@ -550,6 +550,10 @@ class LegacyPlannerBackend:
         kwargs: dict[str, Any] = {
             "model": self._settings.summary_model,
             "temperature": 0,
+            "timeout": self._settings.llm_json_timeout_s,
+            "max_retries": 0,
+            "max_tokens": self._settings.llm_json_max_tokens,
+            "model_kwargs": {"response_format": {"type": "json_object"}},
         }
         if self._settings.openai_base_url:
             kwargs["base_url"] = self._settings.openai_base_url
@@ -636,7 +640,7 @@ class LegacyPlannerBackend:
             model = self._build_chat_model()
             resp = await model.ainvoke(prompt)
             content = (getattr(resp, "content", "") or "").strip()
-            parsed = json.loads(content) if content else {}
+            parsed = self._reasoning._extract_json_obj(content) if content else {}
             if isinstance(parsed, dict):
                 plan_explanation = str(parsed.get("plan_explanation") or "").strip()
                 risk_summary = str(parsed.get("risk_summary") or "").strip()
@@ -767,8 +771,9 @@ class LangChainPlannerBackend:
         kwargs: dict[str, Any] = {
             "model": self._settings.planner_model,
             "temperature": 0,
-            "timeout": 60,
+            "timeout": self._settings.llm_json_timeout_s,
             "max_retries": 0,
+            "max_tokens": self._settings.llm_json_max_tokens,
         }
         if self._settings.openai_base_url:
             kwargs["base_url"] = self._settings.openai_base_url

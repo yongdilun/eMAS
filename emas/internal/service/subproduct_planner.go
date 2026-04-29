@@ -3,11 +3,14 @@ package service
 import (
 	"emas/internal/domain"
 	"emas/pkg/id"
+	"emas/pkg/logger"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -244,6 +247,11 @@ func (s *AIPredictiveService) subproductLimits() schedulerSubproductLimits {
 }
 
 func (s *AIPredictiveService) finalizeProposalPlan(job *domain.Job, preview *SolverPreview, proposal *SchedulingProposal, opts proposalBuildOptions) (*SchedulingProposal, error) {
+	started := time.Now()
+	previewSteps := 0
+	if preview != nil {
+		previewSteps = len(preview.Steps)
+	}
 	if proposal == nil {
 		return nil, nil
 	}
@@ -278,6 +286,19 @@ func (s *AIPredictiveService) finalizeProposalPlan(job *domain.Job, preview *Sol
 	proposal.InventoryActionCount = len(proposal.InventoryActions)
 	if !opts.IncludeInventoryActions {
 		proposal.InventoryActions = nil
+	}
+	if job != nil {
+		logger.L().Info("batch_reschedule_timing",
+			zap.String("stage", "finalize_proposal_plan"),
+			zap.String("job_id", job.JobID),
+			zap.Int("preview_steps", previewSteps),
+			zap.Int("proposed_slots", len(proposal.ProposedSlots)),
+			zap.Int("dependent_jobs", len(proposal.DependentJobs)),
+			zap.Int("inventory_actions", proposal.InventoryActionCount),
+			zap.Int("material_shortages", len(proposal.MaterialShortages)),
+			zap.Bool("feasible", proposal.Feasible),
+			zap.Duration("elapsed", time.Since(started)),
+		)
 	}
 	return proposal, nil
 }

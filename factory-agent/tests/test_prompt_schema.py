@@ -1,6 +1,4 @@
 import json
-import shutil
-from pathlib import Path
 
 import main  # noqa: F401
 
@@ -17,13 +15,8 @@ def test_plan_draft_json_schema_has_expected_shape():
     assert "risk_summary" in schema["properties"]
 
 
-def test_log_llm_prompt_writes_jsonl_debug_log(monkeypatch):
-    temp_dir = Path("factory-agent/tests/.prompt-log-test")
-    try:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        log_path = temp_dir / "debug" / "prompts.log"
-        monkeypatch.setenv("FACTORY_AGENT_DEBUG_LOG", str(log_path))
-
+def test_log_llm_prompt_emits_structured_log(caplog):
+    with caplog.at_level("INFO"):
         log_llm_prompt(
             component="planner",
             backend="langchain",
@@ -32,28 +25,18 @@ def test_log_llm_prompt_writes_jsonl_debug_log(monkeypatch):
             metadata={"attempt": "structured_output", "session_id": "sess-1"},
         )
 
-        assert log_path.exists()
-        lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) == 1
-        payload = json.loads(lines[0])
-        assert payload["event"] == "llm_prompt"
-        assert payload["component"] == "planner"
-        assert payload["backend"] == "langchain"
-        assert payload["model"] == "test-model"
-        assert payload["prompt"] == "Prompt body here"
-        assert payload["attempt"] == "structured_output"
-        assert payload["session_id"] == "sess-1"
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    payload = json.loads(caplog.records[-1].getMessage())
+    assert payload["event"] == "llm_prompt"
+    assert payload["component"] == "planner"
+    assert payload["backend"] == "langchain"
+    assert payload["model"] == "test-model"
+    assert payload["prompt"] == "Prompt body here"
+    assert payload["attempt"] == "structured_output"
+    assert payload["session_id"] == "sess-1"
 
 
-def test_log_llm_prompt_skipped_writes_jsonl_debug_log(monkeypatch):
-    temp_dir = Path("factory-agent/tests/.prompt-log-test-skipped")
-    try:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        log_path = temp_dir / "debug" / "prompts.log"
-        monkeypatch.setenv("FACTORY_AGENT_DEBUG_LOG", str(log_path))
-
+def test_log_llm_prompt_skipped_emits_structured_log(caplog):
+    with caplog.at_level("INFO"):
         log_llm_prompt_skipped(
             component="planner",
             backend="legacy",
@@ -61,15 +44,10 @@ def test_log_llm_prompt_skipped_writes_jsonl_debug_log(monkeypatch):
             metadata={"intent": "Check machine 5 status", "scoped_tool_count": 2},
         )
 
-        assert log_path.exists()
-        lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) == 1
-        payload = json.loads(lines[0])
-        assert payload["event"] == "llm_prompt_skipped"
-        assert payload["component"] == "planner"
-        assert payload["backend"] == "legacy"
-        assert payload["reason"] == "planner_backend=legacy"
-        assert payload["intent"] == "Check machine 5 status"
-        assert payload["scoped_tool_count"] == 2
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    payload = json.loads(caplog.records[-1].getMessage())
+    assert payload["event"] == "llm_prompt_skipped"
+    assert payload["component"] == "planner"
+    assert payload["backend"] == "legacy"
+    assert payload["reason"] == "planner_backend=legacy"
+    assert payload["intent"] == "Check machine 5 status"
+    assert payload["scoped_tool_count"] == 2

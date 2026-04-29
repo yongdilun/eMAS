@@ -1,13 +1,16 @@
 cd "c:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent"
 & "c:\Users\dilun\OneDrive\Documents\eMas APi\.venv\Scripts\python.exe" -m uvicorn main:app --host 127.0.0.1 --port 8000
-$env:GO_API_BASE_URL="http://localhost:8080/api/v1" 
 
 
 cd "C:\Users\dilun\Downloads\llama-b8902-bin-win-cuda-13.1-x64"
-.\llama-server.exe -hf unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL -ngl 999 --port 9000
+.\llama-server.exe -hf unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL -ngl 40 --port 9000
 
 cd "C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front"
 npm run dev
 
-cd C:\Users\dilun\OneDrive\Documents\eMas APi\emas
+cd "C:\Users\dilun\OneDrive\Documents\eMas APi\emas"
 go run .\cmd\emas 
+
+cd /d "C:\Users\dilun\OneDrive\Documents\eMas APi\emas"
+mysql -h localhost -P 3306 -u root -p emas < scripts\reset_seed.sql
+go run .\cmd\seed
