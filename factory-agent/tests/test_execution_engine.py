@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from datetime import datetime
 
@@ -43,6 +44,22 @@ def _machine_list_tool() -> ToolInfo:
         is_concurrency_safe=True,
         is_strongly_idempotent=False,
         capability_tags=["machine", "list"],
+    )
+
+
+def _job_list_tool() -> ToolInfo:
+    return ToolInfo(
+        name="get__jobs",
+        description="List jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={"type": "object", "properties": {}},
+        is_read_only=True,
+        requires_approval=False,
+        side_effect_level="NONE",
+        is_concurrency_safe=True,
+        is_strongly_idempotent=True,
+        capability_tags=["job", "list"],
     )
 
 
@@ -195,6 +212,83 @@ async def test_execution_happy_path_completes(db_session, respx_mock):
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep))).scalars().first()
     assert sess2.status == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_execute_parallel_group_runs_read_steps_concurrently(db_session, monkeypatch):
+    settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        redis_url=None,
+        go_api_base_url="http://testserver",
+        worker_count=0,
+        session_queue_size=10,
+        max_plan_steps=10,
+        max_session_steps=50,
+        max_replans=5,
+        max_llm_calls=20,
+        max_session_duration_s=1800,
+        http_timeout_s=1.0,
+        enable_parallel_execution=True,
+    )
+    engine = ExecutionEngine(settings, FakeEventBus())
+
+    session_id = "sess-parallel"
+    plan_id = "plan-parallel"
+    plan_hash = "hash-parallel"
+    plan_version = 1
+    sess, plan = await _seed_core(
+        db_session,
+        session_id=session_id,
+        plan_id=plan_id,
+        plan_hash=plan_hash,
+        plan_version=plan_version,
+    )
+    plan.parallel_groups = [[0, 1]]
+    plan.dependency_graph = {0: [], 1: []}
+    await db_session.commit()
+
+    await _seed_step(db_session, plan_id=plan_id, session_id=session_id, step_index=0, tool_name="get__machines", args={}, plan_version=plan_version)
+    await _seed_step(db_session, plan_id=plan_id, session_id=session_id, step_index=1, tool_name="get__jobs", args={}, plan_version=plan_version)
+
+    active = 0
+    observed_parallel = False
+
+    async def _fake_execute_tool_call(*, tool, args, idempotency_key, plan_hash, plan_version, session_id, step_id, db):
+        del args, idempotency_key, plan_hash, plan_version, session_id, step_id, db
+        nonlocal active, observed_parallel
+        active += 1
+        if active >= 2:
+            observed_parallel = True
+        await asyncio.sleep(0.05)
+        active -= 1
+        return {"ok": True, "tool": tool.name}, 50
+
+    monkeypatch.setattr(engine, "_execute_tool_call", _fake_execute_tool_call)
+
+    await engine.execute_until_blocked(
+        db_session,
+        session=sess,
+        tools_by_name={
+            "get__machines": _machine_list_tool(),
+            "get__jobs": _job_list_tool(),
+        },
+    )
+
+    from sqlalchemy import select
+    from models import PlanStep, Session
+
+    sess2 = await db_session.get(Session, session_id)
+    steps = (
+        await db_session.execute(
+            select(PlanStep).where(PlanStep.session_id == session_id).order_by(PlanStep.step_index.asc())
+        )
+    ).scalars().all()
+
+    assert observed_parallel is True
+    assert sess2.status == "COMPLETED"
+    assert sess2.step_count == 2
+    assert sess2.current_step_index == 2
+    assert [step.status for step in steps] == ["DONE", "DONE"]
 
 
 @pytest.mark.asyncio

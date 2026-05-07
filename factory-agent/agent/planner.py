@@ -80,14 +80,22 @@ _DEADLINE_RE = re.compile(
 _NOTES_RE = re.compile(r"\bnotes?\s*[:=]\s*(.+)$", re.IGNORECASE)
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 _COMPOUND_SEPARATOR_RE = re.compile(
-    r"\b(?:and then|then|next|after that|afterwards|finally)\b|[;\n.]+",
+    r"\b(?:and then|then|next|after that|afterwards|but first|but before that"
+    r"|once done|when done|once that is done|when that is done|finally)\b"
+    r"|[;]+",
     re.IGNORECASE,
 )
 _AND_CONNECTOR_RE = re.compile(r"\b(?:and|also)\b", re.IGNORECASE)
 _ACTION_VERB_RE = re.compile(
-    r"\b(?:check|show|list|get|find|view|inspect|update|set|create|delete|approve|reject|replan|assign|schedule|replenish|move|run)\b",
+    r"\b(?:check|show|list|get|find|view|inspect|update|set|create|delete"
+    r"|approve|reject|replan|assign|schedule|replenish|move|run|add|open|remove|cancel|start|stop|restart|reset|transfer)\b",
     re.IGNORECASE,
 )
+# Matches numbered steps like "1." or "1)" or "2." at the start of a clause.
+_NUMBERED_STEP_RE = re.compile(r"(?:^|\s)\d+[.)]+\s")
+# Protects decimal/version numbers (e.g. v2.1, 3.14) from period splitting.
+_DECIMAL_PERIOD_PLACEHOLDER = "\x00DECPT\x00"
+_DECIMAL_PERIOD_RE = re.compile(r"(\d)\.(?=\d)")
 _AUXILIARY_CAPABILITY_TAGS = {
     "approve",
     "create",
@@ -879,6 +887,59 @@ def _dedupe_plan_steps(draft: PlanDraft) -> tuple[PlanDraft, int]:
     return deduped, dropped
 
 
+def _assign_parallel_groups(
+    steps: list[PlanStepDraft],
+    tools_by_name: dict[str, ToolInfo],
+    *,
+    enabled: bool,
+) -> list[list[int]]:
+    if not enabled or len(steps) < 2:
+        return []
+
+    for step in steps:
+        step.parallel_group = None
+
+    groups: list[list[int]] = []
+    i = 0
+    while i < len(steps):
+        candidates: list[PlanStepDraft] = []
+        seen_endpoints: set[str] = set()
+        j = i
+        while j < len(steps):
+            step = steps[j]
+            tool = tools_by_name.get(step.tool_name)
+            serial_dep = [step.step_index - 1] if step.step_index > 0 else []
+            step_deps = sorted(set(int(dep) for dep in (step.depends_on or [])))
+            if not tool or not tool.is_read_only or tool.requires_approval:
+                break
+            if step.bindings:
+                break
+            # Preserve explicit planner dependencies; only remove the default serial edge.
+            if step_deps not in ([], serial_dep):
+                break
+            endpoint_key = f"{tool.method}:{tool.endpoint}"
+            if endpoint_key in seen_endpoints:
+                break
+            seen_endpoints.add(endpoint_key)
+            candidates.append(step)
+            j += 1
+
+        if len(candidates) >= 2:
+            group_id = len(groups)
+            group_indexes: list[int] = []
+            for step in candidates:
+                step.parallel_group = group_id
+                step.depends_on = []
+                group_indexes.append(step.step_index)
+            groups.append(group_indexes)
+            i = j
+            continue
+
+        i += 1
+
+    return groups
+
+
 def _field_name_found_in_text(field: str, *texts: str) -> bool:
     normalized = str(field or "").strip().lower()
     if not normalized:
@@ -1159,24 +1220,85 @@ def _diagnostic_plan_override(intent: str, scoped_tools: list[ToolInfo]) -> tupl
     return None
 
 
+def _clean_clause(text: str) -> str:
+    """Strip leading/trailing whitespace, commas, and trailing sentence-ending punctuation."""
+    cleaned = text.strip(" ,")
+    # Remove trailing periods/exclamation/question marks (but not mid-clause ones)
+    cleaned = re.sub(r"[.!?]+$", "", cleaned).strip()
+    return cleaned
+
+
 def _split_compound_intent(intent: str) -> list[str]:
-    normalized = re.sub(r"\s+", " ", intent or "").strip()
-    if not normalized:
+    raw = (intent or "").strip()
+    if not raw:
         return [""]
 
-    parts = [part.strip(" ,") for part in _COMPOUND_SEPARATOR_RE.split(normalized) if part and part.strip(" ,")]
+    # ── Pre-processing ──
+    # 1. Protect decimal/version periods (e.g. v2.1, 3.14) so they survive
+    #    the sentence-boundary split below.
+    protected = _DECIMAL_PERIOD_RE.sub(rf"\1{_DECIMAL_PERIOD_PLACEHOLDER}", raw)
+
+    # 2. Convert newlines to a separator the regex can see *before* collapsing
+    #    whitespace, so "show jobs\ncheck machine" becomes two clauses.
+    protected = protected.replace("\n", " ; ")
+
+    # 3. Normalize whitespace
+    normalized = re.sub(r"\s+", " ", protected).strip()
+
+    # ── Tier 0: Numbered steps  ("1. do X 2. do Y 3. do Z") ──
+    if _NUMBERED_STEP_RE.search(normalized):
+        # Split on the numbered prefixes and discard the numbers themselves.
+        step_parts = re.split(r"(?:^|\s)\d+[.)]+\s", normalized)
+        step_parts = [_clean_clause(p.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")) for p in step_parts if p and p.strip()]
+        if len(step_parts) >= 2:
+            actionful = sum(1 for p in step_parts if _ACTION_VERB_RE.search(p))
+            if actionful >= 2:
+                return step_parts
+
+    # ── Tier 1: Explicit sequencing connectors ──
+    #    "and then", "then", "but first", "once done", ";"
+    parts = [_clean_clause(p.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")) for p in _COMPOUND_SEPARATOR_RE.split(normalized) if p and p.strip(" ,")]
     if len(parts) > 1:
         return parts
 
-    # Fall back to a conservative "and"/"also" split only when the request
-    # looks genuinely multi-action, so we do not split ordinary noun phrases.
-    if " and " in normalized.lower() or " also " in normalized.lower():
-        parts = [part.strip(" ,") for part in _AND_CONNECTOR_RE.split(normalized) if part and part.strip(" ,")]
-        actionful_parts = sum(1 for part in parts if _ACTION_VERB_RE.search(part))
-        if len(parts) > 1 and actionful_parts >= 2:
-            return parts
+    # ── Tier 1.5: Sentence-boundary periods ──
+    #    Split on "." only when the period is a true sentence boundary
+    #    (not inside a decimal/version like v2.1).
+    if "." in normalized:
+        dot_parts = [_clean_clause(p.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")) for p in re.split(r"\.+", normalized) if p and p.strip()]
+        if len(dot_parts) > 1:
+            actionful = sum(1 for p in dot_parts if _ACTION_VERB_RE.search(p))
+            if actionful >= 2:
+                return dot_parts
 
-    return [normalized]
+    # ── Tier 2: "and" / "also" with distinct action verbs ──
+    #    Only split when BOTH halves carry their own action verb.
+    #    Skip if the sentence contains a reason/causal clause ("because", "since",
+    #    "so that", "in order to") — the "and" after these connects the reason,
+    #    not separate actions.
+    _has_reason_clause = bool(re.search(
+        r"\b(?:because|since|so that|in order to|due to|as long as|given that)\b",
+        normalized, re.IGNORECASE,
+    ))
+    if not _has_reason_clause and (" and " in normalized.lower() or " also " in normalized.lower()):
+        and_parts = [_clean_clause(p.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")) for p in _AND_CONNECTOR_RE.split(normalized) if p and p.strip(" ,")]
+        actionful_parts = sum(1 for part in and_parts if _ACTION_VERB_RE.search(part))
+        if len(and_parts) > 1 and actionful_parts >= 2:
+            return and_parts
+
+    # ── Tier 3: Comma-separated with distinct action verbs ──
+    #    "list jobs, check machine M-01" → 2 clauses
+    #    "show jobs, machines, and materials" → stays 1 (only 1 verb)
+    if "," in normalized:
+        comma_parts = [_clean_clause(p.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")) for p in normalized.split(",") if p and p.strip()]
+        # Guard: each resulting clause must have its own action verb.
+        actionful_parts = sum(1 for part in comma_parts if _ACTION_VERB_RE.search(part))
+        if len(comma_parts) > 1 and actionful_parts >= len(comma_parts):
+            return comma_parts
+
+    # ── No split — return as single clause ──
+    result = normalized.replace(_DECIMAL_PERIOD_PLACEHOLDER, ".")
+    return [_clean_clause(result) or result]
 
 
 def _terminal_endpoint_tokens(tool: ToolInfo) -> set[str]:
@@ -1800,13 +1922,23 @@ class LegacyPlannerBackend:
         if diagnostic_override is not None:
             tool, override_args = diagnostic_override
             append_step(clause_text=intent, tool=tool, step_args=override_args)
+            parallel_groups = _assign_parallel_groups(
+                step_drafts,
+                tools_by_name,
+                enabled=self._settings.enable_parallel_execution,
+            )
             plan_explanation, risk_summary, llm_calls = await self._build_explainability(
                 intent=intent,
                 scoped_tools=scoped_tools,
                 steps=step_drafts,
             )
             return PlannerResult(
-                draft=PlanDraft(plan_explanation=plan_explanation, risk_summary=risk_summary, steps=step_drafts),
+                draft=PlanDraft(
+                    plan_explanation=plan_explanation,
+                    risk_summary=risk_summary,
+                    steps=step_drafts,
+                    parallel_groups=parallel_groups or None,
+                ),
                 backend_used="legacy",
                 llm_calls=llm_calls,
                 intent_contract={"intent": intent, "clauses": contract_clauses},
@@ -2291,10 +2423,16 @@ class LegacyPlannerBackend:
             scoped_tools=scoped_tools,
             steps=step_drafts,
         )
+        parallel_groups = _assign_parallel_groups(
+            step_drafts,
+            tools_by_name,
+            enabled=self._settings.enable_parallel_execution,
+        )
         draft = PlanDraft(
             plan_explanation=plan_explanation,
             risk_summary=risk_summary,
             steps=step_drafts,
+            parallel_groups=parallel_groups or None,
         )
         return PlannerResult(
             draft=draft,

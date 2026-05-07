@@ -10,9 +10,10 @@ from agent.planner import (
     PlannerConfirmationRequired,
     PlannerResult,
     StructuredPlannerBackend,
+    _assign_parallel_groups,
 )
 from agent.reasoning_pipeline import ToolSelectionDecision
-from agent.schemas import PlanDraft, PlanStepDraft, ToolInfo
+from agent.schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
 from agent.tool_registry import ToolRegistry
 
 
@@ -31,6 +32,22 @@ def _settings() -> Settings:
         http_timeout_s=1.0,
         planner_backend="legacy",
         planner_fallback_to_legacy=True,
+    )
+
+
+def _read_tool(name: str, endpoint: str) -> ToolInfo:
+    return ToolInfo(
+        name=name,
+        description=name,
+        endpoint=endpoint,
+        method="GET",
+        input_schema={"type": "object", "properties": {}},
+        is_read_only=True,
+        requires_approval=False,
+        side_effect_level="NONE",
+        is_concurrency_safe=True,
+        is_strongly_idempotent=False,
+        capability_tags=["read"],
     )
 
 
@@ -82,6 +99,57 @@ async def test_planner_adapter_langchain_backend_falls_back_to_legacy_when_unava
     assert len(result.draft.steps) == 1
     assert result.draft.steps[0].tool_name == "get__machines_{id}"
     assert result.draft.steps[0].args == {"id": "5"}
+
+
+def test_assign_parallel_groups_for_independent_read_steps():
+    tools = {
+        "get__jobs": _read_tool("get__jobs", "/jobs"),
+        "get__machines": _read_tool("get__machines", "/machines"),
+        "get__materials": _read_tool("get__materials", "/materials"),
+    }
+    steps = [
+        PlanStepDraft(step_index=0, tool_name="get__jobs", args={}, depends_on=[]),
+        PlanStepDraft(step_index=1, tool_name="get__machines", args={}, depends_on=[0]),
+        PlanStepDraft(step_index=2, tool_name="get__materials", args={}, depends_on=[1]),
+    ]
+
+    groups = _assign_parallel_groups(steps, tools, enabled=True)
+
+    assert groups == [[0, 1, 2]]
+    assert [step.parallel_group for step in steps] == [0, 0, 0]
+    assert [step.depends_on for step in steps] == [[], [], []]
+
+
+def test_assign_parallel_groups_skips_bound_steps():
+    tools = {
+        "get__jobs": _read_tool("get__jobs", "/jobs"),
+        "get__machines": _read_tool("get__machines", "/machines"),
+        "get__materials": _read_tool("get__materials", "/materials"),
+    }
+    steps = [
+        PlanStepDraft(step_index=0, tool_name="get__jobs", args={}, depends_on=[]),
+        PlanStepDraft(step_index=1, tool_name="get__machines", args={}, depends_on=[0]),
+        PlanStepDraft(
+            step_index=2,
+            tool_name="get__materials",
+            args={},
+            depends_on=[1],
+            bindings=[
+                PlanBinding(
+                    from_step=1,
+                    result_path="data",
+                    field="id",
+                    target_arg="id",
+                    mode="single",
+                )
+            ],
+        ),
+    ]
+
+    groups = _assign_parallel_groups(steps, tools, enabled=True)
+
+    assert groups == [[0, 1]]
+    assert steps[2].parallel_group is None
 
 
 @pytest.mark.asyncio
