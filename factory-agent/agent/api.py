@@ -1568,44 +1568,23 @@ def build_router(
 
         validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
         if not validation.ok:
-            if req.draft is None and backend_used == "langchain" and settings.planner_fallback_to_legacy:
-                scoped_tools = [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
-                if mode == "plan":
-                    scoped_tools = [tool for tool in scoped_tools if tool.is_read_only]
-                fallback = await planner.generate_plan(
-                    intent=intent,
-                    scoped_tools=scoped_tools,
-                    context=sess.replan_context,
-                    force_backend="legacy",
-                )
-                draft = fallback.draft
-                backend_used = fallback.backend_used
-                fallback_contract = getattr(fallback, "intent_contract", None)
-                if fallback_contract:
-                    context = dict(sess.replan_context or {})
-                    context["intent_contract"] = fallback_contract
-                    sess.replan_context = context
-                validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
-                metrics.inc("plan_backend_used_total", labels={"backend_used": "legacy_fallback"})
-                log_event("planner_fallback_used", session_id=session_id, fallback_backend="legacy")
-            if not validation.ok:
-                metrics.inc("plan_validation_failure_total")
-                metrics.inc("plan_validation_failure_rate")
-                if sess.status == "PLANNING":
-                    context = dict(sess.replan_context or {})
-                    failures = int(context.get("validation_failure_count", 0)) + 1
-                    context["validation_failure_count"] = failures
-                    context["last_validation_errors"] = validation.errors
-                    sess.replan_context = context
-                    sess.error = "Plan validation failed"
-                    sess.version += 1
-                    if failures >= 3:
-                        sess.status = "BLOCKED"
-                        db.add(
-                            DeadLetterRow(
-                                dlq_id=generate_uuid(),
-                                session_id=session_id,
-                                step_id=None,
+            metrics.inc("plan_validation_failure_total")
+            metrics.inc("plan_validation_failure_rate")
+            if sess.status == "PLANNING":
+                context = dict(sess.replan_context or {})
+                failures = int(context.get("validation_failure_count", 0)) + 1
+                context["validation_failure_count"] = failures
+                context["last_validation_errors"] = validation.errors
+                sess.replan_context = context
+                sess.error = "Plan validation failed"
+                sess.version += 1
+                if failures >= 3:
+                    sess.status = "BLOCKED"
+                    db.add(
+                        DeadLetterRow(
+                            dlq_id=generate_uuid(),
+                            session_id=session_id,
+                            step_id=None,
                                 failure_type="replan_limit_reached",
                                 reason="Plan validation failed 3 consecutive times",
                                 payload={"errors": validation.errors, "validation_failure_count": failures},

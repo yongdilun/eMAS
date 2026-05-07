@@ -46,8 +46,8 @@ class Settings:
     memory_keep_recent_messages: int = 6
 
     # Planner / summary backend selection
-    agent_runtime: str = "langgraph_agent"  # legacy_planner|langgraph_agent
-    planner_backend: str = "langgraph"  # legacy|structured|langchain|langgraph
+    agent_runtime: str = "langgraph_agent"  # langgraph_agent
+    planner_backend: str = "langgraph"  # langgraph
     summary_backend: str = "auto"  # auto|legacy|langchain
     tool_result_summary_backend: str = "auto"  # auto|legacy|langchain
     tool_selector_backend: str = "auto"  # auto|retrieval|langchain
@@ -55,7 +55,7 @@ class Settings:
     summary_model: str = "Qwen3.5-9B"
     tool_result_summary_model: str = "Qwen3.5-9B"
     tool_selector_model: str = "Qwen3.5-9B"
-    planner_fallback_to_legacy: bool = False
+    planner_fallback_to_legacy: bool = False  # deprecated (legacy planner path removed)
     enforce_tool_registry_health: bool = True
     auto_repair_tool_registry: bool = True
     min_healthy_tool_count: int = 20
