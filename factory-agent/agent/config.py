@@ -90,6 +90,10 @@ class Settings:
     force_llm_trace_all: bool = False
     openai_base_url: str | None = None
     openai_api_key: str | None = None
+    planner_openai_base_url: str | None = None
+    summary_openai_base_url: str | None = None
+    tool_result_summary_openai_base_url: str | None = None
+    tool_selector_openai_base_url: str | None = None
 
 
 def get_settings() -> Settings:
@@ -203,4 +207,28 @@ def get_settings() -> Settings:
         in {"1", "true", "yes"},
         openai_base_url=(os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or None),
         openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or None),
+        planner_openai_base_url=(
+            os.getenv("PLANNER_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or None
+        ),
+        summary_openai_base_url=(
+            os.getenv("SUMMARY_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or None
+        ),
+        tool_result_summary_openai_base_url=(
+            os.getenv("TOOL_RESULT_SUMMARY_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or None
+        ),
+        tool_selector_openai_base_url=(
+            os.getenv("TOOL_SELECTOR_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or None
+        ),
     )

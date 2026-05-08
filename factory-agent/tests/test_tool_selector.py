@@ -562,3 +562,175 @@ async def test_compound_intent_bypasses_diagnostic_shortcuts():
     # before the second clause is ever considered.
     assert "get__machines_{id}" in result.tool_names
     assert "get__jobs_{id}_slots" in result.tool_names
+
+
+@pytest.mark.asyncio
+async def test_selector_skips_reranker_when_clear_winner_exists(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="langchain",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__reports_machine-utilization": ToolInfo(
+            name="get__reports_machine-utilization",
+            description="Machine utilization report",
+            endpoint="/reports/machine-utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization", "report"],
+        ),
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+    }
+
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {"primary_tool": "get__machines_utilization", "additional_tools": [], "confidence": 1.0, "reason": "forced"}
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="show machine utilization report",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 0
+    assert result.backend_used == "retrieval"
+    assert result.tool_names[0] == "get__reports_machine-utilization"
+
+
+@pytest.mark.asyncio
+async def test_selector_respects_disabled_reranker_even_when_trace_forced(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=False,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__jobs_{id}": ToolInfo(
+            name="get__jobs_{id}",
+            description="Get a job by ID",
+            endpoint="/jobs/{id}",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["job", "lookup"],
+        ),
+        "get__ai_scheduling_jobs_{id}_explanation": ToolInfo(
+            name="get__ai_scheduling_jobs_{id}_explanation",
+            description="Explanation",
+            endpoint="/ai/scheduling/jobs/{id}/explanation",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["ai", "scheduling", "job", "explanation"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {"primary_tool": "get__jobs_{id}", "additional_tools": [], "confidence": 1.0, "reason": "forced"}
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="explain schedule for job JOB-SEED-003",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 0
+    assert result.backend_used == "retrieval"
+    assert result.tool_names[0] == "get__ai_scheduling_jobs_{id}_explanation"
+
+
+@pytest.mark.asyncio
+async def test_selector_prefers_feature_specific_job_explanation_endpoint():
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="retrieval",
+            tool_selector_top_k=6,
+            tool_selector_candidate_pool=12,
+            tool_selector_path_token_weight=4,
+        )
+    )
+    tools = {
+        "get__jobs_{id}": ToolInfo(
+            name="get__jobs_{id}",
+            description="Get a job by ID",
+            endpoint="/jobs/{id}",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["job", "lookup"],
+        ),
+        "get__jobs_{id}_slots": ToolInfo(
+            name="get__jobs_{id}_slots",
+            description="List slots by job ID",
+            endpoint="/jobs/{id}/slots",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["job", "slot", "lookup", "list"],
+        ),
+        "get__ai_scheduling_jobs_{id}_explanation": ToolInfo(
+            name="get__ai_scheduling_jobs_{id}_explanation",
+            description="Explanation",
+            endpoint="/ai/scheduling/jobs/{id}/explanation",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["ai", "scheduling", "job", "explanation"],
+        ),
+        "post__jobs": ToolInfo(
+            name="post__jobs",
+            description="Create a job",
+            endpoint="/jobs",
+            method="POST",
+            input_schema={"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"]},
+            is_read_only=False,
+            requires_approval=True,
+            capability_tags=["job", "create"],
+        ),
+    }
+
+    result = await selector.select_tools(
+        intent="explain schedule for job JOB-SEED-003",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert result.tool_names[0] == "get__ai_scheduling_jobs_{id}_explanation"

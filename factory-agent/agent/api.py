@@ -527,26 +527,32 @@ def build_router(
             sess.name = "New chat"
         await db.commit()
 
-        summary_text = draft.plan_explanation or "Execution plan created."
+        latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
+        quick_summary = draft.plan_explanation or "Execution plan created."
+        plan_message = MessageRow(
+            message_id=generate_uuid(),
+            session_id=sess.session_id,
+            role="assistant",
+            content=quick_summary,
+            mode=(latest_user.mode if latest_user else "normal"),
+            tool_name="__plan__",
+        )
+        db.add(plan_message)
+        await db.commit()
+
+        # Two-phase response for better UX:
+        # 1) quick summary appears immediately
+        # 2) richer summary replaces it when ready
         try:
             summary = await summary_adapter.summarize_plan(intent=intent, draft=draft)
-            summary_text = summary.text
+            summary_text = (summary.text or "").strip()
+            if summary_text and summary_text != (plan_message.content or "").strip():
+                plan_message.content = summary_text
             sess.llm_call_count += summary.llm_calls
             sess.version += 1
+            await db.commit()
         except SummaryBackendError:
             pass
-        latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
-        db.add(
-            MessageRow(
-                message_id=generate_uuid(),
-                session_id=sess.session_id,
-                role="assistant",
-                content=summary_text,
-                mode=(latest_user.mode if latest_user else "normal"),
-                tool_name="__plan__",
-            )
-        )
-        await db.commit()
         return _plan_to_response(plan_row)
 
     async def _create_plan_approval(

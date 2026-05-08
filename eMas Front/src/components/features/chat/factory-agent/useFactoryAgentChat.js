@@ -473,7 +473,18 @@ export function useFactoryAgentChat() {
 
   const messages = useMemo(() => {
     const serverMessages = timeline.map(toTimelineMessage)
-    const merged = [...serverMessages, ...optimisticMessages]
+    const serverUserContents = new Set(
+      serverMessages
+        .filter((m) => m.role === 'user')
+        .map((m) => String(m.content || '').trim().toLowerCase())
+        .filter(Boolean),
+    )
+    const filteredOptimistic = optimisticMessages.filter((m) => {
+      if (m.role !== 'user') return true
+      const key = String(m.content || '').trim().toLowerCase()
+      return key ? !serverUserContents.has(key) : true
+    })
+    const merged = [...serverMessages, ...filteredOptimistic]
     merged.sort((a, b) => {
       const ts = String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
       if (ts !== 0) return ts

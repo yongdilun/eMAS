@@ -294,6 +294,14 @@ function AssistantTurnBubble({
  )
 }
 
+function statusLoadingText(status) {
+ if (status === FACTORY_AGENT_STATUS.PLANNING) return 'Building plan...'
+ if (status === FACTORY_AGENT_STATUS.EXECUTING) return 'Executing steps...'
+ if (status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) return 'Waiting for approval...'
+ if (status === FACTORY_AGENT_STATUS.WAITING_CONFIRMATION) return 'Waiting for confirmation...'
+ return 'Working...'
+}
+
 const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  const chatRef = useRef(null)
  const shouldAutoScrollRef = useRef(true)
@@ -685,9 +693,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  </>
  )}
 
- {isSending && (
+ {isSending && (turns?.length || 0) === 0 && (
  <ChatMessage
- message="Working..."
+ message={statusLoadingText(session?.status)}
  isUser={false}
  timestamp={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
  />

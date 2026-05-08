@@ -10,7 +10,13 @@ from .intent import assess_intent
 from .schemas import ToolInfo
 from .telemetry import log_event, log_llm_prompt, log_llm_prompt_skipped
 from .tool_scope import ScopedTools, filter_tools_for_intent, score_tool
-from .tool_intent_profile import ToolIntentVocabulary, build_tool_intent_profile, profile_match_score, vocabulary_for_tools
+from .tool_intent_profile import (
+    ToolIntentVocabulary,
+    build_tool_intent_profile,
+    profile_match_score,
+    tool_covers_descriptive_terms,
+    vocabulary_for_tools,
+)
 
 
 ToolSelectorBackendName = Literal["retrieval", "langchain"]
@@ -68,16 +74,16 @@ class ToolSelector:
         return (self._settings.embedding_backend or "auto").strip().lower()
 
     def _can_use_llm_reranker(self) -> bool:
-        if self._settings.force_llm_trace_all:
-            return bool(self._settings.openai_base_url or self._settings.openai_api_key)
         if not self._settings.tool_selector_reranker_enabled:
             return False
+        if self._settings.force_llm_trace_all:
+            return bool(self._settings.tool_selector_openai_base_url or self._settings.openai_api_key)
         backend = self._backend_mode()
         if backend == "retrieval":
             return False
         if backend == "langchain":
             return True
-        return bool(self._settings.openai_base_url or self._settings.openai_api_key)
+        return bool(self._settings.tool_selector_openai_base_url or self._settings.openai_api_key)
 
     def _top_candidates(
         self,
@@ -178,8 +184,39 @@ class ToolSelector:
                     return out
         return out
 
-    def _should_rerank(self, candidates: list[tuple[str, int]]) -> bool:
+    def _has_clear_winner(
+        self,
+        *,
+        intent: str,
+        candidates: list[tuple[str, int]],
+        tools_by_name: dict[str, ToolInfo],
+    ) -> bool:
+        if len(candidates) < 2:
+            return True
+        top_names = [name for name, _ in candidates[:5] if name in tools_by_name]
+        if not top_names:
+            return False
+        vocabulary = vocabulary_for_tools([tools_by_name[name] for name in top_names])
+
+        descriptive_matches = [
+            name
+            for name in top_names
+            if tool_covers_descriptive_terms(intent, tools_by_name[name], vocabulary=vocabulary)
+        ]
+        if len(descriptive_matches) == 1 and descriptive_matches[0] == top_names[0]:
+            return True
+
+        top_profile = profile_match_score(intent, tools_by_name[top_names[0]], vocabulary=vocabulary)
+        second_profile = max(
+            (profile_match_score(intent, tools_by_name[name], vocabulary=vocabulary) for name in top_names[1:]),
+            default=-10_000,
+        )
+        return (top_profile - second_profile) >= 8
+
+    def _should_rerank(self, *, intent: str, candidates: list[tuple[str, int]], tools_by_name: dict[str, ToolInfo]) -> bool:
         if len(candidates) < 2 or not self._can_use_llm_reranker():
+            return False
+        if self._has_clear_winner(intent=intent, candidates=candidates, tools_by_name=tools_by_name):
             return False
         if self._settings.force_llm_trace_all:
             return True
@@ -208,6 +245,10 @@ class ToolSelector:
 
     def _normalize_token(self, token: str) -> str:
         lowered = token.lower().strip("_- ")
+        if lowered.endswith("ing") and len(lowered) > 5:
+            lowered = lowered[:-3]
+        elif lowered.endswith("ed") and len(lowered) > 4:
+            lowered = lowered[:-2]
         if lowered.endswith("ies") and len(lowered) > 3:
             return lowered[:-3] + "y"
         if lowered.endswith("s") and len(lowered) > 3:
@@ -543,8 +584,8 @@ class ToolSelector:
             "max_tokens": self._settings.tool_selector_max_tokens,
             "model_kwargs": {"response_format": {"type": "json_object"}},
         }
-        if self._settings.openai_base_url:
-            kwargs["base_url"] = self._settings.openai_base_url
+        if self._settings.tool_selector_openai_base_url:
+            kwargs["base_url"] = self._settings.tool_selector_openai_base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"
         elif self._settings.openai_api_key:
             kwargs["api_key"] = self._settings.openai_api_key
@@ -576,7 +617,7 @@ class ToolSelector:
         if not candidates:
             return ToolSelectionResult(tool_names=[], backend_used="retrieval", llm_calls=0)
 
-        if not self._should_rerank(candidates):
+        if not self._should_rerank(intent=intent, candidates=candidates, tools_by_name=tools_by_name):
             log_llm_prompt_skipped(
                 component="tool_selector",
                 backend=self._backend_mode(),

@@ -37,8 +37,8 @@ class SummaryAdapter:
             "max_retries": 0,
             "max_tokens": self._settings.summary_max_tokens,
         }
-        if self._settings.openai_base_url:
-            kwargs["base_url"] = self._settings.openai_base_url
+        if self._settings.summary_openai_base_url:
+            kwargs["base_url"] = self._settings.summary_openai_base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"
         elif self._settings.openai_api_key:
             kwargs["api_key"] = self._settings.openai_api_key
@@ -47,7 +47,7 @@ class SummaryAdapter:
     async def summarize_plan(self, *, intent: str, draft: PlanDraft) -> SummaryResult:
         backend = (self._settings.summary_backend or "auto").strip().lower()
         if backend == "auto":
-            backend = "langchain" if (self._settings.openai_base_url or self._settings.openai_api_key) else "legacy"
+            backend = "langchain" if (self._settings.summary_openai_base_url or self._settings.openai_api_key) else "legacy"
         if backend == "langchain":
             return await self._summarize_langchain(intent=intent, draft=draft)
         return self._summarize_legacy(intent=intent, draft=draft)

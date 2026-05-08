@@ -62,6 +62,11 @@ class ReasoningPipeline:
             return self._settings.tool_selector_model
         return self._settings.tool_result_summary_model
 
+    def _component_base_url(self, component: str) -> str | None:
+        if component in {"reasoning_tool_selection", "reasoning_semantic_classifier"}:
+            return self._settings.tool_selector_openai_base_url
+        return self._settings.tool_result_summary_openai_base_url
+
     def _component_timeout(self, component: str) -> float:
         if component in {"reasoning_tool_selection", "reasoning_semantic_classifier"}:
             return self._settings.tool_selector_timeout_s
@@ -93,13 +98,13 @@ class ReasoningPipeline:
 
     def _enabled(self, component: str) -> bool:
         if self._settings.force_llm_trace_all:
-            return bool(self._settings.openai_base_url or self._settings.openai_api_key)
+            return bool(self._component_base_url(component) or self._settings.openai_api_key)
         backend = self._component_backend(component)
         if backend in {"legacy", "retrieval", "disabled", "off", "false", "none"}:
             return False
         if backend not in {"auto", "langchain"}:
             return False
-        return bool(self._settings.openai_base_url or self._settings.openai_api_key)
+        return bool(self._component_base_url(component) or self._settings.openai_api_key)
 
     def _extract_json_obj(self, text: str) -> dict[str, Any] | None:
         candidate = (text or "").strip()
@@ -421,8 +426,9 @@ class ReasoningPipeline:
             "max_tokens": self._component_max_tokens(component),
             "model_kwargs": {"response_format": {"type": "json_object"}},
         }
-        if self._settings.openai_base_url:
-            kwargs["base_url"] = self._settings.openai_base_url
+        base_url = self._component_base_url(component)
+        if base_url:
+            kwargs["base_url"] = base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"
         elif self._settings.openai_api_key:
             kwargs["api_key"] = self._settings.openai_api_key

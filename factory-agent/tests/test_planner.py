@@ -390,6 +390,56 @@ def test_validate_node_empty_plan_returns_clarification():
         planner._validate_node(state)
 
 
+def test_validate_node_empty_plan_falls_back_to_clear_read_tool_with_supported_path_id():
+    planner = LangGraphPlanner(_settings())
+    tools = [
+        ToolInfo(
+            name="get__scheduling_explosion",
+            description="Explode demand",
+            endpoint="/scheduling/products/{id}/explosion",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            path_params=["id"],
+            is_read_only=True,
+            requires_approval=False,
+            side_effect_level="NONE",
+            is_concurrency_safe=True,
+            is_strongly_idempotent=False,
+            capability_tags=["scheduling", "explosion", "explode", "demand"],
+        ),
+        ToolInfo(
+            name="post__products",
+            description="Create a product",
+            endpoint="/products",
+            method="POST",
+            input_schema={"type": "object", "properties": {"product_name": {"type": "string"}}, "required": ["product_name"]},
+            is_read_only=False,
+            requires_approval=True,
+            side_effect_level="HIGH",
+            is_concurrency_safe=False,
+            is_strongly_idempotent=False,
+            capability_tags=["product", "create"],
+        ),
+    ]
+    state = {
+        "intent": "explosion for product P-001",
+        "context": {},
+        "scoped_tools": tools,
+        "raw_plan": AgentPlanOutput(
+            plan_explanation="",
+            risk_summary="",
+            steps=[],
+        ),
+    }
+
+    result = planner._validate_node(state)
+
+    draft = result["draft"]
+    assert [step.tool_name for step in draft.steps] == ["get__scheduling_explosion"]
+    assert draft.steps[0].args == {"id": "P-001"}
+    assert result["intent_contract"]["steps"][0]["tool_name"] == "get__scheduling_explosion"
+
+
 def test_langgraph_repair_expands_job_and_slots_compound_read():
     settings = _settings()
     planner = LangGraphPlanner(settings)

@@ -16,6 +16,12 @@ from ..guardrails import (
 from ..plan_validator import validate_plan
 from ..schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
 from ..telemetry import log_event, log_llm_prompt
+from ..tool_intent_profile import (
+    build_tool_intent_profile,
+    intent_feature_tokens,
+    tool_covers_descriptive_terms,
+    vocabulary_for_tools,
+)
 from .state import AgentPlanOutput, AgentPlanStep, AgentState
 
 
@@ -402,7 +408,58 @@ def _deterministic_plan_repair(intent: str, scoped_tools: list[ToolInfo]) -> Age
             ],
         )
 
+    inferred = _infer_clear_read_tool(intent, scoped_tools)
+    if inferred is not None:
+        return inferred
+
     return None
+
+
+def _infer_clear_read_tool(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
+    """Build a safe fallback plan when retrieval already found one clear read tool.
+
+    This catches small-model empty-plan failures without hardcoding endpoint
+    names. The fallback is intentionally narrow: the first retrieved tool must
+    be read-only, approval-free, have all required path arguments either
+    omitted or extractable from the user text, and cover a descriptive request
+    term such as "explosion", "forecast", or "readiness".
+    Generic entity reads like "list machines" do not pass this check because
+    they contain no non-entity descriptive feature.
+    """
+    if not scoped_tools:
+        return None
+    tool = scoped_tools[0]
+    if tool.method != "GET" or not tool.is_read_only or tool.requires_approval:
+        return None
+    supported_args, supported_evidence = _extract_user_supported_path_args(
+        intent=intent,
+        tool=tool,
+        existing_args={},
+    )
+    if missing_required_fields(tool, supported_args):
+        return None
+
+    vocabulary = vocabulary_for_tools(scoped_tools)
+    profile = build_tool_intent_profile(tool, vocabulary=vocabulary)
+    features = intent_feature_tokens(intent, vocabulary=vocabulary)
+    non_entity_features = features - set(vocabulary.entity_tokens) - {profile.endpoint_root}
+    if not non_entity_features:
+        return None
+    if not tool_covers_descriptive_terms(intent, tool, vocabulary=vocabulary):
+        return None
+
+    return AgentPlanOutput(
+        plan_explanation=f"Use `{tool.name}` to satisfy the requested read-only factory operation.",
+        risk_summary="Read-only operation with no data changes.",
+        steps=[
+            AgentPlanStep(
+                tool_name=tool.name,
+                args=supported_args,
+                evidence=supported_evidence,
+                confidence=0.82,
+            )
+        ],
+    )
 
 
 def _extract_json_obj(text: str) -> dict[str, Any] | None:
@@ -805,8 +862,8 @@ class LangGraphPlanner:
         }
         if json_mode:
             kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
-        if self._settings.openai_base_url:
-            kwargs["base_url"] = self._settings.openai_base_url
+        if self._settings.planner_openai_base_url:
+            kwargs["base_url"] = self._settings.planner_openai_base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"
         elif self._settings.openai_api_key:
             kwargs["api_key"] = self._settings.openai_api_key
@@ -822,8 +879,8 @@ class LangGraphPlanner:
         }
 
     async def _reason_node(self, state: AgentState) -> AgentState:
-        if not (self._settings.openai_base_url or self._settings.openai_api_key):
-            raise LangGraphPlannerError("LangGraph planner requires OPENAI_BASE_URL or OPENAI_API_KEY.")
+        if not (self._settings.planner_openai_base_url or self._settings.openai_api_key):
+            raise LangGraphPlannerError("LangGraph planner requires PLANNER_OPENAI_BASE_URL (or OPENAI_BASE_URL) or OPENAI_API_KEY.")
 
         intent = state.get("intent") or ""
         context = state.get("context") or {}

@@ -11,6 +11,17 @@ cd "C:\Users\dilun\Downloads\llama-b8902-bin-win-cuda-13.1-x64"
   --parallel 1 `
   --port 900
 
+cd "C:\Users\dilun\Downloads\llama-b8902-bin-win-cuda-13.1-x64"
+.\llama-server.exe `
+  -hf bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M `
+  -ngl 999 `
+  -c 16384 `
+  -b 256 `
+  -t 6 `
+  -fa on `
+  --port 901
+
+
 cd "C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front"
 npm run dev
 
@@ -31,6 +42,17 @@ cd "C:\Users\dilun\OneDrive\Documents\eMas APi"
 
 # Regenerate tool intent vocabulary from local OpenAPI metadata
 & ".\factory-agent\.venv\Scripts\python.exe" factory-agent\scripts\generate_tool_intent_vocabulary.py
+
+# Backend API / Swagger change refresh sequence
+gofmt -w .\emas\internal\handler\*.go .\emas\internal\service\*.go .\emas\internal\repository\*.go .\emas\internal\handler\dto\*.go .\emas\internal\router\*.go
+cd ".\emas"
+swag init -g cmd/emas/main.go -o docs
+cd ..
+& ".\factory-agent\.venv\Scripts\python.exe" .\emas\scripts\enrich_swagger_id_patterns.py
+& ".\factory-agent\.venv\Scripts\python.exe" .\factory-agent\scripts\generate_tools.py --local
+& ".\factory-agent\.venv\Scripts\python.exe" .\factory-agent\scripts\generate_tool_intent_vocabulary.py
+$env:GOCACHE='.\.gocache_test'; go test ./emas/internal/handler -count=1
+& ".\factory-agent\.venv\Scripts\python.exe" -m pytest factory-agent\tests\test_toolgen.py factory-agent\tests\test_planner.py -q
 
 # Full seed pipeline: Go fast checks + Python manifest + seeded backend scenarios
 .\tests\e2e\run_seed_pipeline.ps1

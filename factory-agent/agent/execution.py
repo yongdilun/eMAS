@@ -187,8 +187,8 @@ class ExecutionEngine:
             "max_retries": 0,
             "max_tokens": self._settings.tool_result_summary_max_tokens,
         }
-        if self._settings.openai_base_url:
-            kwargs["base_url"] = self._settings.openai_base_url
+        if self._settings.tool_result_summary_openai_base_url:
+            kwargs["base_url"] = self._settings.tool_result_summary_openai_base_url
             kwargs["api_key"] = self._settings.openai_api_key or "local"
         elif self._settings.openai_api_key:
             kwargs["api_key"] = self._settings.openai_api_key
@@ -292,7 +292,7 @@ class ExecutionEngine:
     def _tool_result_summary_backend(self) -> str:
         backend = (self._settings.tool_result_summary_backend or "auto").strip().lower()
         if backend == "auto":
-            if self._settings.openai_base_url or self._settings.openai_api_key:
+            if self._settings.tool_result_summary_openai_base_url or self._settings.openai_api_key:
                 return "langchain"
             return "legacy"
         return backend

@@ -37,6 +37,10 @@ def _tokenize(text: str) -> set[str]:
     tokens = {m.group(0).lower() for m in _WORD_RE.finditer(text or "")}
     normalized: set[str] = set()
     for token in tokens:
+        if token.endswith("ing") and len(token) > 5:
+            token = token[:-3]
+        elif token.endswith("ed") and len(token) > 4:
+            token = token[:-2]
         normalized.add(token)
         if token.endswith("ies") and len(token) > 3:
             normalized.add(token[:-3] + "y")
@@ -118,6 +122,7 @@ def score_tool(intent: str, tool: ToolInfo, *, vocabulary: ToolIntentVocabulary 
 
     if tool.path_params and any(token.isdigit() or "-" in token for token in intent_tokens):
         score += 3
+
     return score
 
 

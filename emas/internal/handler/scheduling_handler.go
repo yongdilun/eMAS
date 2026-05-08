@@ -19,14 +19,17 @@ func NewSchedulingHandler(schedulingService *service.SchedulingService) *Schedul
 }
 
 // @Summary Explode demand
+// @ID get__scheduling_explosion
 // @Description Explode demand
 // @Tags scheduling
 // @Accept json
 // @Produce json
+// @Param id path string true "Product ID"
+// @Param quantity query number false "Quantity"
 // @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /scheduling/explosion [get]
+// @Router /scheduling/products/{id}/explosion [get]
 func (h *SchedulingHandler) Explosion(c *gin.Context) {
 	var req dto.SchedulingExplosionRequest
 	if c.Request.Method == http.MethodGet {
@@ -52,14 +55,17 @@ func (h *SchedulingHandler) Explosion(c *gin.Context) {
 }
 
 // @Summary Check readiness
+// @ID get__scheduling_readiness
 // @Description Check readiness
 // @Tags scheduling
 // @Accept json
 // @Produce json
+// @Param id path string true "Product ID"
+// @Param quantity query number false "Quantity"
 // @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /scheduling/readiness [get]
+// @Router /scheduling/products/{id}/readiness [get]
 func (h *SchedulingHandler) Readiness(c *gin.Context) {
 	productID := c.Query("product_id")
 	if productID == "" {
@@ -213,14 +219,16 @@ func (h *SchedulingHandler) BackfillTrainingDataset(c *gin.Context) {
 }
 
 // @Summary Solver preview
+// @ID get__scheduling_solver-preview
 // @Description Solver preview
 // @Tags scheduling
 // @Accept json
 // @Produce json
+// @Param id path string true "Job ID"
 // @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /scheduling/solver-preview [get]
+// @Router /scheduling/jobs/{id}/solver-preview [get]
 func (h *SchedulingHandler) SolverPreview(c *gin.Context) {
 	jobID := c.Param("id")
 	data, err := h.schedulingService.BuildSolverPreview(jobID)

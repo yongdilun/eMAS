@@ -11818,49 +11818,6 @@
 }
 `
 ---
-## get__scheduling_explosion
-**Description**: Explode demand
-**Method**: GET
-**Endpoint**: /scheduling/explosion
-**Capability Tags**: ["scheduling", "explosion", "list", "explode", "demand", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
-}
-`
----
 ## get__scheduling_is-time-before
 **Description**: Is time before
 **Method**: GET
@@ -11947,11 +11904,11 @@
 }
 `
 ---
-## get__scheduling_readiness
-**Description**: Check readiness
+## get__scheduling_solver-preview
+**Description**: Solver preview
 **Method**: GET
-**Endpoint**: /scheduling/readiness
-**Capability Tags**: ["scheduling", "readiness", "list", "check", "data", "error", "success"]
+**Endpoint**: /scheduling/jobs/{id}/solver-preview
+**Capability Tags**: ["scheduling", "job", "solver", "preview", "lookup", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -11959,10 +11916,141 @@
 `json
 {
   "type": "object",
-  "properties": {},
-  "x-path-params": [],
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
   "x-query-params": [],
-  "x-param-sources": {},
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## get__scheduling_explosion
+**Description**: Explode demand
+**Method**: GET
+**Endpoint**: /scheduling/products/{id}/explosion
+**Capability Tags**: ["scheduling", "product", "explosion", "lookup", "explode", "demand", "id", "quantity", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "quantity"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "quantity": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## get__scheduling_readiness
+**Description**: Check readiness
+**Method**: GET
+**Endpoint**: /scheduling/products/{id}/readiness
+**Capability Tags**: ["scheduling", "product", "readiness", "lookup", "check", "id", "quantity", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "quantity"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "quantity": "query"
+  },
   "x-allowed-roles": [
     "viewer",
     "planner",
@@ -12228,49 +12316,6 @@
     }
   },
   "required": []
-}
-`
----
-## get__scheduling_solver-preview
-**Description**: Solver preview
-**Method**: GET
-**Endpoint**: /scheduling/solver-preview
-**Capability Tags**: ["scheduling", "solver", "preview", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
 }
 `
 ---

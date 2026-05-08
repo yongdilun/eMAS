@@ -21,6 +21,7 @@ type LLMParserClient struct {
 	httpClient *http.Client
 	baseURL    string
 	model      string
+	provider   string
 	mu         sync.Mutex
 	cache      map[string]cacheEntry
 }
@@ -40,6 +41,27 @@ type ollamaRequest struct {
 type ollamaResponse struct {
 	Response string `json:"response"`
 	// Other fields are ignored.
+}
+
+type openAIRequest struct {
+	Model          string            `json:"model"`
+	Messages       []openAIMessage   `json:"messages"`
+	Temperature    float64           `json:"temperature,omitempty"`
+	MaxTokens      int               `json:"max_tokens,omitempty"`
+	ResponseFormat map[string]string `json:"response_format,omitempty"`
+}
+
+type openAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type openAIResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
 }
 
 // semaphore channel for limiting concurrent Ollama calls. Initialized lazily
@@ -99,13 +121,18 @@ func NewLLMParserClient() *LLMParserClient {
 	if model == "" {
 		model = "llama3.1:8b-instruct"
 	}
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("LLM_PARSER_PROVIDER")))
+	if provider == "" {
+		provider = "ollama"
+	}
 	return &LLMParserClient{
 		httpClient: &http.Client{
 			Timeout: 2 * time.Second,
 		},
-		baseURL: base,
-		model:   model,
-		cache:   make(map[string]cacheEntry),
+		baseURL:  base,
+		model:    model,
+		provider: provider,
+		cache:    make(map[string]cacheEntry),
 	}
 }
 
@@ -153,19 +180,43 @@ func (c *LLMParserClient) generate(ctx context.Context, prompt string) ([]byte, 
 	}
 	defer releaseLLMSlot()
 
-	reqBody, err := json.Marshal(ollamaRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-		Options: map[string]interface{}{
-			"temperature": 0.1,
-			"num_predict": 256,
-		},
-	})
-	if err != nil {
-		return nil, err
+	var (
+		reqBody []byte
+		url     string
+		err     error
+	)
+	if c.provider == "openai" {
+		reqBody, err = json.Marshal(openAIRequest{
+			Model: c.model,
+			Messages: []openAIMessage{
+				{Role: "user", Content: prompt},
+			},
+			Temperature: 0.1,
+			MaxTokens:   256,
+			ResponseFormat: map[string]string{
+				"type": "json_object",
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		url = fmt.Sprintf("%s/chat/completions", strings.TrimRight(c.baseURL, "/"))
+	} else {
+		reqBody, err = json.Marshal(ollamaRequest{
+			Model:  c.model,
+			Prompt: prompt,
+			Stream: false,
+			Options: map[string]interface{}{
+				"temperature": 0.1,
+				"num_predict": 256,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		url = fmt.Sprintf("%s/api/generate", c.baseURL)
 	}
-	url := fmt.Sprintf("%s/api/generate", c.baseURL)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
@@ -183,14 +234,27 @@ func (c *LLMParserClient) generate(ctx context.Context, prompt string) ([]byte, 
 		return nil, fmt.Errorf("llm parser http %d: %s", resp.StatusCode, string(b))
 	}
 
-	// Enforce a hard response limit even if Ollama misbehaves.
+	// Enforce a hard response limit even if the backend misbehaves.
 	limited := io.LimitReader(resp.Body, 16*1024)
-	var or ollamaResponse
-	if err := json.NewDecoder(limited).Decode(&or); err != nil {
-		return nil, fmt.Errorf("decode ollama response: %w", err)
+	var rawContent string
+	if c.provider == "openai" {
+		var or openAIResponse
+		if err := json.NewDecoder(limited).Decode(&or); err != nil {
+			return nil, fmt.Errorf("decode openai response: %w", err)
+		}
+		if len(or.Choices) == 0 {
+			return nil, fmt.Errorf("openai parser response missing choices")
+		}
+		rawContent = or.Choices[0].Message.Content
+	} else {
+		var or ollamaResponse
+		if err := json.NewDecoder(limited).Decode(&or); err != nil {
+			return nil, fmt.Errorf("decode ollama response: %w", err)
+		}
+		rawContent = or.Response
 	}
 
-	sanitized, err := sanitizeLLMJSON(or.Response)
+	sanitized, err := sanitizeLLMJSON(rawContent)
 	if err != nil {
 		return nil, err
 	}

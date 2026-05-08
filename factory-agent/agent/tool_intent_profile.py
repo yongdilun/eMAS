@@ -46,6 +46,10 @@ EMPTY_VOCABULARY = ToolIntentVocabulary(
 
 def normalize_token(token: str) -> str:
     lowered = (token or "").strip().lower()
+    if lowered.endswith("ing") and len(lowered) > 5:
+        lowered = lowered[:-3]
+    elif lowered.endswith("ed") and len(lowered) > 4:
+        lowered = lowered[:-2]
     if lowered.endswith("ies") and len(lowered) > 3:
         return lowered[:-3] + "y"
     if lowered.endswith("sses") and len(lowered) > 5:
@@ -338,6 +342,7 @@ def profile_match_score(intent: str, tool: ToolInfo, *, vocabulary: ToolIntentVo
     score = 0
 
     identity_overlap = intent_tokens & set(profile.identity_tokens)
+    identity_soft_overlap = _soft_overlap(intent_tokens, set(profile.identity_tokens)) - identity_overlap
     feature_overlap = feature_tokens & set(profile.feature_tokens)
     soft_feature_overlap = _soft_overlap(feature_tokens, set(profile.feature_tokens)) - feature_overlap
     endpoint_overlap = intent_tokens & set(profile.endpoint_segments)
@@ -349,6 +354,7 @@ def profile_match_score(intent: str, tool: ToolInfo, *, vocabulary: ToolIntentVo
     uncovered_discriminators = feature_tokens - covered_features - set(vocab.entity_tokens)
 
     score += len(identity_overlap) * 3
+    score += len(identity_soft_overlap) * 4
     score += len(endpoint_overlap) * 5
     score += len(endpoint_feature_overlap) * 8
     score += len(feature_overlap) * 9

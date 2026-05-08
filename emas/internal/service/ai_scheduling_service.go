@@ -923,6 +923,7 @@ func (s *AIPredictiveService) ListHighRiskJobs(limit int) ([]HighRiskJobPredicti
 			{JobID: "NO-JOBS-002", MachineName: "Unassigned", Issue: "Add more scheduling history to improve predictions", RiskLevel: "Low", RiskScore: 8},
 		}, nil
 	}
+	jobs = highRiskCandidateJobs(jobs, limit)
 	result := make([]HighRiskJobPrediction, 0, len(jobs))
 	for _, job := range jobs {
 		detail, err := s.buildDelayRisk(job)
@@ -950,6 +951,64 @@ func (s *AIPredictiveService) ListHighRiskJobs(limit int) ([]HighRiskJobPredicti
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func highRiskCandidateJobs(jobs []domain.Job, limit int) []domain.Job {
+	if limit <= 0 || len(jobs) <= limit {
+		return jobs
+	}
+	candidates := append([]domain.Job(nil), jobs...)
+	now := time.Now()
+	sort.Slice(candidates, func(i, j int) bool {
+		left := highRiskCandidateScore(candidates[i], now)
+		right := highRiskCandidateScore(candidates[j], now)
+		if left == right {
+			if candidates[i].Deadline.Equal(candidates[j].Deadline) {
+				return candidates[i].JobID < candidates[j].JobID
+			}
+			return candidates[i].Deadline.Before(candidates[j].Deadline)
+		}
+		return left > right
+	})
+	return candidates[:limit]
+}
+
+func highRiskCandidateScore(job domain.Job, now time.Time) float64 {
+	score := 0.0
+	switch job.Status {
+	case domain.JobStatusPaused, domain.JobStatusBlocked:
+		score += 100
+	case domain.JobStatusRunning:
+		score += 30
+	case domain.JobStatusScheduled:
+		score += 15
+	}
+	switch job.Priority {
+	case domain.JobPriorityUrgent:
+		score += 70
+	case domain.JobPriorityHigh:
+		score += 45
+	case domain.JobPriorityMedium:
+		score += 20
+	}
+	if job.Deadline.Before(now) {
+		score += 120
+	} else {
+		hoursUntilDeadline := job.Deadline.Sub(now).Hours()
+		switch {
+		case hoursUntilDeadline <= 24:
+			score += 80
+		case hoursUntilDeadline <= 72:
+			score += 55
+		case hoursUntilDeadline <= 168:
+			score += 30
+		}
+	}
+	remainingQty := job.QuantityTotal - job.QuantityCompleted
+	if remainingQty > 0 {
+		score += float64(minInt(remainingQty, 1000)) / 50.0
+	}
+	return score
 }
 
 func (s *AIPredictiveService) Recommendations() ([]AIRecommendation, error) {
