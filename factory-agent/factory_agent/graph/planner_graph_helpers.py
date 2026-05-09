@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -6,17 +6,17 @@ import re
 from typing import Any
 
 from ..config import Settings
-from ..guardrails import (
+from ..security.guardrails import (
     build_unsupported_enum_clarification,
     missing_required_fields,
     promote_user_provenance,
     sanitize_tool_args_against_schema,
     strip_unsupported_optional_args,
 )
-from ..plan_validator import validate_plan
+from ..planning.plan_validator import validate_plan
 from ..schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
-from ..telemetry import log_event, log_llm_prompt
-from ..tool_intent_profile import (
+from ..observability.telemetry import log_event, log_llm_prompt
+from ..planning.tool_intent_profile import (
     build_tool_intent_profile,
     intent_feature_tokens,
     tool_covers_descriptive_terms,
@@ -827,5 +827,7 @@ def _insert_delete_preflights(
         rebuilt_contracts.append(contract)
 
     return rebuilt_steps, rebuilt_contracts, inserted
+
+
 
 

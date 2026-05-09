@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 import pytest
@@ -32,8 +32,8 @@ async def sessionmaker_override():
         poolclass=StaticPool,
     )
 
-    import models  # noqa: F401
-    from database import Base
+    import factory_agent.persistence.models as models  # noqa: F401
+    from factory_agent.persistence.database import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -58,3 +58,4 @@ def _offline_langgraph_planner(monkeypatch):
     from tests.offline_langgraph_planner import OfflineLangGraphPlanner
 
     monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", OfflineLangGraphPlanner)
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from .schemas import ToolInfo
+from ..schemas import ToolInfo
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
@@ -430,3 +430,4 @@ def child_tools_for_parent(parent: ToolInfo, tools: list[ToolInfo]) -> list[Tool
         and tool.method == "GET"
         and tool.endpoint.startswith(parent_endpoint.rstrip("/") + "/")
     ]
+

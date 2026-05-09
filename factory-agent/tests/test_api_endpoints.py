@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 import sys
 import types
 from datetime import datetime
@@ -16,7 +16,7 @@ import database
 from factory_agent.api import build_router
 from factory_agent.config import Settings
 from factory_agent.schemas import PlanDraft, PlanStepDraft
-from factory_agent.tool_registry import ToolRegistry
+from factory_agent.registry.tool_registry import ToolRegistry
 
 
 class FakeEventBus:
@@ -109,7 +109,7 @@ async def _make_app(
 
 
 async def _seed_tool(db_session, *, name, endpoint, method, input_schema, capability_tags, is_read_only=True, requires_approval=False):
-    from models import Tool, generate_uuid
+    from factory_agent.persistence.models import Tool, generate_uuid
 
     db_session.add(
         Tool(
@@ -142,8 +142,8 @@ async def _seed_session_plan_with_steps(
     plan_version: int,
     steps: list[dict],
 ):
-    from models import Plan, PlanStep, Session, generate_uuid
-    from factory_agent.execution import compute_idempotency_key
+    from factory_agent.persistence.models import Plan, PlanStep, Session, generate_uuid
+    from factory_agent.orchestration.execution import compute_idempotency_key
 
     sess = Session(
         session_id=session_id,
@@ -327,7 +327,7 @@ async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_overr
 
 @pytest.mark.asyncio
 async def test_legacy_planner_prefers_entity_machine_tool_when_id_present(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -367,7 +367,7 @@ async def test_legacy_planner_prefers_entity_machine_tool_when_id_present(sessio
 
 @pytest.mark.asyncio
 async def test_legacy_planner_returns_clarification_when_required_args_missing(sessionmaker_override, db_session):
-    from models import Plan
+    from factory_agent.persistence.models import Plan
 
     await _seed_tool(
         db_session,
@@ -395,7 +395,7 @@ async def test_legacy_planner_returns_clarification_when_required_args_missing(s
 
 @pytest.mark.asyncio
 async def test_legacy_planner_allows_partial_args_for_write_tool_and_waits_approval(sessionmaker_override, db_session):
-    from models import Approval, PlanStep
+    from factory_agent.persistence.models import Approval, PlanStep
 
     await _seed_tool(
         db_session,
@@ -446,7 +446,7 @@ async def test_legacy_planner_allows_partial_args_for_write_tool_and_waits_appro
 
 @pytest.mark.asyncio
 async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -483,7 +483,7 @@ async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db
 
 @pytest.mark.asyncio
 async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -520,7 +520,7 @@ async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_ses
 
 @pytest.mark.asyncio
 async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -557,7 +557,7 @@ async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessi
 
 @pytest.mark.asyncio
 async def test_legacy_planner_prefers_resource_create_over_specialized_subresource(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -612,7 +612,7 @@ async def test_legacy_planner_prefers_resource_create_over_specialized_subresour
 
 @pytest.mark.asyncio
 async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -648,7 +648,7 @@ async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker
 
 @pytest.mark.asyncio
 async def test_legacy_planner_prefers_products_list_over_product_process_lookup_when_id_missing(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -699,7 +699,7 @@ async def test_legacy_planner_prefers_products_list_over_product_process_lookup_
 
 @pytest.mark.asyncio
 async def test_llm_structured_tool_selection_contract_is_applied(sessionmaker_override, db_session, monkeypatch):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     class _FakeResponse:
         def __init__(self, content: str):
@@ -785,7 +785,7 @@ async def test_llm_structured_tool_selection_contract_is_applied(sessionmaker_ov
 
 @pytest.mark.asyncio
 async def test_plan_creation_survives_summary_model_failure(sessionmaker_override, db_session, monkeypatch):
-    from models import Plan
+    from factory_agent.persistence.models import Plan
 
     class _FailingChatOpenAI:
         def __init__(self, **kwargs):
@@ -825,7 +825,7 @@ async def test_plan_creation_survives_summary_model_failure(sessionmaker_overrid
 
 @pytest.mark.asyncio
 async def test_legacy_planner_splits_compound_intent_into_multiple_steps(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -878,7 +878,7 @@ async def test_legacy_planner_splits_compound_intent_into_multiple_steps(session
 
 @pytest.mark.asyncio
 async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -915,7 +915,7 @@ async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, d
 
 @pytest.mark.asyncio
 async def test_legacy_planner_extracts_seed_proposal_id(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -952,7 +952,7 @@ async def test_legacy_planner_extracts_seed_proposal_id(sessionmaker_override, d
 
 @pytest.mark.asyncio
 async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, db_session):
-    from models import Plan
+    from factory_agent.persistence.models import Plan
 
     await _seed_tool(
         db_session,
@@ -995,7 +995,7 @@ async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, 
 
 @pytest.mark.asyncio
 async def test_delete_session_removes_session_and_related_rows(sessionmaker_override, db_session):
-    from models import Message, Session
+    from factory_agent.persistence.models import Message, Session
 
     app, _ = await _make_app(
         sessionmaker_override,
@@ -1028,7 +1028,7 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
 
 @pytest.mark.asyncio
 async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -1067,7 +1067,7 @@ async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_overrid
 
 @pytest.mark.asyncio
 async def test_conversation_message_returns_completed_empty_plan(sessionmaker_override, db_session):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -1109,7 +1109,7 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
 @pytest.mark.asyncio
 async def test_planner_clarification_returns_message_not_error(sessionmaker_override, db_session):
-    from models import Message, Session
+    from factory_agent.persistence.models import Message, Session
     from factory_agent.planner import PlannerClarificationError
 
     await _seed_tool(
@@ -1180,8 +1180,8 @@ async def test_planner_clarification_returns_message_not_error(sessionmaker_over
 
 @pytest.mark.asyncio
 async def test_planner_unknown_term_clarification_returns_message_not_error(sessionmaker_override, db_session, monkeypatch):
-    from models import Message
-    from factory_agent.reasoning_pipeline import ReasoningPipeline
+    from factory_agent.persistence.models import Message
+    from factory_agent.planning.reasoning_pipeline import ReasoningPipeline
 
     await _seed_tool(
         db_session,
@@ -1229,7 +1229,7 @@ async def test_planner_unknown_term_clarification_returns_message_not_error(sess
 
 @pytest.mark.asyncio
 async def test_predicate_confirmation_round_trip_resumes_with_selected_filter(sessionmaker_override, db_session):
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     await _seed_tool(
         db_session,
@@ -1279,7 +1279,7 @@ async def test_predicate_confirmation_round_trip_resumes_with_selected_filter(se
 
 @pytest.mark.asyncio
 async def test_plan_mode_creates_plan_level_approval_after_discovery(sessionmaker_override, db_session, respx_mock):
-    from models import Approval, Plan
+    from factory_agent.persistence.models import Approval, Plan
 
     await _seed_tool(
         db_session,
@@ -1331,7 +1331,7 @@ async def test_plan_mode_creates_plan_level_approval_after_discovery(sessionmake
 
 @pytest.mark.asyncio
 async def test_tool_registry_load_normalizes_legacy_string_tags(sessionmaker_override, db_session):
-    from models import Tool, generate_uuid
+    from factory_agent.persistence.models import Tool, generate_uuid
 
     db_session.add(
         Tool(
@@ -1364,9 +1364,9 @@ async def test_tool_registry_load_normalizes_legacy_string_tags(sessionmaker_ove
 
 @pytest.mark.asyncio
 async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.tool_registry import ToolRegistry
-    from models import Tool
-    from models import PlanStep
+    from factory_agent.registry.tool_registry import ToolRegistry
+    from factory_agent.persistence.models import Tool
+    from factory_agent.persistence.models import PlanStep
 
     for idx in range(5):
         await _seed_tool(
@@ -1453,8 +1453,8 @@ async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_overrid
 
 @pytest.mark.asyncio
 async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.tool_selector import ToolSelector
-    from models import PlanStep
+    from factory_agent.planning.tool_selector import ToolSelector
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -1510,8 +1510,8 @@ async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker
 
 @pytest.mark.asyncio
 async def test_create_plan_falls_back_when_tool_selector_reranker_errors(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.tool_selector import ToolSelector
-    from models import PlanStep
+    from factory_agent.planning.tool_selector import ToolSelector
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -1562,7 +1562,7 @@ async def test_create_plan_falls_back_when_tool_selector_reranker_errors(session
 
 @pytest.mark.asyncio
 async def test_generated_write_plan_sets_requires_approval_and_waits_approval(sessionmaker_override, db_session):
-    from models import Approval, PlanStep
+    from factory_agent.persistence.models import Approval, PlanStep
 
     await _seed_tool(
         db_session,
@@ -1614,7 +1614,7 @@ async def test_generated_write_plan_sets_requires_approval_and_waits_approval(se
 
 @pytest.mark.asyncio
 async def test_langchain_invalid_output_fallback_disabled_rejected_and_not_executable(sessionmaker_override, db_session):
-    from models import Plan
+    from factory_agent.persistence.models import Plan
 
     await _seed_tool(
         db_session,
@@ -1698,7 +1698,7 @@ async def test_get_tools_lists_and_scopes(sessionmaker_override, db_session):
 
 @pytest.mark.asyncio
 async def test_reject_approval_sets_session_idle_and_step_skipped(sessionmaker_override, db_session):
-    from models import Approval, PlanStep, Session, generate_uuid
+    from factory_agent.persistence.models import Approval, PlanStep, Session, generate_uuid
 
     step_id = generate_uuid()
     approval_id = generate_uuid()
@@ -1763,7 +1763,7 @@ async def test_reject_approval_sets_session_idle_and_step_skipped(sessionmaker_o
 
 @pytest.mark.asyncio
 async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_session):
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     await _seed_session_plan_with_steps(
         db_session,
@@ -1795,7 +1795,7 @@ async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_se
 
 @pytest.mark.asyncio
 async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_override, db_session, respx_mock):
-    from models import PlanStep
+    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
@@ -1861,8 +1861,8 @@ async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_ov
 
 @pytest.mark.asyncio
 async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline(sessionmaker_override, db_session):
-    from models import Approval, Message, Plan, PlanStep, Session, generate_uuid
-    from factory_agent.execution import compute_idempotency_key
+    from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, Session, generate_uuid
+    from factory_agent.orchestration.execution import compute_idempotency_key
 
     session_id = "sess-snapshot"
     plan_id = "plan-snapshot"
@@ -1970,7 +1970,7 @@ async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline
 
 @pytest.mark.asyncio
 async def test_approve_endpoint_allows_overriding_args_before_execution(sessionmaker_override, db_session):
-    from models import Approval as ApprovalRow, PlanStep as PlanStep
+    from factory_agent.persistence.models import Approval as ApprovalRow, PlanStep as PlanStep
 
     schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
     await _seed_tool(
@@ -2026,7 +2026,7 @@ async def test_approve_endpoint_allows_overriding_args_before_execution(sessionm
 
 @pytest.mark.asyncio
 async def test_dlq_dismiss_and_replay_endpoints(sessionmaker_override, db_session):
-    from models import DeadLetter, generate_uuid
+    from factory_agent.persistence.models import DeadLetter, generate_uuid
 
     dlq_id = generate_uuid()
     db_session.add(
@@ -2055,7 +2055,7 @@ async def test_dlq_dismiss_and_replay_endpoints(sessionmaker_override, db_sessio
 
 @pytest.mark.asyncio
 async def test_execute_expected_version_conflict_returns_409(sessionmaker_override, db_session):
-    from models import Session, generate_uuid
+    from factory_agent.persistence.models import Session, generate_uuid
 
     session_id = generate_uuid()
     db_session.add(
@@ -2077,7 +2077,7 @@ async def test_execute_expected_version_conflict_returns_409(sessionmaker_overri
 
 @pytest.mark.asyncio
 async def test_waiting_approval_user_message_triggers_replan_context(sessionmaker_override, db_session):
-    from models import Session
+    from factory_agent.persistence.models import Session
 
     await _seed_session_plan_with_steps(
         db_session,
@@ -2107,7 +2107,7 @@ async def test_waiting_approval_user_message_triggers_replan_context(sessionmake
 
 @pytest.mark.asyncio
 async def test_dlq_replay_resets_step_and_marks_session_executing(sessionmaker_override, db_session):
-    from models import DeadLetter, PlanStep, Session, generate_uuid
+    from factory_agent.persistence.models import DeadLetter, PlanStep, Session, generate_uuid
 
     session_id = "sess-replay-reset"
     plan_id = "plan-replay-reset"
@@ -2158,7 +2158,7 @@ async def test_dlq_replay_resets_step_and_marks_session_executing(sessionmaker_o
 
 @pytest.mark.asyncio
 async def test_replan_validation_failure_three_times_blocks_and_pushes_dlq(sessionmaker_override, db_session):
-    from models import DeadLetter, Session, Tool, generate_uuid
+    from factory_agent.persistence.models import DeadLetter, Session, Tool, generate_uuid
 
     session_id = "sess-validate-fail"
     db_session.add(
@@ -2307,7 +2307,7 @@ async def test_tampered_jwt_rejected_with_401(sessionmaker_override):
 
 @pytest.mark.asyncio
 async def test_pending_approval_read_endpoints_require_jwt_and_support_session_filter(sessionmaker_override, db_session):
-    from models import Approval, generate_uuid
+    from factory_agent.persistence.models import Approval, generate_uuid
 
     first = generate_uuid()
     second = generate_uuid()
@@ -2361,7 +2361,7 @@ async def test_pending_approval_read_endpoints_require_jwt_and_support_session_f
 
 @pytest.mark.asyncio
 async def test_machine_tool_result_summary_is_operator_readable(sessionmaker_override, db_session, respx_mock):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     await _seed_tool(
         db_session,
@@ -2402,7 +2402,7 @@ async def test_machine_tool_result_summary_is_operator_readable(sessionmaker_ove
 
 @pytest.mark.asyncio
 async def test_product_ids_result_summary_returns_ids_not_generic_record_count(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     class _FakeResponse:
         def __init__(self, content: str):
@@ -2476,7 +2476,7 @@ async def test_product_ids_result_summary_returns_ids_not_generic_record_count(s
 
 @pytest.mark.asyncio
 async def test_product_ids_result_summary_works_without_llm(sessionmaker_override, db_session, respx_mock):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     await _seed_tool(
         db_session,
@@ -2534,7 +2534,7 @@ async def test_product_ids_result_summary_works_without_llm(sessionmaker_overrid
 
 @pytest.mark.asyncio
 async def test_job_list_result_summary_uses_llm_in_hybrid_mode(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     class _FakeResponse:
         def __init__(self, content: str):
@@ -2611,7 +2611,7 @@ async def test_job_list_result_summary_uses_llm_in_hybrid_mode(sessionmaker_over
 
 @pytest.mark.asyncio
 async def test_job_list_result_summary_recovers_from_structured_fact_dump(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     class _FakeResponse:
         def __init__(self, content: str):
@@ -2698,7 +2698,7 @@ async def test_job_list_result_summary_recovers_from_structured_fact_dump(sessio
 
 @pytest.mark.asyncio
 async def test_job_list_result_summary_deterministically_extracts_analysis_intent(sessionmaker_override, db_session, respx_mock):
-    from models import Message
+    from factory_agent.persistence.models import Message
 
     await _seed_tool(
         db_session,
@@ -2772,7 +2772,7 @@ async def test_job_list_result_summary_deterministically_extracts_analysis_inten
 
 @pytest.mark.asyncio
 async def test_read_only_machine_not_found_returns_operator_friendly_completion(sessionmaker_override, db_session, respx_mock):
-    from models import Message, Session
+    from factory_agent.persistence.models import Message, Session
 
     await _seed_tool(
         db_session,
@@ -2819,7 +2819,7 @@ async def test_read_only_machine_not_found_returns_operator_friendly_completion(
 
 @pytest.mark.asyncio
 async def test_write_machine_not_found_is_checked_before_approval(sessionmaker_override, db_session, respx_mock):
-    from models import Approval, Message
+    from factory_agent.persistence.models import Approval, Message
 
     read_schema = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
     write_schema = {
@@ -2941,7 +2941,7 @@ async def test_write_machine_approval_includes_target_preview(sessionmaker_overr
 
 @pytest.mark.asyncio
 async def test_write_machine_not_found_skips_approval_without_read_tool_registered(sessionmaker_override, db_session, respx_mock):
-    from models import Approval
+    from factory_agent.persistence.models import Approval
 
     write_schema = {
         "type": "object",
@@ -2985,7 +2985,7 @@ async def test_write_machine_not_found_skips_approval_without_read_tool_register
 
 @pytest.mark.asyncio
 async def test_json_injection_attempt_in_args_rejected_without_plan_write(sessionmaker_override, db_session):
-    from models import Plan
+    from factory_agent.persistence.models import Plan
 
     schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
     await _seed_tool(
@@ -3025,3 +3025,5 @@ async def test_json_injection_attempt_in_args_rejected_without_plan_write(sessio
 
     plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
     assert len(plan_rows) == 0
+
+

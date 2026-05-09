@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 from typing import Literal
 
-from .config import Settings
-from .schemas import PlanDraft
-from .telemetry import log_llm_prompt, log_llm_prompt_skipped
+from ..config import Settings
+from ..schemas import PlanDraft
+from ..observability.telemetry import log_llm_prompt, log_llm_prompt_skipped
 
 
 SummaryBackendName = Literal["deterministic", "langchain"]
@@ -97,3 +97,5 @@ class SummaryAdapter:
         if not content:
             raise SummaryBackendError("Summary backend returned empty content.")
         return SummaryResult(text=content, backend_used="langchain", llm_calls=1)
+
+

@@ -1,9 +1,9 @@
-import json
+﻿import json
 
 import main  # noqa: F401
 
-from factory_agent.prompting import get_plan_draft_json_schema
-from factory_agent.telemetry import log_llm_prompt, log_llm_prompt_skipped
+from factory_agent.planning.prompting import get_plan_draft_json_schema
+from factory_agent.observability.telemetry import log_llm_prompt, log_llm_prompt_skipped
 
 
 def test_plan_draft_json_schema_has_expected_shape():
@@ -51,3 +51,4 @@ def test_log_llm_prompt_skipped_emits_structured_log(caplog):
     assert payload["reason"] == "summary_backend=deterministic"
     assert payload["intent"] == "Check machine 5 status"
     assert payload["scoped_tool_count"] == 2
+

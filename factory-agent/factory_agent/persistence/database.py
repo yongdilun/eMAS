@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 
 from dotenv import load_dotenv
@@ -6,7 +6,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from factory_agent.metrics import metrics
+from factory_agent.observability.metrics import metrics
 
 load_dotenv()
 
@@ -53,3 +53,4 @@ def _after_cursor_execute(conn, cursor, statement, parameters, context, executem
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
+

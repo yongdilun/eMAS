@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import hashlib
@@ -7,7 +7,7 @@ import json
 import time
 from typing import Any
 
-from .config import Settings
+from ..config import Settings
 
 
 class JwtValidationError(Exception):
@@ -83,3 +83,4 @@ def validate_bearer_token(authorization: str | None, *, settings: Settings) -> d
             raise JwtValidationError("invalid audience")
 
     return payload
+

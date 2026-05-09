@@ -1,10 +1,10 @@
-import os
+﻿import os
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import models  # noqa: F401
-from database import Base
+import factory_agent.persistence.models as models  # noqa: F401
+from factory_agent.persistence.database import Base
 
 
 @pytest.mark.asyncio
@@ -20,3 +20,4 @@ async def test_mysql_schema_creates_cleanly():
             await conn.run_sync(Base.metadata.create_all)
     finally:
         await engine.dispose()
+

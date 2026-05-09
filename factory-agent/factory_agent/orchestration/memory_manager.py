@@ -1,14 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Message as MessageRow
-from models import generate_uuid
+from factory_agent.persistence.models import Message as MessageRow
+from factory_agent.persistence.models import generate_uuid
 
-from .config import Settings
+from ..config import Settings
 
 
 class MemoryManager:
@@ -63,3 +63,5 @@ class MemoryManager:
             await db.delete(msg)
         await db.commit()
         return True
+
+

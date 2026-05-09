@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
@@ -6,7 +6,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .schemas import ToolInfo
+from ..schemas import ToolInfo
 from .tool_intent_profile import tool_covers_descriptive_terms
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
@@ -422,11 +422,11 @@ def _build_confirmation(
 ) -> dict[str, Any]:
     """Build the confirmation payload for an ambiguous free-text predicate.
 
-    ``options``     — top *top_n* candidates shown by default in the UI.
-    ``all_options`` — the complete ranked list (never truncated) used by the
+    ``options``     â€” top *top_n* candidates shown by default in the UI.
+    ``all_options`` â€” the complete ranked list (never truncated) used by the
                       repair loop and exposed to the frontend via a
                       'show all fields' toggle.
-    ``has_more``    — True when there are more candidates beyond *top_n*.
+    ``has_more``    â€” True when there are more candidates beyond *top_n*.
     """
     def _option(c: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -763,7 +763,7 @@ async def verify_clause_against_tool(
                             field_schema=field_schema,
                             source="heuristic",
                         )
-                        # Always include every plausible non-control string field —
+                        # Always include every plausible non-control string field â€”
                         # the threshold governs auto-map, NOT which fields appear.
                         if score == 0.0 and not isinstance(field_schema.get("enum"), list):
                             score = 0.15
@@ -846,7 +846,7 @@ async def verify_clause_against_tool(
                 pred["sent"] = field_name in repaired_args and repaired_args.get(field_name) not in (None, "")
                 predicates.append(pred)
             elif top and top["confidence"] >= 0.55:
-                # Pass the complete ranked list — _build_confirmation slices
+                # Pass the complete ranked list â€” _build_confirmation slices
                 # to top 3 for display but keeps all_options intact for the
                 # repair loop and the 'show all fields' UI toggle.
                 confirmation = _build_confirmation(
@@ -919,7 +919,7 @@ async def verify_clause_against_tool(
                         field_schema=fs, source="heuristic",
                     )
                     # Always include every plausible non-control string field
-                    # as a candidate regardless of score — the threshold only
+                    # as a candidate regardless of score â€” the threshold only
                     # governs auto-map, not which options appear in the list.
                     # Give zero-scored fields a small baseline so they rank
                     # above fields that were explicitly excluded.
@@ -953,7 +953,7 @@ async def verify_clause_against_tool(
             cand_scores.sort(key=lambda c: c["confidence"], reverse=True)
             top2 = cand_scores[0] if cand_scores else None
             if not top2:
-                # filter_fields was empty — nothing to try.
+                # filter_fields was empty â€” nothing to try.
                 continue
             pred2 = _predicate_dict(
                 raw_term=raw_term,
@@ -1034,3 +1034,4 @@ async def verify_clause_against_tool(
         predicates=predicates,
         predicate_coverage_score=_coverage_score(predicates),
     )
+

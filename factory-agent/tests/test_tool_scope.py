@@ -1,5 +1,5 @@
-from factory_agent.schemas import ToolInfo
-from factory_agent.tool_scope import filter_tools_for_intent
+﻿from factory_agent.schemas import ToolInfo
+from factory_agent.planning.tool_scope import filter_tools_for_intent
 
 
 def test_tool_scope_prefers_approval_tools_for_approval_intent():
@@ -110,3 +110,4 @@ def test_tool_scope_default_cap_is_30():
         )
     scoped = filter_tools_for_intent(intent="machine inventory report", tools_by_name=tools)
     assert len(scoped.tool_names) <= 30
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
@@ -6,8 +6,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .schemas import ToolInfo
-from .telemetry import log_event
+from ..schemas import ToolInfo
+from ..observability.telemetry import log_event
 
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
@@ -350,3 +350,5 @@ def validate_agent_tool_args(
         clarification=clarification,
         provenance=provenance,
     )
+
+

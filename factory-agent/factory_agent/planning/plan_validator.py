@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -7,7 +7,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .schemas import PlanDraft, ToolInfo
+from ..schemas import PlanDraft, ToolInfo
 
 
 @dataclass(frozen=True)
@@ -317,3 +317,4 @@ def validate_plan(
         normalized_parallel_groups=parallel_groups,
         plan_hash=plan_hash,
     )
+

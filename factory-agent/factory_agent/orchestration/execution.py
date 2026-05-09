@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -16,25 +16,25 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
-from models import Approval as ApprovalRow
-from models import DeadLetter as DeadLetterRow
-from models import ExecutionSnapshot as SnapshotRow
-from models import Message as MessageRow
-from models import Plan as PlanRow
-from models import PlanStep as PlanStepRow
-from models import Session as SessionRow
-from models import generate_uuid
+from factory_agent.persistence.models import Approval as ApprovalRow
+from factory_agent.persistence.models import DeadLetter as DeadLetterRow
+from factory_agent.persistence.models import ExecutionSnapshot as SnapshotRow
+from factory_agent.persistence.models import Message as MessageRow
+from factory_agent.persistence.models import Plan as PlanRow
+from factory_agent.persistence.models import PlanStep as PlanStepRow
+from factory_agent.persistence.models import Session as SessionRow
+from factory_agent.persistence.models import generate_uuid
 
-from .config import Settings
-from .events import AgentEvent, EventBus
+from ..config import Settings
+from ..observability.events import AgentEvent, EventBus
 from .memory_manager import MemoryManager
-from .metrics import metrics
-from .presentation import extract_table_from_result
-from .reasoning_pipeline import ReasoningPipeline
-from .schemas import ToolInfo
-from .tabular_analysis import analyze_result
-from .telemetry import log_event, log_llm_prompt, log_llm_prompt_skipped, log_step_status_changed
-from .intent_verifier import normalize_predicate_value
+from ..observability.metrics import metrics
+from ..analysis.presentation import extract_table_from_result
+from ..planning.reasoning_pipeline import ReasoningPipeline
+from ..schemas import ToolInfo
+from ..analysis.tabular_analysis import analyze_result
+from ..observability.telemetry import log_event, log_llm_prompt, log_llm_prompt_skipped, log_step_status_changed
+from ..planning.intent_verifier import normalize_predicate_value
 from . import execution_runtime
 
 FailureDecision = Literal["RETRY", "REPLAN", "FAIL_HARD", "AMBIGUOUS"]
@@ -1186,7 +1186,7 @@ class ExecutionEngine:
                 # the repair loop in _repair_empty_predicate_result can investigate
                 # alternative candidate fields before surfacing the result.
                 current["verified"] = "unknown_empty"
-                current["reason"] = "empty result — filter sent but result is ambiguous; repair loop may retry"
+                current["reason"] = "empty result â€” filter sent but result is ambiguous; repair loop may retry"
                 unknowns += 1
             else:
                 comparable = [item for item in items if field in item]
@@ -1699,3 +1699,6 @@ class ExecutionEngine:
             session=session,
             tools_by_name=tools_by_name,
         )
+
+
+

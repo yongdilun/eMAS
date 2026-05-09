@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from factory_agent.config import Settings
 from factory_agent.graph.errors import LangGraphPlannerClarification
@@ -15,7 +15,7 @@ from factory_agent.planner import (
     _assign_parallel_groups,
 )
 from factory_agent.schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
-from factory_agent.tool_registry import ToolRegistry
+from factory_agent.registry.tool_registry import ToolRegistry
 
 
 def _settings() -> Settings:
@@ -799,3 +799,4 @@ async def test_planner_service_strips_ungrounded_args_via_contract(monkeypatch):
     )
 
     assert result.draft.steps[0].args == {"priority": "high"}
+

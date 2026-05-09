@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-from .schemas import ToolInfo
+from ..schemas import ToolInfo
 
 
 ROLE_ORDER = {
@@ -50,3 +50,4 @@ def filter_tools_for_role(tools_by_name: dict[str, ToolInfo], *, role: str) -> d
         for name, tool in tools_by_name.items()
         if tool_allowed_for_role(tool, role)
     }
+

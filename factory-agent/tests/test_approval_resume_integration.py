@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import contextlib
 import os
 import time
@@ -12,12 +12,12 @@ from sqlalchemy import select
 import database
 from factory_agent.api import build_router
 from factory_agent.config import Settings
-from factory_agent.events import AgentEvent, EventBus
-from factory_agent.execution import ExecutionEngine
-from factory_agent.tool_registry import ToolRegistry
-from models import Approval as ApprovalRow
-from models import PlanStep as PlanStepRow
-from models import Session as SessionRow
+from factory_agent.observability.events import AgentEvent, EventBus
+from factory_agent.orchestration.execution import ExecutionEngine
+from factory_agent.registry.tool_registry import ToolRegistry
+from factory_agent.persistence.models import Approval as ApprovalRow
+from factory_agent.persistence.models import PlanStep as PlanStepRow
+from factory_agent.persistence.models import Session as SessionRow
 
 
 async def _seed_tool(
@@ -31,7 +31,7 @@ async def _seed_tool(
     is_read_only=True,
     requires_approval=False,
 ):
-    from models import Tool, generate_uuid
+    from factory_agent.persistence.models import Tool, generate_uuid
 
     db_session.add(
         Tool(
@@ -220,3 +220,5 @@ async def test_approval_approve_resumes_within_2s(sessionmaker_override, db_sess
             await _wait_for_status(client, session_id, "COMPLETED", timeout_s=2.0)
     finally:
         await cleanup()
+
+

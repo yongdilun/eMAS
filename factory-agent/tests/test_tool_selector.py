@@ -1,8 +1,8 @@
-import pytest
+﻿import pytest
 
 from factory_agent.config import Settings
 from factory_agent.schemas import ToolInfo
-from factory_agent.tool_selector import ToolSelector
+from factory_agent.planning.tool_selector import ToolSelector
 
 
 def _settings(**overrides):
@@ -734,3 +734,4 @@ async def test_selector_prefers_feature_specific_job_explanation_endpoint():
     )
 
     assert result.tool_names[0] == "get__ai_scheduling_jobs_{id}_explanation"
+

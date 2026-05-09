@@ -1,6 +1,6 @@
-import copy
+﻿import copy
 
-from factory_agent.plan_validator import validate_plan
+from factory_agent.planning.plan_validator import validate_plan
 from factory_agent.schemas import PlanDraft, PlanStepDraft, ToolInfo
 
 
@@ -290,3 +290,4 @@ def test_rejects_binding_unknown_response_field():
     res = validate_plan(plan, tools)
     assert not res.ok
     assert any("missing_id" in error for error in res.errors)
+

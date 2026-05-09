@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import pytest
 from datetime import datetime
 
@@ -7,8 +7,8 @@ import respx
 from sqlalchemy.exc import SQLAlchemyError
 
 from factory_agent.config import Settings
-from factory_agent.events import AgentEvent
-from factory_agent.execution import ExecutionEngine, compute_idempotency_key
+from factory_agent.observability.events import AgentEvent
+from factory_agent.orchestration.execution import ExecutionEngine, compute_idempotency_key
 from factory_agent.schemas import ToolInfo
 
 
@@ -93,7 +93,7 @@ def _paint_shop_contract() -> dict:
 
 
 async def _seed_core(db_session, *, session_id: str, plan_id: str, plan_hash: str, plan_version: int):
-    from models import Plan, Session, generate_uuid
+    from factory_agent.persistence.models import Plan, Session, generate_uuid
 
     sess = Session(
         session_id=session_id,
@@ -137,7 +137,7 @@ async def _seed_step(
     bindings: list[dict] | None = None,
     requires_approval: bool = False,
 ):
-    from models import PlanStep, generate_uuid
+    from factory_agent.persistence.models import PlanStep, generate_uuid
 
     step = PlanStep(
         step_id=generate_uuid(),
@@ -208,7 +208,7 @@ async def test_execution_happy_path_completes(db_session, respx_mock):
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep))).scalars().first()
     assert sess2.status == "COMPLETED"
@@ -275,7 +275,7 @@ async def test_execute_parallel_group_runs_read_steps_concurrently(db_session, m
     )
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     steps = (
@@ -320,7 +320,7 @@ async def test_predicate_verifier_passes_empty_result_when_filter_sent(db_sessio
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name={"get__machines": _machine_list_tool()})
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
@@ -357,7 +357,7 @@ async def test_predicate_verifier_replans_when_requested_filter_not_sent(db_sess
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name={"get__machines": _machine_list_tool()})
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
@@ -395,7 +395,7 @@ async def test_predicate_verifier_marks_missing_comparable_field_unknown(db_sess
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name={"get__machines": _machine_list_tool()})
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
@@ -449,7 +449,7 @@ async def test_execution_approval_gates_without_http(db_session, respx_mock):
     assert len(respx_mock.calls) == 0
 
     from sqlalchemy import select
-    from models import Approval, Session
+    from factory_agent.persistence.models import Approval, Session
     sess2 = await db_session.get(Session, session_id)
     approvals = (await db_session.execute(select(Approval))).scalars().all()
     assert sess2.status == "WAITING_APPROVAL"
@@ -481,7 +481,7 @@ async def test_execution_snapshot_replay_skips_http(db_session, respx_mock):
     sess, plan = await _seed_core(db_session, session_id=session_id, plan_id=plan_id, plan_hash=plan_hash, plan_version=plan_version)
     step = await _seed_step(db_session, plan_id=plan_id, session_id=session_id, step_index=0, tool_name="get__machines", args={}, plan_version=plan_version)
 
-    from models import ExecutionSnapshot, generate_uuid
+    from factory_agent.persistence.models import ExecutionSnapshot, generate_uuid
     snap = ExecutionSnapshot(
         snapshot_id=generate_uuid(),
         step_id=step.step_id,
@@ -523,7 +523,7 @@ async def test_execution_snapshot_replay_skips_http(db_session, respx_mock):
 @pytest.mark.asyncio
 async def test_execution_missing_path_arg_replans_without_http(db_session, respx_mock):
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
@@ -627,7 +627,7 @@ async def test_execution_ambiguous_timeout_creates_dlq_and_blocks(db_session, re
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import DeadLetter, PlanStep, Session
+    from factory_agent.persistence.models import DeadLetter, PlanStep, Session
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep))).scalars().first()
     dlqs = (await db_session.execute(select(DeadLetter))).scalars().all()
@@ -682,7 +682,7 @@ async def test_execution_http_5xx_triggers_replan(db_session, respx_mock):
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import DeadLetter, Session
+    from factory_agent.persistence.models import DeadLetter, Session
     sess2 = await db_session.get(Session, session_id)
     dlqs = (await db_session.execute(select(DeadLetter))).scalars().all()
     assert sess2.status == "PLANNING"
@@ -739,7 +739,7 @@ async def test_execution_strong_idempotent_timeout_retries_then_succeeds(db_sess
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (await db_session.execute(select(PlanStep))).scalars().first()
@@ -807,7 +807,7 @@ async def test_execution_rate_limit_inside_loop_pushes_dlq(db_session, respx_moc
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import DeadLetter, Session
+    from factory_agent.persistence.models import DeadLetter, Session
 
     sess2 = await db_session.get(Session, session_id)
     dlqs = (await db_session.execute(select(DeadLetter))).scalars().all()
@@ -861,7 +861,7 @@ async def test_execution_http_401_fails_hard_without_retry_and_pushes_dlq(db_ses
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import DeadLetter, Session
+    from factory_agent.persistence.models import DeadLetter, Session
 
     sess2 = await db_session.get(Session, session_id)
     dlq = (await db_session.execute(select(DeadLetter))).scalars().first()
@@ -946,7 +946,7 @@ async def test_execution_http_404_soft_not_found_completes_and_preserves_done_st
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     steps = (
@@ -1012,7 +1012,7 @@ async def test_execution_mid_step_user_message_queued_and_processed_after_step(d
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (
@@ -1088,7 +1088,7 @@ async def test_db_failure_mid_step_resets_step_to_not_started(db_session):
     await engine.execute_until_blocked(db_session, session=sess, tools_by_name=tools)
 
     from sqlalchemy import select
-    from models import PlanStep, Session
+    from factory_agent.persistence.models import PlanStep, Session
 
     sess2 = await db_session.get(Session, session_id)
     step = (
@@ -1104,7 +1104,7 @@ async def test_db_failure_mid_step_resets_step_to_not_started(db_session):
 @pytest.mark.asyncio
 async def test_foreach_step_uses_per_item_idempotency_and_bulk_state(db_session, respx_mock):
     from sqlalchemy import select
-    from models import Approval, PlanStep, Session
+    from factory_agent.persistence.models import Approval, PlanStep, Session
 
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
@@ -1227,3 +1227,4 @@ async def test_foreach_step_uses_per_item_idempotency_and_bulk_state(db_session,
     assert step.result["succeeded"] == 3
     assert len(step.bulk_state["succeeded"]) == 3
     assert len({item["idempotency_key"] for item in step.bulk_state["succeeded"]}) == 3
+

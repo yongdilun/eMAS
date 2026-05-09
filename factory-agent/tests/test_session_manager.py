@@ -1,8 +1,8 @@
-import pytest
+﻿import pytest
 from datetime import datetime, timedelta
 
 from factory_agent.config import Settings
-from factory_agent.session_manager import SessionManager, TransitionError, VersionConflictError
+from factory_agent.orchestration.session_manager import SessionManager, TransitionError, VersionConflictError
 
 
 @pytest.mark.asyncio
@@ -94,3 +94,4 @@ async def test_update_with_version_rejects_second_concurrent_update(db_session):
     latest = await mgr.get_session(db_session, session_id=session_id)
     assert latest is not None
     assert latest.status == "EXECUTING"
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -6,11 +6,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Message as MessageRow
-from models import Session as SessionRow
-from models import generate_uuid
+from factory_agent.persistence.models import Message as MessageRow
+from factory_agent.persistence.models import Session as SessionRow
+from factory_agent.persistence.models import generate_uuid
 
-from .config import Settings
+from ..config import Settings
 
 
 @dataclass(frozen=True)
@@ -146,3 +146,5 @@ class SessionManager:
         if not refreshed:  # pragma: no cover
             raise VersionConflictError("Session not found after versioned update")
         return refreshed
+
+

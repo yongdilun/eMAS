@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import sys
@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import models  # noqa: F401
-from database import Base
+import factory_agent.persistence.models as models  # noqa: F401
+from factory_agent.persistence.database import Base
 
 
 def _quote(name: str) -> str:
@@ -62,3 +62,4 @@ if __name__ == "__main__":
         raise SystemExit("DATABASE_URL is required")
     migrate(url)
     print("Safe schema migration completed.")
+

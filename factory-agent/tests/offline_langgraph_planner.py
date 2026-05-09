@@ -1,4 +1,4 @@
-"""Test-only planner that mimics LangGraphPlanner output without LLM or langgraph imports."""
+﻿"""Test-only planner that mimics LangGraphPlanner output without LLM or langgraph imports."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from factory_agent.graph.planner_graph_helpers import (
     _tool_cards,
 )
 from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep, AgentState
-from factory_agent.guardrails import missing_required_fields
+from factory_agent.security.guardrails import missing_required_fields
 from factory_agent.schemas import ToolInfo
 from factory_agent.services.planner_service import PlannerConfirmationRequired, _split_compound_intent
 
@@ -224,3 +224,4 @@ class OfflineLangGraphPlanner:
             return list(repaired.steps)
 
         return []
+

@@ -1,5 +1,5 @@
-from factory_agent.schemas import ToolInfo
-from factory_agent.tool_registry import ToolRegistry
+﻿from factory_agent.schemas import ToolInfo
+from factory_agent.registry.tool_registry import ToolRegistry
 
 
 def _tool(name: str, endpoint: str, method: str, tags: list[str]) -> ToolInfo:
@@ -39,3 +39,4 @@ def test_registry_health_rejects_incomplete_generated_metadata():
 
     assert not result.ok
     assert "incomplete tool metadata" in (result.message or "")
+

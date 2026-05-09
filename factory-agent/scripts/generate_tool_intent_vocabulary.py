@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -13,8 +13,8 @@ if str(FACTORY_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(FACTORY_AGENT_ROOT))
 
 from factory_agent.schemas import ToolInfo  # noqa: E402
-from factory_agent.tool_intent_profile import build_tool_intent_vocabulary  # noqa: E402
-from factory_agent.toolgen import tools_from_openapi  # noqa: E402
+from factory_agent.planning.tool_intent_profile import build_tool_intent_vocabulary  # noqa: E402
+from factory_agent.registry.toolgen import tools_from_openapi  # noqa: E402
 
 
 def _json_list(raw: str | None) -> list[str]:
@@ -160,3 +160,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

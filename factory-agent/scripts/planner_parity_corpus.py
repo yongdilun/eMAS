@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import asyncio
@@ -14,12 +14,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from factory_agent.config import Settings
-from factory_agent.plan_validator import validate_plan
+from factory_agent.planning.plan_validator import validate_plan
 from factory_agent.planner import PlannerBackendError, PlannerClarificationError, PlannerConfirmationRequired
 from factory_agent.schemas import ToolInfo
 from factory_agent.services.planner_service import PlannerService
-from factory_agent.tool_registry import ToolRegistry
-from factory_agent.tool_scope import filter_tools_for_intent
+from factory_agent.registry.tool_registry import ToolRegistry
+from factory_agent.planning.tool_scope import filter_tools_for_intent
 
 
 @dataclass
@@ -271,3 +271,5 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(_main()))
+
+

@@ -1,14 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 from ..config import Settings
-from ..guardrails import promote_user_provenance, strip_unsupported_optional_args
+from ..security.guardrails import promote_user_provenance, strip_unsupported_optional_args
 from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
-from ..telemetry import log_event
-from ..tool_registry import ToolRegistry
+from ..observability.telemetry import log_event
+from ..registry.tool_registry import ToolRegistry
 
 PlannerBackendName = Literal["langgraph"]
 
@@ -238,7 +238,7 @@ class PlannerService:
         planner_cls = PlannerService._langgraph_planner_cls
         if planner_cls is None:
             try:
-                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415 — optional heavy deps
+                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415 â€” optional heavy deps
             except Exception as exc:
                 raise PlannerBackendError("LangGraph planner unavailable.") from exc
 
@@ -322,3 +322,5 @@ class PlannerService:
                     intent=intent,
                 )
         return result
+
+

@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
 
-from .schemas import PlanDraft
+from ..schemas import PlanDraft
 
 
 PLANNER_SYSTEM_INSTRUCTIONS = """You are the Factory Operations planning agent.
@@ -46,3 +46,4 @@ def build_planner_prompt(*, user_goal: str, tools_markdown: str, scoped_tool_nam
             json.dumps(schema, indent=2, ensure_ascii=False),
         ]
     )
+

@@ -1,4 +1,4 @@
-from factory_agent.permissions import filter_tools_for_role, role_from_claims
+﻿from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
 from factory_agent.schemas import ToolInfo
 
 
@@ -38,3 +38,4 @@ def test_filter_tools_for_role_respects_explicit_allowed_roles():
     }
     assert filter_tools_for_role(tools, role="planner") == {}
     assert set(filter_tools_for_role(tools, role="manager")) == {"post__jobs"}
+

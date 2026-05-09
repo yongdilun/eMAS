@@ -1,8 +1,8 @@
-import uuid
+﻿import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID # if using pg
-from database import Base
+from factory_agent.persistence.database import Base
 
 # We'll use String(36) for UUIDs to remain compatible with MySQL/SQLite
 def generate_uuid():
@@ -183,3 +183,4 @@ class DeadLetter(Base):
     dismissed_at = Column(DateTime, nullable=True)
     dismissed_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+

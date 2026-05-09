@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import contextlib
 from datetime import datetime, timedelta
@@ -12,25 +12,25 @@ from jsonschema import Draft202012Validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
-from models import Approval as ApprovalRow
-from models import DeadLetter as DeadLetterRow
-from models import ExecutionSnapshot as ExecutionSnapshotRow
-from models import Message as MessageRow
-from models import Plan as PlanRow
-from models import PlanStep as PlanStepRow
-from models import Session as SessionRow
-from models import generate_uuid
+from factory_agent.persistence.database import get_db
+from factory_agent.persistence.models import Approval as ApprovalRow
+from factory_agent.persistence.models import DeadLetter as DeadLetterRow
+from factory_agent.persistence.models import ExecutionSnapshot as ExecutionSnapshotRow
+from factory_agent.persistence.models import Message as MessageRow
+from factory_agent.persistence.models import Plan as PlanRow
+from factory_agent.persistence.models import PlanStep as PlanStepRow
+from factory_agent.persistence.models import Session as SessionRow
+from factory_agent.persistence.models import generate_uuid
 
 from ..config import Settings
-from ..events import AgentEvent, EventBus
-from ..execution import ExecutionEngine, compute_idempotency_key
-from ..intent import assess_intent
-from ..metrics import metrics
-from ..permissions import filter_tools_for_role, role_from_claims
+from ..observability.events import AgentEvent, EventBus
+from ..orchestration.execution import ExecutionEngine, compute_idempotency_key
+from ..planning.intent import assess_intent
+from ..observability.metrics import metrics
+from ..security.permissions import filter_tools_for_role, role_from_claims
 from ..planner import PlannerBackendError, PlannerClarificationError, PlannerConfirmationRequired
 from ..services.planner_service import PlannerService
-from ..plan_validator import validate_plan
+from ..planning.plan_validator import validate_plan
 from ..schemas import (
     ApprovalDecisionRequest,
     ApprovalResponse,
@@ -52,13 +52,13 @@ from ..schemas import (
     ToolInfo,
     ValidationErrorResponse,
 )
-from ..session_manager import SessionManager, TransitionError, VersionConflictError
+from ..orchestration.session_manager import SessionManager, TransitionError, VersionConflictError
 from ..security import JwtValidationError, validate_bearer_token
-from ..summary_backend import SummaryAdapter, SummaryBackendError
-from ..telemetry import log_event, log_step_status_changed
-from ..tool_registry import ToolRegistry
-from ..tool_selector import ToolSelector
-from ..presentation import extract_table_from_result
+from ..analysis.summary_backend import SummaryAdapter, SummaryBackendError
+from ..observability.telemetry import log_event, log_step_status_changed
+from ..registry.tool_registry import ToolRegistry
+from ..planning.tool_selector import ToolSelector
+from ..analysis.presentation import extract_table_from_result
 
 
 def _normalize_session_name(name: str | None) -> str | None:
@@ -2206,3 +2206,5 @@ def build_router(
         return HTMLResponse(content=html)
 
     return router
+
+

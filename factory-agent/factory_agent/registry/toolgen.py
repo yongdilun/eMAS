@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -11,7 +11,7 @@ import requests
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Tool, ToolRegistryMeta, generate_uuid
+from factory_agent.persistence.models import Tool, ToolRegistryMeta, generate_uuid
 
 
 @dataclass(frozen=True)
@@ -599,3 +599,4 @@ async def write_tools_md_and_meta(
     await db.commit()
 
     return ToolgenResult(tool_count=len(tools), tools_md_hash=tools_md_hash)
+

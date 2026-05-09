@@ -1,4 +1,4 @@
-from factory_agent.toolgen import tools_from_openapi
+﻿from factory_agent.registry.toolgen import tools_from_openapi
 
 
 def test_tools_from_openapi_flattens_swagger2_body_parameter_schema():
@@ -319,3 +319,4 @@ def test_tools_from_openapi_preserves_response_schema_and_roles():
     assert tools["get__jobs"].output_schema["properties"]["data"]["items"]["properties"]["job_id"]["type"] == "string"
     assert tools["get__jobs"].input_schema["x-allowed-roles"] == ["viewer", "planner", "manager", "admin"]
     assert tools["post__jobs"].input_schema["x-allowed-roles"] == ["manager", "admin"]
+

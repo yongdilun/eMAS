@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from ..guardrails import validate_agent_tool_args
+from ..security.guardrails import validate_agent_tool_args
 from ..schemas import ToolInfo
 
 
@@ -123,3 +123,4 @@ def build_langchain_tools(
         build_langchain_tool(tool=tool, executor=active_executor, context_factory=context_factory)
         for tool in tools
     ]
+

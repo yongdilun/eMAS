@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
 from .intent import assess_intent
-from .schemas import ToolInfo
+from ..schemas import ToolInfo
 from .tool_intent_profile import ToolIntentVocabulary, profile_match_score, vocabulary_for_tools
 
 
@@ -162,3 +162,4 @@ def filter_tools_for_intent(
     if not picked:
         return ScopedTools(tool_names=[])
     return ScopedTools(tool_names=picked)
+

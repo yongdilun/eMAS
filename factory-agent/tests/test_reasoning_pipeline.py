@@ -1,7 +1,7 @@
-import pytest
+﻿import pytest
 
 from factory_agent.config import Settings
-from factory_agent.reasoning_pipeline import ReasoningPipeline
+from factory_agent.planning.reasoning_pipeline import ReasoningPipeline
 
 
 def _settings(**overrides):
@@ -252,3 +252,4 @@ async def test_extract_facts_sanitizes_structured_fact_dump(monkeypatch):
     assert result.facts
     assert "JOB-SEED-001" in result.facts[0]
     assert "status planned" in result.facts[0].lower()
+

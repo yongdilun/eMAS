@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -8,22 +8,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, inspect, select
 
-import models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
-from database import AsyncSessionLocal, Base, engine
-from models import Approval as ApprovalRow
-from models import DeadLetter as DeadLetterRow
-from models import PlanStep as PlanStepRow
-from models import Session as SessionRow
-from models import Tool as ToolRow
-from models import generate_uuid
+import factory_agent.persistence.models as models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
+from factory_agent.persistence.database import AsyncSessionLocal, Base, engine
+from factory_agent.persistence.models import Approval as ApprovalRow
+from factory_agent.persistence.models import DeadLetter as DeadLetterRow
+from factory_agent.persistence.models import PlanStep as PlanStepRow
+from factory_agent.persistence.models import Session as SessionRow
+from factory_agent.persistence.models import Tool as ToolRow
+from factory_agent.persistence.models import generate_uuid
 
 from factory_agent.api import build_router
 from factory_agent.config import get_settings
-from factory_agent.events import AgentEvent, EventBus
-from factory_agent.execution import ExecutionEngine
-from factory_agent.metrics import metrics
-from factory_agent.telemetry import log_event, log_step_status_changed, setup_logging
-from factory_agent.tool_registry import ToolRegistry
+from factory_agent.observability.events import AgentEvent, EventBus
+from factory_agent.orchestration.execution import ExecutionEngine
+from factory_agent.observability.metrics import metrics
+from factory_agent.observability.telemetry import log_event, log_step_status_changed, setup_logging
+from factory_agent.registry.tool_registry import ToolRegistry
 
 
 def _ensure_schema_compatibility(sync_conn) -> None:
@@ -676,3 +676,5 @@ async def health():
 async def mock_slow(ms: int = 1000):
     await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
     return {"ok": True, "slept_ms": ms}
+
+

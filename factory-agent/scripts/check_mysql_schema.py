@@ -1,10 +1,10 @@
-import asyncio
+﻿import asyncio
 import os
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import models  # noqa: F401
-from database import Base
+import factory_agent.persistence.models as models  # noqa: F401
+from factory_agent.persistence.database import Base
 
 
 async def _run(url: str) -> None:
@@ -23,3 +23,4 @@ if __name__ == "__main__":
         raise SystemExit("MYSQL_TEST_DATABASE_URL is required")
     asyncio.run(_run(mysql_url))
     print("MySQL schema create check passed.")
+

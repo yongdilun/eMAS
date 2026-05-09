@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -8,9 +8,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Tool as ToolRow
+from factory_agent.persistence.models import Tool as ToolRow
 
-from .schemas import ToolInfo
+from ..schemas import ToolInfo
 
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
@@ -191,3 +191,5 @@ class ToolRegistry:
                 message=f"Tool registry contains incomplete tool metadata: {sample}{suffix}.",
             )
         return RegistryHealthResult(ok=True, message=None)
+
+

@@ -1,4 +1,4 @@
-from factory_agent.presentation import extract_table_from_result
+﻿from factory_agent.analysis.presentation import extract_table_from_result
 
 
 def test_table_columns_follow_requested_fields_without_domain_hardcoding():
@@ -82,3 +82,4 @@ def test_filter_like_requested_field_keeps_identity_columns_visible():
     assert keys[:3] == ["job_id", "product_id", "priority"]
     assert "quantity_total" in keys
     assert presentation["table"]["rows"][0]["job_id"] == "JOB-SEED-005"
+
