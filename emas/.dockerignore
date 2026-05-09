@@ -1,0 +1,8 @@
+.git
+*.md
+.env
+.env.*
+scripts
+**/*_test.go
+.cursor
+.DS_Store

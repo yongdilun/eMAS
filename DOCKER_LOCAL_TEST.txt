@@ -1,0 +1,35 @@
+# eMAS — local Docker Compose smoke test
+
+cd "C:\Users\dilun\OneDrive\Documents\eMas APi"
+
+copy .env.example .env
+# Edit project root .env: set MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD (and optional REDIS_URL).
+# LLM / ADMIN_API_KEY / JWT / etc. live in factory-agent\.env and emas\.env — Compose merges them
+# and overrides DB + Go + OpenAPI URLs for Docker networking.
+
+docker compose build
+docker compose up -d
+
+# Seed MySQL (canonical demo data). Uses same DB_* env as go-api (host mysql in Compose).
+docker compose run --rm --entrypoint /usr/local/bin/seed go-api
+
+docker compose ps
+docker compose logs -f --tail=100 nginx go-api factory-agent
+
+# Health checks
+curl http://localhost/health
+curl http://localhost/api/v1/machines
+curl http://localhost/agent/health
+
+# Stop
+docker compose down
+
+# Stop and delete MySQL volume
+docker compose down -v
+
+# Optional Redis
+docker compose --profile with-redis up -d
+# Set REDIS_URL=redis://redis:6379/0 in .env before starting.
+
+# LLM: no LLM service in Compose. Put Gemini URLs + keys in factory-agent\.env as PRODUCTION_OPENAI_*.
+# Compose sets APP_MODE=production by default for factory-agent (override with APP_MODE in project root .env if needed).

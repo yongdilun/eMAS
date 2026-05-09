@@ -116,6 +116,17 @@ def _env_for_mode(app_mode: str, key: str, default: str | None = None) -> str | 
     scoped_value = os.getenv(scoped_key)
     if scoped_value is not None and scoped_value.strip() != "":
         return scoped_value
+    # In production, per-role URLs (PLANNER_OPENAI_BASE_URL, etc.) must not override
+    # PRODUCTION_OPENAI_BASE_URL when PRODUCTION_PLANNER_OPENAI_BASE_URL is unset —
+    # otherwise a leftover localhost URL keeps routing the planner to local Llama.
+    if (
+        app_mode == "production"
+        and key != "OPENAI_BASE_URL"
+        and key.endswith("_OPENAI_BASE_URL")
+    ):
+        prod_generic = os.getenv("PRODUCTION_OPENAI_BASE_URL")
+        if prod_generic is not None and prod_generic.strip() != "":
+            return prod_generic
     shared_value = os.getenv(key)
     if shared_value is not None and shared_value.strip() != "":
         return shared_value

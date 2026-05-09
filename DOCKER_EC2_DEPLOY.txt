@@ -1,0 +1,47 @@
+# eMAS — single EC2 (Docker Compose), nginx on :80 only
+
+# --- EC2 ---
+# Launch one t2.micro or t3.micro in a public subnet.
+# Security group inbound:
+#   TCP 22 from YOUR_IP/32
+#   TCP 80 from 0.0.0.0/0
+# Do NOT open 3306, 6379, 8000, 8080, 900, 901.
+# Billing: enable Cost Budgets + Free Tier usage alerts before launch.
+
+# --- On the instance (Amazon Linux 2023 example) ---
+sudo dnf update -y
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user
+newgrp docker
+
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+docker compose version
+
+# --- App ---
+cd ~
+git clone https://github.com/YOUR_ORG/YOUR_REPO.git emas
+cd emas
+cp .env.example .env
+nano .env
+
+docker compose up -d --build
+docker compose ps
+
+# Smoke test (from laptop or from EC2)
+curl -sS http://EC2_PUBLIC_IP/health
+curl -sS http://EC2_PUBLIC_IP/agent/health
+
+# Logs
+docker compose logs -f --tail=100 nginx go-api factory-agent
+
+# Stop app (keep volume data)
+docker compose down
+
+# Stop instance when idle (AWS console or CLI) to avoid charges after Free Tier.
+
+# --- Optional: seed Go DB (run on a machine with repo + Go + network to MySQL) ---
+# Not included in API image; from dev laptop with Docker:
+# docker compose exec mysql mysql -uemas -p emas_db < emas/scripts/reset_seed.sql
+# docker compose run --rm -v "$PWD/emas:/src" -w /src golang:1.25-bookworm go run ./cmd/seed

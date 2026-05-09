@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -6,7 +6,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, select, text
 
 import factory_agent.persistence.models as models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
 from factory_agent.persistence.database import AsyncSessionLocal, Base, engine
@@ -50,6 +50,11 @@ def _ensure_schema_compatibility(sync_conn) -> None:
     ensure_column("plan_steps", "bulk_state", "JSON")
     ensure_column("approvals", "subject_type", "VARCHAR(20) NOT NULL DEFAULT 'step'")
     ensure_column("approvals", "plan_id", "VARCHAR(36)")
+
+    # MySQL: older schemas used VARCHAR(1000) for capability_tags; toolgen can emit longer JSON.
+    if "tools" in tables and getattr(sync_conn.dialect, "name", "") == "mysql":
+        with contextlib.suppress(Exception):
+            sync_conn.execute(text("ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL"))
 
 
 @asynccontextmanager

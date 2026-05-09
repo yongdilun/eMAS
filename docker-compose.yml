@@ -1,0 +1,111 @@
+services:
+  mysql:
+    image: mysql:8.4
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-emas_db}
+      MYSQL_USER: ${MYSQL_USER:-emas}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    expose:
+      - "3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["with-redis"]
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  go-api:
+    build:
+      context: ./emas
+      dockerfile: Dockerfile
+    env_file:
+      - ./emas/.env
+    environment:
+      # Overrides: emas/.env points at localhost; in Compose the DB is the mysql service.
+      SERVER_ADDR: ${SERVER_ADDR:-:8080}
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: ${MYSQL_USER:-emas}
+      DB_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in project root .env}
+      DB_NAME: ${MYSQL_DATABASE:-emas_db}
+    expose:
+      - "8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  factory-agent:
+    build:
+      context: ./factory-agent
+      dockerfile: Dockerfile
+    env_file:
+      - ./factory-agent/.env
+    environment:
+      # Overrides: factory-agent/.env uses localhost URLs; in Compose use service DNS names.
+      # APP_MODE: root .env can set APP_MODE=development; otherwise default production so PRODUCTION_* / Gemini apply.
+      APP_MODE: ${APP_MODE:-production}
+      DATABASE_URL: mysql+aiomysql://${MYSQL_USER:-emas}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-emas_db}
+      GO_API_BASE_URL: http://go-api:8080/api/v1
+      OPENAPI_URL: http://go-api:8080/swagger/doc.json
+      # Set in project root .env when using `docker compose --profile with-redis` (e.g. redis://redis:6379/0)
+      REDIS_URL: ${REDIS_URL:-}
+    expose:
+      - "8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      go-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./eMas Front
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_FACTORY_AGENT_BASE_URL: ${VITE_FACTORY_AGENT_BASE_URL:-/agent}
+    expose:
+      - "80"
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      go-api:
+        condition: service_healthy
+      factory-agent:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:

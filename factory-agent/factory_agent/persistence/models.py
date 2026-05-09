@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID # if using pg
@@ -112,7 +112,8 @@ class Tool(Base):
     is_concurrency_safe = Column(Boolean, default=True)
     is_idempotent = Column(Boolean, default=False)
     is_strongly_idempotent = Column(Boolean, default=False)
-    capability_tags = Column(String(1000), default="[]") # Store as JSON string or text since SQLite lacks array
+    # JSON list of tag strings; rich OpenAPI-derived tags can exceed 1k chars (MySQL VARCHAR limit caused 1406).
+    capability_tags = Column(Text, nullable=False, default="[]")
     deprecated_at = Column(DateTime, nullable=True)
     replacement_tool = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

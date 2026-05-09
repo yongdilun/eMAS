@@ -1,6 +1,8 @@
 import logger from './logger'
 
-const BASE_URL = 'http://localhost:8080/api/v1'
+const BASE_URL = (
+  import.meta.env?.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
+).replace(/\/+$/, '')
 
 /**
  * Parse a backend error response into a human-readable message.
