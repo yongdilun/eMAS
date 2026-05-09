@@ -20,12 +20,17 @@ services:
 
   redis:
     image: redis:7-alpine
-    profiles: ["with-redis"]
     expose:
       - "6379"
     volumes:
       - redis_data:/data
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   go-api:
     build:
@@ -66,12 +71,14 @@ services:
       DATABASE_URL: mysql+aiomysql://${MYSQL_USER:-emas}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-emas_db}
       GO_API_BASE_URL: http://go-api:8080/api/v1
       OPENAPI_URL: http://go-api:8080/swagger/doc.json
-      # Set in project root .env when using `docker compose --profile with-redis` (e.g. redis://redis:6379/0)
-      REDIS_URL: ${REDIS_URL:-}
+      # Default: in-stack Redis. Override in project root .env if you use an external broker.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     expose:
       - "8000"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       go-api:
         condition: service_healthy

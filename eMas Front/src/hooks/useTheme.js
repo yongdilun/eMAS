@@ -2,7 +2,7 @@ import { useEffect, useCallback } from 'react'
 import useLocalStorage from './useLocalStorage'
 
 const useTheme = () => {
-  const [theme, setTheme] = useLocalStorage('theme', 'dark')
+  const [theme, setTheme] = useLocalStorage('theme', 'light')
 
   useEffect(() => {
     const root = window.document.documentElement
