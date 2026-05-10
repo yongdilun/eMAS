@@ -50,5 +50,26 @@
     "valid_slot_statuses": ["planned", "running", "paused", "completed", "cancelled"],
     "valid_split_strategies": ["equal", "proportional", "custom"],
     "valid_objectives": ["time", "cost", "efficiency"]
+  },
+  "router": {
+    "weights": {
+      "entity_id_detected": 12,
+      "tool_registry_match": 10,
+      "explicit_override": 20,
+      "api_action_verb": 5,
+      "temporal_marker": 4,
+      "entity_token_match": 3,
+      "rag_intent_verb": 8,
+      "safety_term": 7,
+      "diagnose_signal": 8,
+      "entity_id_plus_question_word": 6,
+      "entity_id_plus_rag_verb": 10,
+      "safety_term_plus_entity_id": 8,
+      "rag_reference_then_action": 10
+    },
+    "thresholds": {
+      "clarify": 5,
+      "ambiguity_margin": 3
+    }
   }
 }
