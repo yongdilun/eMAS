@@ -56,3 +56,25 @@ def build_rag_reranker_chat_model(settings: Settings, *, json_mode: bool = True)
     elif settings.openai_api_key:
         kwargs["api_key"] = settings.openai_api_key
     return ChatOpenAI(**kwargs)
+
+
+def build_rag_answer_chat_model(settings: Settings):
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception as exc:
+        raise PlannerLLMError("RAG answer generator requires langchain-openai.") from exc
+
+    kwargs: dict[str, Any] = {
+        "model": settings.rag_answer_model,
+        "temperature": 0,
+        "timeout": settings.rag_answer_timeout_s,
+        "max_retries": 0,
+        "max_tokens": settings.rag_answer_max_tokens,
+    }
+    
+    if settings.rag_answer_openai_base_url:
+        kwargs["base_url"] = settings.rag_answer_openai_base_url
+        kwargs["api_key"] = settings.openai_api_key or "local"
+    elif settings.openai_api_key:
+        kwargs["api_key"] = settings.openai_api_key
+    return ChatOpenAI(**kwargs)

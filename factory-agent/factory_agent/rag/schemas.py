@@ -34,3 +34,26 @@ class ScoredChunk(BaseModel):
     keyword_score: Optional[float] = None
     fusion_score: Optional[float] = None
     boosted_score: Optional[float] = None
+
+class SourceCitation(BaseModel):
+    source_number: int
+    doc_id: str
+    title: str
+    organization: str
+    authority_level: str
+    domain: str
+    version: str
+    license: str
+    retrieved_date: str
+
+class AnswerResult(BaseModel):
+    answer: str
+    sources: List[SourceCitation]
+    safety_warning: bool
+    route_used: str
+
+class AgentResponse(BaseModel):
+    answer: str
+    sources: List[SourceCitation]
+    route: str
+    safety_warning: bool = False

@@ -59,6 +59,7 @@ class Settings:
     tool_result_summary_model: str = "Qwen3.5-9B"
     tool_selector_model: str = "Qwen3.5-9B"
     rag_reranker_model: str = "Qwen3.5-9B"
+    rag_answer_model: str = "Qwen3.5-9B"
     enforce_tool_registry_health: bool = True
     auto_repair_tool_registry: bool = True
     min_healthy_tool_count: int = 20
@@ -79,6 +80,8 @@ class Settings:
     rag_reranker_timeout_s: float = 3.0
     rag_reranker_max_tokens: int = 256
     rag_reranker_top_k: int = 3
+    rag_answer_timeout_s: float = 20.0
+    rag_answer_max_tokens: int = 600
     embedding_backend: str = "disabled"  # sentence-transformers|disabled
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     llm_default_timeout_s: float = 20.0
@@ -101,6 +104,7 @@ class Settings:
     tool_result_summary_openai_base_url: str | None = None
     tool_selector_openai_base_url: str | None = None
     rag_reranker_openai_base_url: str | None = None
+    rag_answer_openai_base_url: str | None = None
 
 
 def _normalize_summary_backend(value: str) -> str:
@@ -286,8 +290,17 @@ def get_settings() -> Settings:
         rag_reranker_timeout_s=float(os.getenv("RAG_RERANKER_TIMEOUT_S", "3.0")),
         rag_reranker_max_tokens=int(os.getenv("RAG_RERANKER_MAX_TOKENS", "256")),
         rag_reranker_top_k=int(os.getenv("RAG_RERANKER_TOP_K", "3")),
+        rag_answer_model=env("RAG_ANSWER_MODEL", env("PLANNER_MODEL", env("LLM_MODEL", "Qwen3.5-9B"))).strip(),
+        rag_answer_timeout_s=float(os.getenv("RAG_ANSWER_TIMEOUT_S", "20.0")),
+        rag_answer_max_tokens=int(os.getenv("RAG_ANSWER_MAX_TOKENS", "600")),
         rag_reranker_openai_base_url=(
             env("RAG_RERANKER_OPENAI_BASE_URL")
+            or env("OPENAI_BASE_URL")
+            or env("LLM_BASE_URL")
+            or None
+        ),
+        rag_answer_openai_base_url=(
+            env("RAG_ANSWER_OPENAI_BASE_URL")
             or env("OPENAI_BASE_URL")
             or env("LLM_BASE_URL")
             or None
