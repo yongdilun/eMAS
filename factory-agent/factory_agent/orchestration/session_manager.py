@@ -1,7 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,5 +148,33 @@ class SessionManager:
         if not refreshed:  # pragma: no cover
             raise VersionConflictError("Session not found after versioned update")
         return refreshed
+
+    # Phase 5 adapters: keep response shaping centralized and stable.
+    def build_answer_from_execution(self, execution_result: Any) -> str:
+        status = str(getattr(execution_result, "status", "completed")).lower().replace("_", " ")
+        step_index = getattr(execution_result, "current_step_index", None)
+        if isinstance(step_index, int):
+            return f"Execution {status}. Reached step {step_index}."
+        return f"Execution {status}."
+
+    def summarize_execution(self, execution_result: Any) -> str:
+        payload = {
+            "status": getattr(execution_result, "status", None),
+            "current_step_index": getattr(execution_result, "current_step_index", None),
+        }
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    def serialize_rag_context(self, rag_result: Any) -> str:
+        source_titles: list[str] = []
+        for source in getattr(rag_result, "sources", []) or []:
+            title = getattr(source, "title", None)
+            if isinstance(title, str) and title:
+                source_titles.append(title)
+        summary = {
+            "answer": getattr(rag_result, "answer", ""),
+            "source_titles": source_titles,
+            "safety_warning": bool(getattr(rag_result, "safety_warning", False)),
+        }
+        return json.dumps(summary, ensure_ascii=False, default=str)
 
 

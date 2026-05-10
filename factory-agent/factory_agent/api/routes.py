@@ -1492,6 +1492,9 @@ def build_router(
             route_decision = await query_router.route(intent)
             route_type = route_decision.get("route", "API_ONLY")
             route_source = route_decision.get("route_source", "unknown")
+            if not isinstance(sess.replan_context, dict):
+                sess.replan_context = {}
+            sess.replan_context["route_decision"] = route_decision
             log_event(
                 "query_routed",
                 session_id=session_id,
@@ -1513,11 +1516,27 @@ def build_router(
                 )
                 metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
                 return plan_resp
-                
+
+            if route_type == "CLARIFY":
+                tools_by_name = await tool_registry.get_tools_by_name(db)
+                clarify_reason = route_decision.get("clarify_reason") or "the request is missing required specifics"
+                reply = f"I need clarification before execution: {clarify_reason}."
+                plan_resp = await _persist_conversation_reply_as_empty_plan(
+                    db=db,
+                    sess=sess,
+                    reply=reply,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                    context_to_keep=sess.replan_context,
+                )
+                metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+                return plan_resp
+
             if route_type == "API_THEN_RAG":
-                if not isinstance(sess.replan_context, dict):
-                    sess.replan_context = {}
                 sess.replan_context["rag_required"] = True
+            if route_type == "RAG_THEN_API":
+                sess.replan_context["rag_context_required"] = True
 
         tools_by_name = await tool_registry.get_tools_by_name(db)
         tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))

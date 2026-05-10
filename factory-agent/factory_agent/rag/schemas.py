@@ -57,3 +57,4 @@ class AgentResponse(BaseModel):
     sources: List[SourceCitation]
     route: str
     safety_warning: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)

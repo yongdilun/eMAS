@@ -935,88 +935,133 @@ Answer generation is complete and the response may be returned to the caller onl
 User Query → Planner → Tool Agent → Answer
 ```
 
-**After:**
+**After (real system):**
 ```
-User Query → Router → [API_ONLY: Tool Agent]
+User Query → Async QueryRouter (RouteDecision dict)
+                    → [API_ONLY: LangGraph Tool Execution]
                     → [RAG_ONLY: RAG Pipeline]
-                    → [API_THEN_RAG: Tool Agent → RAG Pipeline → Merged Answer]
+                    → [API_THEN_RAG: LangGraph Tool Execution → RAG Synthesis]
+                    → [RAG_THEN_API: RAG Context → LangGraph Tool Execution]
+                    → [CLARIFY: Clarification Request (no execution)]
 ```
 
-### 7.2 API_THEN_RAG Execution Order
+### 7.2 Route Contract and Execution Model
 
 ```
-1. Run Tool Agent (API call)
-   └─ Returns: structured data (metrics, records, status)
+Router implementation: orchestration/router.py
+Router output: RouteDecision (dict), not a plain route string
+Runtime style: fully async (router, execution runtime, RAG pipeline)
 
-2. Pass API result as context to RAG pipeline
-   └─ Query is enriched: "Given [API result], explain/advise..."
-
-3. Run RAG pipeline
-   └─ Returns: explanation chunks with citations
-
-4. Merge both results in Answer Generator
-   └─ Returns: grounded answer using live data + document context
+Supported routes:
+- API_ONLY
+- RAG_ONLY
+- API_THEN_RAG
+- RAG_THEN_API
+- CLARIFY
 ```
 
-### 7.3 API_THEN_RAG Query Enrichment
+### 7.3 Route Flows (Authoritative)
 
-Before sending to RAG, enrich the query with the API result:
+```text
+API_ONLY
+1) Run LangGraph planner + execution engine in session context
+2) Build answer from persisted execution/session messages
+3) Return normalized AgentResponse
+
+RAG_ONLY
+1) Run RAG pipeline in same async session context
+2) Return grounded answer + citations (+ safety metadata if present)
+
+API_THEN_RAG
+1) Execute API/tool flow first via LangGraph runtime
+2) Summarize execution output from session/plan records
+3) Enrich RAG query with execution summary (not raw tool dict)
+4) Run RAG and return synthesized final answer
+
+RAG_THEN_API
+1) Run RAG first to retrieve procedure/context
+2) Pass retrieved context to LangGraph planner/execution
+3) Execute API/tool actions with retrieved guidance
+4) Return execution-derived answer with RAG citations
+
+CLARIFY
+1) Return clarification prompt immediately
+2) Do not call LangGraph execution runtime
+3) Do not call RAG pipeline
+```
+
+### 7.4 Integration Code Skeleton (Async + RouteDecision-Aligned)
 
 ```python
-def enrich_query_with_api_result(
-    original_query: str,
-    api_result: dict
-) -> str:
-    """
-    Augment the query so the RAG pipeline has the live context it needs.
-    """
-    api_summary = json.dumps(api_result, indent=2)
-    return (
-        f"Original question: {original_query}\n\n"
-        f"Live system data already retrieved:\n{api_summary}\n\n"
-        f"Now explain or advise based on this data and relevant procedures."
-    )
-```
+class EMASAgent:
+    def __init__(self, router, langgraph_runner, rag_pipeline, session_manager):
+        self.router = router
+        self.langgraph_runner = langgraph_runner
+        self.rag_pipeline = rag_pipeline
+        self.session_manager = session_manager
 
-### 7.4 Integration Code Skeleton
+    async def run(self, query: str, session_id: str | None = None) -> AgentResponse:
+        decision = await self.router.route(query=query, session_id=session_id)
+        route = decision["route"]
 
-```python
-class eMASAgent:
+        if route == "CLARIFY":
+            return AgentResponse(
+                answer=decision.get("clarification_prompt", "Please clarify your request."),
+                sources=[],
+                route=route,
+                metadata={"route_decision": decision},
+            )
 
-    def __init__(self):
-        self.router = QueryRouter()
-        self.tool_agent = ToolAgent()       # existing
-        self.rag_pipeline = RAGPipeline()   # new
-
-    def run(self, query: str) -> AgentResponse:
-        route = self.router.route(query)
+        if route == "RAG_ONLY":
+            rag = await self.rag_pipeline.run(query=query, session_id=session_id)
+            return AgentResponse(
+                answer=rag.answer,
+                sources=rag.sources,
+                safety_warning=getattr(rag, "safety_warning", None),
+                route=route,
+                metadata={"route_decision": decision},
+            )
 
         if route == "API_ONLY":
-            result = self.tool_agent.run(query)
-            return AgentResponse(answer=result, sources=[], route=route)
-
-        elif route == "RAG_ONLY":
-            result = self.rag_pipeline.run(query)
+            exec_result = await self.langgraph_runner.execute(query=query, session_id=session_id)
+            final_answer = self.session_manager.build_answer_from_execution(exec_result)
             return AgentResponse(
-                answer=result.answer,
-                sources=result.sources,
-                safety_warning=result.safety_warning,
-                route=route
+                answer=final_answer,
+                sources=[],
+                route=route,
+                metadata={"route_decision": decision, "execution_id": exec_result.execution_id},
             )
 
-        elif route == "API_THEN_RAG":
-            api_result = self.tool_agent.run(query)
-            enriched_query = enrich_query_with_api_result(query, api_result)
-            rag_result = self.rag_pipeline.run(
-                query=enriched_query,
-                api_data=api_result
-            )
+        if route == "API_THEN_RAG":
+            exec_result = await self.langgraph_runner.execute(query=query, session_id=session_id)
+            execution_summary = self.session_manager.summarize_execution(exec_result)
+            enriched_query = f"{query}\n\nExecution context:\n{execution_summary}"
+            rag = await self.rag_pipeline.run(query=enriched_query, session_id=session_id)
             return AgentResponse(
-                answer=rag_result.answer,
-                sources=rag_result.sources,
-                safety_warning=rag_result.safety_warning,
-                route=route
+                answer=rag.answer,
+                sources=rag.sources,
+                safety_warning=getattr(rag, "safety_warning", None),
+                route=route,
+                metadata={"route_decision": decision, "execution_id": exec_result.execution_id},
             )
+
+        if route == "RAG_THEN_API":
+            rag = await self.rag_pipeline.run(query=query, session_id=session_id)
+            guidance_context = self.session_manager.serialize_rag_context(rag)
+            exec_result = await self.langgraph_runner.execute(
+                query=query,
+                session_id=session_id,
+                guidance_context=guidance_context,
+            )
+            final_answer = self.session_manager.build_answer_from_execution(exec_result)
+            return AgentResponse(
+                answer=final_answer,
+                sources=rag.sources,
+                route=route,
+                metadata={"route_decision": decision, "execution_id": exec_result.execution_id},
+            )
+
+        raise ValueError(f"Unsupported route: {route}")
 ```
 
 ### 7.5 Exit Requirements — Phase 5 (Agent Integration)
@@ -1025,19 +1070,30 @@ The full eMAS RAG agent is ready for use / production deployment only when **all
 
 | # | Exit Condition | How to Verify |
 |---|---|---|
-| AG1 | All three routes (`API_ONLY`, `RAG_ONLY`, `API_THEN_RAG`) return an `AgentResponse` with no unhandled exceptions | Run one representative query per route; assert `AgentResponse` is returned |
-| AG2 | `API_ONLY` route never calls the RAG pipeline | Mock RAG pipeline to raise if called; run API_ONLY query; assert no exception |
-| AG3 | `RAG_ONLY` route never calls the tool agent | Mock tool agent to raise if called; run RAG_ONLY query; assert no exception |
-| AG4 | `API_THEN_RAG` calls tool agent first, then RAG — never in reverse order | Add timestamps to mocks; assert `api_call_time < rag_call_time` |
-| AG5 | Tool agent failure in `API_THEN_RAG` falls back to `RAG_ONLY` and notes missing live data in the answer | Mock tool agent to raise; assert response still contains RAG answer with fallback note |
-| AG6 | `AgentResponse.route` field always matches the router's decision | Assert `response.route == router.route(query)` for all test queries |
-| AG7 | End-to-end latency (query in → answer out) is under 10 seconds for `RAG_ONLY` queries | Time 5 end-to-end RAG_ONLY calls; assert p95 < 10 s |
-| AG8 | All exit requirements for Phases 1–4 have been individually verified before running Phase 5 integration tests | Confirm phase exit checklists are signed off |
+| AG1 | All five routes (`API_ONLY`, `RAG_ONLY`, `API_THEN_RAG`, `RAG_THEN_API`, `CLARIFY`) complete with no unhandled exceptions | Run representative queries per route and assert valid completion |
+| AG2 | Router contract is preserved as `RouteDecision` dict through orchestration | Assert decision dict (route + rationale/metadata) is attached to response metadata |
+| AG3 | `CLARIFY` never invokes RAG or LangGraph execution | Instrument calls; assert both are zero for CLARIFY queries |
+| AG4 | `API_ONLY` never invokes RAG | Mock RAG to fail if called; assert API_ONLY route still succeeds |
+| AG5 | `RAG_ONLY` never invokes LangGraph execution runtime | Mock executor to fail if called; assert RAG_ONLY route still succeeds |
+| AG6 | `API_THEN_RAG` order is strict: execution first, then RAG | Timestamp/instrument calls and assert `execute < rag` |
+| AG7 | `RAG_THEN_API` order is strict: RAG first, then execution | Timestamp/instrument calls and assert `rag < execute` |
+| AG8 | RAG enrichment in `API_THEN_RAG` uses session/execution summary, not raw assumed dict output | Unit-test adapter against real execution result shape |
+| AG9 | API-route `AgentResponse.answer` is normalized user-facing text, never raw internal objects | Contract tests verify type/shape and no raw debug payloads |
+| AG10 | Integration is fully async (`await` router + execution + RAG) with no sync wrappers | Async integration tests (`pytest.mark.asyncio`) + code inspection |
+| AG11 | RAG and execution runtime share the same session context where required | Assert same `session_id` propagation across both subsystems |
+| AG12 | `response.route` matches `RouteDecision.route` for all routes | Route contract assertions in integration tests |
+| AG13 | Route-level failure handling is graceful (timeouts/errors) with safe user responses | Fault injection tests for each route |
+| AG14 | Latency SLOs: `CLARIFY` p95 < 2 s, `RAG_ONLY` p95 < 10 s, mixed routes p95 < 15 s | Timed test suite with multiple runs per route |
+| AG15 | Phases 1–4 exit requirements are all signed off before Phase 5 production enablement | Verify checklist sign-off records |
 
 **Blocking issues (do not proceed if any apply):**
-- Any route returns an unhandled exception on a valid query
-- `API_THEN_RAG` calls RAG before the tool agent
-- Tool agent failure in `API_THEN_RAG` propagates to the user as an unhandled error
+- Any supported route is missing from orchestration handling
+- `RouteDecision` metadata is discarded and only route string is used
+- `CLARIFY` triggers RAG or LangGraph execution
+- `API_THEN_RAG` or `RAG_THEN_API` order is incorrect
+- API routes return raw internal execution structures to users
+- Session context is not consistently propagated between execution runtime and RAG pipeline
+- Any valid query path produces an uncaught exception
 - Any Phase 1–4 exit requirement is unmet
 
 ---
