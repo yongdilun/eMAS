@@ -1,0 +1,39 @@
+{
+  "documents": [
+    {
+      "doc_id": "SOP-LOTO-001",
+      "title": "LOTO Procedure Standard",
+      "file_path": "rag_sources/01_emas_internal_docs/scheduling/loto_procedure.md",
+      "source_type": "internal_sop",
+      "organization": "eMAS Site Safety",
+      "domain": "safety",
+      "subdomain": "lockout_tagout",
+      "authority_level": "mandatory_procedure",
+      "use_for": [
+        "explain LOTO procedure steps",
+        "explain energy isolation requirements",
+        "explain lockout tagout compliance",
+        "support safety audits and SOP references"
+      ],
+      "do_not_use_for": [
+        "live machine lock status lookup",
+        "real-time permit approval",
+        "vendor-specific equipment instruction",
+        "legal or regulatory certification"
+      ],
+      "related_entities": [
+        "energy_isolation",
+        "lockout_device",
+        "tagout_device",
+        "authorized_employee",
+        "affected_employee",
+        "energy_control_program"
+      ],
+      "risk_level": "high",
+      "license": "internal",
+      "version": "1.0",
+      "retrieved_date": "2026-05-10",
+      "notes": "Initial LOTO procedure doc for RAG testing."
+    }
+  ]
+}

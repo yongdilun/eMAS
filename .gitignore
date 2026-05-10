@@ -22,3 +22,16 @@ test-artifacts/
 .cache/
 emas/.cache/
 .cursor/
+# ChromaDB / local vector database artifacts
+**/chroma.sqlite3
+**/data_level0.bin
+**/header.bin
+**/length.bin
+**/link_lists.bin
+
+# RAG generated storage folders
+factory-agent/factory_agent/rag/storage/
+factory-agent/factory_agent/rag/chroma/
+factory-agent/factory_agent/rag/chroma_db/
+factory-agent/factory_agent/rag/vector_db/
+factory-agent/factory_agent/rag/indexes/
