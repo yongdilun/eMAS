@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import contextlib
 from datetime import datetime, timedelta
@@ -53,6 +53,8 @@ from ..schemas import (
     ToolInfo,
     ValidationErrorResponse,
 )
+from ..orchestration.router import QueryRouter
+from ..llm.models import build_planner_chat_model
 from ..orchestration.session_manager import SessionManager, TransitionError, VersionConflictError
 from ..security import JwtValidationError, validate_bearer_token
 from ..analysis.summary_backend import SummaryAdapter, SummaryBackendError
@@ -250,6 +252,7 @@ def build_router(
     planner = planner_adapter or PlannerService(settings=settings, tool_registry=tool_registry)
     tool_selector = ToolSelector(settings)
     summary_adapter = SummaryAdapter(settings)
+    query_router = QueryRouter(llm=build_planner_chat_model(settings, json_mode=True))
 
     def _should_enforce_registry_health() -> bool:
         if not settings.enforce_tool_registry_health:
@@ -1484,6 +1487,38 @@ def build_router(
         latest_user = await _latest_user_message(db=db, session_id=session_id)
         mode = latest_user.mode if latest_user else "normal"
         assessment = assess_intent(intent)
+        
+        if assessment.kind == "operations" and intent:
+            route_decision = await query_router.route(intent)
+            route_type = route_decision.get("route", "API_ONLY")
+            route_source = route_decision.get("route_source", "unknown")
+            log_event(
+                "query_routed",
+                session_id=session_id,
+                intent=intent,
+                route=route_type,
+                route_source=route_source
+            )
+            
+            if route_type == "RAG_ONLY":
+                tools_by_name = await tool_registry.get_tools_by_name(db)
+                reply = "RAG lookup will be performed for: " + intent
+                plan_resp = await _persist_conversation_reply_as_empty_plan(
+                    db=db,
+                    sess=sess,
+                    reply=reply,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                )
+                metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+                return plan_resp
+                
+            if route_type == "API_THEN_RAG":
+                if not isinstance(sess.replan_context, dict):
+                    sess.replan_context = {}
+                sess.replan_context["rag_required"] = True
+
         tools_by_name = await tool_registry.get_tools_by_name(db)
         tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
         backend_used = "langgraph" if req.draft is None else "client"
