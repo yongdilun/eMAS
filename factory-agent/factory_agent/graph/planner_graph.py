@@ -14,6 +14,25 @@ except Exception:  # pragma: no cover
     Command = None  # type: ignore[assignment]
 
 
+def _interrupt_payload_from_result(result: Any) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    interrupts = result.get("__interrupt__")
+    if isinstance(interrupts, list) and interrupts:
+        payload = getattr(interrupts[0], "value", None)
+        return payload if isinstance(payload, dict) else {"kind": "approval_required"}
+    return None
+
+
+def _interrupt_payload_from_snapshot(snapshot: Any) -> dict[str, Any] | None:
+    tasks = getattr(snapshot, "tasks", ()) or ()
+    for task in tasks:
+        for item in getattr(task, "interrupts", ()) or ():
+            payload = getattr(item, "value", None)
+            return payload if isinstance(payload, dict) else {"kind": "approval_required"}
+    return None
+
+
 def _initial_planner_state(
     *,
     intent: str,
@@ -69,16 +88,19 @@ class LangGraphPlanner:
         graph = compile_planner_graph(self._settings)
         state: AgentState = _initial_planner_state(intent=intent, scoped_tools=scoped_tools, context=context)
         thread_id = str(state.get("session_id") or "langgraph-local-thread")
+        config = {"recursion_limit": 64, "configurable": {"thread_id": thread_id}}
         result = await graph.ainvoke(
             state,
-            config={"recursion_limit": 64, "configurable": {"thread_id": thread_id}},
+            config=config,
         )
-        interrupts = result.get("__interrupt__")
-        if isinstance(interrupts, list) and interrupts:
-            payload = getattr(interrupts[0], "value", None)
-            if isinstance(payload, dict):
-                raise LangGraphPlannerApprovalRequired(payload)
-            raise LangGraphPlannerApprovalRequired({"kind": "approval_required"})
+        payload = _interrupt_payload_from_result(result)
+        if payload is None:
+            try:
+                payload = _interrupt_payload_from_snapshot(await graph.aget_state(config))
+            except Exception:
+                payload = None
+        if payload is not None:
+            raise LangGraphPlannerApprovalRequired(payload)
         clarification = result.get("clarification")
         if clarification:
             raise LangGraphPlannerClarification(str(clarification))
@@ -100,14 +122,19 @@ class LangGraphPlanner:
         graph = compile_planner_graph(self._settings)
         if Command is None:
             raise LangGraphPlannerError("LangGraph Command resume is unavailable in this runtime.")
+        config = {"recursion_limit": 64, "configurable": {"thread_id": session_id}}
         result = await graph.ainvoke(
             Command(resume={"approved": approved}),
-            config={"recursion_limit": 64, "configurable": {"thread_id": session_id}},
+            config=config,
         )
-        interrupts = result.get("__interrupt__")
-        if isinstance(interrupts, list) and interrupts:
-            payload = getattr(interrupts[0], "value", None)
-            raise LangGraphPlannerApprovalRequired(payload if isinstance(payload, dict) else {"kind": "approval_required"})
+        payload = _interrupt_payload_from_result(result)
+        if payload is None:
+            try:
+                payload = _interrupt_payload_from_snapshot(await graph.aget_state(config))
+            except Exception:
+                payload = None
+        if payload is not None:
+            raise LangGraphPlannerApprovalRequired(payload)
         clarification = result.get("clarification")
         if clarification:
             raise LangGraphPlannerClarification(str(clarification))

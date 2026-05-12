@@ -756,6 +756,8 @@ def build_router(
             current_plan = (
                 await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))
             ).scalars().first()
+        graph_native_session = _is_graph_native_session(sess, current_plan)
+        allow_step_projection = (not graph_native_session) or _is_langgraph_plan(current_plan)
 
         plan_rows = (
             await db.execute(
@@ -816,8 +818,9 @@ def build_router(
         plan_messages = [row for row in assistant_messages if row.tool_name == "__plan__"]
         conversation_messages = [row for row in assistant_messages if row.tool_name == "__conversation__"]
         confirmation_messages = [row for row in assistant_messages if row.tool_name == "__confirmation__"]
+        snapshot_step_rows = step_rows if allow_step_projection else []
         step_ids_by_plan: dict[str, list[str]] = {}
-        for step in step_rows:
+        for step in snapshot_step_rows:
             step_ids_by_plan.setdefault(step.plan_id, []).append(step.step_id)
 
         user_messages_sorted = sorted(user_messages, key=lambda m: m.created_at)
@@ -1048,7 +1051,7 @@ def build_router(
                     )
                 )
 
-        execution_started_at = min((step.started_at for step in step_rows if step.started_at), default=None)
+        execution_started_at = min((step.started_at for step in snapshot_step_rows if step.started_at), default=None)
         if execution_started_at:
             events.append(
                 _timeline_event(
@@ -1063,7 +1066,7 @@ def build_router(
             )
 
         tool_messages_by_step = {msg.step_id: msg for msg in tool_result_messages if msg.step_id}
-        for step in step_rows:
+        for step in snapshot_step_rows:
             if step.status == "IN_PROGRESS" and step.started_at:
                 events.append(
                     _timeline_event(
@@ -1199,7 +1202,7 @@ def build_router(
                     )
                 )
 
-        ambiguous_step = next((step for step in step_rows if step.status == "AMBIGUOUS" and (step.completed_at or step.started_at)), None)
+        ambiguous_step = next((step for step in snapshot_step_rows if step.status == "AMBIGUOUS" and (step.completed_at or step.started_at)), None)
         if sess.status == "BLOCKED":
             blocked_at = (ambiguous_step.completed_at if ambiguous_step and ambiguous_step.completed_at else sess.updated_at)
             events.append(
@@ -1252,7 +1255,7 @@ def build_router(
         )
 
         checkpoint_step_responses: list[PlanStepResponse] = []
-        if _is_langgraph_plan(current_plan) and checkpoint_steps:
+        if graph_native_session and checkpoint_steps:
             outputs_by_tool: dict[str, dict[str, Any]] = {}
             for out in checkpoint_tool_outputs:
                 if not isinstance(out, dict):
@@ -1284,7 +1287,7 @@ def build_router(
                         bindings=raw_step.get("bindings") if isinstance(raw_step.get("bindings"), list) else [],
                         bulk_state=None,
                         status=cp_status,
-                        idempotency_key=None,
+                        idempotency_key=f"langgraph:{sess.session_id}:{idx_cp}",
                         requires_approval=bool(raw_step.get("requires_approval")),
                         approval_id=None,
                         retry_count=0,
@@ -1299,7 +1302,7 @@ def build_router(
         return SessionSnapshotResponse(
             session=_session_to_response(sess),
             plan=_plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None,
-            steps=(checkpoint_step_responses or [_step_to_response(step) for step in step_rows]),
+            steps=(checkpoint_step_responses or [_step_to_response(step) for step in snapshot_step_rows]),
             pending_approval=_approval_to_response(pending_approval) if pending_approval else None,
             timeline=events,
         )
@@ -2395,25 +2398,10 @@ def build_router(
             return _approval_to_response(row)
         sess = await session_mgr.get_session(db, session_id=row.session_id)
         if _is_graph_native_session(sess, current_plan) and (getattr(row, "subject_type", "step") or "step") == "step":
-            row.status = "REJECTED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
-            row.rejection_reason = req.rejection_reason or "Rejected by operator"
-            if sess:
-                sess.status = "IDLE"
-                sess.error = row.rejection_reason
-                sess.updated_at = datetime.utcnow()
-                sess.version += 1
-            await db.commit()
-            await event_bus.publish(
-                AgentEvent(
-                    event_type="approval_decided",
-                    session_id=row.session_id,
-                    payload={"approval_id": row.approval_id, "status": "REJECTED", "subject_type": "graph_native"},
-                    published_at=datetime.utcnow(),
-                )
+            raise HTTPException(
+                status_code=409,
+                detail="graph-native approvals must use subject_type=graph/plan paths; legacy step approval is disabled",
             )
-            return _approval_to_response(row)
         if (getattr(row, "subject_type", "step") or "step") == "plan":
             row.status = "REJECTED"
             row.decided_by = req.decided_by

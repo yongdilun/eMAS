@@ -332,6 +332,8 @@ def make_final_validator_node(settings: Settings):
         if _has_fatal(state):
             return {"status": "failed", "next_route": "fatal_end"}
 
+        staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+
         # Commit-time business failure: forward-only auto-repair, never state rollback.
         commit = state.get("last_commit_result")
         if isinstance(commit, dict) and commit.get("ok") is False:
@@ -365,18 +367,18 @@ def make_final_validator_node(settings: Settings):
                 detail=failed_entry,
             )
 
-        out = validate_node(state)
-        if out.get("status") == "awaiting_clarification":
-            out["next_route"] = "fatal_end"
-            return out
-        if out.get("status") != "completed":
-            return _route_forward_for_repair(state, phase="final_validator", reason="plan_validation_failed")
-
-        staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
         if staged and not isinstance(state.get("bundle_dry_run_result"), dict):
-            out["next_route"] = "bundle_dry_run"
-            out["status"] = "validating"
-            return out
+            return {
+                "next_route": "bundle_dry_run",
+                "status": "validating",
+                "completed_actions": [
+                    {
+                        "phase": "final_validator",
+                        "kind": "dry_run_required",
+                        "summary": "Staged writes require bundle dry-run before final validation.",
+                    }
+                ],
+            }
 
         dry_failure = _dry_run_failure(state)
         if dry_failure is not None:
@@ -399,6 +401,13 @@ def make_final_validator_node(settings: Settings):
                 reason=str(dry_failure.get("reason") or "dry_run_failed"),
                 detail=dry_failure,
             )
+
+        out = validate_node(state)
+        if out.get("status") == "awaiting_clarification":
+            out["next_route"] = "fatal_end"
+            return out
+        if out.get("status") != "completed":
+            return _route_forward_for_repair(state, phase="final_validator", reason="plan_validation_failed")
 
         if _needs_approval(state):
             payload = _approval_payload(state)

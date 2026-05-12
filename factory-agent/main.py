@@ -12,6 +12,7 @@ import factory_agent.persistence.models as models  # noqa: F401 (ensure models a
 from factory_agent.persistence.database import AsyncSessionLocal, Base, engine
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import DeadLetter as DeadLetterRow
+from factory_agent.persistence.models import Plan as PlanRow
 from factory_agent.persistence.models import PlanStep as PlanStepRow
 from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.persistence.models import Tool as ToolRow
@@ -55,6 +56,18 @@ def _ensure_schema_compatibility(sync_conn) -> None:
     if "tools" in tables and getattr(sync_conn.dialect, "name", "") == "mysql":
         with contextlib.suppress(Exception):
             sync_conn.execute(text("ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL"))
+
+
+async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
+    if session is None:
+        return False
+    context = session.replan_context if isinstance(session.replan_context, dict) else {}
+    if context.get("langgraph_pending_approval"):
+        return True
+    if not session.plan_id:
+        return False
+    plan = (await db.execute(select(PlanRow).where(PlanRow.plan_id == session.plan_id))).scalars().first()
+    return bool(plan and str(plan.created_by or "").strip().lower() == "langgraph")
 
 
 @asynccontextmanager
@@ -157,6 +170,14 @@ async def lifespan(app: FastAPI):
                         await db.commit()
                         await refresh_operational_gauges(db)
                         continue
+                    if await _is_graph_native_session(db, session):
+                        log_event(
+                            "worker_skipped_graph_native_session",
+                            session_id=session.session_id,
+                            status=session.status,
+                        )
+                        await refresh_operational_gauges(db)
+                        continue
                     tools_by_name = await tool_registry.get_tools_by_name(db)
                     try:
                         await executor.execute_until_blocked(db, session=session, tools_by_name=tools_by_name)
@@ -190,6 +211,13 @@ async def lifespan(app: FastAPI):
             ).scalars().all()
             recovered_count = 0
             for session in stuck_sessions:
+                if await _is_graph_native_session(db, session):
+                    log_event(
+                        "cold_start_skipped_graph_native_session",
+                        session_id=session.session_id,
+                        status=session.status,
+                    )
+                    continue
                 if not session.plan_id:
                     session.status = "FAILED"
                     session.error = "Recovered from cold start without plan"
@@ -335,7 +363,7 @@ async def lifespan(app: FastAPI):
                 session.updated_at = datetime.utcnow()
             await db.commit()
             for session in stuck_sessions:
-                if session.status == "EXECUTING":
+                if session.status == "EXECUTING" and not await _is_graph_native_session(db, session):
                     with contextlib.suppress(Exception):
                         await enqueue_session(session.session_id)
             await refresh_operational_gauges(db)
@@ -361,6 +389,8 @@ async def lifespan(app: FastAPI):
                         await db.execute(select(SessionRow).where(SessionRow.session_id == step.session_id))
                     ).scalars().first()
                     if not session:
+                        continue
+                    if await _is_graph_native_session(db, session):
                         continue
                     tool = (
                         await db.execute(select(ToolRow).where(ToolRow.name == step.tool_name))
@@ -467,6 +497,9 @@ async def lifespan(app: FastAPI):
                 ).scalars().first()
                 if not session:
                     return
+                if await _is_graph_native_session(db, session):
+                    await refresh_operational_gauges(db)
+                    return
                 if approval.status == "APPROVED":
                     session.status = "EXECUTING"
                     session.updated_at = datetime.utcnow()
@@ -509,6 +542,9 @@ async def lifespan(app: FastAPI):
                     await db.execute(select(SessionRow).where(SessionRow.session_id == event.session_id))
                 ).scalars().first()
                 if not session:
+                    return
+                if await _is_graph_native_session(db, session):
+                    await refresh_operational_gauges(db)
                     return
                 steps = (
                     await db.execute(
@@ -556,6 +592,12 @@ async def lifespan(app: FastAPI):
                 ).scalars().first()
                 if not dlq:
                     return
+                session = (
+                    await db.execute(select(SessionRow).where(SessionRow.session_id == dlq.session_id))
+                ).scalars().first()
+                if session and await _is_graph_native_session(db, session):
+                    await refresh_operational_gauges(db)
+                    return
                 if dlq.step_id:
                     step = (
                         await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == dlq.step_id))
@@ -588,9 +630,6 @@ async def lifespan(app: FastAPI):
                             )
                 dlq.status = "REPLAYED"
                 dlq.replayed_at = dlq.replayed_at or datetime.utcnow()
-                session = (
-                    await db.execute(select(SessionRow).where(SessionRow.session_id == dlq.session_id))
-                ).scalars().first()
                 if session:
                     if dlq.step_id:
                         step = (
@@ -681,5 +720,3 @@ async def health():
 async def mock_slow(ms: int = 1000):
     await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
     return {"ok": True, "slept_ms": ms}
-
-

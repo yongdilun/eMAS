@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from typing import Any
@@ -375,14 +376,48 @@ async def commit_node_impl(state: AgentState, *, settings: Settings) -> dict[str
     staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
     if not staged:
         return {"last_commit_result": {"skipped": True, "reason": "no_staged_writes"}}
+    dry = state.get("bundle_dry_run_result")
+    if not isinstance(dry, dict) or dry.get("ok") is not True:
+        return {
+            "last_commit_result": {
+                "ok": False,
+                "http_status": 428,
+                "error": "commit_precondition_failed:bundle_dry_run_required",
+            }
+        }
+    validations = state.get("validation_results") or []
+    if not any(isinstance(v, dict) and v.get("ok") is True for v in validations):
+        return {
+            "last_commit_result": {
+                "ok": False,
+                "http_status": 428,
+                "error": "commit_precondition_failed:final_validation_required",
+            }
+        }
+    approvals = state.get("approval_requests") or []
+    if not any(isinstance(a, dict) and a.get("status") == "approved" for a in approvals):
+        return {
+            "last_commit_result": {
+                "ok": False,
+                "http_status": 428,
+                "error": "commit_precondition_failed:approval_required",
+            }
+        }
     keys = [x.get("idempotency_key") for x in staged if isinstance(x.get("idempotency_key"), str)]
-    headers = {}
-    if keys:
-        headers["X-Bundle-Idempotency-Key"] = keys[0]
+    bundle_key_source = "|".join(keys) if keys else stable_json(staged)
+    bundle_key = hashlib.sha256(f"bundle|{bundle_key_source}".encode("utf-8")).hexdigest()
+    headers = {
+        "Idempotency-Key": bundle_key,
+        "X-Bundle-Idempotency-Key": bundle_key,
+    }
     url = f"{settings.go_api_base_url}{settings.agent_transaction_commit_path}"
     try:
         async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
-            resp = await client.post(url, json={"staged_writes": staged}, headers=headers)
+            resp = await client.post(
+                url,
+                json={"staged_writes": staged, "bundle_idempotency_key": bundle_key},
+                headers=headers,
+            )
         body: Any = None
         try:
             body = resp.json() if resp.content else {}
@@ -394,6 +429,7 @@ async def commit_node_impl(state: AgentState, *, settings: Settings) -> dict[str
                 {
                     "phase": "commit",
                     "http_status": resp.status_code,
+                    "bundle_idempotency_key": bundle_key,
                     "idempotency_keys": keys[:5],
                     "count": len(staged),
                 }

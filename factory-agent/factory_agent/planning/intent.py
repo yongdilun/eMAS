@@ -25,7 +25,7 @@ _CLAUSE_SPLIT_RE = re.compile(
 )
 _MACHINE_ID_RE = re.compile(r"\b([A-Z]{1,3}-\d{2,})\b")
 _JOB_TOKEN_RE = re.compile(
-    r"\bjob\b\s*(?:id|#)?\s*([A-Z0-9][A-Z0-9-]{0,15}|\d{2,})\b",
+    r"\bjob\b\s*(?:id|#)?\s*((?:[A-Z]{1,6}-)?\d{2,}|[A-Z]{1,6}-[A-Z0-9-]*\d[A-Z0-9-]*)\b",
     re.IGNORECASE,
 )
 _USE_MACHINE_RE = re.compile(

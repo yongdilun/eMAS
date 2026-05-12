@@ -72,6 +72,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	aiOrchestrator := service.NewAICommandOrchestrator()
 	aiCommandProcessor := service.NewAICommandProcessor(aiOrchestrator, aiPredictiveSvc, jobSvc)
 	aiChatSvc := service.NewAIChatService(convRepo, msgRepo, aiCommandProcessor)
+	agentTransactionSvc := service.NewAgentTransactionService(db)
 
 	// Phase 0 chatbot (new foundation, read-only tool execution only).
 	chatPlanner := service.NewKeywordChatPlanner()
@@ -101,6 +102,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	dashboardH := handler.NewDashboardHandler(db, machineRepo, invRepo)
 	predictiveH := handler.NewPredictiveHandler(aiPredictiveSvc)
 	aiH := handler.NewAIHandler(aiCommandProcessor)
+	agentTransactionH := handler.NewAgentTransactionHandler(agentTransactionSvc)
 	settingsH := handler.NewSettingsHandler(settingsRepo)
 	schedulingSettingsH := handler.NewSchedulingSettingsHandler(settingsRepo, schedulingSvc)
 	refH := handler.NewReferenceHandler(db)
@@ -233,6 +235,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 
 		// AI / NLP
 		v1.POST("/ai/command", aiH.ParseCommand)
+		v1.POST("/agent/transaction/bundle-dry-run", agentTransactionH.BundleDryRun)
+		v1.POST("/agent/transaction/commit", agentTransactionH.Commit)
 
 		// AI Chat (persisted conversations)
 		// By default this routes through the new Phase 0 chatbot stack (read-only tools only).

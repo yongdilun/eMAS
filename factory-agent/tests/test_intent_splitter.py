@@ -58,6 +58,13 @@ def test_plural_jobs_does_not_create_job_id_constraint():
     assert not any(c.field == "job_id" for c in flat)
 
 
+def test_job_for_product_does_not_treat_for_as_job_id():
+    intents = split_user_intents("create a job for product P-001 quantity 10")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "job_id" and c.value == "FOR" for c in flat)
+    assert any(c.field == "product_id" and c.value == "P-001" for c in flat)
+
+
 def test_explicit_constraints_preserve_machine_job_product_date_and_operator():
     q = "Prefer machine M-001, schedule job J-101 for product P-200 by 2026-05-15 with operator Alice"
     intents = split_user_intents(q)
