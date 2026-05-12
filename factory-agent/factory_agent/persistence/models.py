@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON, Index
-from sqlalchemy.dialects.postgresql import UUID as PGUUID # if using pg
 from factory_agent.persistence.database import Base
 
 # We'll use String(36) for UUIDs to remain compatible with MySQL/SQLite
@@ -228,4 +227,3 @@ class VectorMemory(Base):
     pii_redacted = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
-

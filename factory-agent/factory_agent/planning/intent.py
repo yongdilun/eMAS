@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import warnings
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 from uuid import uuid4
