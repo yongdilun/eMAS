@@ -253,6 +253,20 @@ _SEMANTIC_EVENT_MAP: dict[str, str] = {
 }
 
 
+def _semantic_payload_for_timeline_event(ev: TimelineEventResponse, *, session_id: str) -> dict[str, Any]:
+    return {
+        "type": _SEMANTIC_EVENT_MAP.get(ev.event_type, str(ev.event_type).upper()),
+        "event_id": ev.event_id,
+        "session_id": session_id,
+        "created_at": ev.created_at.isoformat(),
+        "content": ev.content,
+        "details": ev.details or {},
+        "tool_name": ev.tool_name,
+        "approval_id": ev.approval_id,
+        "status": ev.status,
+    }
+
+
 def build_router(
     *,
     settings: Settings,
@@ -756,9 +770,6 @@ def build_router(
             current_plan = (
                 await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))
             ).scalars().first()
-        graph_native_session = _is_graph_native_session(sess, current_plan)
-        allow_step_projection = (not graph_native_session) or _is_langgraph_plan(current_plan)
-
         plan_rows = (
             await db.execute(
                 select(PlanRow)
@@ -804,11 +815,23 @@ def build_router(
                     return candidate
             return state
 
+        graph_native_session = _is_graph_native_session(sess, current_plan)
+        if not graph_native_session and isinstance(checkpoint_payload, dict):
+            state_payload = checkpoint_payload.get("state")
+            graph_native_session = (
+                isinstance(state_payload, dict)
+                and state_payload.get("kind") == "langgraph_native_checkpoint"
+            )
+        allow_step_projection = (not graph_native_session) or _is_langgraph_plan(current_plan)
+
         checkpoint_state = _checkpoint_state_dict(checkpoint_payload if isinstance(checkpoint_payload, dict) else None)
         checkpoint_draft = checkpoint_state.get("validated_plan") if isinstance(checkpoint_state.get("validated_plan"), dict) else {}
         checkpoint_steps = checkpoint_draft.get("steps") if isinstance(checkpoint_draft.get("steps"), list) else []
         checkpoint_tool_outputs = (
             checkpoint_state.get("tool_outputs") if isinstance(checkpoint_state.get("tool_outputs"), list) else []
+        )
+        checkpoint_completed_actions = (
+            checkpoint_state.get("completed_actions") if isinstance(checkpoint_state.get("completed_actions"), list) else []
         )
 
         pending_approval = next((row for row in reversed(approval_rows) if row.status == "PENDING"), None)
@@ -1131,6 +1154,118 @@ def build_router(
                 )
             )
 
+        def _graph_event_base_time() -> datetime:
+            if user_messages_sorted:
+                return user_messages_sorted[-1].created_at
+            return sess.session_started_at or sess.created_at or sess.updated_at or datetime.utcnow()
+
+        def _graph_event_time(offset: int) -> datetime:
+            return _graph_event_base_time() + timedelta(milliseconds=offset)
+
+        def _graph_tool_event_key(row: dict[str, Any], idx: int) -> str:
+            raw_key = row.get("tool_call_id") or row.get("output_ref") or row.get("idempotency_key") or idx
+            return str(raw_key).replace(":", "_")
+
+        should_project_checkpoint_timeline = bool(
+            graph_native_session
+            and checkpoint_state
+            and not snapshot_step_rows
+        )
+        if should_project_checkpoint_timeline:
+            has_plan_timeline = any(
+                event.event_type == "plan_created"
+                for event in events
+            )
+            if checkpoint_draft and not has_plan_timeline:
+                plan_content = str(checkpoint_draft.get("plan_explanation") or "Execution plan created.")
+                events.append(
+                    _timeline_event(
+                        event_id=f"graph-plan:{session_id}",
+                        event_type="plan_created",
+                        content=plan_content,
+                        created_at=_graph_event_time(10),
+                        status="PLANNING",
+                        turn_id=_turn_id_for_time(_graph_event_time(10)),
+                        step_context={**_session_ctx(), "source": "checkpoint_projection"},
+                        details={
+                            "plan_explanation": plan_content,
+                            "risk_summary": checkpoint_draft.get("risk_summary"),
+                        },
+                    )
+                )
+
+            graph_tool_actions = [
+                action
+                for action in checkpoint_completed_actions
+                if isinstance(action, dict) and action.get("phase") == "tool_execution"
+            ]
+            for idx_action, action in enumerate(graph_tool_actions):
+                tool_name = str(action.get("tool_name") or "")
+                if not tool_name:
+                    continue
+                key = _graph_tool_event_key(action, idx_action)
+                created_at = _graph_event_time(20 + idx_action * 20)
+                events.append(
+                    _timeline_event(
+                        event_id=f"graph-tool-started:{session_id}:{idx_action}:{key}",
+                        event_type="tool_started",
+                        content="Tool started.",
+                        created_at=created_at,
+                        turn_id=_turn_id_for_time(created_at),
+                        step_context={
+                            **_session_ctx(),
+                            "source": "checkpoint_projection",
+                            "tool_name": tool_name,
+                        },
+                        step_id=f"lg-step-{idx_action}",
+                        tool_name=tool_name,
+                        status="IN_PROGRESS",
+                        details={"args": action.get("args") if isinstance(action.get("args"), dict) else {}},
+                    )
+                )
+
+            for idx_out, output in enumerate(checkpoint_tool_outputs):
+                if not isinstance(output, dict):
+                    continue
+                tool_name = str(output.get("tool_name") or output.get("tool") or "")
+                if not tool_name:
+                    continue
+                args = output.get("args") if isinstance(output.get("args"), dict) else {}
+                result = output.get("result") if isinstance(output.get("result"), dict) else None
+                last_error = str(output.get("error") or output.get("last_error") or "") or None
+                status = str(output.get("status") or ("FAILED" if last_error else "DONE"))
+                summary = str(output.get("summary") or output.get("result_summary") or "").strip()
+                content = summary or (
+                    f"{tool_name} failed: {last_error}" if last_error else f"{tool_name} completed."
+                )
+                key = _graph_tool_event_key(output, idx_out)
+                created_at = _graph_event_time(25 + idx_out * 20)
+                events.append(
+                    _timeline_event(
+                        event_id=f"graph-tool-result:{session_id}:{idx_out}:{key}",
+                        event_type="tool_result",
+                        content=content,
+                        created_at=created_at,
+                        turn_id=_turn_id_for_time(created_at),
+                        step_context={
+                            **_session_ctx(),
+                            "source": "checkpoint_projection",
+                            "tool_name": tool_name,
+                        },
+                        step_id=f"lg-step-{idx_out}",
+                        tool_name=tool_name,
+                        status=status,
+                        details=_build_tool_result_details(
+                            tool_name=tool_name,
+                            args=args,
+                            result=result,
+                            last_error=last_error,
+                            content=content,
+                            intent=sess.current_intent,
+                        ),
+                    )
+                )
+
         for approval in approval_rows:
             tool = tools_by_name.get(approval.tool_name)
             missing_required = _missing_required_fields(approval.tool_name, approval.args)
@@ -1396,12 +1531,14 @@ def build_router(
     @router.get("/sessions/{session_id}/events/semantic")
     async def stream_semantic_events(
         session_id: str,
+        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
         db: AsyncSession = Depends(get_db),
     ):
         """
-        Phase 6 semantic SSE adapter:
+        Phase 7 semantic SSE adapter:
         - frontend hydrates from snapshot first
         - this stream emits semantic events derived from snapshot timeline diffs
+        - EventSource reconnects can resume after Last-Event-ID
         """
 
         async def _event_gen():
@@ -1409,6 +1546,13 @@ def build_router(
             poll_s = 1.0
             seen_event_ids: set[str] = set()
             idle_heartbeats = 0
+            if last_event_id:
+                initial_snapshot = await load_session_snapshot(db=db, session_id=session_id)
+                if initial_snapshot is not None:
+                    for ev in initial_snapshot.timeline:
+                        seen_event_ids.add(ev.event_id)
+                        if ev.event_id == last_event_id:
+                            break
             # Initial ready frame so client confirms stream attachment.
             init_payload = {"type": "STREAM_READY", "session_id": session_id}
             yield f"event: semantic\ndata: {json.dumps(init_payload, ensure_ascii=False)}\n\n"
@@ -1423,17 +1567,7 @@ def build_router(
                     if ev.event_id in seen_event_ids:
                         continue
                     seen_event_ids.add(ev.event_id)
-                    payload = {
-                        "type": _SEMANTIC_EVENT_MAP.get(ev.event_type, str(ev.event_type).upper()),
-                        "event_id": ev.event_id,
-                        "session_id": session_id,
-                        "created_at": ev.created_at.isoformat(),
-                        "content": ev.content,
-                        "details": ev.details or {},
-                        "tool_name": ev.tool_name,
-                        "approval_id": ev.approval_id,
-                        "status": ev.status,
-                    }
+                    payload = _semantic_payload_for_timeline_event(ev, session_id=session_id)
                     emitted = True
                     yield f"id: {ev.event_id}\nevent: semantic\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if emitted:

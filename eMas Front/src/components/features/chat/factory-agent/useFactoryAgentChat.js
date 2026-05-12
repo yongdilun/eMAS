@@ -229,11 +229,12 @@ export function useFactoryAgentChat() {
     }
     if (!session?.session_id) return
 
-    const url = factoryAgentStreamUrl(factoryAgentApi.semanticEventsPath(session.session_id))
+    const sessionId = session.session_id
+    const url = factoryAgentStreamUrl(factoryAgentApi.semanticEventsPath(sessionId))
     const es = new EventSource(url)
     semanticSourceRef.current = es
 
-    es.onmessage = async (evt) => {
+    const handleSemanticEvent = async (evt) => {
       try {
         const data = JSON.parse(evt.data || '{}')
         const kind = String(data?.type || '')
@@ -250,22 +251,30 @@ export function useFactoryAgentChat() {
           kind === 'REPLAN_REQUESTED' ||
           kind === 'EXECUTION_STARTED'
         ) {
-          await safelyRefreshSnapshot(session.session_id)
+          await safelyRefreshSnapshot(sessionId)
         }
       } catch {
         // Keep polling fallback active.
       }
     }
 
+    es.addEventListener('semantic', handleSemanticEvent)
+    es.onmessage = handleSemanticEvent
+
+    es.onopen = () => {
+      safelyRefreshSnapshot(sessionId).catch(() => {
+        // Snapshot polling remains the recovery fallback.
+      })
+    }
+
     es.onerror = () => {
-      // Polling loop remains the fallback; just close this stream.
-      if (semanticSourceRef.current) {
-        semanticSourceRef.current.close()
-        semanticSourceRef.current = null
-      }
+      safelyRefreshSnapshot(sessionId).catch(() => {
+        // EventSource will retry; polling also remains active for live sessions.
+      })
     }
 
     return () => {
+      es.removeEventListener('semantic', handleSemanticEvent)
       es.close()
       if (semanticSourceRef.current === es) semanticSourceRef.current = null
     }

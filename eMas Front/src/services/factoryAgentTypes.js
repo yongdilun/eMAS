@@ -3,7 +3,7 @@
  * @property {string} session_id
  * @property {string} user_id
  * @property {string|null} [name]
- * @property {'IDLE'|'PLANNING'|'WAITING_APPROVAL'|'EXECUTING'|'BLOCKED'|'FAILED'|'COMPLETED'} status
+ * @property {'IDLE'|'PLANNING'|'WAITING_APPROVAL'|'WAITING_CONFIRMATION'|'EXECUTING'|'BLOCKED'|'FAILED'|'COMPLETED'} status
  * @property {string|null} [current_intent]
  * @property {string|null} [plan_id]
  * @property {number} [plan_version]
@@ -45,7 +45,7 @@
  * @typedef {Object} ApprovalResponse
  * @property {string} approval_id
  * @property {string} session_id
- * @property {'step'|'plan'} [subject_type]
+ * @property {'step'|'plan'|'graph'} [subject_type]
  * @property {string|null} [plan_id]
  * @property {string|null} [step_id]
  * @property {string} tool_name
