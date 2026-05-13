@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ...config import Settings
@@ -10,7 +11,7 @@ from ...security.guardrails import (
     sanitize_tool_args_against_schema,
     strip_unsupported_optional_args,
 )
-from ...planning.plan_validator import validate_plan
+from ...planning.plan_validator import stable_json, validate_plan
 from ...schemas import PlanBinding, PlanDraft, PlanStepDraft
 from ...observability.telemetry import log_event
 from ..errors import LangGraphPlannerClarification, LangGraphPlannerError
@@ -29,17 +30,110 @@ except Exception:  # pragma: no cover - defensive for older langgraph versions
     interrupt = None  # type: ignore[assignment]
 
 
+def _dedupe_identical_readonly_steps(
+    step_drafts: list[PlanStepDraft],
+    contract_steps: list[dict[str, Any]],
+    tools_by_name: dict[str, Any],
+    *,
+    intent: str,
+) -> tuple[list[PlanStepDraft], list[dict[str, Any]]]:
+    """Collapse duplicate read-only steps that match after clean_args normalization.
+
+    Blueprint-level dedupe may miss pairs that sanitize/strip to identical args.
+    Plan validator uses ``tool_name`` + ``stable_json(args)`` — same key here.
+    Remaps depends_on and bindings onto surviving step indices.
+    """
+    if len(step_drafts) != len(contract_steps):
+        return step_drafts, contract_steps
+
+    redirect: dict[int, int] = {}
+    first_idx_by_key: dict[str, int] = {}
+    for i, step in enumerate(step_drafts):
+        tool = tools_by_name.get(step.tool_name)
+        if not tool or not tool.is_read_only:
+            continue
+        key = f"{step.tool_name}:{stable_json(step.args)}"
+        if key in first_idx_by_key:
+            redirect[i] = first_idx_by_key[key]
+        else:
+            first_idx_by_key[key] = i
+
+    def canon(old: int) -> int:
+        while old in redirect:
+            old = redirect[old]
+        return old
+
+    n = len(step_drafts)
+    kept_old = [i for i in range(n) if canon(i) == i]
+    if len(kept_old) == n:
+        return step_drafts, contract_steps
+
+    old_to_new = {old: j for j, old in enumerate(kept_old)}
+    new_drafts: list[PlanStepDraft] = []
+    new_contracts: list[dict[str, Any]] = []
+    for new_idx, old_idx in enumerate(kept_old):
+        step = step_drafts[old_idx]
+        contract = contract_steps[old_idx]
+        dep_new: list[int] = []
+        for d in step.depends_on:
+            cd = canon(d)
+            if cd in old_to_new:
+                dep_new.append(old_to_new[cd])
+        new_bindings: list[PlanBinding] = []
+        for b in step.bindings:
+            cs = canon(b.from_step)
+            if cs not in old_to_new:
+                continue
+            new_bindings.append(b.model_copy(update={"from_step": old_to_new[cs]}))
+        new_deps = sorted(set(dep_new))
+        if not new_deps and new_idx > 0:
+            new_deps = [new_idx - 1]
+        new_drafts.append(
+            step.model_copy(
+                update={
+                    "step_index": new_idx,
+                    "depends_on": new_deps,
+                    "bindings": new_bindings,
+                    "parallel_group": None,
+                }
+            )
+        )
+        c2 = dict(contract)
+        c2["step_index"] = new_idx
+        c2["bindings"] = [binding.model_dump() for binding in new_bindings]
+        new_contracts.append(c2)
+
+    log_event(
+        "langgraph_planner_readonly_step_dedupe",
+        level="INFO",
+        intent=intent,
+        removed_steps=n - len(kept_old),
+        step_count_before=n,
+        step_count_after=len(kept_old),
+    )
+    return new_drafts, new_contracts
+
+
+def _blueprint_has_duplicate_tool_args(plan_blueprint: Any) -> bool:
+    keys: set[str] = set()
+    for step in plan_blueprint.steps or []:
+        name = getattr(step, "tool_name", None)
+        if not isinstance(name, str):
+            continue
+        raw_args = getattr(step, "args", None)
+        args_d: dict[str, Any] = dict(raw_args) if isinstance(raw_args, dict) else {}
+        key = f"{name}::{json.dumps(args_d, sort_keys=True, default=str)}"
+        if key in keys:
+            return True
+        keys.add(key)
+    return False
+
+
 def make_validate_node(settings: Settings):
     def validate_node(state: AgentState) -> AgentState:
         plan_blueprint = state.get("plan_blueprint")
         if plan_blueprint is None:
             raise LangGraphPlannerError("LangGraph planner did not produce a plan.")
-        if plan_blueprint.clarification:
-            return {
-                "clarification": plan_blueprint.clarification,
-                "validated_plan": None,
-                "status": "awaiting_clarification",
-            }
 
         tools_by_name = {tool.name: tool for tool in state.get("scoped_tools") or []}
         repaired = _deterministic_plan_repair(
@@ -47,21 +141,35 @@ def make_validate_node(settings: Settings):
             state.get("scoped_tools") or [],
             context=state.get("context") or {},
         )
-        repaired_tool_names = {step.tool_name for step in repaired.steps} if repaired is not None else set()
-        blueprint_tool_names = {step.tool_name for step in plan_blueprint.steps or []}
-        incomplete_repairable_plan = bool(repaired_tool_names and not repaired_tool_names <= blueprint_tool_names)
-        if not plan_blueprint.steps or any(step.tool_name not in tools_by_name for step in plan_blueprint.steps) or incomplete_repairable_plan:
-            if repaired is not None:
+        if repaired is not None:
+            repaired_tool_names = {step.tool_name for step in repaired.steps}
+            blueprint_tool_names = {step.tool_name for step in plan_blueprint.steps or []}
+            incomplete_repairable_plan = bool(repaired_tool_names and not repaired_tool_names <= blueprint_tool_names)
+            if (
+                plan_blueprint.clarification
+                or not plan_blueprint.steps
+                or any(step.tool_name not in tools_by_name for step in plan_blueprint.steps or [])
+                or incomplete_repairable_plan
+                or _blueprint_has_duplicate_tool_args(plan_blueprint)
+            ):
                 log_event(
                     "langgraph_planner_deterministic_repair",
                     level="WARNING",
                     intent=user_query_text(state),
-                    reason="empty_unsupported_or_incomplete_plan",
+                    reason="clarification_or_empty_unsupported_or_incomplete_plan",
+                    had_clarification=bool(plan_blueprint.clarification),
                     raw_step_count=len(plan_blueprint.steps or []),
                     raw_tool_names=[step.tool_name for step in plan_blueprint.steps or []],
                     tool_names=[step.tool_name for step in repaired.steps],
                 )
                 plan_blueprint = repaired
+
+        if plan_blueprint.clarification:
+            return {
+                "clarification": plan_blueprint.clarification,
+                "validated_plan": None,
+                "status": "awaiting_clarification",
+            }
         context = state.get("context") or {}
         intent_memory = context.get("intent_memory") if isinstance(context.get("intent_memory"), dict) else {}
         step_drafts: list[PlanStepDraft] = []
@@ -185,6 +293,13 @@ def make_validate_node(settings: Settings):
                 scoped_tool_count=len(tools_by_name),
             )
             raise LangGraphPlannerClarification("I could not map that request to a safe factory tool plan.")
+
+        step_drafts, contract_steps = _dedupe_identical_readonly_steps(
+            step_drafts,
+            contract_steps,
+            tools_by_name,
+            intent=user_query_text(state),
+        )
 
         step_drafts, contract_steps, inserted_preflights = _insert_delete_preflights(
             steps=step_drafts,

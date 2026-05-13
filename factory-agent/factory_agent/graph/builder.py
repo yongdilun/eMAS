@@ -87,6 +87,7 @@ def compile_planner_graph(settings: Settings):
         {
             "fatal_end": "fatal_end",
             "continue_planner": "planner",
+            "synthesize_plan": "synthesize_plan",
         },
     )
     graph.add_edge("synthesize_plan", "final_validator")

@@ -50,10 +50,10 @@ From repo root:
 ```
 This updates both:
 - the DB-backed tool registry used by the agent at runtime
-- `factory-agent/tools.md`
+- `factory-agent/factory_agent/tools.md` (generated; do not edit by hand)
 
 Important:
-- `factory-agent/tools.md` alone is not the source of truth at runtime.
+- `tools.md` alone is not the source of truth at runtime.
 - The planner/executor loads tools from the database-backed registry first.
 - A correct-looking `tools.md` does not guarantee the live registry schema is correct.
 
@@ -102,11 +102,11 @@ You should usually see updates in:
 - `emas/docs/swagger.yaml`
 - `emas/docs/swagger.json`
 - `emas/docs/docs.go`
-- `factory-agent/tools.md`
+- `factory-agent/factory_agent/tools.md`
 - `factory-agent/factory_agent/generated/id_patterns.json`
 - `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`
 
-Then inspect the changed tool entry in `factory-agent/tools.md` and confirm:
+Then inspect the changed tool entry in `factory-agent/factory_agent/tools.md` and confirm:
 - enum values are present when expected
 - `x-query-params` includes query filters that should be planner-visible
 - `x-param-sources` marks each field correctly as `query`, `path`, or `body`
@@ -118,7 +118,7 @@ For machine status filters, for example, `get__machines` should keep:
 
 Suggested quick checks:
 ```powershell
-Select-String -Path .\factory-agent\tools.md -Pattern '## get__machines','"status"','"enum"','"x-query-params"','"x-param-sources"' -Context 0,20
+Select-String -Path .\factory-agent\factory_agent\tools.md -Pattern '## get__machines','"status"','"enum"','"x-query-params"','"x-param-sources"' -Context 0,20
 ```
 
 If the generated markdown looks right but chat/planning still behaves wrong, verify the live registry was regenerated from the same Swagger source. The runtime app can auto-repair the DB registry from `emas/docs/swagger.json`, so stale local Swagger can repopulate bad schemas later.
@@ -153,5 +153,5 @@ curl http://localhost:8080/health
 - If planner behavior changed for phrases like `find all running machine`, treat that as a schema regression first, not just a prompt/planner issue.
 - When debugging chat/tool-selection drift, compare all three layers:
   1. Go Swagger output in `emas/docs/swagger.json`
-  2. generated `factory-agent/tools.md`
+  2. generated `factory-agent/factory_agent/tools.md`
   3. the live DB-backed registry loaded by the agent

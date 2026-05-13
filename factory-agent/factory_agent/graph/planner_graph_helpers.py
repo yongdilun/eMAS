@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -26,7 +26,7 @@ from ..planning.tool_intent_profile import (
 from .state import AgentPlanOutput, AgentPlanStep, AgentState
 
 
-_TOKEN_ID_RE = re.compile(r"\b([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b")
+_TOKEN_ID_RE = re.compile(r"\b([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b", re.IGNORECASE)
 _COMPOUND_CONNECTOR_RE = re.compile(r"\b(?:and|and then|then|next|after that|afterwards|with)\b", re.IGNORECASE)
 _ID_PATTERN_CATALOG_PATH = Path(__file__).resolve().parents[1] / "generated" / "id_patterns.json"
 _ID_PREFIX_CACHE: dict[str, list[str]] | None = None
@@ -74,6 +74,9 @@ def _build_agent_prompt(*, intent: str, context: dict[str, Any], tool_cards: lis
         "For DELETE by id, include a GET of the same endpoint immediately before the DELETE as a preflight target check.\n"
         "For every arg, include evidence[field] with the exact user text span or context field that supports it.\n"
         "If a required read argument is missing or a filter is ambiguous, ask for clarification and return no steps.\n"
+        "Exception: when the user text (or session context) already contains an explicit factory id token "
+        "(e.g. JOB-…, MAT-…, AIPROP-…, MACH-, JS-, STP-, product/step/material-style hyphenated ids), "
+        "you MUST use it as the corresponding path parameter (usually args.id) — never ask which job/record when that token is present.\n"
         "Use depends_on and bindings when a later step needs an earlier result.\n"
         "depends_on is a list of integer indices into this same steps array (zero-based, must be smaller than the current step's index). "
         "Example: the second step depending on the first step is depends_on:[0]. "
@@ -104,7 +107,7 @@ def _extract_prefixed_id(intent: str, prefix: str) -> str | None:
     for match in _TOKEN_ID_RE.finditer(intent or ""):
         value = match.group(1)
         if value.upper().startswith(prefix):
-            return value
+            return value.upper()
     return None
 
 
@@ -527,6 +530,178 @@ def _deterministic_plan_repair(
     lowered = (intent or "").lower()
     tools = {tool.name: tool for tool in scoped_tools}
 
+    # Narrow catalog reads (avoid LLM clarification on optional sort/filter).
+    if (
+        re.search(r"\b(?:show|list|get|view)\s+products?\b", lowered)
+        and "product type" not in lowered
+        and "product types" not in lowered
+        and "get__products" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation="List catalog products.",
+            risk_summary="Read-only listing with no mandatory filters.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__products",
+                    args={},
+                    evidence={},
+                    confidence=0.95,
+                )
+            ],
+        )
+
+    if (
+        "machine utilization" in lowered
+        and "report" in lowered
+        and "get__reports_machine-utilization" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation="Fetch the machine utilization report for the requested window.",
+            risk_summary="Read-only report retrieval.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__reports_machine-utilization",
+                    args={},
+                    evidence={},
+                    confidence=0.93,
+                )
+            ],
+        )
+
+    job_lookup_id = _extract_entity_id(intent, "job")
+    if (
+        job_lookup_id
+        and re.search(r"\b(?:explain|explanation)\b", lowered)
+        and "schedule" in lowered
+        and "get__ai_scheduling_jobs_{id}_explanation" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Explain scheduling for job `{job_lookup_id}`.",
+            risk_summary="Read-only scheduling explanation.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__ai_scheduling_jobs_{id}_explanation",
+                    args={"id": job_lookup_id},
+                    evidence={"id": job_lookup_id},
+                    confidence=0.93,
+                )
+            ],
+        )
+
+    if (
+        job_lookup_id
+        and re.search(r"\bassist\b", lowered)
+        and "get__ai_scheduling_jobs_{id}_assist" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Run scheduling assist for job `{job_lookup_id}`.",
+            risk_summary="Read-only scheduling assistance.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__ai_scheduling_jobs_{id}_assist",
+                    args={"id": job_lookup_id},
+                    evidence={"id": job_lookup_id},
+                    confidence=0.93,
+                )
+            ],
+        )
+
+    if (
+        job_lookup_id
+        and ("delay risk" in lowered or ("delay" in lowered and "risk" in lowered))
+        and "get__ai_scheduling_jobs_{id}_delay-risk" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Fetch delay-risk analysis for job `{job_lookup_id}`.",
+            risk_summary="Read-only scheduling diagnostic.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__ai_scheduling_jobs_{id}_delay-risk",
+                    args={"id": job_lookup_id},
+                    evidence={"id": job_lookup_id},
+                    confidence=0.93,
+                )
+            ],
+        )
+
+    if (
+        job_lookup_id
+        and "shortage" in lowered
+        and "get__ai_scheduling_jobs_{id}_shortage-analysis" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Run shortage analysis for job `{job_lookup_id}`.",
+            risk_summary="Read-only scheduling diagnostic.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__ai_scheduling_jobs_{id}_shortage-analysis",
+                    args={"id": job_lookup_id},
+                    evidence={"id": job_lookup_id},
+                    confidence=0.93,
+                )
+            ],
+        )
+
+    # Require the literal word "job" after show/get/view — do not use `\s+job\b` alone or it
+    # matches the `job` prefix inside lowercased IDs like `JOB-SEED-001` → `job-seed-001`.
+    if (
+        job_lookup_id
+        and re.search(r"\b(?:show|get|view)\s+job\s+", lowered)
+        and "get__jobs_{id}" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Look up job `{job_lookup_id}` (response may be not-found).",
+            risk_summary="Read-only lookup.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__jobs_{id}",
+                    args={"id": job_lookup_id},
+                    evidence={"id": job_lookup_id},
+                    confidence=0.95,
+                )
+            ],
+        )
+
+    machine_reroute_id = _extract_entity_id(intent, "machine")
+    if (
+        machine_reroute_id
+        and "reroute" in lowered
+        and "get__machines_reroute-recommendations" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Fetch reroute recommendations for machine `{machine_reroute_id}`.",
+            risk_summary="Read-only diagnostics.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="get__machines_reroute-recommendations",
+                    args={"machine_id": machine_reroute_id},
+                    evidence={"machine_id": machine_reroute_id},
+                    confidence=0.92,
+                )
+            ],
+        )
+
+    machine_update_id = _extract_entity_id(intent, "machine")
+    if (
+        machine_update_id
+        and "maintenance" in lowered
+        and re.search(r"\b(?:set|put|update)\b", lowered)
+        and "machine" in lowered
+        and "put__machines_{id}" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Set machine `{machine_update_id}` status to maintenance (approval-gated).",
+            risk_summary="Machine status update requires approval before commit.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="put__machines_{id}",
+                    args={"id": machine_update_id, "status": "maintenance"},
+                    evidence={"id": machine_update_id, "status": "maintenance"},
+                    confidence=0.9,
+                )
+            ],
+        )
+
     inferred = _infer_enum_status_update(intent, scoped_tools)
     if inferred is not None:
         return inferred
@@ -592,6 +767,29 @@ def _deterministic_plan_repair(
                     args={"id": "M-NOT-REAL"},
                     evidence={"id": "missing machine diagnostic"},
                     confidence=0.85,
+                )
+            ],
+        )
+
+    delete_job_id = _extract_entity_id(intent, "job")
+    if not delete_job_id and re.search(r"\b(?:delete|remove)\b", lowered) and "job" in lowered:
+        matches = list(_TOKEN_ID_RE.finditer(intent or ""))
+        if matches:
+            delete_job_id = matches[-1].group(1).upper()
+    if (
+        delete_job_id
+        and re.search(r"\b(?:delete|remove)\b", lowered)
+        and "delete__jobs_{id}" in tools
+    ):
+        return AgentPlanOutput(
+            plan_explanation=f"Delete job `{delete_job_id}` (approval-gated).",
+            risk_summary="Destructive job deletion requires approval before execution.",
+            steps=[
+                AgentPlanStep(
+                    tool_name="delete__jobs_{id}",
+                    args={"id": delete_job_id},
+                    evidence={"id": delete_job_id},
+                    confidence=0.88,
                 )
             ],
         )
@@ -1075,7 +1273,4 @@ def _insert_delete_preflights(
         rebuilt_contracts.append(contract)
 
     return rebuilt_steps, rebuilt_contracts, inserted
-
-
-
 

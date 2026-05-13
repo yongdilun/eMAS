@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -15,7 +15,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from factory_agent.config import Settings
 from factory_agent.planning.plan_validator import validate_plan
-from factory_agent.planner import PlannerBackendError, PlannerClarificationError, PlannerConfirmationRequired
+from factory_agent.planner import (
+    PlannerBackendError,
+    PlannerClarificationError,
+    PlannerConfirmationRequired,
+    PlannerPlanRejected,
+)
 from factory_agent.schemas import ToolInfo
 from factory_agent.services.planner_service import PlannerService
 from factory_agent.registry.tool_registry import ToolRegistry
@@ -189,7 +194,7 @@ async def _evaluate_langgraph_planner(
                 scoped_tools=scoped_tools,
                 context={},
             )
-        except (PlannerClarificationError, PlannerConfirmationRequired):
+        except (PlannerClarificationError, PlannerConfirmationRequired, PlannerPlanRejected):
             metrics.clarification_count += 1
             metrics.infeasible_count += 1
             continue

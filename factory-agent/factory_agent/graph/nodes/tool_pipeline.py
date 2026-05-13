@@ -15,10 +15,84 @@ from ...llm.models import build_planner_chat_model
 from ...schemas import ToolInfo
 from ..http_tool_client import compute_planner_write_idempotency_key, execute_tool_http, stable_json
 from ..planner_graph_helpers import _message_content_text
+from .planner_loop import planner_tool_output_tail
 from ..state import AgentState, user_query_text
 
 
 _REF_TOKEN_RE = re.compile(r"^\$ref:[A-Za-z0-9_\-]+$")
+
+
+def _scalar_from_tool_result_body(body: Any) -> str | None:
+    """Pick a single id-like string from a typical Go JSON tool response."""
+    if body is None:
+        return None
+    if isinstance(body, str) and body.strip():
+        return body.strip()
+    if not isinstance(body, dict):
+        return None
+    for key in (
+        "job_id",
+        "id",
+        "product_id",
+        "machine_id",
+        "material_id",
+        "proposal_id",
+        "slot_id",
+        "step_id",
+    ):
+        v = body.get(key)
+        if v is not None and isinstance(v, (str, int, float)):
+            s = str(v).strip()
+            if s:
+                return s
+    data = body.get("data")
+    if isinstance(data, dict):
+        inner = _scalar_from_tool_result_body(data)
+        if inner:
+            return inner
+    if isinstance(data, list) and data:
+        first = data[0]
+        if isinstance(first, dict):
+            inner = _scalar_from_tool_result_body(first)
+            if inner:
+                return inner
+    return None
+
+
+def _scalar_from_tool_output_row(row: dict[str, Any]) -> str | None:
+    res = row.get("result")
+    if isinstance(res, dict):
+        return _scalar_from_tool_result_body(res)
+    return None
+
+
+def _deep_resolve_ref_args(obj: Any, registry: dict[str, Any]) -> Any:
+    if isinstance(obj, str) and obj.startswith("$ref:") and obj in registry:
+        return registry[obj]
+    if isinstance(obj, dict):
+        return {k: _deep_resolve_ref_args(v, registry) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_resolve_ref_args(v, registry) for v in obj]
+    return obj
+
+
+def _batch_contains_ref_placeholders(raw_calls: list[Any]) -> bool:
+    found: set[str] = set()
+
+    def walk(o: Any) -> None:
+        if isinstance(o, str) and _REF_TOKEN_RE.match(o):
+            found.add(o)
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    for tc in raw_calls:
+        if isinstance(tc, dict):
+            walk(tc.get("args"))
+    return bool(found)
 
 
 def _collect_ref_tokens(obj: Any, out: set[str]) -> None:
@@ -61,6 +135,17 @@ def _deterministic_useful(
         return False, "infrastructure_error"
     if http_status == 404:
         return False, "not_found"
+    # Successful read-only GETs must win before empty-body checks: several diagnostic/report
+    # endpoints return `{}` or `{success:true}` with no list payload; treating that as
+    # "empty" caused relevance_filter to loop planner→tool until LangGraph recursion_limit.
+    if (
+        tool
+        and tool.method == "GET"
+        and tool.is_read_only
+        and http_status is not None
+        and 200 <= http_status < 300
+    ):
+        return True, "direct_lookup_pass_through"
     if body == [] or body == {}:
         return False, "empty_body"
     if isinstance(body, dict):
@@ -70,8 +155,6 @@ def _deterministic_useful(
             v = body.get(key)
             if v == []:
                 return False, "empty_list"
-    if tool and tool.method == "GET" and tool.is_read_only:
-        return True, "direct_lookup_pass_through"
     n = _bulk_item_count(body)
     if n > 100:
         return True, f"bulk_data_ranked_cap(n={n})"
@@ -122,12 +205,23 @@ def make_tool_execution_node(settings: Settings):
         fatal: str | None = None
         new_wg = wg
 
+        tail = planner_tool_output_tail(state)
+        tail_len = len(tail)
+        ref_registry: dict[str, Any] = {}
+        for j, row in enumerate(tail):
+            if isinstance(row, dict):
+                slot_val = _scalar_from_tool_output_row(row)
+                if slot_val is not None:
+                    ref_registry[f"$ref:{j}"] = slot_val
+        batch_read_idx = 0
+
         async def run_one(tc: dict[str, Any]) -> None:
-            nonlocal fatal, new_wg
+            nonlocal fatal, new_wg, batch_read_idx
             if not isinstance(tc, dict):
                 return
             name = tc.get("tool_name")
-            args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+            raw_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+            args = _deep_resolve_ref_args(dict(raw_args), ref_registry)
             tcid = str(tc.get("tool_call_id") or "")
             tool = tools_by_name.get(name) if isinstance(name, str) else None
 
@@ -244,6 +338,11 @@ def make_tool_execution_node(settings: Settings):
             key = f"read:{name}:{tcid}"
             ri[key] = {"summary": f"status={env.get('http_status')}", "tool_call_id": tcid}
 
+            slot_val = _scalar_from_tool_result_body(body)
+            if slot_val is not None:
+                ref_registry[f"$ref:{tail_len + batch_read_idx}"] = slot_val
+            batch_read_idx += 1
+
         all_read = True
         for tc in raw_calls:
             if not isinstance(tc, dict):
@@ -254,7 +353,13 @@ def make_tool_execution_node(settings: Settings):
                 all_read = False
                 break
 
-        if pending.get("kind") == "parallel_read_tools" and settings.enable_parallel_execution and all_read:
+        refs_in_batch = _batch_contains_ref_placeholders(raw_calls)
+        if (
+            pending.get("kind") == "parallel_read_tools"
+            and settings.enable_parallel_execution
+            and all_read
+            and not refs_in_batch
+        ):
             await asyncio.gather(*[run_one(tc) for tc in raw_calls if isinstance(tc, dict)])
         else:
             for tc in raw_calls:
@@ -459,6 +564,12 @@ def route_after_tool(state: AgentState) -> str:
 def route_after_relevance(state: AgentState) -> str:
     if state.get("fatal_system_error"):
         return "fatal_end"
+    # Writes are staged without HTTP rows in `pending_relevance_batch`, so the relevance
+    # node sees an empty batch. Routing back to the planner would loop until LangGraph
+    # recursion_limit; go straight to synthesis when we already have staged work.
+    staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+    if staged:
+        return "synthesize_plan"
     return "continue_planner"
 
 

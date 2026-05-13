@@ -34,6 +34,10 @@ _USE_MACHINE_RE = re.compile(
 )
 _MACHINE_NAME_RE = re.compile(r"\bmachine\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
 _PRODUCT_RE = re.compile(r"\bproduct\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
+_MATERIAL_REF_RE = re.compile(
+    r"\bmaterial\s+(?:id\s+)?([A-Z0-9][A-Z0-9-]*)\b",
+    re.IGNORECASE,
+)
 _DATE_WITH_PREPOSITION_RE = re.compile(
     r"\b(?P<op>on|for|by|before|after|from|until|date)\s+"
     r"(?P<value>\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
@@ -68,13 +72,19 @@ _SCHEDULING_HINT = re.compile(
     r"\b(?:schedule|scheduling|assign|book|slot|calendar|dispatch)\b",
     re.IGNORECASE,
 )
-_INVENTORY_HINT = re.compile(r"\b(?:inventory|stock|parts?|shortage|warehouse|sku)\b", re.IGNORECASE)
+_INVENTORY_HINT = re.compile(
+    r"\b(?:inventory|stock|parts?|shortage|warehouse|sku|material)\b",
+    re.IGNORECASE,
+)
 _MACHINE_HINT = re.compile(
     r"\b(?:machine|machines|cnc|equipment|line|station|unit|oee|availability|available)\b",
     re.IGNORECASE,
 )
 _JOB_HINT = re.compile(r"\b(?:job|work\s*order|wo\b)\b", re.IGNORECASE)
 _REPORT_HINT = re.compile(r"\b(?:report|export|csv|pdf|dashboard)\b", re.IGNORECASE)
+# M-prefixed compound machine ids (e.g. M-LTH-02): used to suppress inner XXX-NN matches from _MACHINE_ID_RE.
+_COMPOUND_M_MACHINE_RE = re.compile(r"\bM-[A-Z]+-\d{2,}\b", re.IGNORECASE)
+_JOB_CREATE_RE = re.compile(r"\b(?:create|new|add|open)\s+job\s+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -117,11 +127,50 @@ def _date_operator(token: str) -> Literal["=", "before", "after"]:
     return "="
 
 
+def _compound_m_machine_spans(clause: str) -> list[tuple[int, int]]:
+    return [(m.start(), m.end()) for m in _COMPOUND_M_MACHINE_RE.finditer(clause)]
+
+
+def _machine_id_is_inner_fragment_of_compound(
+    _clause: str, m: re.Match[str], compound_spans: list[tuple[int, int]]
+) -> bool:
+    start, end = m.start(), m.end()
+    for fs, fe in compound_spans:
+        if fs < start and end <= fe and (start, end) != (fs, fe):
+            return True
+    return False
+
+
+def _token_looks_like_machine_code(token: str) -> bool:
+    """M1 hybrid: allow M-… codes without digits (e.g. M-CNC); otherwise require a digit."""
+    t = token.strip()
+    if not t:
+        return False
+    if re.match(r"^M-", t, re.IGNORECASE):
+        return True
+    return bool(re.search(r"\d", t))
+
+
 def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
     out: list[ExplicitConstraint] = []
+    compound_spans = _compound_m_machine_spans(clause)
+    for m in _MATERIAL_REF_RE.finditer(clause):
+        cap = m.group(1).upper()
+        out.append(
+            ExplicitConstraint(
+                field="material_id",
+                operator="=",
+                value=cap,
+                source_text=m.group(0),
+                strength=_constraint_strength(clause, m),
+                mutable=False,
+            )
+        )
     for m in _MACHINE_ID_RE.finditer(clause):
-        local_prefix = clause[max(0, m.start() - 16) : m.start()].lower()
-        if re.search(r"\b(?:job|product|operator|op)\s*(?:id|#)?\s*$", local_prefix):
+        local_prefix = clause[max(0, m.start() - 48) : m.start()].lower()
+        if re.search(r"\b(?:job|product|operator|op|material)\s*(?:id|#)?\s*$", local_prefix):
+            continue
+        if _machine_id_is_inner_fragment_of_compound(clause, m, compound_spans):
             continue
         out.append(
             ExplicitConstraint(
@@ -145,34 +194,44 @@ def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
             )
         )
     for m in _MACHINE_NAME_RE.finditer(clause):
-        if not re.match(r"^[A-Z]-?\d", m.group(1), re.I):
-            out.append(
-                ExplicitConstraint(
-                    field="machine_ref",
-                    operator="=",
-                    value=m.group(1),
-                    source_text=m.group(0),
-                    strength=_constraint_strength(clause, m),
-                    mutable=False,
-                )
+        token = m.group(1)
+        if not _token_looks_like_machine_code(token):
+            continue
+        out.append(
+            ExplicitConstraint(
+                field="machine_ref",
+                operator="=",
+                value=token,
+                source_text=m.group(0),
+                strength=_constraint_strength(clause, m),
+                mutable=False,
             )
+        )
     for m in _JOB_TOKEN_RE.finditer(clause):
+        raw_val = str(m.group(1)).upper() if m.group(1) else m.group(0)
+        if re.match(r"^P-\d+$", raw_val) and _JOB_CREATE_RE.search(clause):
+            left = clause[max(0, m.start() - 48) : m.start()].lower()
+            if "product" not in left:
+                continue
         out.append(
             ExplicitConstraint(
                 field="job_id",
                 operator="=",
-                value=str(m.group(1)).upper() if m.group(1) else m.group(0),
+                value=raw_val,
                 source_text=m.group(0),
                 strength=_constraint_strength(clause, m),
                 mutable=False,
             )
         )
     for m in _PRODUCT_RE.finditer(clause):
+        cap = m.group(1).upper()
+        if cap in {"TYPE", "TYPES"} and re.search(r"\bproduct\s+types?\b", clause, re.IGNORECASE):
+            continue
         out.append(
             ExplicitConstraint(
                 field="product_id",
                 operator="=",
-                value=m.group(1).upper(),
+                value=cap,
                 source_text=m.group(0),
                 strength=_constraint_strength(clause, m),
                 mutable=False,
@@ -211,6 +270,12 @@ def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
                 mutable=False,
             )
         )
+    machine_ids = {str(c.value).strip().upper() for c in out if c.field == "machine_id"}
+    out = [
+        c
+        for c in out
+        if not (c.field == "machine_ref" and str(c.value).strip().upper() in machine_ids)
+    ]
     # De-dupe identical field+value
     seen: set[tuple[str, str]] = set()
     deduped: list[ExplicitConstraint] = []

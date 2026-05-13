@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -19,7 +19,8 @@ class PlanValidationResult:
     plan_hash: str
 
 
-def _stable_json(obj: Any) -> str:
+def stable_json(obj: Any) -> str:
+    """Canonical JSON for plan hashing and duplicate-step keys (sorted keys, compact)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 def _strip_required(schema: Any) -> Any:
@@ -42,7 +43,7 @@ def _strip_required(schema: Any) -> Any:
 
 
 def compute_plan_hash(plan: PlanDraft) -> str:
-    payload = _stable_json(plan.model_dump())
+    payload = stable_json(plan.model_dump())
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -252,7 +253,7 @@ def validate_plan(
     # Rule 5 (10.2): No duplicate (tool_name + args) pairs
     seen: set[str] = set()
     for step in plan.steps:
-        key = f"{step.tool_name}:{_stable_json(step.args)}"
+        key = f"{step.tool_name}:{stable_json(step.args)}"
         if key in seen:
             errors.append(f"Duplicate step detected: {step.tool_name} with same args")
         seen.add(key)

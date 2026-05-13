@@ -2,8 +2,8 @@ export const getReadableAction = (toolName) => {
   const raw = String(toolName || '').trim()
   const lower = raw.toLowerCase()
   if (!lower) return 'Processing'
-  if (lower.startsWith('get')) return 'Inspecting'
-  if (lower.startsWith('list')) return 'Inspecting'
+  if (lower.startsWith('get')) return 'Finding'
+  if (lower.startsWith('list')) return 'Finding'
   if (lower.startsWith('post') || lower.startsWith('create')) return 'Creating'
   if (lower.startsWith('put') || lower.startsWith('patch') || lower.startsWith('update')) return 'Updating'
   if (lower.startsWith('delete') || lower.startsWith('remove')) return 'Deleting'
@@ -11,6 +11,181 @@ export const getReadableAction = (toolName) => {
 }
 
 const safeStr = (v) => (v == null ? '' : String(v))
+
+function isGenericProgressText(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return (
+    !normalized ||
+    normalized === 'tool started.' ||
+    normalized === 'step started.' ||
+    normalized === 'execution started.' ||
+    normalized === 'execution completed successfully.' ||
+    /^[-\w{}]+ completed\.$/.test(normalized)
+  )
+}
+
+function looksLikeRawJsonText(value) {
+  const text = String(value || '').trim()
+  if (!text || !['{', '['].includes(text[0])) return false
+  try {
+    JSON.parse(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isPlanLikeAnswer(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return false
+  return (
+    normalized.includes('executing the following plan') ||
+    normalized.includes('risk summary:') ||
+    normalized.includes('before executing') ||
+    /^operators can\b/.test(normalized)
+  )
+}
+
+function readableToolTarget(toolName) {
+  const parts = String(toolName || '')
+    .replace(/\{.*?\}/g, '')
+    .split('__')
+    .pop()
+    .replaceAll('_', ' ')
+    .replaceAll('-', ' ')
+    .trim()
+  if (!parts) return 'records'
+  return parts
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value || ''))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function toolEntityLabel(toolName, plural) {
+  let cleaned = String(toolName || 'records').replace(/__+/g, '_')
+  cleaned = cleaned.includes('_') ? cleaned.split('_').slice(1).join('_') : cleaned
+  cleaned = cleaned
+    .replace(/\{id\}/g, '')
+    .replace(/_id\b/g, '')
+    .replace(/^[_\-\s/{}]+|[_\-\s/{}]+$/g, '')
+  let noun = (cleaned || 'record').split('_')[0].replaceAll('-', ' ')
+  if (plural && !noun.endsWith('s')) noun = `${noun}s`
+  if (!plural && noun.endsWith('s')) noun = noun.slice(0, -1)
+  return noun || (plural ? 'records' : 'record')
+}
+
+function resultRows(result) {
+  if (!result || typeof result !== 'object') return []
+  for (const key of ['data', 'items']) {
+    if (Array.isArray(result[key])) {
+      return result[key].filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+    }
+  }
+  return []
+}
+
+function resultHasEmptyRows(result) {
+  if (!result || typeof result !== 'object') return false
+  return ['data', 'items'].some((key) => Array.isArray(result[key]) && result[key].length === 0)
+}
+
+function idValues(rows, limit = 6) {
+  const ids = []
+  for (const row of rows) {
+    for (const [key, value] of Object.entries(row || {})) {
+      const normalized = String(key || '').toLowerCase().replaceAll('-', '_')
+      if ((normalized === 'id' || normalized.endsWith('_id')) && value != null && value !== '') {
+        ids.push(String(value))
+        break
+      }
+    }
+    if (ids.length >= limit) break
+  }
+  return ids
+}
+
+function filterPhrase(args, noun) {
+  const payload = args && typeof args === 'object' ? args : {}
+  const parts = []
+  if (payload.priority != null && payload.priority !== '') parts.push(`${payload.priority}-priority`)
+  if (payload.status != null && payload.status !== '') parts.push(String(payload.status))
+  parts.push(noun)
+  return parts.join(' ')
+}
+
+function toolResultObject(tool) {
+  const detailResult = tool?.details?.result
+  if (detailResult && typeof detailResult === 'object' && !Array.isArray(detailResult)) return detailResult
+  return parseJsonObject(tool?.content)
+}
+
+function summarizeToolResult(tool) {
+  if (!tool) return null
+  const result = toolResultObject(tool)
+  const rows = resultRows(result)
+  const presentationRows = Array.isArray(tool?.details?.presentation?.table?.rows)
+    ? tool.details.presentation.table.rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+    : []
+  const displayRows = rows.length ? rows : presentationRows
+  const args = tool?.details?.args
+
+  if (displayRows.length) {
+    const noun = toolEntityLabel(tool.tool_name, displayRows.length !== 1)
+    const descriptor = filterPhrase(args, noun)
+    const ids = idValues(displayRows)
+    if (ids.length) {
+      const suffix = displayRows.length > ids.length ? `, +${displayRows.length - ids.length} more` : ''
+      return `Found ${displayRows.length} ${descriptor}: ${ids.join(', ')}${suffix}. Details are shown in the table below.`
+    }
+    return `Found ${displayRows.length} ${descriptor}. Details are shown in the table below.`
+  }
+
+  if (resultHasEmptyRows(result)) {
+    return `No ${filterPhrase(args, toolEntityLabel(tool.tool_name, true))} matched.`
+  }
+
+  if (result?.not_found) {
+    const text = result._summary || result.detail || 'Requested resource was not found.'
+    return String(text).trim() || null
+  }
+
+  for (const key of ['_summary', 'summary', 'message', 'detail', 'status']) {
+    const value = result?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+
+  const content = String(tool?.content || '').trim()
+  if (content && !isGenericProgressText(content) && !looksLikeRawJsonText(content) && !isPlanLikeAnswer(content)) {
+    return content
+  }
+  return null
+}
+
+function latestToolSummary(turn) {
+  const tools = Array.isArray(turn?.tools) ? turn.tools : []
+  for (let i = tools.length - 1; i >= 0; i -= 1) {
+    const summary = summarizeToolResult(tools[i])
+    if (summary) return summary
+  }
+  return null
+}
+
+function nonGenericToolLines(turn) {
+  const tools = Array.isArray(turn?.tools) ? turn.tools : []
+  return tools
+    .map((t) => (t?.content ? String(t.content).trim() : ''))
+    .filter(Boolean)
+    .filter((line, idx, lines) => lines.indexOf(line) === idx)
+    .filter((line) => !isGenericProgressText(line))
+    .filter((line) => !looksLikeRawJsonText(line))
+    .filter((line) => !isPlanLikeAnswer(line))
+}
 
 function pickLatestTurnIdByTime(userEvents, atIso) {
   if (!userEvents.length) return null
@@ -217,6 +392,7 @@ export function computeFactoryAgentTurnSummary(turn) {
   const lastConfirmation = Array.isArray(turn.confirmations) ? turn.confirmations[turn.confirmations.length - 1] : null
   const lastTool = Array.isArray(turn.tools) ? turn.tools[turn.tools.length - 1] : null
   const terminal = turn.terminal || null
+  const toolSummary = latestToolSummary(turn)
   const approvalTs = toTs(lastApproval?.created_at)
   const confirmationTs = toTs(lastConfirmation?.created_at)
   const latestProgressTs = Math.max(toTs(lastTool?.created_at), toTs(terminal?.created_at))
@@ -246,26 +422,40 @@ export function computeFactoryAgentTurnSummary(turn) {
 
     // Prefer the last tool result when completion is a generic status line.
     const isGenericComplete = String(terminal.content || '').toLowerCase().includes('execution completed successfully')
-    if (isGenericComplete) {
-      const toolLines = (Array.isArray(turn.tools) ? turn.tools : [])
-        .map((t) => (t?.content ? String(t.content).trim() : ''))
-        .filter(Boolean)
-      const deduped = toolLines.filter((line, idx) => toolLines.indexOf(line) === idx)
+    const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
+    if (isGenericComplete || terminalIsPlanLike) {
+      if (toolSummary) return toolSummary
+      const deduped = nonGenericToolLines(turn)
       if (deduped.length >= 2) return deduped.join('\n')
+      if (deduped.length === 1) return deduped[0]
+      if (lastPlan?.content && !isPlanLikeAnswer(lastPlan.content)) return lastPlan.content
       if (lastTool?.content) return lastTool.content
     }
     return terminal.content || 'Execution completed.'
   }
 
   const lastPlan = Array.isArray(turn.thinking) ? turn.thinking[turn.thinking.length - 1] : null
+  const planIsCompleted = String(lastPlan?.details?.status || '').toUpperCase() === 'COMPLETED'
+  const lastToolDone = String(lastTool?.status || '').toUpperCase() === 'DONE'
   
-  // RAG / Conversation Support: If we have a plan but no tool execution, return the plan content
-  if (lastPlan?.content && !lastTool && (!turn.status || turn.status.length === 0)) {
+  // LangGraph snapshots can briefly or historically have a completed plan
+  // without a terminal event. In that shape the plan summary is the answer.
+  if (lastPlan?.content && planIsCompleted && lastToolDone) {
+    if ((isPlanLikeAnswer(lastPlan.content) || looksLikeRawJsonText(lastPlan.content)) && toolSummary) return toolSummary
+    return lastPlan.content
+  }
+  if (lastPlan?.content && planIsCompleted && !lastTool && (!turn.status || turn.status.length === 0)) {
     return lastPlan.content
   }
 
-  if (lastTool || turn.status?.length) return 'Working...'
-  if (lastPlan?.content) return 'Working...'
+  if (lastToolDone && toolSummary) return toolSummary
+  if (lastTool || turn.status?.length) {
+    const label = readableToolTarget(lastTool?.tool_name)
+    const action = lastTool?.action || getReadableAction(lastTool?.tool_name)
+    return `${action} ${label}...`
+  }
+  if (lastPlan?.content) return 'Planning...'
+  if (turn.user?.content) return 'Splitting intent...'
 
   return 'Working...'
 }

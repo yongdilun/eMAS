@@ -51,6 +51,7 @@ class _FakePlanner:
         return (
             PlanDraft(plan_explanation="ok", risk_summary="ok", steps=[]),
             {"intent": "x", "backend": "langgraph", "steps": []},
+            [],
         )
 
 
@@ -162,13 +163,13 @@ async def test_durable_checkpoint_resumes_approval_after_process_restart(monkeyp
         )
 
     assert events == ["bundle_dry_run"]
-    assert len(planner_prompts) == 2
+    assert len(planner_prompts) == 1
 
     clear_graph_checkpointer_cache()
-    draft, contract = await LangGraphPlanner(settings).resume_after_approval(session_id=session_id, approved=True)
+    draft, contract, _outputs = await LangGraphPlanner(settings).resume_after_approval(session_id=session_id, approved=True)
 
     assert events == ["bundle_dry_run", "commit"]
-    assert len(planner_prompts) == 2
+    assert len(planner_prompts) == 1
     assert draft.steps[0].tool_name == "post__jobs"
     assert contract["backend"] == "langgraph"
 

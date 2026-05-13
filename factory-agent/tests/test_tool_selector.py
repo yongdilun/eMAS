@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from factory_agent.config import Settings
 from factory_agent.schemas import ToolInfo
@@ -596,10 +596,10 @@ async def test_selector_uses_context_binding_for_pronoun_followup_slots():
             requires_approval=False,
             capability_tags=["job", "slot", "lookup", "list"],
         ),
-        "get__reports_production-output-per-slot": ToolInfo(
-            name="get__reports_production-output-per-slot",
+        "get__reports_production-output": ToolInfo(
+            name="get__reports_production-output",
             description="Production output per slot",
-            endpoint="/reports/production-output-per-slot",
+            endpoint="/reports/production-output",
             method="GET",
             input_schema={"type": "object", "properties": {}},
             is_read_only=True,

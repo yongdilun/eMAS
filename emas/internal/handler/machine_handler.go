@@ -287,6 +287,7 @@ func (h *MachineHandler) Utilization(c *gin.Context) {
 // @Tags machines
 // @Accept json
 // @Produce json
+// @Param machine_id query string true "Machine ID"
 // @Success 200 {object} dto.Response{data=map[string][]string}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

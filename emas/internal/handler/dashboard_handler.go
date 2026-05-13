@@ -88,7 +88,7 @@ type AlertItem struct {
 // @Success 200 {object} dto.Response{data=[]AlertItem}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /dashboard/alerts [get]
+// @Router /alerts [get]
 func (h *DashboardHandler) GetAlerts(c *gin.Context) {
 	status := c.Query("status")
 	typeFilter := strings.TrimSpace(strings.ToLower(c.Query("type")))

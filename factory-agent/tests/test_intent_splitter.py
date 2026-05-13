@@ -65,6 +65,66 @@ def test_job_for_product_does_not_treat_for_as_job_id():
     assert any(c.field == "product_id" and c.value == "P-001" for c in flat)
 
 
+def test_create_job_p_dash_digits_is_product_not_job_id():
+    intents = split_user_intents("create job P-005 qty 2 then show it")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "job_id" and str(c.value).upper().startswith("P-") for c in flat)
+
+
+def test_machine_utilization_does_not_emit_machine_ref():
+    intents = split_user_intents("show machine utilization for last week")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "machine_ref" for c in flat)
+
+
+def test_machine_reroute_does_not_emit_machine_ref():
+    intents = split_user_intents("show machine reroute recommendations")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "machine_ref" for c in flat)
+
+
+def test_machine_types_does_not_emit_machine_ref():
+    intents = split_user_intents("list machine types")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "machine_ref" for c in flat)
+
+
+def test_product_types_does_not_emit_product_id_types():
+    intents = split_user_intents("list product types")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "product_id" and str(c.value).upper() == "TYPES" for c in flat)
+
+
+def test_machine_m_lth_02_no_inner_lth_02_machine_id():
+    intents = split_user_intents("set machine M-LTH-02 to maintenance")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "machine_id" and str(c.value).upper() == "LTH-02" for c in flat)
+    assert any(
+        (c.field == "machine_ref" and str(c.value).upper() == "M-LTH-02")
+        or (c.field == "machine_id" and str(c.value).upper() == "M-LTH-02")
+        for c in flat
+    )
+
+
+def test_m_lth_02_plain_token_does_not_yield_inner_lth_02_machine_id():
+    intents = split_user_intents("lookup M-LTH-02 status")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert not any(c.field == "machine_id" and str(c.value).upper() == "LTH-02" for c in flat)
+
+
+def test_machine_m_cnc_still_emits_machine_ref():
+    intents = split_user_intents("show details for machine M-CNC")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert any(c.field == "machine_ref" and str(c.value).upper() == "M-CNC" for c in flat)
+
+
+def test_show_material_mat_token_is_material_id_not_machine_id():
+    intents = split_user_intents("show material MAT-002")
+    flat = [c for i in intents for c in i.explicit_constraints]
+    assert any(c.field == "material_id" and str(c.value).upper() == "MAT-002" for c in flat)
+    assert not any(c.field == "machine_id" and str(c.value).upper() == "MAT-002" for c in flat)
+
+
 def test_explicit_constraints_preserve_machine_job_product_date_and_operator():
     q = "Prefer machine M-001, schedule job J-101 for product P-200 by 2026-05-15 with operator Alice"
     intents = split_user_intents(q)

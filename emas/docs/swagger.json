@@ -1622,7 +1622,7 @@
                 }
             }
         },
-        "/dashboard/alerts": {
+        "/alerts": {
             "get": {
                 "description": "Get alerts",
                 "consumes": [
@@ -3752,6 +3752,15 @@
                     "machines"
                 ],
                 "summary": "Get reroute recommendations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Machine ID",
+                        "name": "machine_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -6564,7 +6573,7 @@
                 }
             }
         },
-        "/reports/production-output-per-slot": {
+        "/reports/production-output": {
             "get": {
                 "description": "Production output per slot",
                 "consumes": [

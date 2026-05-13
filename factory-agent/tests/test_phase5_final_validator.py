@@ -340,11 +340,11 @@ async def test_approval_interrupt_resume_commits_from_checkpoint_without_replann
 
     assert exc.value.payload["kind"] == "approval_required"
     assert events == ["bundle_dry_run"]
-    assert len(planner_prompts) == 2
+    assert len(planner_prompts) == 1
 
-    draft, contract = await planner.resume_after_approval(session_id=session_id, approved=True)
+    draft, contract, _outputs = await planner.resume_after_approval(session_id=session_id, approved=True)
 
     assert events == ["bundle_dry_run", "commit"]
-    assert len(planner_prompts) == 2
+    assert len(planner_prompts) == 1
     assert draft.steps[0].tool_name == "post__jobs"
     assert contract["backend"] == "langgraph"

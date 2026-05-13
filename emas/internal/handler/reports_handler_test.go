@@ -57,3 +57,24 @@ func TestReportsHandler_BottleneckForecast_SQLite(t *testing.T) {
 		t.Fatalf("bottlenecks: got %d", w.Code)
 	}
 }
+
+func TestReportsHandler_SQLiteMinuteDiffReports(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	r := testutil.NewTestRouter(db, router.Setup)
+
+	for _, path := range []string{
+		"/api/v1/reports/machine-utilization",
+		"/api/v1/reports/maintenance-efficiency",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := testutil.Request(r, "GET", path, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s: got %d", path, w.Code)
+			}
+			success, _, _ := testutil.DecodeResponse(w)
+			if !success {
+				t.Fatalf("%s: response success false", path)
+			}
+		})
+	}
+}

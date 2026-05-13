@@ -30,9 +30,16 @@ from ..orchestration.memory_manager import MemoryManager
 from ..planning.intent import assess_intent
 from ..observability.metrics import metrics
 from ..security.permissions import filter_tools_for_role, role_from_claims
-from ..planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerConfirmationRequired
+from ..planner import (
+    PlannerApprovalRequired,
+    PlannerBackendError,
+    PlannerClarificationError,
+    PlannerConfirmationRequired,
+    PlannerPlanRejected,
+)
 from ..services.planner_service import PlannerService
 from ..planning.plan_validator import validate_plan
+from ..planning.tool_output_alignment import align_tool_outputs_to_steps, summarize_tool_result
 from ..schemas import (
     ApprovalDecisionRequest,
     ApprovalResponse,
@@ -220,6 +227,43 @@ def _build_tool_result_details(
         presentation["message"] = content or ""
         details["presentation"] = presentation
     return details
+
+
+def _looks_like_raw_json_text(value: str | None) -> bool:
+    text = (value or "").strip()
+    if not text or text[0] not in "{[":
+        return False
+    try:
+        json.loads(text)
+        return True
+    except Exception:
+        return False
+
+
+def _is_plan_like_completion_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "executing the following plan" in text
+        or "risk summary:" in text
+        or "before executing" in text
+        or text.startswith("operators can")
+    )
+
+
+def _is_operator_result_text(value: str | None) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    if "execution completed successfully" in lower:
+        return False
+    if lower in {"tool started.", "step started.", "execution started."}:
+        return False
+    if lower.endswith(" completed.") and "__" in lower:
+        return False
+    return not _looks_like_raw_json_text(text) and not _is_plan_like_completion_text(text)
 
 
 _TIMELINE_EVENT_PRIORITY = {
@@ -501,6 +545,7 @@ def build_router(
         intent: str,
         derived_from_plan_id: str | None = None,
         context_to_keep: dict[str, Any] | None = None,
+        tool_outputs: list[dict[str, Any]] | None = None,
     ) -> PlanResponse:
         validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
         if not validation.ok:
@@ -535,10 +580,15 @@ def build_router(
         await db.commit()
         await db.refresh(plan_row)
 
+        completed_at = datetime.utcnow() if status == "COMPLETED" else None
         step_status = "DONE" if status == "COMPLETED" else "NOT_STARTED"
-        step_completed_at = datetime.utcnow() if status == "COMPLETED" else None
-        for step in draft.steps:
+        step_completed_at = completed_at
+        step_names = [s.tool_name for s in draft.steps]
+        aligned = align_tool_outputs_to_steps(step_tool_names=step_names, tool_outputs=tool_outputs)
+        for i, step in enumerate(draft.steps):
             tool = tools_by_name.get(step.tool_name)
+            pair = aligned[i] if i < len(aligned) else (None, None)
+            step_result, step_summary = pair
             step_row = PlanStepRow(
                 step_id=generate_uuid(),
                 plan_id=plan_row.plan_id,
@@ -560,6 +610,8 @@ def build_router(
                 retry_count=0,
                 max_retries=3,
                 completed_at=step_completed_at,
+                result=step_result,
+                result_summary=step_summary,
             )
             db.add(step_row)
         await db.commit()
@@ -574,6 +626,7 @@ def build_router(
         sess.version += 1
         if status == "COMPLETED":
             sess.status = "COMPLETED"
+            sess.completed_at = sess.completed_at or completed_at or datetime.utcnow()
         elif status == "PENDING_APPROVAL":
             sess.status = "WAITING_APPROVAL"
         else:
@@ -583,7 +636,13 @@ def build_router(
         await db.commit()
 
         latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
-        quick_summary = draft.plan_explanation or "Execution plan created."
+        result_summaries = [
+            summary
+            for _result, summary in aligned
+            if isinstance(summary, str) and summary.strip()
+        ]
+        result_summary = " ".join(dict.fromkeys(result_summaries))
+        quick_summary = result_summary or draft.plan_explanation or "Execution plan created."
         plan_message = MessageRow(
             message_id=generate_uuid(),
             session_id=sess.session_id,
@@ -595,19 +654,20 @@ def build_router(
         db.add(plan_message)
         await db.commit()
 
-        # Two-phase response for better UX:
-        # 1) quick summary appears immediately
-        # 2) richer summary replaces it when ready
-        try:
-            summary = await summary_adapter.summarize_plan(intent=intent, draft=draft)
-            summary_text = (summary.text or "").strip()
-            if summary_text and summary_text != (plan_message.content or "").strip():
-                plan_message.content = summary_text
-            sess.llm_call_count += summary.llm_calls
-            sess.version += 1
-            await db.commit()
-        except SummaryBackendError:
-            pass
+        if not result_summary:
+            # Two-phase response for better UX:
+            # 1) quick summary appears immediately
+            # 2) richer summary replaces it when ready
+            try:
+                summary = await summary_adapter.summarize_plan(intent=intent, draft=draft)
+                summary_text = (summary.text or "").strip()
+                if summary_text and summary_text != (plan_message.content or "").strip():
+                    plan_message.content = summary_text
+                sess.llm_call_count += summary.llm_calls
+                sess.version += 1
+                await db.commit()
+            except SummaryBackendError:
+                pass
         return _plan_to_response(plan_row)
 
     async def _create_plan_approval(
@@ -675,7 +735,7 @@ def build_router(
                 scoped_tools=scoped_tools,
                 context=planner_context,
             )
-        except (PlannerClarificationError, PlannerBackendError):
+        except (PlannerClarificationError, PlannerBackendError, PlannerPlanRejected):
             return None
 
         sess.llm_call_count += selection.llm_calls
@@ -696,6 +756,7 @@ def build_router(
             intent=intent,
             derived_from_plan_id=discovery_plan.plan_id,
             context_to_keep=context_to_keep,
+            tool_outputs=generated.tool_outputs,
         )
         plan_row = (await db.execute(select(PlanRow).where(PlanRow.plan_id == response.plan_id))).scalars().first()
         if not plan_row:
@@ -1111,8 +1172,14 @@ def build_router(
                 content = msg.content
             elif step.status in ("DONE", "FAILED", "AMBIGUOUS") and (step.completed_at or step.started_at):
                 created_at = step.completed_at or step.started_at
+                deterministic_summary = summarize_tool_result(
+                    tool_name=step.tool_name,
+                    result=step.result if isinstance(step.result, dict) else None,
+                    args=step.args if isinstance(step.args, dict) else {},
+                )
                 content = (
                     step.result_summary
+                    or deterministic_summary
                     or (f"{step.tool_name} failed: {step.last_error}" if step.status == "FAILED" else f"{step.tool_name} completed.")
                 )
             else:
@@ -1227,9 +1294,13 @@ def build_router(
                 last_error = str(output.get("error") or output.get("last_error") or "") or None
                 status = str(output.get("status") or ("FAILED" if last_error else "DONE"))
                 summary = str(output.get("summary") or output.get("result_summary") or "").strip()
-                content = summary or (
+                if _looks_like_raw_json_text(summary):
+                    summary = ""
+                deterministic_summary = summarize_tool_result(tool_name=tool_name, result=result, args=args)
+                fallback_content = deterministic_summary or (
                     f"{tool_name} failed: {last_error}" if last_error else f"{tool_name} completed."
                 )
+                content = summary or fallback_content
                 key = _graph_tool_event_key(output, idx_out)
                 created_at = _graph_event_time(25 + idx_out * 20)
                 events.append(
@@ -1355,21 +1426,68 @@ def build_router(
                     step_context=_session_ctx(),
                 )
             )
-        if sess.completed_at:
-            completion_message = next((msg for msg in reversed(assistant_messages) if "Execution completed successfully" in msg.content), None)
+        latest_user_at = user_messages_sorted[-1].created_at if user_messages_sorted else None
+        has_completion_for_latest_turn = any(
+            event.event_type == "session_completed"
+            and (latest_user_at is None or event.created_at >= latest_user_at)
+            for event in events
+        )
+        if sess.status == "COMPLETED" and not has_completion_for_latest_turn:
+            useful_completion_message = next(
+                (
+                    msg
+                    for msg in reversed(assistant_messages)
+                    if (msg.content or "").strip()
+                    and "Execution completed successfully" not in msg.content
+                    and (msg.tool_name in {"__plan__", "__conversation__"} or msg.tool_name is None)
+                ),
+                None,
+            )
+            generic_completion_message = next(
+                (msg for msg in reversed(assistant_messages) if "Execution completed successfully" in msg.content),
+                None,
+            )
+            useful_tool_result_event = next(
+                (
+                    event
+                    for event in sorted(events, key=lambda item: item.created_at, reverse=True)
+                    if event.event_type == "tool_result" and _is_operator_result_text(event.content)
+                ),
+                None,
+            )
+            completed_at = (
+                sess.completed_at
+                or sess.updated_at
+                or max((event.created_at for event in events), default=None)
+                or datetime.utcnow()
+            )
+            completion_content = (
+                useful_completion_message.content
+                if useful_completion_message and useful_completion_message.content
+                else generic_completion_message.content
+                if generic_completion_message and generic_completion_message.content
+                else "Execution completed successfully."
+            )
+            if useful_tool_result_event and (
+                not useful_completion_message
+                or _is_plan_like_completion_text(useful_completion_message.content)
+                or _looks_like_raw_json_text(useful_completion_message.content)
+            ):
+                completion_content = useful_tool_result_event.content
             events.append(
                 _timeline_event(
                     event_id=f"completed:{session_id}",
                     event_type="session_completed",
-                    content=(
-                        completion_message.content
-                        if completion_message and completion_message.content
-                        else "Execution completed successfully."
-                    ),
-                    created_at=sess.completed_at,
+                    content=completion_content,
+                    created_at=completed_at,
                     status="COMPLETED",
-                    turn_id=_turn_id_for_time(sess.completed_at),
+                    turn_id=_turn_id_for_time(completed_at),
                     step_context=_session_ctx(),
+                    details={
+                        "plan_id": current_plan.plan_id if current_plan else sess.plan_id,
+                        "sources": current_plan.sources if current_plan else [],
+                        "safety_content": current_plan.safety_content if current_plan else None,
+                    },
                 )
             )
 
@@ -1538,8 +1656,14 @@ def build_router(
             poll_s = 1.0
             seen_event_ids: set[str] = set()
             idle_heartbeats = 0
+
+            async def _fresh_snapshot() -> SessionSnapshotResponse | None:
+                await db.rollback()
+                db.expire_all()
+                return await load_session_snapshot(db=db, session_id=session_id)
+
             if last_event_id:
-                initial_snapshot = await load_session_snapshot(db=db, session_id=session_id)
+                initial_snapshot = await _fresh_snapshot()
                 if initial_snapshot is not None:
                     for ev in initial_snapshot.timeline:
                         seen_event_ids.add(ev.event_id)
@@ -1549,7 +1673,7 @@ def build_router(
             init_payload = {"type": "STREAM_READY", "session_id": session_id}
             yield f"event: semantic\ndata: {json.dumps(init_payload, ensure_ascii=False)}\n\n"
             while True:
-                snapshot = await load_session_snapshot(db=db, session_id=session_id)
+                snapshot = await _fresh_snapshot()
                 if snapshot is None:
                     gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
                     yield f"event: semantic\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
@@ -1874,6 +1998,7 @@ def build_router(
             context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
         )
         scoped_names = set(selection.tool_names)
+        tool_outputs_for_plan: list[dict[str, Any]] | None = None
 
         if draft is None:
             if not intent.strip():
@@ -1897,6 +2022,7 @@ def build_router(
                     )
                     draft = generated.draft
                     backend_used = generated.backend_used
+                    tool_outputs_for_plan = generated.tool_outputs
                     intent_contract = getattr(generated, "intent_contract", None)
                     if intent_contract:
                         context = dict(sess.replan_context or {})
@@ -1943,7 +2069,7 @@ def build_router(
                 reply = str(e)
                 if ('could not safely map "' in reply and "Allowed " in reply) or (
                     'couldn\'t match "' in reply and "supported " in reply
-                ):
+                ) or ("not found" in reply.lower() or "does not exist" in reply.lower()):
                     context_to_keep = _remember_negative_predicate_bindings(
                         sess=sess,
                         bindings=getattr(e, "negative_bindings", []) or [],
@@ -1960,6 +2086,8 @@ def build_router(
                     metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
                     return plan_resp
                 raise HTTPException(status_code=400, detail={"errors": [reply]}) from e
+            except PlannerPlanRejected as e:
+                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
             except PlannerBackendError as e:
                 raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
             except Exception as e:
@@ -2018,6 +2146,7 @@ def build_router(
             status=plan_status,
             intent=intent,
             context_to_keep=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+            tool_outputs=tool_outputs_for_plan,
         )
         await memory_manager.save_checkpoint(
             db,
@@ -2140,6 +2269,12 @@ def build_router(
             sess.version += 1
             await db.commit()
             return sess
+        except PlannerPlanRejected as e:
+            sess.status = "BLOCKED"
+            sess.error = str(e)
+            sess.version += 1
+            await db.commit()
+            raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
         except PlannerBackendError as e:
             sess.status = "FAILED"
             sess.error = str(e)
@@ -2164,6 +2299,7 @@ def build_router(
             status="COMPLETED",
             intent=intent,
             context_to_keep=context,
+            tool_outputs=generated.tool_outputs,
         )
         sess = await session_mgr.get_session(db, session_id=sess.session_id) or sess
         sess.status = "COMPLETED"
@@ -2335,6 +2471,7 @@ def build_router(
                     status="COMPLETED",
                     intent=intent,
                     context_to_keep=context,
+                    tool_outputs=resumed.tool_outputs,
                 )
                 await db.commit()
             except PlannerClarificationError as e:
@@ -2342,6 +2479,12 @@ def build_router(
                 sess.error = str(e)
                 sess.version += 1
                 await db.commit()
+            except PlannerPlanRejected as e:
+                sess.status = "BLOCKED"
+                sess.error = str(e)
+                sess.version += 1
+                await db.commit()
+                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
             except PlannerBackendError as e:
                 sess.status = "FAILED"
                 sess.error = str(e)
@@ -2385,6 +2528,12 @@ def build_router(
                 raise HTTPException(status_code=404, detail="session not found")
             try:
                 await planner.resume_after_approval(session_id=sess.session_id, approved=False)
+            except PlannerPlanRejected as e:
+                sess.status = "BLOCKED"
+                sess.error = str(e)
+                sess.version += 1
+                await db.commit()
+                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
             except PlannerBackendError as e:
                 sess.status = "FAILED"
                 sess.error = str(e)

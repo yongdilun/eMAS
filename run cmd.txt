@@ -75,7 +75,7 @@ $env:GOCACHE='.\.gocache_test'; go test ./emas/internal/handler -count=1
 .\tests\e2e\run_seed_pipeline.ps1 -SkipFast -SkipPython -SkipSeeded -AgentApi -AgentScenario factory-simple-read,factory-update-machine
 
 # Keep going and show response bodies when diagnosing failures
-.\tests\e2e\run_seed_pipeline.ps1 -SkipFast -SkipPython -SkipSeeded -AgentApi -KeepGoing -ShowResponses
+.\tests\e2e\run_seed_pipeline.ps1 -SkipFast -SkipPython -SkipSeeded -AgentApi -KeepGoing -ShowResponses -SkipRAG
 
 cd /d "C:\Users\dilun\OneDrive\Documents\eMas APi\emas"
 mysql -h localhost -P 3306 -u root -p emas < scripts\reset_seed.sql

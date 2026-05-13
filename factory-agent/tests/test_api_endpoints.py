@@ -1200,6 +1200,41 @@ async def test_planner_clarification_returns_message_not_error(sessionmaker_over
 
 
 @pytest.mark.asyncio
+async def test_langgraph_read_only_not_found_plan_returns_200_not_400(
+    sessionmaker_override,
+    db_session,
+):
+    from factory_agent.planner import PlannerClarificationError
+
+    await _seed_tool(
+        db_session,
+        name="get__machines_{id}",
+        endpoint="/machines/{id}",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+        capability_tags='["machine","status"]',
+        is_read_only=True,
+    )
+
+    class FakePlanner:
+        async def generate_plan(self, *, intent, scoped_tools, context=None):
+            del intent, scoped_tools, context
+            raise PlannerClarificationError("Is there any specific information you need about machine 5, given that it does not exist?")
+
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={"role": "user", "content": "Check machine 5 status", "mode": "normal"},
+        )
+        plan = await client.post(f"/sessions/{session_id}/plans", json={})
+
+    assert plan.status_code == 200
+    assert plan.json()["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
 async def test_planner_unknown_term_clarification_returns_message_not_error(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.persistence.models import Message
     from factory_agent.planning.reasoning_pipeline import ReasoningPipeline

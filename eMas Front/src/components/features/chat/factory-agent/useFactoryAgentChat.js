@@ -7,6 +7,13 @@ const DEFAULT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend
 const ACTIVE_SESSION_KEY = 'factory_agent_active_session_id'
 const SESSION_COUNTER_KEY = 'factory_agent_session_counter'
 const MESSAGE_MODE_KEY = 'factory_agent_message_mode'
+const CLIENT_PROGRESS_STAGES = [
+  { delayMs: 0, stage: 'intent' },
+  { delayMs: 900, stage: 'planning' },
+  { delayMs: 2200, stage: 'tool' },
+  { delayMs: 6500, stage: 'answer' },
+  { delayMs: 12000, stage: 'long' },
+]
 
 const hasStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 
@@ -33,6 +40,47 @@ function nextSessionName() {
   } catch {
     return 'New chat'
   }
+}
+
+function normalizeTextKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function inferProgressTarget(text) {
+  const lower = normalizeTextKey(text)
+  const priority =
+    /\blow[-\s]+priority\b/.test(lower) ? 'low-priority ' :
+    /\bhigh[-\s]+priority\b/.test(lower) ? 'high-priority ' :
+    /\bmedium[-\s]+priority\b/.test(lower) ? 'medium-priority ' :
+    ''
+
+  if (/\bjob(s)?\b/.test(lower)) return `${priority}jobs`.trim()
+  if (/\bmachine(s)?\b/.test(lower)) return `${priority}machines`.trim()
+  if (/\b(material|materials|inventory)\b/.test(lower)) return `${priority}inventory`.trim()
+  if (/\bproposal(s)?\b/.test(lower)) return `${priority}proposals`.trim()
+  if (/\bapproval(s)?\b/.test(lower)) return `${priority}approvals`.trim()
+  return `${priority}records`.trim()
+}
+
+function progressTextForStage(stage, text) {
+  const target = inferProgressTarget(text)
+  if (stage === 'intent') return 'Splitting intent...'
+  if (stage === 'planning') return 'Planning query...'
+  if (stage === 'tool') return `Finding ${target}...`
+  if (stage === 'answer') return 'Preparing answer...'
+  return 'Still checking results...'
+}
+
+function turnHasRealAssistantProgress(turn) {
+  if (!turn) return false
+  return Boolean(
+    turn.terminal ||
+    (Array.isArray(turn.thinking) && turn.thinking.length) ||
+    (Array.isArray(turn.tools) && turn.tools.length) ||
+    (Array.isArray(turn.status) && turn.status.length) ||
+    (Array.isArray(turn.approvals) && turn.approvals.length) ||
+    (Array.isArray(turn.confirmations) && turn.confirmations.length),
+  )
 }
 
 function toSessionSummary(session) {
@@ -94,6 +142,7 @@ export function useFactoryAgentChat() {
   const [isPollingApprovals, setIsPollingApprovals] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState(null)
   const [optimisticMessages, setOptimisticMessages] = useState([])
+  const [clientProgress, setClientProgress] = useState(null)
   const [messageMode, setMessageMode] = useState(() => {
     if (!hasStorage()) return 'normal'
     return localStorage.getItem(MESSAGE_MODE_KEY) || 'normal'
@@ -101,6 +150,7 @@ export function useFactoryAgentChat() {
 
   const sessionPollTimerRef = useRef(null)
   const semanticSourceRef = useRef(null)
+  const clientProgressTimersRef = useRef([])
 
   const mergeSessionSummary = useCallback((summary) => {
     if (!summary?.session_id) return
@@ -114,6 +164,41 @@ export function useFactoryAgentChat() {
   const removeOptimisticMessage = useCallback((messageId) => {
     setOptimisticMessages((prev) => prev.filter((item) => item.id !== messageId))
   }, [])
+
+  const clearClientProgressTimers = useCallback(() => {
+    for (const timer of clientProgressTimersRef.current) {
+      clearTimeout(timer)
+    }
+    clientProgressTimersRef.current = []
+  }, [])
+
+  const clearClientProgress = useCallback(() => {
+    clearClientProgressTimers()
+    setClientProgress(null)
+  }, [clearClientProgressTimers])
+
+  const startClientProgress = useCallback((sessionId, text) => {
+    if (!sessionId) return
+    clearClientProgressTimers()
+    const startedAt = new Date().toISOString()
+    const requestKey = `${sessionId}:${Date.now()}`
+
+    const setStage = (stage) => {
+      setClientProgress({
+        requestKey,
+        sessionId,
+        text,
+        content: progressTextForStage(stage, text),
+        stage,
+        startedAt,
+      })
+    }
+
+    for (const item of CLIENT_PROGRESS_STAGES) {
+      const timer = setTimeout(() => setStage(item.stage), item.delayMs)
+      clientProgressTimersRef.current.push(timer)
+    }
+  }, [clearClientProgressTimers])
 
   const appendOptimisticUserMessage = useCallback((content) => {
     const id = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -221,6 +306,7 @@ export function useFactoryAgentChat() {
   }, [clearSessionPoll, pollSnapshot, session?.session_id, session?.status, sessionPollIntervalMs])
 
   useEffect(() => clearSessionPoll, [clearSessionPoll])
+  useEffect(() => clearClientProgressTimers, [clearClientProgressTimers])
 
   useEffect(() => {
     if (semanticSourceRef.current) {
@@ -368,6 +454,7 @@ export function useFactoryAgentChat() {
 
   const runIntent = useCallback(async (sessionId, text, mode = 'normal') => {
     await factoryAgentApi.addMessage(sessionId, { role: 'user', content: text, mode })
+    await safelyRefreshSnapshot(sessionId)
     const planResp = await factoryAgentApi.createPlan(sessionId)
     if (!(planResp?.status === 'COMPLETED')) {
       await executeWithRetry(sessionId, { background: mode !== 'plan' })
@@ -389,6 +476,7 @@ export function useFactoryAgentChat() {
       // Keep one session as the chat "thread" until the user explicitly starts a new one.
       if (!current) current = await startNewSession()
       if (!current) return
+      startClientProgress(current.session_id, text)
 
       if ([FACTORY_AGENT_STATUS.IDLE, FACTORY_AGENT_STATUS.BLOCKED, FACTORY_AGENT_STATUS.FAILED, FACTORY_AGENT_STATUS.COMPLETED].includes(current.status)) {
         await runIntent(current.session_id, text, messageMode)
@@ -397,6 +485,7 @@ export function useFactoryAgentChat() {
         await safelyRefreshSnapshot(current.session_id)
       } else if (current.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) {
         await factoryAgentApi.addMessage(current.session_id, { role: 'user', content: text, mode: messageMode })
+        await safelyRefreshSnapshot(current.session_id)
         const planResp = await factoryAgentApi.createPlan(current.session_id)
         if (!(planResp?.status === 'COMPLETED')) {
           await executeWithRetry(current.session_id, { background: messageMode !== 'plan' })
@@ -413,10 +502,12 @@ export function useFactoryAgentChat() {
       setError(normalizeFactoryAgentError(err, 'Failed to send request'))
     } finally {
       removeOptimisticMessage(optimisticId)
+      clearClientProgress()
       setIsSending(false)
     }
   }, [
     appendOptimisticUserMessage,
+    clearClientProgress,
     executeWithRetry,
     input,
     isSending,
@@ -427,6 +518,7 @@ export function useFactoryAgentChat() {
     safelyRefreshSnapshot,
     session,
     setMessageMode,
+    startClientProgress,
     startNewSession,
   ])
 
@@ -517,6 +609,7 @@ export function useFactoryAgentChat() {
         field: option.field,
         value: option.value,
       })
+      await safelyRefreshSnapshot(session.session_id)
       const planResp = await factoryAgentApi.createPlan(session.session_id)
       if (!(planResp?.status === 'COMPLETED')) {
         await executeWithRetry(session.session_id, { background: messageMode !== 'plan' })
@@ -556,11 +649,27 @@ export function useFactoryAgentChat() {
 
   const turns = useMemo(() => {
     const assembled = assembleFactoryAgentTurns(Array.isArray(timeline) ? timeline : [])
-    return assembled.map((t) => ({
+    const mapped = assembled.map((t) => ({
       ...t,
       summary: computeFactoryAgentTurnSummary(t),
     }))
-  }, [timeline])
+    if (!isSending || !clientProgress || clientProgress.sessionId !== session?.session_id || !mapped.length) {
+      return mapped
+    }
+
+    const latestIndex = mapped.length - 1
+    const latest = mapped[latestIndex]
+    const latestUserKey = normalizeTextKey(latest?.user?.content)
+    const progressUserKey = normalizeTextKey(clientProgress.text)
+    if (latest?.user?.content && latestUserKey === progressUserKey && !turnHasRealAssistantProgress(latest)) {
+      mapped[latestIndex] = {
+        ...latest,
+        summary: clientProgress.content,
+        clientProgress,
+      }
+    }
+    return mapped
+  }, [clientProgress, isSending, session?.session_id, timeline])
 
   const activeSessionName = useMemo(() => {
     if (session?.name) return session.name
@@ -591,6 +700,7 @@ export function useFactoryAgentChat() {
     isPollingSession,
     isPollingApprovals,
     lastSyncedAt,
+    clientProgress,
     handleSend,
     handleCancel,
     decideApproval,

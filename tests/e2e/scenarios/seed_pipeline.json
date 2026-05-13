@@ -1429,7 +1429,7 @@
     "seed_profile": "canonical",
     "expected_intent": "read",
     "expected_tools": [
-      "get__dashboard_alerts"
+      "get__alerts"
     ],
     "approval_policy": "none",
     "expected_status": 200,
@@ -1481,7 +1481,7 @@
   {
     "id": "factory-reroute-recommendations",
     "category": "factory_agent",
-    "input": "show machine reroute recommendations",
+    "input": "show reroute recommendations for machine M-CNC-01",
     "entrypoint": "factory_agent",
     "seed_profile": "canonical",
     "expected_intent": "read",
@@ -1904,7 +1904,7 @@
     "seed_profile": "canonical",
     "expected_intent": "read",
     "expected_tools": [
-      "get__reports_production-output-per-slot"
+      "get__reports_production-output"
     ],
     "approval_policy": "none",
     "expected_status": 200,

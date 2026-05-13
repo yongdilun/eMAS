@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -14,6 +14,16 @@ from ..schemas import ToolInfo
 
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+
+
+def default_tools_md_path() -> str:
+    """Filesystem path for generated tool markdown (same default ToolRegistry loads)."""
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "tools.md"))
+
+
+def default_id_patterns_path() -> str:
+    """Filesystem path for generated id pattern catalog (from OpenAPI schemas)."""
+    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "generated", "id_patterns.json"))
 
 
 def _parse_tags(raw: str | None) -> list[str]:
@@ -106,7 +116,7 @@ class ToolRegistrySnapshot:
 class ToolRegistry:
     def __init__(self, *, tools_md_path: str | None = None):
         self._snapshot: ToolRegistrySnapshot | None = None
-        self._tools_md_path = tools_md_path or os.path.join(os.path.dirname(__file__), "..", "tools.md")
+        self._tools_md_path = tools_md_path or default_tools_md_path()
 
     async def load_from_db(self, db: AsyncSession) -> ToolRegistrySnapshot:
         await self.normalize_legacy_tags(db)

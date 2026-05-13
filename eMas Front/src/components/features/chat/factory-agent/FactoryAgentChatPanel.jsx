@@ -9,6 +9,40 @@ import { formatCitationChipLabel } from '../sourceFormatting'
 
 const CHAT_VIEW_MODE = (import.meta.env?.VITE_FACTORY_AGENT_CHAT_MODE || 'user').trim().toLowerCase() === 'dev' ? 'dev' : 'user'
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
+const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
+
+function isProgressSummary(text) {
+ const normalized = String(text || '').trim()
+ if (!normalized) return true
+ return normalized.endsWith('...') && !normalized.includes('\n') && normalized.length <= 90
+}
+
+function looksLikeRawJsonText(value) {
+ const text = String(value || '').trim()
+ if (!text || !['{', '['].includes(text[0])) return false
+ try {
+ JSON.parse(text)
+ return true
+ } catch {
+ return false
+ }
+}
+
+function isPlanLikeAnswer(value) {
+ const normalized = String(value || '').trim().toLowerCase()
+ if (!normalized) return false
+ return (
+ normalized.includes('executing the following plan') ||
+ normalized.includes('risk summary:') ||
+ normalized.includes('before executing') ||
+ /^operators can\b/.test(normalized)
+ )
+}
+
+function isUserVisibleDetailText(value) {
+ const text = String(value || '').trim()
+ return Boolean(text) && !isProgressSummary(text) && !looksLikeRawJsonText(text) && !isPlanLikeAnswer(text)
+}
 
 function dedupeLines(lines = []) {
  const seen = new Set()
@@ -66,12 +100,12 @@ function buildUserDetailLines(turn) {
 
  const lines = []
  const planExplanation = thinking[thinking.length - 1]?.details?.plan_explanation || thinking[thinking.length - 1]?.content
- if (planExplanation && !['Thinking...', 'Working...'].includes(String(planExplanation).trim())) {
+ if (isUserVisibleDetailText(planExplanation)) {
  lines.push(planExplanation)
  }
 
  for (const tool of tools) {
- if (tool?.content && !['Thinking...', 'Working...'].includes(String(tool.content).trim())) {
+ if (isUserVisibleDetailText(tool?.content)) {
  lines.push(tool.content)
  }
  }
@@ -191,6 +225,45 @@ function StreamedAssistantText({ text, streamKey, enabled, sources = [] }) {
   return <>{renderCitationsAndBold(displayed || (enabled ? '' : text), sources)}</>
 }
 
+function useStagedAssistantSummary(rawSummary) {
+ const initial = rawSummary || 'Working...'
+ const [displayed, setDisplayed] = useState(initial)
+ const displayedRef = useRef(initial)
+ const lastDisplayedAtRef = useRef(Date.now())
+ const timerRef = useRef(null)
+
+ useEffect(() => {
+ const next = rawSummary || 'Working...'
+ if (next === displayedRef.current) return undefined
+
+ if (timerRef.current) {
+ window.clearTimeout(timerRef.current)
+ timerRef.current = null
+ }
+
+ const minMs = Number.isFinite(PROGRESS_STAGE_MIN_MS) && PROGRESS_STAGE_MIN_MS > 0 ? PROGRESS_STAGE_MIN_MS : 0
+ const shouldHold = isProgressSummary(displayedRef.current) || isProgressSummary(next)
+ const elapsed = Date.now() - lastDisplayedAtRef.current
+ const delay = shouldHold ? Math.max(0, minMs - elapsed) : 0
+
+ timerRef.current = window.setTimeout(() => {
+ displayedRef.current = next
+ lastDisplayedAtRef.current = Date.now()
+ setDisplayed(next)
+ timerRef.current = null
+ }, delay)
+
+ return () => {
+ if (timerRef.current) {
+ window.clearTimeout(timerRef.current)
+ timerRef.current = null
+ }
+ }
+ }, [rawSummary])
+
+ return displayed
+}
+
 function getLatestToolPresentation(turn) {
  const tools = Array.isArray(turn?.tools) ? turn.tools : []
  for (let index = tools.length - 1; index >= 0; index -= 1) {
@@ -297,12 +370,13 @@ function AssistantTurnBubble({
  decideApproval,
  decideConfirmation,
  isDecidingApproval,
- isSending,
- mode,
- shouldAnimateText,
+  isSending,
+  mode,
+  shouldAnimateText,
 }) {
- const summary = turn?.summary || 'Working...'
- const showDetails = !['Thinking...', 'Working...'].includes(summary)
+ const rawSummary = turn?.summary || 'Working...'
+ const summary = useStagedAssistantSummary(rawSummary)
+ const showDetails = !isProgressSummary(summary)
  const presentation = getLatestToolPresentation(turn)
  const tableAnimKey = `${turn?.id || 'turn'}:${presentation?.table?.total_rows || 0}:${summary}`
 
@@ -323,7 +397,7 @@ function AssistantTurnBubble({
  sources={turn.sources}
  />
  </div>
- {presentation ? (
+ {presentation && showDetails ? (
  <TablePresentation
  presentation={presentation}
  animate={shouldAnimateText && showDetails}
@@ -376,6 +450,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  pendingApproval,
  approvalReason,
  messageMode,
+ clientProgress,
  setApprovalReason,
  setMessageMode,
  isDecidingApproval,
@@ -419,6 +494,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  if (session?.status === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
  if (session?.status === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Request a plan change while approval is pending...'
+ const displayStatus = isSending ? 'WORKING' : (session?.status || 'Ready')
 
  return (
  <div className="flex h-full relative">
@@ -646,7 +722,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  </h2>
  <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-ink-subtle">
  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
- {session?.status || 'Ready'}
+ {displayStatus}
  </span>
  </div>
  <div className="flex items-center gap-1">
@@ -753,9 +829,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  </>
  )}
 
- {isSending && (turns?.length || 0) === 0 && (
+{isSending && (turns?.length || 0) === 0 && (
  <ChatMessage
- message={statusLoadingText(session?.status)}
+ message={clientProgress?.content || statusLoadingText(session?.status)}
  isUser={false}
  timestamp={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
  />

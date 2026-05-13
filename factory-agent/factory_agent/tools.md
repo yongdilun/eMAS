@@ -2457,11 +2457,11 @@
 }
 `
 ---
-## get__dashboard_alerts
+## get__alerts
 **Description**: Get alerts
 **Method**: GET
-**Endpoint**: /dashboard/alerts
-**Capability Tags**: ["dashboard", "alert", "list", "statu", "type", "sort", "by", "dir", "limit", "offset", "field", "data", "machine", "id", "time", "title", "error", "success"]
+**Endpoint**: /alerts
+**Capability Tags**: ["alert", "dashboard", "list", "statu", "type", "sort", "by", "dir", "limit", "offset", "field", "data", "machine", "id", "time", "title", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -6430,7 +6430,7 @@
 **Description**: Get reroute recommendations
 **Method**: GET
 **Endpoint**: /machines/reroute-recommendations
-**Capability Tags**: ["machine", "reroute", "recommendation", "list", "data", "error", "success"]
+**Capability Tags**: ["machine", "reroute", "recommendation", "list", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -6438,10 +6438,21 @@
 `json
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "machine_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "machine_id"
+  ],
   "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
+  "x-query-params": [
+    "machine_id"
+  ],
+  "x-param-sources": {
+    "machine_id": "query"
+  },
   "x-allowed-roles": [
     "viewer",
     "planner",
@@ -10966,11 +10977,11 @@
 }
 `
 ---
-## get__reports_production-output-per-slot
+## get__reports_production-output
 **Description**: Production output per slot
 **Method**: GET
-**Endpoint**: /reports/production-output-per-slot
-**Capability Tags**: ["report", "production", "output", "per", "slot", "list", "data", "error", "success"]
+**Endpoint**: /reports/production-output
+**Capability Tags**: ["report", "production", "output", "list", "per", "slot", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true

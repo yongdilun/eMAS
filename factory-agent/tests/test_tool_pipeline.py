@@ -78,6 +78,93 @@ def test_decision_guard_rejects_forward_ref():
     assert pd.get("tool_calls") == []
 
 
+def test_decision_guard_same_batch_read_chain_empty_tail():
+    """M2: With empty tail, $ref:0 is the first read's output; second read may reference it."""
+    jobs_tool = ToolInfo(
+        name="get__jobs",
+        description="jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={"type": "object"},
+        is_read_only=True,
+    )
+    slots_tool = ToolInfo(
+        name="get__jobs_{id}_slots",
+        description="slots",
+        endpoint="/jobs/{id}/slots",
+        method="GET",
+        input_schema={"type": "object"},
+        path_params=["id"],
+        is_read_only=True,
+    )
+    state: AgentState = {
+        "original_query": "q",
+        "intent": "q",
+        "messages": [],
+        "scoped_tools": [jobs_tool, slots_tool],
+        "context": {},
+        "tool_outputs": [],
+        "current_intent": {"intent_id": "i1", "explicit_constraints": [], "status": "in_progress"},
+        "pending_decision": {
+            "intent_id": "i1",
+            "decision_id": "d1",
+            "kind": "domain_tool",
+            "tool_calls": [
+                {"tool_name": "get__jobs", "args": {"status": "scheduled"}},
+                {"tool_name": "get__jobs_{id}_slots", "args": {"id": "$ref:0"}},
+            ],
+        },
+    }
+    out = decision_guard_node(state)
+    assert out["next_route"] == "tool_execution"
+    pd = out.get("pending_decision")
+    assert isinstance(pd, dict)
+    assert pd.get("tool_calls")
+
+
+def test_decision_guard_accepts_historical_tail_ref():
+    """M2: $ref:0 resolves against planner_tool_output_tail (cross-turn memory follow-up)."""
+    read_tool = ToolInfo(
+        name="get__jobs_{id}_slots",
+        description="slots",
+        endpoint="/jobs/{id}/slots",
+        method="GET",
+        input_schema={"type": "object"},
+        path_params=["id"],
+        is_read_only=True,
+    )
+    state: AgentState = {
+        "original_query": "q",
+        "intent": "q",
+        "messages": [],
+        "scoped_tools": [read_tool],
+        "context": {},
+        "tool_outputs": [
+            {
+                "tool_name": "get__jobs_{id}",
+                "args": {"id": "JOB-SEED-001"},
+                "result": {"job_id": "JOB-SEED-001", "status": "scheduled"},
+                "http_status": 200,
+            }
+        ],
+        "tool_outputs_truncated_at": 0,
+        "current_intent": {"intent_id": "i1", "explicit_constraints": [], "status": "in_progress"},
+        "pending_decision": {
+            "intent_id": "i1",
+            "decision_id": "d1",
+            "kind": "domain_tool",
+            "tool_calls": [
+                {"tool_name": "get__jobs_{id}_slots", "args": {"id": "$ref:0"}},
+            ],
+        },
+    }
+    out = decision_guard_node(state)
+    assert out["next_route"] == "tool_execution"
+    pd = out.get("pending_decision")
+    assert isinstance(pd, dict)
+    assert pd.get("tool_calls")
+
+
 def test_decision_guard_rejects_unknown_read_ref():
     read_tool = ToolInfo(
         name="get__jobs",
@@ -182,6 +269,68 @@ async def test_tool_execution_runs_read_and_relevance_appends_normalized_output(
     assert outputs[0]["result"]["data"][0]["machine_id"] == "M-001"
     assert outputs[0]["useful"] is True
     assert after_relevance["retrieved_info"]["relevance_trace"][0]["tool_name"] == "get__machines"
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_resolves_historical_ref_placeholder(monkeypatch):
+    settings = get_settings()
+    slots_tool = ToolInfo(
+        name="get__jobs_{id}_slots",
+        description="slots",
+        endpoint="/jobs/{id}/slots",
+        method="GET",
+        input_schema={"type": "object"},
+        path_params=["id"],
+        is_read_only=True,
+    )
+    captured: list[dict[str, object]] = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key):
+        captured.append(dict(args))
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": []},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.graph.nodes.tool_pipeline.execute_tool_http",
+        fake_execute_tool_http,
+    )
+
+    execute = make_tool_execution_node(settings)
+    state: AgentState = {
+        "session_id": "sess-m2",
+        "original_query": "slots",
+        "intent": "slots",
+        "messages": [],
+        "scoped_tools": [slots_tool],
+        "context": {},
+        "write_generation": 0,
+        "retrieved_info": {},
+        "tool_outputs": [
+            {
+                "tool_name": "get__jobs_{id}",
+                "args": {"id": "JOB-SEED-001"},
+                "result": {"job_id": "JOB-SEED-001"},
+                "http_status": 200,
+            }
+        ],
+        "tool_outputs_truncated_at": 0,
+        "pending_decision": {
+            "intent_id": "i1",
+            "decision_id": "d1",
+            "kind": "domain_tool",
+            "tool_calls": [
+                {"tool_name": "get__jobs_{id}_slots", "args": {"id": "$ref:0"}, "tool_call_id": "tc-slots"}
+            ],
+        },
+    }
+    await execute(state)
+    assert len(captured) == 1
+    assert captured[0]["id"] == "JOB-SEED-001"
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,24 @@ func NewReportsHandler(db *gorm.DB) *ReportsHandler {
 	return &ReportsHandler{db: db}
 }
 
+func minuteDiffSumExpr(db *gorm.DB, startCol, endCol string) string {
+	switch db.Dialector.Name() {
+	case "sqlite":
+		return "COALESCE(SUM((julianday(" + endCol + ") - julianday(" + startCol + ")) * 24 * 60), 0)"
+	default:
+		return "COALESCE(SUM(TIMESTAMPDIFF(MINUTE, " + startCol + ", " + endCol + ")), 0)"
+	}
+}
+
+func minuteDiffAvgExpr(db *gorm.DB, startCol, endCol string) string {
+	switch db.Dialector.Name() {
+	case "sqlite":
+		return "AVG((julianday(" + endCol + ") - julianday(" + startCol + ")) * 24 * 60)"
+	default:
+		return "AVG(TIMESTAMPDIFF(MINUTE, " + startCol + ", " + endCol + "))"
+	}
+}
+
 // @Summary Parse date range
 // @Description Parse date range
 // @Tags reports
@@ -54,7 +72,7 @@ func (h *ReportsHandler) parseDateRange(c *gin.Context) (start, end time.Time, o
 // @Success 200 {object} dto.Response
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
-// @Router /reports/production-output-per-slot [get]
+// @Router /reports/production-output [get]
 func (h *ReportsHandler) ProductionOutputPerSlot(c *gin.Context) {
 	start, end, ok := h.parseDateRange(c)
 	if !ok {
@@ -105,7 +123,7 @@ func (h *ReportsHandler) MachineUtilization(c *gin.Context) {
 		SlotCount    int     `json:"slot_count"`
 	}
 	if err := h.db.Table("job_step_schedule_slots").
-		Select("machine_id, job_steps.step_id, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, scheduled_start, scheduled_end)), 0) as total_minutes, COUNT(*) as slot_count").
+		Select("machine_id, job_steps.step_id, "+minuteDiffSumExpr(h.db, "scheduled_start", "scheduled_end")+" as total_minutes, COUNT(*) as slot_count").
 		Joins("JOIN job_steps ON job_steps.job_step_id = job_step_schedule_slots.job_step_id").
 		Where("scheduled_start >= ? AND scheduled_end <= ?", start, end).
 		Group("machine_id, job_steps.step_id").
@@ -321,7 +339,7 @@ func (h *ReportsHandler) MaintenanceEfficiency(c *gin.Context) {
 		AvgDuration float64 `json:"avg_duration_minutes"`
 	}
 	if err := h.db.Table("maintenance_records").
-		Select("machine_id, COUNT(*) as planned_count, COUNT(*) as completed_count, AVG(TIMESTAMPDIFF(MINUTE, start_time, end_time)) as avg_duration_minutes").
+		Select("machine_id, COUNT(*) as planned_count, COUNT(*) as completed_count, "+minuteDiffAvgExpr(h.db, "start_time", "end_time")+" as avg_duration_minutes").
 		Where("start_time >= ? AND end_time <= ?", start, end).
 		Group("machine_id").
 		Scan(&results).Error; err != nil {

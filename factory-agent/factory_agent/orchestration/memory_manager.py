@@ -99,9 +99,16 @@ class MemoryManager:
         base_context: dict[str, Any] | None = None,
         k: int = 8,
     ) -> dict[str, Any]:
-        if not self._settings.memory_enabled:
-            return dict(base_context or {})
         context = dict(base_context or {})
+        context["session_id"] = session_id
+        # LangGraph needs prior user/assistant/tool turns for follow-ups ("now show its slots");
+        # this is independent of vector memory / checkpointing.
+        history = await self._recent_session_messages(db, session_id=session_id, limit=max(k, 24))
+        if history:
+            context["messages"] = self._rows_to_planner_message_dicts(history)
+
+        if not self._settings.memory_enabled:
+            return context
         if not (intent or "").strip():
             return context
 
@@ -136,6 +143,42 @@ class MemoryManager:
                 }
 
         return context
+
+    async def _recent_session_messages(
+        self, db: AsyncSession, *, session_id: str | None, limit: int
+    ) -> list[MessageRow]:
+        sid = (session_id or "").strip()
+        if not sid:
+            return []
+        lim = max(1, min(int(limit), 100))
+        rows = (
+            await db.execute(
+                select(MessageRow)
+                .where(MessageRow.session_id == sid)
+                .order_by(MessageRow.created_at.desc())
+                .limit(lim)
+            )
+        ).scalars().all()
+        return list(reversed(rows))
+
+    def _rows_to_planner_message_dicts(self, rows: list[MessageRow]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if row.tool_name == "__memory_compaction__":
+                continue
+            role = (row.role or "user").strip().lower()
+            if role == "system":
+                continue
+            text = (row.content or "").strip()
+            if self._settings.memory_redact_pii:
+                text = self._redact_pii(text).strip()
+            if not text:
+                continue
+            item: dict[str, Any] = {"role": role, "content": text}
+            if role == "tool_result":
+                item["tool_call_id"] = str(row.step_id or row.message_id or "context")
+            out.append(item)
+        return out
 
     async def save_checkpoint(
         self,
@@ -355,4 +398,3 @@ class MemoryManager:
             "open_questions": open_questions[:25],
             "source_message_ids": source_ids,
         }
-

@@ -263,6 +263,29 @@ def run_scenario(
     _, steps, _ = request_json(client, "GET", f"/sessions/{sid}/steps", expected_status=200)
 
     step_tools = [step.get("tool_name") for step in steps]
+    seen_tools = {tool for tool in step_tools if tool}
+    timeline = snapshot.get("timeline") if isinstance(snapshot, dict) else None
+    if isinstance(timeline, list):
+        for event in timeline:
+            if not isinstance(event, dict):
+                continue
+            tool_name = event.get("tool_name")
+            if isinstance(tool_name, str) and tool_name and tool_name not in {"__conversation__", "__plan__"}:
+                if tool_name not in seen_tools:
+                    step_tools.append(tool_name)
+                    seen_tools.add(tool_name)
+    for approval in approvals:
+        payload = approval.get("args") if isinstance(approval, dict) and isinstance(approval.get("args"), dict) else {}
+        preview = payload.get("preview")
+        if not isinstance(preview, list):
+            continue
+        for item in preview:
+            if not isinstance(item, dict):
+                continue
+            tool_name = item.get("tool_name")
+            if isinstance(tool_name, str) and tool_name and tool_name not in seen_tools:
+                step_tools.append(tool_name)
+                seen_tools.add(tool_name)
     missing_tools = [tool for tool in scenario.get("expected_tools", []) if tool not in step_tools]
 
     body = searchable_text(snapshot, messages, steps, events)

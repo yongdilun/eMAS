@@ -1552,7 +1552,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/dashboard/alerts": {
+        "/alerts": {
             "get": {
                 "description": "Get alerts",
                 "consumes": [
@@ -3626,6 +3626,15 @@ const docTemplate = `{
                     "machines"
                 ],
                 "summary": "Get reroute recommendations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Machine ID",
+                        "name": "machine_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -6358,7 +6367,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/reports/production-output-per-slot": {
+        "/reports/production-output": {
             "get": {
                 "description": "Production output per slot",
                 "consumes": [

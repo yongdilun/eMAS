@@ -1024,7 +1024,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.Response'
-  /dashboard/alerts:
+  /alerts:
     get:
       description: Get alerts
       consumes:
@@ -2375,6 +2375,12 @@ paths:
       tags:
       - machines
       summary: Get reroute recommendations
+      parameters:
+      - type: string
+        description: Machine ID
+        name: machine_id
+        in: query
+        required: true
       responses:
         '200':
           description: OK
@@ -4157,7 +4163,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.Response'
-  /reports/production-output-per-slot:
+  /reports/production-output:
     get:
       description: Production output per slot
       consumes:

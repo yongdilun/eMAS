@@ -172,3 +172,37 @@ async def test_vector_memory_retrieval_is_session_scoped(sessionmaker_override, 
 
     total_vectors = (await db_session.execute(select(VectorMemory))).scalars().all()
     assert len(total_vectors) >= 2
+
+
+@pytest.mark.asyncio
+async def test_build_planner_context_loads_messages_when_memory_disabled(sessionmaker_override, db_session):
+    settings = _settings(memory_enabled=False, vector_memory_enabled=False, checkpoint_enabled=False)
+    manager = MemoryManager(settings)
+    session_id = generate_uuid()
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u-msg",
+            status="IDLE",
+            session_started_at=datetime.utcnow(),
+        )
+    )
+    db_session.add(
+        Message(
+            message_id=generate_uuid(),
+            session_id=session_id,
+            role="user",
+            content="Show slots for JOB-SEED-004",
+        )
+    )
+    await db_session.commit()
+
+    ctx = await manager.build_planner_context(
+        db_session,
+        session_id=session_id,
+        intent="now show its slots",
+        base_context={},
+    )
+    msgs = ctx.get("messages") or []
+    assert msgs
+    assert any("JOB-SEED-004" in str(m.get("content") or "") for m in msgs if isinstance(m, dict))

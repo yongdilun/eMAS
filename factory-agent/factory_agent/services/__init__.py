@@ -5,6 +5,7 @@ from .planner_service import (
     PlannerBackendError,
     PlannerClarificationError,
     PlannerConfirmationRequired,
+    PlannerPlanRejected,
     PlannerResult,
     PlannerService,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "PlannerApprovalRequired",
     "PlannerClarificationError",
     "PlannerConfirmationRequired",
+    "PlannerPlanRejected",
     "PlannerResult",
     "PlannerService",
 ]

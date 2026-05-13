@@ -10,6 +10,7 @@ from ...config import Settings
 from ...llm.models import build_planner_chat_model
 from ...observability.telemetry import log_event, log_llm_prompt
 from ...schemas import ControlAction, PlannerDecision, ToolCall, ToolInfo
+from ...security.guardrails import promote_user_provenance, sanitize_tool_args_against_schema, strip_unsupported_optional_args
 from ..errors import LangGraphPlannerError
 from ..planner_graph_helpers import _deterministic_plan_repair, _message_content_text, _tool_cards
 from ..state import AgentPlanOutput, AgentPlanStep, AgentState, user_query_text
@@ -26,7 +27,75 @@ def _get_by_path(obj: dict[str, Any], path: str) -> Any:
     return cur
 
 
-def _constraint_violated(*, constraint: dict[str, Any], tool_args: dict[str, Any]) -> bool:
+def _singular_entity(value: str) -> str:
+    lowered = value.strip().lower().replace("-", "_")
+    if lowered.endswith("ies") and len(lowered) > 3:
+        return lowered[:-3] + "y"
+    if lowered.endswith("s") and len(lowered) > 1:
+        return lowered[:-1]
+    return lowered
+
+
+def _endpoint_entity_before_param(endpoint: str, param_name: str) -> str | None:
+    segments = [segment for segment in (endpoint or "").split("/") if segment]
+    target = f"{{{param_name}}}"
+    for idx, segment in enumerate(segments):
+        if segment != target:
+            continue
+        prior = next((item for item in reversed(segments[:idx]) if not item.startswith("{")), "")
+        return _singular_entity(prior) if prior else None
+    return None
+
+
+def _constraint_entity(field: str) -> str | None:
+    for suffix in ("_id", "_ref"):
+        if field.endswith(suffix) and len(field) > len(suffix):
+            return _singular_entity(field[: -len(suffix)])
+    return None
+
+
+def _constraint_actual(
+    *,
+    constraint: dict[str, Any],
+    tool_args: dict[str, Any],
+    tool: ToolInfo | None = None,
+) -> Any:
+    field = str(constraint.get("field") or "")
+    actual = _get_by_path(tool_args, field) if "." in field else tool_args.get(field)
+    if actual is not None or tool is None:
+        return actual
+
+    entity = _constraint_entity(field)
+    if not entity:
+        return None
+    param_names = tool.path_params or re.findall(r"\{([a-zA-Z0-9_]+)\}", tool.endpoint or "")
+    for param_name in param_names:
+        if param_name not in tool_args:
+            continue
+        if _endpoint_entity_before_param(tool.endpoint, param_name) == entity:
+            return tool_args.get(param_name)
+    # Query/body aliases: intents often emit explicit_constraints like machine_ref=… while
+    # tools use machine_id (query) or id (path). Without this mapping, DecisionGuard treats
+    # correct calls as violations and loops planner→guard until LangGraph recursion_limit.
+    if entity:
+        for key in (f"{entity}_id", f"{entity}_ref"):
+            v = tool_args.get(key)
+            if v is not None and v != "":
+                return v
+        lone = param_names[0] if len(param_names) == 1 else None
+        if lone and lone in tool_args and tool_args.get(lone) not in (None, ""):
+            ep_ent = _endpoint_entity_before_param(tool.endpoint or "", lone)
+            if ep_ent == entity:
+                return tool_args.get(lone)
+    return None
+
+
+def _constraint_violated(
+    *,
+    constraint: dict[str, Any],
+    tool_args: dict[str, Any],
+    tool: ToolInfo | None = None,
+) -> bool:
     if constraint.get("strength") == "soft":
         return False
     field = str(constraint.get("field") or "")
@@ -34,7 +103,7 @@ def _constraint_violated(*, constraint: dict[str, Any], tool_args: dict[str, Any
         return False
     op = str(constraint.get("operator") or "=")
     expected = constraint.get("value")
-    actual = _get_by_path(tool_args, field) if "." in field else tool_args.get(field)
+    actual = _constraint_actual(constraint=constraint, tool_args=tool_args, tool=tool)
     if op == "=":
         if actual is None:
             return True
@@ -77,9 +146,40 @@ def _assign_missing_output_refs(raw_calls: list[dict[str, Any]], tools_by_name: 
         tc["output_ref"] = f"$ref:{nm}_{i}"
 
 
-def _forward_ref_violation(raw_calls: list[dict[str, Any]], tools_by_name: dict[str, ToolInfo]) -> str | None:
+def planner_tool_output_tail(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Same slice as the planner prompt's \"Recent tool_outputs\" (last up to 4, post-truncation)."""
+    recent = state.get("tool_outputs") or []
+    if not isinstance(recent, list):
+        return []
+    truncated_at = int(state.get("tool_outputs_truncated_at") or 0)
+    visible = recent[max(0, truncated_at) :]
+    return visible[-4:] if len(visible) > 4 else list(visible)
+
+
+def _forward_ref_violation(
+    raw_calls: list[dict[str, Any]],
+    tools_by_name: dict[str, ToolInfo],
+    *,
+    tool_output_tail: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Validate $ref placeholders against prior tool outputs and same-batch ordering.
+
+    Naming (aligned with the planner prompt tail):
+    - ``$ref:j`` for ``j < len(tail)`` → j-th row in ``tool_output_tail`` (cross-turn / earlier reads).
+    - ``$ref:{len(tail)+k}`` → k-th *read* tool call in this batch (0-based among reads only).
+    - Write tools still declare explicit ``output_ref`` names for same-turn write chaining.
+    """
+    tail = tool_output_tail or []
+    tail_len = len(tail)
+
     declared: dict[str, int] = {}
+    # Historical outputs always precede the current batch (producer index -1).
+    for j in range(tail_len):
+        declared[f"$ref:{j}"] = -1
+
     for i, tc in enumerate(raw_calls):
+        if not isinstance(tc, dict):
+            continue
         tool = tools_by_name.get(str(tc.get("tool_name") or ""))
         if not tool or tool.is_read_only:
             continue
@@ -88,24 +188,41 @@ def _forward_ref_violation(raw_calls: list[dict[str, Any]], tools_by_name: dict[
             if ref in declared:
                 return f"duplicate_output_ref:{ref}"
             declared[ref] = i
+
+    # Validate each call's args against refs declared *before* this call, then register
+    # implicit read outputs for later calls (fixes forward_or_self_ref when tail is empty).
+    read_slot = 0
     for i, tc in enumerate(raw_calls):
+        if not isinstance(tc, dict):
+            continue
         need: set[str] = set()
         _collect_ref_tokens(tc.get("args"), need)
         for r in need:
             if r not in declared:
                 return f"unknown_ref:{r}"
-            if declared[r] >= i:
+            prod = declared[r]
+            if prod >= i:
                 return f"forward_or_self_ref:{r}"
+        tool = tools_by_name.get(str(tc.get("tool_name") or ""))
+        if tool and tool.is_read_only:
+            declared[f"$ref:{tail_len + read_slot}"] = i
+            read_slot += 1
     return None
 
 
-def _constraints_violated(*, constraints: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> bool:
+def _constraints_violated(
+    *,
+    constraints: list[dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
+    tools_by_name: dict[str, ToolInfo] | None = None,
+) -> bool:
     for tc in tool_calls:
         args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+        tool = (tools_by_name or {}).get(str(tc.get("tool_name") or ""))
         for c in constraints:
             if not isinstance(c, dict):
                 continue
-            if _constraint_violated(constraint=c, tool_args=args):
+            if _constraint_violated(constraint=c, tool_args=args, tool=tool):
                 return True
     return False
 
@@ -160,6 +277,26 @@ def _risk_for_tools(tool_calls: list[ToolCall], tools_by_name: dict[str, ToolInf
     return "read"
 
 
+def _read_not_found_summary(*, state: AgentState, tools_by_name: dict[str, ToolInfo]) -> str | None:
+    outputs = state.get("tool_outputs") or []
+    if not isinstance(outputs, list):
+        return None
+    truncated_at = int(state.get("tool_outputs_truncated_at") or 0)
+    for row in reversed(outputs[max(0, truncated_at) :]):
+        if not isinstance(row, dict):
+            continue
+        name = row.get("tool_name")
+        tool = tools_by_name.get(str(name)) if isinstance(name, str) else None
+        if tool is None or not tool.is_read_only:
+            continue
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        if row.get("http_status") != 404 and not result.get("not_found"):
+            continue
+        detail = result.get("_summary") or result.get("detail") or result.get("message")
+        return str(detail or "Requested resource was not found.")
+    return None
+
+
 def _build_planner_decision_prompt(*, state: AgentState, current: dict[str, Any], tools_by_name: dict[str, ToolInfo]) -> str:
     tool_cards = state.get("tool_cards") or _tool_cards(list(tools_by_name.values()))
     recent_outputs = state.get("tool_outputs") or []
@@ -184,9 +321,12 @@ def _build_planner_decision_prompt(*, state: AgentState, current: dict[str, Any]
         "- For domain_tool / parallel_read_tools, only use tool_name values from the tool catalog.\n"
         "- For dependent writes in one decision, use $ref:... placeholders in args and optional output_ref per write call; "
         "the guard auto-fills missing output_ref.\n"
+        "- $ref:j refers to the j-th row in Recent tool_outputs (0-based); additional reads in this same decision continue indexing after those rows.\n"
         "- Prefer read-only GET tools before writes; keep args minimal and schema-safe.\n"
         "- If mandatory user facts are missing, use kind request_clarification with control_action "
         '{"name":"request_clarification","payload":{"question":"..."}} and empty tool_calls.\n'
+        "- Do NOT request clarification for a job/entity id when the user query or recent conversation already "
+        'includes an explicit prefixed id (e.g. "JOB-…"); emit domain_tool / parallel_read_tools with args.id set instead.\n'
         "- When the current intent is fully satisfied using tool results already in state, use intent_completed "
         'with empty tool_calls and a short summary in decision_summary.\n'
         "- If the intent is impossible or unsafe, use intent_failed with decision_summary explaining why.\n"
@@ -273,6 +413,13 @@ def _fallback_decision_from_repair(
 
 def make_planner_node(settings: Settings):
     async def planner_node(state: AgentState) -> dict[str, Any]:
+        if [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]:
+            return {
+                "pending_decision": None,
+                "next_route": "synthesize_plan",
+                "status": "validating",
+            }
+
         if not (settings.planner_openai_base_url or settings.openai_api_key):
             raise LangGraphPlannerError(
                 "LangGraph planner requires PLANNER_OPENAI_BASE_URL (or OPENAI_BASE_URL) or OPENAI_API_KEY."
@@ -342,6 +489,29 @@ def make_planner_node(settings: Settings):
             current["status"] = "in_progress"
         working[cursor] = current
 
+        not_found_summary = _read_not_found_summary(state=state, tools_by_name=tools_by_name)
+        if not_found_summary:
+            current["status"] = "completed"
+            working[cursor] = current
+            later = _next_active_intent_index(working, cursor + 1)
+            return {
+                "planner_iteration": iteration,
+                "working_intents": working,
+                "intent_cursor": later if later is not None else cursor,
+                "current_intent": current,
+                "pending_decision": None,
+                "completed_actions": [
+                    {
+                        "phase": "planner",
+                        "intent_id": current.get("intent_id"),
+                        "kind": "intent_completed",
+                        "summary": not_found_summary,
+                    }
+                ],
+                "next_route": "continue_planner" if later is not None else "synthesize_plan",
+                "status": "planning" if later is not None else "validating",
+            }
+
         prompt = _build_planner_decision_prompt(state=state, current=current, tools_by_name=tools_by_name)
         log_llm_prompt(
             component="planner_loop",
@@ -404,20 +574,49 @@ def make_planner_node(settings: Settings):
                     risk_level="read",
                 )
 
+        if decision.kind in ("domain_tool", "parallel_read_tools", "request_approval") and not decision.tool_calls:
+            fb = _fallback_decision_from_repair(
+                clause=str(current.get("description") or user_query_text(state)),
+                scoped_tools=scoped,
+                current_intent=current,
+            )
+            if fb is not None:
+                decision = fb
+
         next_route: RouteKey = "decision_guard"
         extra: dict[str, Any] = {}
         pending_payload: dict[str, Any] | None = decision.model_dump(mode="json")
 
         if decision.kind == "request_clarification":
-            q = None
-            if decision.control_action and isinstance(decision.control_action.payload, dict):
-                q = decision.control_action.payload.get("question")
-            if not isinstance(q, str) or not q.strip():
-                q = decision.decision_summary
-            extra["clarification"] = q.strip()
-            extra["status"] = "awaiting_clarification"
-            next_route = "clarify_end"
-            pending_payload = None
+            rep = _deterministic_plan_repair(
+                str(current.get("description") or user_query_text(state)),
+                scoped,
+                context=state.get("context") or {},
+            )
+            if rep is not None and rep.steps:
+                steps_tc = [
+                    ToolCall(tool_name=s.tool_name, args=dict(s.args or {}))
+                    for s in rep.steps[: settings.max_plan_steps]
+                ]
+                decision = PlannerDecision(
+                    intent_id=str(current.get("intent_id")),
+                    kind="domain_tool",
+                    tool_calls=steps_tc,
+                    decision_summary="Deterministic repair replaced an unnecessary clarification request.",
+                    risk_level=_risk_for_tools(steps_tc, tools_by_name),
+                )
+                next_route = "decision_guard"
+                pending_payload = decision.model_dump(mode="json")
+            else:
+                q = None
+                if decision.control_action and isinstance(decision.control_action.payload, dict):
+                    q = decision.control_action.payload.get("question")
+                if not isinstance(q, str) or not q.strip():
+                    q = decision.decision_summary
+                extra["clarification"] = q.strip()
+                extra["status"] = "awaiting_clarification"
+                next_route = "clarify_end"
+                pending_payload = None
         elif decision.kind == "intent_completed":
             current["status"] = "completed"
             working[cursor] = current
@@ -498,9 +697,38 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
     raw_calls = pending.get("tool_calls") or []
     if not isinstance(raw_calls, list):
         raw_calls = []
-    fixed_calls: list[dict[str, Any]] = [dict(x) for x in raw_calls if isinstance(x, dict)]
+    fixed_calls: list[dict[str, Any]] = []
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    intent_memory = context.get("intent_memory") if isinstance(context.get("intent_memory"), dict) else {}
+    for item in raw_calls:
+        if not isinstance(item, dict):
+            continue
+        fixed = dict(item)
+        tool = tools_by_name.get(str(fixed.get("tool_name") or ""))
+        if tool is not None:
+            raw_args = fixed.get("args") if isinstance(fixed.get("args"), dict) else {}
+            sanitized_args, _ = sanitize_tool_args_against_schema(tool, dict(raw_args))
+            provenance = promote_user_provenance(
+                tool=tool,
+                args=sanitized_args,
+                intent=user_query_text(state),
+                evidence={},
+            )
+            clean_args, _ = strip_unsupported_optional_args(
+                tool=tool,
+                args=sanitized_args,
+                intent=user_query_text(state),
+                intent_memory=intent_memory,
+                arg_provenance=provenance,
+            )
+            fixed["args"] = clean_args
+        fixed_calls.append(fixed)
     _assign_missing_output_refs(fixed_calls, tools_by_name)
-    ref_err = _forward_ref_violation(fixed_calls, tools_by_name)
+    ref_err = _forward_ref_violation(
+        fixed_calls,
+        tools_by_name,
+        tool_output_tail=planner_tool_output_tail(state),
+    )
     if ref_err:
         pending2 = dict(pending)
         pending2["violates_constraints"] = True
@@ -539,7 +767,44 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
     pending = dict(pending)
     pending["tool_calls"] = fixed_calls
 
-    if constraints and fixed_calls and _constraints_violated(constraints=constraints, tool_calls=fixed_calls):
+    if (
+        constraints
+        and fixed_calls
+        and _constraints_violated(
+            constraints=constraints,
+            tool_calls=fixed_calls,
+            tools_by_name=tools_by_name,
+        )
+    ):
+        if isinstance(current, dict):
+            fb = _fallback_decision_from_repair(
+                clause=str(current.get("description") or user_query_text(state)),
+                scoped_tools=scoped,
+                current_intent=current,
+            )
+            if fb is not None:
+                repaired_calls = [tc.model_dump(mode="json") for tc in fb.tool_calls]
+                _assign_missing_output_refs(repaired_calls, tools_by_name)
+                if not _constraints_violated(
+                    constraints=constraints,
+                    tool_calls=repaired_calls,
+                    tools_by_name=tools_by_name,
+                ):
+                    return {
+                        "pending_decision": {
+                            **fb.model_dump(mode="json"),
+                            "tool_calls": repaired_calls,
+                        },
+                        "next_route": "tool_execution",
+                        "completed_actions": [
+                            {
+                                "phase": "decision_guard",
+                                "intent_id": fb.intent_id,
+                                "kind": "constraint_repair",
+                                "summary": "Deterministic repair preserved explicit user constraints.",
+                            }
+                        ],
+                    }
         pending["violates_constraints"] = True
         pending["tool_calls"] = []
         pending["decision_summary"] = (
@@ -576,11 +841,16 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
     return {"pending_decision": pending, "next_route": "tool_execution"}
 
 
+def _plan_step_key(tool_name: str, args: dict[str, Any]) -> str:
+    return f"{tool_name}::{json.dumps(args, sort_keys=True, default=str)}"
+
+
 def synthesize_plan_node(state: AgentState) -> dict[str, Any]:
     """Build a structured plan blueprint from the graph execution trace."""
     scoped = state.get("scoped_tools") or []
     tools_by_name = {t.name: t for t in scoped if getattr(t, "name", None)}
     steps: list[AgentPlanStep] = []
+    seen_keys: set[str] = set()
     for entry in state.get("completed_actions") or []:
         if not isinstance(entry, dict):
             continue
@@ -590,10 +860,17 @@ def synthesize_plan_node(state: AgentState) -> dict[str, Any]:
         if not isinstance(name, str) or name not in tools_by_name:
             continue
         args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+        args_copy = dict(args)
+        tool_def = tools_by_name[name]
+        sanitized, _ = sanitize_tool_args_against_schema(tool_def, args_copy)
+        key = _plan_step_key(name, sanitized)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         steps.append(
             AgentPlanStep(
                 tool_name=name,
-                args=dict(args),
+                args=dict(sanitized),
                 evidence={},
                 confidence=0.85,
                 missing_required=[],

@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
@@ -14,7 +15,49 @@ PlannerBackendName = Literal["langgraph"]
 
 
 class PlannerBackendError(RuntimeError):
+    """Transient or infrastructure planner failure — maps to HTTP 503."""
+
     pass
+
+
+class PlannerPlanRejected(RuntimeError):
+    """Planner produced no valid plan (validation, JSON, graph outcome) — maps to HTTP 400."""
+
+    pass
+
+
+def _is_transient_exception(exc: BaseException) -> bool:
+    """True when the failure is likely retryable (timeouts, transport, overload)."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (TimeoutError, asyncio.TimeoutError, ConnectionError)):
+            return True
+        mod = getattr(type(cur), "__module__", "") or ""
+        name = type(cur).__name__
+        if mod.startswith("httpx"):
+            if name.endswith("Timeout") or name in ("ConnectError", "ReadTimeout", "WriteTimeout", "PoolTimeout"):
+                return True
+        if name in ("ConnectError", "ReadTimeout", "WriteTimeout", "PoolTimeout", "RemoteProtocolError"):
+            return True
+        cur = cur.__cause__ or cur.__context__
+
+    lowered = str(exc).lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "timeout",
+            "timed out",
+            "connection refused",
+            "connection reset",
+            "temporarily unavailable",
+            "rate limit",
+            "try again",
+            "overload",
+            "eof occurred",
+        )
+    )
 
 
 class PlannerClarificationError(PlannerBackendError):
@@ -48,6 +91,7 @@ class PlannerResult:
     backend_used: PlannerBackendName
     llm_calls: int = 0
     intent_contract: dict[str, Any] | None = None
+    tool_outputs: list[dict[str, Any]] | None = None
 
 
 def _assign_parallel_groups(
@@ -248,19 +292,23 @@ class PlannerService:
         scoped_tools: list[ToolInfo],
         context: dict[str, Any] | None = None,
     ) -> PlannerResult:
-        from ..graph.errors import LangGraphPlannerApprovalRequired, LangGraphPlannerClarification
+        from ..graph.errors import (
+            LangGraphPlannerApprovalRequired,
+            LangGraphPlannerClarification,
+            LangGraphPlannerError,
+        )
 
         planner_cls = PlannerService._langgraph_planner_cls
         if planner_cls is None:
             try:
-                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415 â€” optional heavy deps
+                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415 — optional heavy deps
             except Exception as exc:
                 raise PlannerBackendError("LangGraph planner unavailable.") from exc
 
         self._tool_registry.load_tools_markdown()
 
         try:
-            draft, contract = await planner_cls(self._settings).generate(
+            draft, contract, tool_outputs = await planner_cls(self._settings).generate(
                 intent=intent,
                 scoped_tools=scoped_tools,
                 context=context,
@@ -272,10 +320,22 @@ class PlannerService:
             raise PlannerApprovalRequired(str(exc), approval=payload) from exc
         except PlannerConfirmationRequired:
             raise
+        except LangGraphPlannerError as exc:
+            if _is_transient_exception(exc):
+                raise PlannerBackendError(str(exc)) from exc
+            raise PlannerPlanRejected(str(exc)) from exc
         except Exception as exc:
+            if _is_transient_exception(exc):
+                raise PlannerBackendError(str(exc)) from exc
             raise PlannerBackendError(str(exc)) from exc
 
-        result = PlannerResult(draft=draft, backend_used="langgraph", llm_calls=1, intent_contract=contract)
+        result = PlannerResult(
+            draft=draft,
+            backend_used="langgraph",
+            llm_calls=1,
+            intent_contract=contract,
+            tool_outputs=tool_outputs,
+        )
 
         deduped_draft, dropped_steps = _dedupe_plan_steps(result.draft)
         if dropped_steps > 0:
@@ -284,6 +344,7 @@ class PlannerService:
                 backend_used=result.backend_used,
                 llm_calls=result.llm_calls,
                 intent_contract=result.intent_contract,
+                tool_outputs=result.tool_outputs,
             )
             log_event(
                 "planner_duplicate_steps_deduped",
@@ -347,7 +408,11 @@ class PlannerService:
         session_id: str,
         approved: bool,
     ) -> PlannerResult:
-        from ..graph.errors import LangGraphPlannerApprovalRequired, LangGraphPlannerClarification
+        from ..graph.errors import (
+            LangGraphPlannerApprovalRequired,
+            LangGraphPlannerClarification,
+            LangGraphPlannerError,
+        )
 
         planner_cls = PlannerService._langgraph_planner_cls
         if planner_cls is None:
@@ -356,7 +421,7 @@ class PlannerService:
             except Exception as exc:
                 raise PlannerBackendError("LangGraph planner unavailable.") from exc
         try:
-            draft, contract = await planner_cls(self._settings).resume_after_approval(
+            draft, contract, tool_outputs = await planner_cls(self._settings).resume_after_approval(
                 session_id=session_id,
                 approved=approved,
             )
@@ -365,8 +430,20 @@ class PlannerService:
         except LangGraphPlannerApprovalRequired as exc:
             payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
             raise PlannerApprovalRequired(str(exc), approval=payload) from exc
+        except LangGraphPlannerError as exc:
+            if _is_transient_exception(exc):
+                raise PlannerBackendError(str(exc)) from exc
+            raise PlannerPlanRejected(str(exc)) from exc
         except Exception as exc:
+            if _is_transient_exception(exc):
+                raise PlannerBackendError(str(exc)) from exc
             raise PlannerBackendError(str(exc)) from exc
-        return PlannerResult(draft=draft, backend_used="langgraph", llm_calls=1, intent_contract=contract)
+        return PlannerResult(
+            draft=draft,
+            backend_used="langgraph",
+            llm_calls=1,
+            intent_contract=contract,
+            tool_outputs=tool_outputs,
+        )
 
 

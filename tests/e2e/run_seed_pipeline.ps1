@@ -488,6 +488,8 @@ try {
     Set-RunEnv "ADMIN_API_KEY" "seed-pipeline-admin"
     Set-RunEnv "JWT_REQUIRED" "0"
     Set-RunEnv "MAX_CONCURRENT" "0"
+    Set-RunEnv "HTTP_TIMEOUT_S" "45"
+    Set-RunEnv "GRAPH_CHECKPOINT_BACKEND" "auto"
     Set-RunEnv "ENFORCE_TOOL_REGISTRY_HEALTH" "1"
     Set-RunEnv "AUTO_REPAIR_TOOL_REGISTRY" "1"
     if ($LiveAgent) {

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -113,8 +113,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--output",
-        default=str(FACTORY_AGENT_ROOT / "agent" / "generated" / "tool_intent_vocabulary.json"),
-        help="Output JSON path used by factory-agent runtime fallback.",
+        default=str(FACTORY_AGENT_ROOT / "factory_agent" / "generated" / "tool_intent_vocabulary.json"),
+        help="Output JSON path (must match factory_agent.planning.tool_intent_profile).",
     )
     parser.add_argument(
         "--generic-threshold",
