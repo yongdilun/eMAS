@@ -28,6 +28,15 @@ LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.xfail(
     strict=True,
 )
 
+LEGACY_RUNTIME_RETIRED_XFAIL = pytest.mark.xfail(
+    reason=(
+        "Legacy relational PlanStep execution, step approvals, DLQ replay, and "
+        "background worker execution are retired; graph-native checkpoint execution "
+        "is now the only active runtime."
+    ),
+    strict=True,
+)
+
 
 class FakeEventBus:
     def __init__(self):
@@ -153,7 +162,7 @@ async def _seed_session_plan_with_steps(
     steps: list[dict],
 ):
     from factory_agent.persistence.models import Plan, PlanStep, Session, generate_uuid
-    from factory_agent.orchestration.execution import compute_idempotency_key
+    from factory_agent.tools.arguments import compute_idempotency_key
 
     sess = Session(
         session_id=session_id,
@@ -1577,6 +1586,8 @@ async def test_create_plan_falls_back_when_tool_selector_reranker_errors(session
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_generated_write_plan_sets_requires_approval_and_waits_approval(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, PlanStep
 
@@ -1712,6 +1723,8 @@ async def test_get_tools_lists_and_scopes(sessionmaker_override, db_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_reject_approval_sets_session_idle_and_step_skipped(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, PlanStep, Session, generate_uuid
 
@@ -1809,6 +1822,8 @@ async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import PlanStep
 
@@ -1877,7 +1892,7 @@ async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_ov
 @pytest.mark.asyncio
 async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, Session, generate_uuid
-    from factory_agent.orchestration.execution import compute_idempotency_key
+    from factory_agent.tools.arguments import compute_idempotency_key
 
     session_id = "sess-snapshot"
     plan_id = "plan-snapshot"
@@ -1984,6 +1999,8 @@ async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_approve_endpoint_allows_overriding_args_before_execution(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval as ApprovalRow, PlanStep as PlanStep
 
@@ -2040,6 +2057,8 @@ async def test_approve_endpoint_allows_overriding_args_before_execution(sessionm
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_dlq_dismiss_and_replay_endpoints(sessionmaker_override, db_session):
     from factory_agent.persistence.models import DeadLetter, generate_uuid
 
@@ -2121,6 +2140,8 @@ async def test_waiting_approval_user_message_triggers_replan_context(sessionmake
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_dlq_replay_resets_step_and_marks_session_executing(sessionmaker_override, db_session):
     from factory_agent.persistence.models import DeadLetter, PlanStep, Session, generate_uuid
 
@@ -2262,6 +2283,8 @@ async def test_admin_dashboard_html_renders(sessionmaker_override):
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_background_execute_returns_429_when_enqueue_fails(sessionmaker_override):
     async def fail_enqueue(_session_id: str) -> None:
         raise RuntimeError("session queue full")
@@ -2277,6 +2300,8 @@ async def test_background_execute_returns_429_when_enqueue_fails(sessionmaker_ov
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_background_execute_rejects_duplicate_enqueue_for_same_session(sessionmaker_override):
     queued: set[str] = set()
 
@@ -2375,6 +2400,8 @@ async def test_pending_approval_read_endpoints_require_jwt_and_support_session_f
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_machine_tool_result_summary_is_operator_readable(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Message
 
@@ -2416,6 +2443,8 @@ async def test_machine_tool_result_summary_is_operator_readable(sessionmaker_ove
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_product_ids_result_summary_returns_ids_not_generic_record_count(sessionmaker_override, db_session, respx_mock, monkeypatch):
     from factory_agent.persistence.models import Message
 
@@ -2490,6 +2519,8 @@ async def test_product_ids_result_summary_returns_ids_not_generic_record_count(s
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_product_ids_result_summary_works_without_llm(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Message
 
@@ -2548,6 +2579,8 @@ async def test_product_ids_result_summary_works_without_llm(sessionmaker_overrid
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_job_list_result_summary_uses_llm_in_hybrid_mode(sessionmaker_override, db_session, respx_mock, monkeypatch):
     from factory_agent.persistence.models import Message
 
@@ -2625,6 +2658,8 @@ async def test_job_list_result_summary_uses_llm_in_hybrid_mode(sessionmaker_over
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_job_list_result_summary_recovers_from_structured_fact_dump(sessionmaker_override, db_session, respx_mock, monkeypatch):
     from factory_agent.persistence.models import Message
 
@@ -2712,6 +2747,8 @@ async def test_job_list_result_summary_recovers_from_structured_fact_dump(sessio
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_job_list_result_summary_deterministically_extracts_analysis_intent(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Message
 
@@ -2786,6 +2823,8 @@ async def test_job_list_result_summary_deterministically_extracts_analysis_inten
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_read_only_machine_not_found_returns_operator_friendly_completion(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Message, Session
 
@@ -2833,6 +2872,8 @@ async def test_read_only_machine_not_found_returns_operator_friendly_completion(
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_write_machine_not_found_is_checked_before_approval(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Approval, Message
 
@@ -2900,6 +2941,8 @@ async def test_write_machine_not_found_is_checked_before_approval(sessionmaker_o
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_RUNTIME_RETIRED_XFAIL
 async def test_write_machine_approval_includes_target_preview(sessionmaker_override, db_session, respx_mock):
     read_schema = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
     write_schema = {

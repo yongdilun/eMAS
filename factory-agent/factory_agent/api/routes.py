@@ -10,7 +10,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
-from jsonschema import Draft202012Validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +26,6 @@ from factory_agent.persistence.models import generate_uuid
 from ..config import Settings
 from ..graph.session_detection import is_graph_native_session, is_langgraph_plan
 from ..observability.events import AgentEvent, EventBus
-from ..orchestration.execution import ExecutionEngine, compute_idempotency_key
 from ..orchestration.memory_manager import MemoryManager
 from ..planning.intent import assess_intent
 from ..observability.metrics import metrics
@@ -56,11 +54,12 @@ from ..schemas import (
     ToolInfo,
     ValidationErrorResponse,
 )
-from ..orchestration.session_manager import SessionManager, TransitionError, VersionConflictError
+from ..orchestration.session_manager import SessionManager, TransitionError
 from ..security import JwtValidationError, validate_bearer_token
 from ..analysis.summary_backend import SummaryAdapter, SummaryBackendError
 from ..observability.telemetry import log_event, log_step_status_changed
 from ..registry.tool_registry import ToolRegistry
+from ..tools.arguments import compute_idempotency_key
 from ..planning.tool_selector import ToolSelector
 from ..analysis.presentation import extract_table_from_result
 
@@ -279,7 +278,6 @@ def build_router(
     router = APIRouter()
     session_mgr = SessionManager(settings)
     memory_manager = MemoryManager(settings)
-    executor = ExecutionEngine(settings, event_bus)
     planner = planner_adapter or PlannerService(settings=settings, tool_registry=tool_registry)
     tool_selector = ToolSelector(settings)
     summary_adapter = SummaryAdapter(settings)
@@ -2189,71 +2187,24 @@ def build_router(
         if expected_version is not None and sess.version != expected_version:
             raise HTTPException(status_code=409, detail=f"version_conflict expected={expected_version} actual={sess.version}")
         current_plan = await _load_current_plan(db=db, session_id=session_id)
-        if await _is_graph_native_session(db, sess, current_plan):
-            if sess.status == "WAITING_APPROVAL":
-                return _session_to_response(sess)
-            if current_plan and current_plan.status == "COMPLETED" and sess.status == "COMPLETED":
-                return _session_to_response(sess)
-            sess = await _run_langgraph_session(db=db, sess=sess, user=user)
+        if sess.status == "WAITING_APPROVAL":
             return _session_to_response(sess)
-        if current_plan is None and sess.current_intent:
-            sess = await _run_langgraph_session(db=db, sess=sess, user=user)
+        if current_plan and current_plan.status == "COMPLETED" and sess.status == "COMPLETED":
             return _session_to_response(sess)
-        if current_plan and current_plan.status == "COMPLETED":
+        if sess.status == "COMPLETED":
             return _session_to_response(sess)
-        if current_plan and current_plan.status == "PENDING_APPROVAL":
-            pending_plan_approval = (
-                await db.execute(
-                    select(ApprovalRow)
-                    .where(ApprovalRow.session_id == session_id)
-                    .where(ApprovalRow.plan_id == current_plan.plan_id)
-                    .where(ApprovalRow.subject_type == "plan")
-                    .where(ApprovalRow.status == "PENDING")
-                )
-            ).scalars().first()
-            if pending_plan_approval:
-                return _session_to_response(sess)
         try:
             session_mgr.enforce_limits(sess)
         except TransitionError as e:
             raise HTTPException(status_code=429, detail=str(e))
-        # Background execution only works when the worker pool is enabled.
-        if background and settings.worker_count <= 0:
-            background = False
-        if current_plan and current_plan.kind == "discovery":
-            background = False
 
-        if background and enqueue_session is not None:
-            # Mark as executing and enqueue.
-            try:
-                sess = await session_mgr.update_with_version(
-                    db,
-                    session_id=sess.session_id,
-                    expected_version=sess.version,
-                    values={"status": "EXECUTING", "error": None},
-                )
-            except VersionConflictError as e:
-                raise HTTPException(status_code=409, detail=str(e))
-            try:
-                await enqueue_session(session_id)
-            except Exception as e:
-                raise HTTPException(status_code=429, detail=f"queue full or enqueue failed: {e}")
-            return _session_to_response(sess)
-
-        tools_by_name = await _ensure_registry_health(db=db)
-        tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
-        await executor.execute_until_blocked(db, session=sess, tools_by_name=tools_by_name)
-        sess = await session_mgr.get_session(db, session_id=session_id)
-        current_plan = await _load_current_plan(db=db, session_id=session_id)
-        if current_plan and current_plan.kind == "discovery" and sess and sess.status == "COMPLETED":
-            promoted = await _promote_discovery_to_execution(
-                db=db,
-                sess=sess,
-                discovery_plan=current_plan,
-                tools_by_name=tools_by_name,
+        if background:
+            log_event(
+                "background_execute_ignored",
+                session_id=session_id,
+                reason="legacy worker execution retired; running graph-native inline",
             )
-            if promoted:
-                sess = await session_mgr.get_session(db, session_id=session_id)
+        sess = await _run_langgraph_session(db=db, sess=sess, user=user)
         return _session_to_response(sess)
 
     @router.post("/sessions/{session_id}/cancel", response_model=SessionResponse)
@@ -2348,9 +2299,6 @@ def build_router(
         row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
-        sess_for_mode = await session_mgr.get_session(db, session_id=row.session_id)
-        current_plan = await _load_current_plan(db=db, session_id=row.session_id)
-
         if (getattr(row, "subject_type", "step") or "step") == "graph":
             row.status = "APPROVED"
             row.decided_by = req.decided_by
@@ -2411,75 +2359,15 @@ def build_router(
             return _approval_to_response(row)
 
         if (getattr(row, "subject_type", "step") or "step") == "plan":
-            plan_row = None
-            if getattr(row, "plan_id", None):
-                plan_row = (await db.execute(select(PlanRow).where(PlanRow.plan_id == row.plan_id))).scalars().first()
-            row.status = "APPROVED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
-            if plan_row:
-                plan_row.status = "APPROVED"
-                plan_row.approved_plan_hash = plan_row.plan_hash
-            sess = await session_mgr.get_session(db, session_id=row.session_id)
-            if sess:
-                sess.status = "IDLE"
-                sess.error = None
-                sess.version += 1
-            await db.commit()
-            await event_bus.publish(
-                AgentEvent(
-                    event_type="approval_decided",
-                    session_id=row.session_id,
-                    payload={"approval_id": row.approval_id, "status": "APPROVED"},
-                    published_at=datetime.utcnow(),
-                )
-            )
-            return _approval_to_response(row)
-
-        if await _is_graph_native_session(db, sess_for_mode, current_plan):
             raise HTTPException(
-                status_code=409,
-                detail="graph-native approvals must use subject_type=graph/plan paths; legacy step approval is disabled",
+                status_code=410,
+                detail="legacy plan approvals are retired; graph-native approvals use subject_type=graph",
             )
 
-        if req.args is not None:
-            if not isinstance(req.args, dict):
-                raise HTTPException(status_code=400, detail="args must be an object")
-            tools_by_name = await tool_registry.get_tools_by_name(db)
-            tool = tools_by_name.get(row.tool_name)
-            if not tool:
-                raise HTTPException(status_code=400, detail=f"unknown tool: {row.tool_name}")
-            try:
-                Draft202012Validator(tool.input_schema).validate(req.args)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"invalid args: {e}")
-
-            row.args = req.args
-            step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
-            if step:
-                step.args = req.args
-                sess = await session_mgr.get_session(db, session_id=row.session_id)
-                plan_version = (sess.plan_version or 0) if sess else 0
-                step.idempotency_key = compute_idempotency_key(
-                    session_id=row.session_id,
-                    step_index=step.step_index,
-                    plan_version=plan_version,
-                    args=req.args,
-                )
-
-        row.status = "APPROVED"
-        row.decided_by = req.decided_by
-        row.decided_at = datetime.utcnow()
-        await db.commit()
-        await event_bus.publish(
-            AgentEvent(
-                event_type="approval_decided",
-                session_id=row.session_id,
-                payload={"approval_id": row.approval_id, "status": "APPROVED"},
-                published_at=datetime.utcnow(),
-            )
+        raise HTTPException(
+            status_code=410,
+            detail="legacy step approvals are retired; graph-native approvals use subject_type=graph",
         )
-        return _approval_to_response(row)
 
     @router.post("/approvals/{approval_id}/reject", response_model=ApprovalResponse)
     async def reject_approval(
@@ -2491,7 +2379,6 @@ def build_router(
         row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
-        current_plan = await _load_current_plan(db=db, session_id=row.session_id)
         if (getattr(row, "subject_type", "step") or "step") == "graph":
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
@@ -2525,63 +2412,16 @@ def build_router(
                 )
             )
             return _approval_to_response(row)
-        sess = await session_mgr.get_session(db, session_id=row.session_id)
-        if await _is_graph_native_session(db, sess, current_plan) and (getattr(row, "subject_type", "step") or "step") == "step":
-            raise HTTPException(
-                status_code=409,
-                detail="graph-native approvals must use subject_type=graph/plan paths; legacy step approval is disabled",
-            )
         if (getattr(row, "subject_type", "step") or "step") == "plan":
-            row.status = "REJECTED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
-            row.rejection_reason = req.rejection_reason
-            if getattr(row, "plan_id", None):
-                plan_row = (await db.execute(select(PlanRow).where(PlanRow.plan_id == row.plan_id))).scalars().first()
-                if plan_row:
-                    plan_row.status = "REJECTED"
-            if sess:
-                sess.status = "IDLE"
-                sess.error = req.rejection_reason or f"Approval {row.approval_id} rejected"
-                sess.updated_at = datetime.utcnow()
-                sess.version += 1
-            await db.commit()
-            await event_bus.publish(
-                AgentEvent(
-                    event_type="approval_decided",
-                    session_id=row.session_id,
-                    payload={"approval_id": row.approval_id, "status": "REJECTED"},
-                    published_at=datetime.utcnow(),
-                )
+            raise HTTPException(
+                status_code=410,
+                detail="legacy plan approvals are retired; graph-native approvals use subject_type=graph",
             )
-            return _approval_to_response(row)
 
-        row.status = "REJECTED"
-        row.decided_by = req.decided_by
-        row.decided_at = datetime.utcnow()
-        row.rejection_reason = req.rejection_reason
-        step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
-        if step and step.status not in ("DONE", "SKIPPED", "FAILED", "AMBIGUOUS"):
-            step.status = "SKIPPED"
-            step.completed_at = datetime.utcnow()
-            reason = req.rejection_reason or f"Approval {row.approval_id} rejected"
-            step.last_error = reason
-            if sess:
-                _log_step_status(sess, step, step.status)
-        if sess:
-            sess.status = "IDLE"
-            sess.error = req.rejection_reason or f"Approval {row.approval_id} rejected"
-            sess.updated_at = datetime.utcnow()
-        await db.commit()
-        await event_bus.publish(
-            AgentEvent(
-                event_type="approval_decided",
-                session_id=row.session_id,
-                payload={"approval_id": row.approval_id, "status": "REJECTED"},
-                published_at=datetime.utcnow(),
-            )
+        raise HTTPException(
+            status_code=410,
+            detail="legacy step approvals are retired; graph-native approvals use subject_type=graph",
         )
-        return _approval_to_response(row)
 
     @router.get("/dlq", response_model=list[DeadLetterResponse])
     async def list_dlq(
@@ -2621,33 +2461,9 @@ def build_router(
         _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
-        row = DeadLetterRow(
-            dlq_id=generate_uuid(),
-            session_id=req.session_id,
-            step_id=req.step_id,
-            failure_type=req.failure_type,
-            reason=req.reason,
-            payload=req.payload,
-            status="PENDING",
-        )
-        db.add(row)
-        await db.commit()
-        await db.refresh(row)
-        metrics.inc("dlq_push_total", labels={"failure_type": req.failure_type})
-        metrics.inc("dlq_push_rate", labels={"failure_type": req.failure_type})
-        return DeadLetterResponse(
-            dlq_id=row.dlq_id,
-            session_id=row.session_id,
-            step_id=row.step_id,
-            failure_type=row.failure_type,
-            reason=row.reason,
-            payload=row.payload,
-            status=row.status,
-            replayed_at=row.replayed_at,
-            replayed_by=row.replayed_by,
-            dismissed_at=row.dismissed_at,
-            dismissed_reason=row.dismissed_reason,
-            created_at=row.created_at,
+        raise HTTPException(
+            status_code=410,
+            detail="legacy step-based DLQ push is retired; graph-native failures are recorded in graph state",
         )
 
     @router.post("/dlq/{dlq_id}/replay")
@@ -2657,52 +2473,10 @@ def build_router(
         _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
-        row = (await db.execute(select(DeadLetterRow).where(DeadLetterRow.dlq_id == dlq_id))).scalars().first()
-        if not row:
-            raise HTTPException(status_code=404, detail="dlq entry not found")
-        sess = await session_mgr.get_session(db, session_id=row.session_id)
-        current_plan = await _load_current_plan(db=db, session_id=row.session_id)
-        if await _is_graph_native_session(db, sess, current_plan):
-            raise HTTPException(
-                status_code=409,
-                detail="DLQ replay is legacy step-based and disabled for graph-native sessions; rerun with /sessions/{session_id}/execute",
-            )
-        if row.step_id:
-            step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
-            if step:
-                step.status = "NOT_STARTED"
-                step.last_error = None
-                step.started_at = None
-                step.completed_at = None
-                step.retry_count = 0
-                if sess:
-                    _log_step_status(sess, step, step.status)
-        if sess:
-            if row.step_id:
-                step = (await db.execute(select(PlanStepRow).where(PlanStepRow.step_id == row.step_id))).scalars().first()
-                if step is not None:
-                    sess.current_step_index = min(sess.current_step_index or 0, step.step_index)
-            sess.status = "EXECUTING"
-            sess.error = None
-            sess.version += 1
-        row.status = "REPLAYED"
-        row.replayed_at = datetime.utcnow()
-        row.replayed_by = req.replayed_by
-        row.dismissed_at = None
-        row.dismissed_reason = None
-        await db.commit()
-        metrics.inc("dlq_replay_total")
-        metrics.inc("dlq_replay_success_total")
-        metrics.inc("dlq_replay_success_rate")
-        await event_bus.publish(
-            AgentEvent(
-                event_type="dlq_replay_requested",
-                session_id=row.session_id,
-                payload={"dlq_id": dlq_id},
-                published_at=datetime.utcnow(),
-            )
+        raise HTTPException(
+            status_code=410,
+            detail="legacy step-based DLQ replay is retired; rerun graph-native sessions with /sessions/{session_id}/execute",
         )
-        return {"ok": True}
 
     @router.post("/dlq/{dlq_id}/replay-request")
     async def request_dlq_replay(
@@ -2710,7 +2484,10 @@ def build_router(
         _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
-        return await replay_dlq(dlq_id, DeadLetterReplayRequest(), {}, db)
+        raise HTTPException(
+            status_code=410,
+            detail="legacy step-based DLQ replay is retired; rerun graph-native sessions with /sessions/{session_id}/execute",
+        )
 
     @router.post("/dlq/{dlq_id}/dismiss")
     async def dismiss_dlq(

@@ -6,7 +6,7 @@ This test is opt-in. It is **skipped** unless::
     OPENAI_BASE_URL        = http://...    # or LLM_BASE_URL
 
 When enabled, it loads ``tests/rag_eval/cases.json``, drives every case through
-the real router + RAG pipeline via :class:`Phase5Agent`, and writes JSON
+the current RAG evaluation harness, and writes JSON
 artifacts under ``test-artifacts/rag-eval/<run_id>/`` (see
 ``tests/rag_eval/README.md``).
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -11,8 +10,6 @@ from fastapi import FastAPI
 import database
 from factory_agent.api import build_router
 from factory_agent.config import Settings
-from factory_agent.observability.events import AgentEvent
-from factory_agent.orchestration.execution import ExecutionEngine
 from factory_agent.persistence import database as persistence_database
 from factory_agent.persistence.models import Session, WorkflowCheckpoint
 from factory_agent.registry.tool_registry import ToolRegistry
@@ -20,12 +17,12 @@ from factory_agent.registry.tool_registry import ToolRegistry
 
 class _FakeEventBus:
     def __init__(self):
-        self.published: list[AgentEvent] = []
+        self.published: list[object] = []
 
-    async def publish(self, event: AgentEvent) -> None:
+    async def publish(self, event: object) -> None:
         self.published.append(event)
 
-    async def listen(self, handler: Any) -> None:
+    async def listen(self, handler: object) -> None:
         return None
 
 
@@ -73,7 +70,6 @@ def _checkpoint_row(session_id: str) -> WorkflowCheckpoint:
 
 @pytest.mark.asyncio
 async def test_phase8_execute_endpoint_does_not_fall_back_to_legacy_engine_for_checkpoint_only_graph_session(
-    monkeypatch,
     sessionmaker_override,
     db_session,
 ):
@@ -90,11 +86,6 @@ async def test_phase8_execute_endpoint_does_not_fall_back_to_legacy_engine_for_c
     db_session.add(_checkpoint_row(session_id))
     await db_session.commit()
 
-    async def fail_legacy_execute(*args, **kwargs):
-        raise AssertionError("graph-native execution reached legacy ExecutionEngine")
-
-    monkeypatch.setattr(ExecutionEngine, "execute_until_blocked", fail_legacy_execute)
-
     app = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(f"/sessions/{session_id}/execute")
@@ -103,35 +94,23 @@ async def test_phase8_execute_endpoint_does_not_fall_back_to_legacy_engine_for_c
     assert response.json()["status"] == "WAITING_APPROVAL"
 
 
-@pytest.mark.asyncio
-async def test_phase8_legacy_execution_engine_rejects_graph_native_checkpoint_sessions(db_session):
-    session_id = "phase8-engine-guard"
-    session = Session(
-        session_id=session_id,
-        user_id="u1",
-        status="EXECUTING",
-        current_intent="list machines",
-        replan_context={},
-    )
-    db_session.add(session)
-    db_session.add(_checkpoint_row(session_id))
-    await db_session.commit()
-
-    engine = ExecutionEngine(_settings(), _FakeEventBus())
-
-    with pytest.raises(RuntimeError, match="disabled for graph-native sessions"):
-        await engine.execute_until_blocked(db_session, session=session, tools_by_name={})
-
-
-def test_phase8_query_router_has_no_production_imports_outside_legacy_module():
+def test_phase8_legacy_runtime_modules_are_removed_from_production_package():
     package_root = Path(__file__).resolve().parents[1] / "factory_agent"
-    forbidden_imports: list[str] = []
+    removed_modules = [
+        "orchestration/execution.py",
+        "orchestration/execution_runtime.py",
+        "orchestration/router.py",
+        "orchestration/agent_integration.py",
+    ]
+    assert [rel for rel in removed_modules if (package_root / rel).exists()] == []
+
+    forbidden_terms = ["ExecutionEngine", "execute_until_blocked", "QueryRouter", "Phase5Agent"]
+    matches: list[str] = []
     for path in package_root.rglob("*.py"):
         rel = path.relative_to(package_root).as_posix()
-        if rel == "orchestration/router.py":
-            continue
         text = path.read_text(encoding="utf-8")
-        if "orchestration.router import QueryRouter" in text or "import QueryRouter" in text:
-            forbidden_imports.append(rel)
+        for term in forbidden_terms:
+            if term in text:
+                matches.append(f"{rel}:{term}")
 
-    assert forbidden_imports == []
+    assert matches == []

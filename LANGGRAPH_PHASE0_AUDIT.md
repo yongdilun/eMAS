@@ -2,7 +2,7 @@
 
 Date: 2026-05-12
 
-Updated: 2026-05-13 reference-check pass; 2026-05-13 Phase 1 schema evidence update; 2026-05-13 Phase 2 intent evidence update; 2026-05-13 Phase 3 planner-loop evidence update; 2026-05-13 Phase 4 tool execution evidence update; 2026-05-13 Phase 5 dry-run/approval/commit evidence update; 2026-05-13 Phase 6 checkpoint/execution-truth evidence update; 2026-05-13 Phase 7 API/UI alignment evidence update; 2026-05-13 Phase 8 legacy retirement/contract cleanup evidence update; 2026-05-13 Phase 9 final verification evidence update
+Updated: 2026-05-13 reference-check pass; 2026-05-13 Phase 1 schema evidence update; 2026-05-13 Phase 2 intent evidence update; 2026-05-13 Phase 3 planner-loop evidence update; 2026-05-13 Phase 4 tool execution evidence update; 2026-05-13 Phase 5 dry-run/approval/commit evidence update; 2026-05-13 Phase 6 checkpoint/execution-truth evidence update; 2026-05-13 Phase 7 API/UI alignment evidence update; 2026-05-13 Phase 8 legacy retirement/contract cleanup evidence update; 2026-05-13 Phase 9 final verification evidence update; 2026-05-13 post-Phase 9 legacy runtime cleanup update
 
 Scope: audit of active runtime paths for session creation, message submission, plan creation, execution, approval, snapshot, SSE, checkpointing, and legacy replay. The original Phase 0 pass was evidence-only; later phase updates below record approved implementation changes and verification evidence.
 
@@ -12,29 +12,29 @@ Scope: audit of active runtime paths for session creation, message submission, p
 | --- | --- | --- |
 | Session CRUD | PARTIAL | `SessionRow` is still the public session record and is used by API/UI compatibility paths in `factory-agent/factory_agent/api/routes.py:1307`, `factory-agent/factory_agent/api/routes.py:1320`, `factory-agent/factory_agent/api/routes.py:1332`, and `factory-agent/factory_agent/orchestration/session_manager.py:49`. |
 | Message submission | PARTIAL | Messages are persisted as relational `MessageRow` records at `factory-agent/factory_agent/api/routes.py:1472`; user messages can mutate legacy step state or graph approval rows depending on current plan classification. |
-| Plan creation | LEGACY STILL USED | `/sessions/{session_id}/plans` calls LangGraph through `PlannerService`, but persists the result as `PlanRow` and `PlanStepRow` compatibility records in `_persist_plan` at `factory-agent/factory_agent/api/routes.py:489`. It also still gates non-operation requests through `assess_intent` at `factory-agent/factory_agent/api/routes.py:1715`. |
-| Execution | PARTIAL | `/sessions/{session_id}/execute` routes graph-native sessions to `_run_langgraph_session` and now uses the shared graph-native detector in `factory-agent/factory_agent/graph/session_detection.py`, including durable checkpoint-only graph sessions. It still falls back to `ExecutionEngine.execute_until_blocked` for non-graph legacy/current-plan sessions, but Phase 8 added a defensive legacy-engine guard that raises before any graph-native session can execute there. |
-| Approval | PARTIAL | Graph approvals use `subject_type="graph"` and resume via `Command(resume=...)` through `PlannerService.resume_after_approval`; Phase 6 proves resume survives process-local checkpointer reset. Plan/step approval paths remain for compatibility/legacy sessions, and legacy step approval now returns `409` without mutation for graph-native sessions. |
+| Plan creation | COMPATIBILITY PROJECTION | `/sessions/{session_id}/plans` calls LangGraph through `PlannerService` and may still persist `PlanRow`/`PlanStepRow` compatibility projections for UI/history. These rows are no longer an execution engine input. |
+| Execution | DONE | `/sessions/{session_id}/execute` now runs `_run_langgraph_session` inline for active sessions. The legacy relational `ExecutionEngine`, `execute_until_blocked`, route-score router, and Phase5Agent modules have been removed from production code. |
+| Approval | DONE | Graph approvals use `subject_type="graph"` and resume via `Command(resume=...)` through `PlannerService.resume_after_approval`; Phase 6 proves resume survives process-local checkpointer reset. Legacy plan/step approval decisions now return `410 Gone`. |
 | Snapshot | PARTIAL | `GET /sessions/{session_id}/snapshot` exists at `factory-agent/factory_agent/api/routes.py:1520`. For graph-native sessions, Phase 7 now treats durable `langgraph_native_checkpoint` rows as graph-native even without a compatibility plan/replan shim and projects checkpoint plan/tool progress into stable timeline events; non-graph snapshot/SSE compatibility paths remain relational. |
 | SSE | PARTIAL | Semantic SSE exists at `factory-agent/factory_agent/api/routes.py:1531`; Phase 7 keeps it as a snapshot timeline adapter, emits shared semantic payloads, and supports `Last-Event-ID` resume, but it is still not a direct LangGraph event-stream tap. |
 | Native LangGraph graph | PARTIAL | The compiled graph includes `input_layer -> intent_splitter -> prepare -> planner -> decision_guard -> tool_execution -> relevance_filter -> planner`, plus validation, dry-run, commit, fatal, and clarification nodes in `factory-agent/factory_agent/graph/builder.py:39`. Runtime entry is `graph.ainvoke` at `factory-agent/factory_agent/graph/planner_graph.py:72`; Phase 5 now detects native interrupt payloads from checkpoint snapshots and resumes with `Command(resume=...)`. |
 | Checkpointing | DONE for graph-native | Native LangGraph checkpointer is wired in `factory-agent/factory_agent/graph/builder.py:123`, and resume uses `thread_id=session_id` in `factory-agent/factory_agent/graph/planner_graph.py:103`. Phase 6 adds DB-backed durable LangGraph checkpoints in `factory-agent/factory_agent/graph/checkpointing.py` using `workflow_checkpoints`, with JSON-safe `agent_state` projection for snapshots and native checkpoint payload for resume. Legacy memory checkpoints remain only in legacy execution paths. |
 | Backend transaction bundle API | DONE | Go API now exposes `POST /api/v1/agent/transaction/bundle-dry-run` and `POST /api/v1/agent/transaction/commit` through `emas/internal/handler/agent_transaction_handler.go` and `emas/internal/router/router.go`; `emas/internal/service/agent_transaction_service.go` applies commit bundles inside one GORM transaction and requires backend idempotency on commit. |
-| DLQ replay | LEGACY STILL USED | `/dlq/{dlq_id}/replay` is still present and remains able to mutate legacy step sessions, but Phase 8 routes its graph-native check through `factory-agent/factory_agent/graph/session_detection.py`, so LangGraph plans, pending graph approvals, and checkpoint-only graph sessions are all blocked. Phase 6 also makes the `main.py` DLQ replay event listener skip graph-native sessions. |
-| Worker/cold-start recovery | LEGACY STILL USED | `main.py` worker execution still calls `executor.execute_until_blocked` for legacy sessions, and cold-start recovery/event listeners still mutate `PlanStepRow`/`SessionRow` for legacy sessions. Phase 8 routes worker/recovery guards through the shared graph-native detector and `ExecutionEngine.execute_until_blocked` now rejects graph-native sessions directly. |
+| DLQ replay | RETIRED | `/dlq/{dlq_id}/replay`, `/dlq/{dlq_id}/replay-request`, and `/dlq/push` now return `410 Gone`. DLQ list/dismiss views remain only for historical/operator cleanup. |
+| Worker/cold-start recovery | RETIRED | `main.py` no longer imports or instantiates `ExecutionEngine`; worker execution, cold-start relational step recovery, stuck-step reconciliation, and legacy approval/DLQ event mutation are no-ops/ignored. |
 | Frontend chat recovery | PARTIAL | Frontend hydrates from snapshot and opens semantic SSE in `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:167` and `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:234`; Phase 7 now consumes named `event: semantic` frames and refreshes snapshot on stream open/error. It still calls create-plan then execute in `runIntent` at `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:369`, which remains a future behavior-changing flow cleanup. |
 
 ## Reference-Check Pass
 
 | Candidate | Reference result | Phase 0 decision |
 | --- | --- | --- |
-| `ExecutionEngine.execute_until_blocked` | Runtime references remain in `factory-agent/factory_agent/api/routes.py` and `factory-agent/main.py` for legacy sessions. Phase 8 adds shared graph-native detection plus a direct guard in `factory-agent/factory_agent/orchestration/execution.py`, and `factory-agent/tests/test_phase8_legacy_retirement.py` proves checkpoint-only graph sessions do not reach it. Existing execution-engine tests are marked `legacy_compatibility`. | Keep as explicitly labeled legacy compatibility for non-graph sessions. Not graph-native execution truth. |
-| `QueryRouter` / route scores | Phase 8 reference checks found no production import of `QueryRouter` outside `factory-agent/factory_agent/orchestration/router.py`. The remaining `QueryRouter` use is in `tests/rag_eval/run_eval.py`, and route-score-shaped `Phase5Agent` tests are marked `legacy_compatibility`. | Keep deprecated compatibility/eval code clearly labeled. Graph-native runtime does not import or depend on it. |
+| `ExecutionEngine.execute_until_blocked` | Removed from production code with `factory-agent/factory_agent/orchestration/execution.py` and `factory-agent/factory_agent/orchestration/execution_runtime.py`. Dedicated legacy execution tests were deleted. | Retired. |
+| `QueryRouter` / route scores | Removed from production code with `factory-agent/factory_agent/orchestration/router.py` and route-score `Phase5Agent` compatibility code. | Retired. |
 | `assess_intent` | Still used by `/sessions/{session_id}/plans` in `factory-agent/factory_agent/api/routes.py:1716`, `ToolSelector` in `factory-agent/factory_agent/planning/tool_selector.py:570`, and tool scope helpers in `factory-agent/factory_agent/planning/tool_scope.py:80`. | Not safe cleanup. It is compatibility-only by intent, but still active. |
 | `SessionRow` | Used across API, session manager, memory manager, worker recovery, and frontend-facing snapshot/session responses. | Keep for UI/history compatibility. |
-| `PlanRow` | Used by plan creation, graph-native detection through `created_by="langgraph"`, snapshot projection, approval paths, and legacy execution. | Keep for compatibility projection until graph checkpoint state becomes execution truth. |
-| `PlanStepRow` | Used by snapshot steps, legacy execution, cold-start recovery, approval mutations, DLQ replay, and tests. | Keep for legacy and compatibility projection. Not graph-native truth. |
-| DLQ replay | `/dlq/{dlq_id}/replay` remains live at `factory-agent/factory_agent/api/routes.py:2536` and event handling remains in `factory-agent/main.py:550`; it explicitly blocks graph-native sessions. | Legacy still used. Keep blocked for graph-native sessions; retire later. |
+| `PlanRow` | Used by plan creation and snapshot/UI compatibility projection. | Keep as public compatibility projection only. |
+| `PlanStepRow` | Used by snapshot/UI compatibility projection and historical rows. | Keep as public compatibility projection only. Not execution truth. |
+| DLQ replay | Replay/push endpoints now return `410 Gone`; event replay mutation in `main.py` is ignored. | Retired. |
 | Frontend `createPlan -> execute` flow | `useFactoryAgentChat.js` still calls `createPlan` before execute in `runIntent` at line 360 and retry flows at lines 390 and 511. | Behavior-changing to alter. Needs approval before changing UX/API flow. |
 | Graph approval/session detection | Graph sessions are now detected through the shared detector in `factory-agent/factory_agent/graph/session_detection.py`, covering `created_by="langgraph"`, `replan_context.langgraph_pending_approval`, and durable `langgraph_native_checkpoint` rows. | Compatibility shim plus graph checkpoint marker. Keep until public session metadata can represent graph-native state directly. |
 
@@ -122,7 +122,7 @@ Verification for this Phase 8 update: `python -m pytest tests/test_phase8_legacy
 
 ## Phase 9 Evidence Update
 
-Phase 9 was a final verification gate, not a broad refactor. It found no remaining graph-native runtime path that reaches `ExecutionEngine.execute_until_blocked`, DLQ replay, legacy worker execution, or relational `PlanStepRow` execution truth. The remaining active legacy code is intentionally scoped to non-graph sessions or public compatibility projection: relational session/message/plan/step records for UI and history, legacy approval and DLQ APIs for legacy sessions, deprecated route-score/eval compatibility, and the frontend `createPlan -> execute` workflow already listed as a future behavior-changing cleanup.
+Phase 9 was a final verification gate, not a broad refactor. It found no remaining graph-native runtime path that reaches `ExecutionEngine.execute_until_blocked`, DLQ replay, legacy worker execution, or relational `PlanStepRow` execution truth. Before the post-Phase-9 cleanup, remaining active legacy code was scoped to non-graph sessions or public compatibility projection; after cleanup, the active legacy execution runtime, legacy approval/DLQ mutation paths, and route-score compatibility modules are retired. Relational session/message/plan/step records remain for UI/history compatibility projection, and the frontend `createPlan -> execute` workflow remains a future UX/API cleanup item.
 
 Small verification-blocking fixes were made where tests exposed scoped runtime risks: BGE reranker loading is now lazy/offline-safe so API tests do not attempt Hugging Face network resolution during unrelated execution construction; `_run_langgraph_session` tolerates planner adapters without an `intent_contract` field; `assess_intent` keeps action-hinted approval queries such as "show pending approvals" in the operational path; legacy checkpoint-save error handling captures `session_id` before rollback-sensitive DB errors; and stale API tests that asserted pre-Phase-9 legacy plan-step projection behavior are now strict `legacy_compatibility` xfails. These changes do not retire non-graph legacy behavior or alter the graph-native safety boundary.
 
@@ -145,6 +145,21 @@ Documented Phase 9 exclusions:
 
 End-to-end coverage conclusion: Phases 3 and 4 prove graph-native read flow, planner loop, guard repair, tool execution, and relevance filtering; Phase 5 plus backend transaction tests prove write staging, bundle dry-run, final validation, approval interrupt/resume, and atomic commit; Phase 6 proves durable checkpoint recovery and graph checkpoint state as execution truth; Phase 7 proves snapshot hydration, semantic SSE resume, and frontend build alignment; Phase 8 plus Phase 9 API/broad suites prove legacy execution paths are blocked for graph-native sessions.
 
+## Post-Phase 9 Legacy Cleanup Update
+
+After approval to drop non-graph legacy-session support, the legacy relational runtime was retired instead of merely guarded. Production files removed: `factory-agent/factory_agent/orchestration/execution.py`, `factory-agent/factory_agent/orchestration/execution_runtime.py`, `factory-agent/factory_agent/orchestration/router.py`, and `factory-agent/factory_agent/orchestration/agent_integration.py`. Dedicated legacy tests removed: `factory-agent/tests/test_execution_engine.py`, `factory-agent/tests/test_approval_resume_integration.py`, and `factory-agent/tests/test_phase5_agent_integration.py`.
+
+The few reusable helpers that graph/API code still needed were moved out of the legacy module into `factory-agent/factory_agent/tools/arguments.py`: stable JSON hashing, compatibility idempotency-key generation, and HTTP tool argument normalization. Production reference checks now show no `ExecutionEngine`, `execute_until_blocked`, `QueryRouter`, or `Phase5Agent` references outside tests that assert those names stay absent.
+
+Runtime entry cleanup:
+
+- `/sessions/{session_id}/execute` no longer falls back to relational `PlanStepRow` execution or background worker enqueue. Active execution runs `_run_langgraph_session`.
+- Legacy plan and step approval approve/reject paths return `410 Gone`; graph approval resume is unchanged.
+- `/dlq/push`, `/dlq/{dlq_id}/replay`, and `/dlq/{dlq_id}/replay-request` return `410 Gone`; DLQ list/dismiss remain historical cleanup views.
+- `main.py` no longer imports or constructs the legacy engine. Worker execution, cold-start relational step recovery, stuck-step reconciliation, and legacy approval/DLQ event mutation are retired/no-op.
+
+Verification for this cleanup update: `python -m pytest tests/test_api_endpoints.py -q` (`41 passed, 20 xfailed`), `python -m pytest tests/test_agent_state.py tests/test_intent.py tests/test_intent_splitter.py tests/test_planner_phase3.py tests/test_tool_pipeline.py tests/test_phase5_final_validator.py tests/test_planner_service_phase6.py tests/test_phase7_api_ui_alignment.py tests/test_phase8_legacy_retirement.py -q` (`50 passed`), `python -m pytest -q -m "not legacy_compatibility" --ignore=tests/test_rag_generation.py --ignore=tests/test_rag_ingestion.py --ignore=tests/test_rag_reranking.py` (`364 passed, 3 skipped, 20 deselected`), `python -m compileall factory_agent main.py`, and `rg` reference checks for retired legacy symbols.
+
 ## Runtime Path Classification
 
 | Runtime path | Classification | Notes |
@@ -152,33 +167,33 @@ End-to-end coverage conclusion: Phases 3 and 4 prove graph-native read flow, pla
 | `POST /sessions` | Compatibility | Creates `SessionRow` for public session identity/history. |
 | `POST /sessions/{id}/messages` | Compatibility with legacy branches | Persists `MessageRow`; cancellation/replan behavior still edits `PlanStepRow` for non-LangGraph plans and graph approval rows for graph-native sessions. |
 | `POST /sessions/{id}/plans` | Compatibility / legacy projection | Uses LangGraph planner when no client draft is supplied, but produces relational `PlanRow`/`PlanStepRow` as the public artifact. |
-| `POST /sessions/{id}/execute` with no current plan | Graph-native | Calls `_run_langgraph_session`, which invokes LangGraph and persists compatibility rows after completion. |
-| `POST /sessions/{id}/execute` with LangGraph-created plan, graph pending approval, or durable LangGraph checkpoint | Graph-native with compatibility projection | Shared graph-native detection recognizes `created_by="langgraph"`, `replan_context.langgraph_pending_approval`, or `langgraph_native_checkpoint` rows. |
-| `POST /sessions/{id}/execute` with non-LangGraph plan | Legacy | Calls `ExecutionEngine.execute_until_blocked`. |
+| `POST /sessions/{id}/execute` with no current plan | Graph-native | Calls `_run_langgraph_session`, which invokes LangGraph and may persist compatibility rows after completion. |
+| `POST /sessions/{id}/execute` with LangGraph-created plan, graph pending approval, durable LangGraph checkpoint, or stale non-LangGraph plan | Graph-native with compatibility projection | Active execution no longer reads relational `PlanStepRow` rows as execution truth. |
+| `POST /sessions/{id}/execute` with non-LangGraph plan | Graph-native rerun / compatibility projection | Legacy plan-step execution has been removed. |
 | `GET /sessions/{id}/snapshot` for graph-native sessions | Graph-native compatibility projection | Derives steps and timeline events from LangGraph checkpoint `agent_state` or LangGraph-created compatibility plan rows; legacy step execution rows are suppressed for graph-native sessions, and raw checkpoint blobs stay internal. |
 | `GET /sessions/{id}/snapshot` for legacy sessions | Compatibility projection | Still derives legacy session views from relational session/plan/step/message/event rows. |
 | `GET /sessions/{id}/events/semantic` | Compatibility adapter | Emits semantic event names from snapshot timeline polling, with `Last-Event-ID` resume support for browser/network reconnects. |
 | `POST /approvals/{id}/approve` for `subject_type="graph"` | Graph-native approval resume | Calls `planner.resume_after_approval(session_id, approved=True)`. |
 | `POST /approvals/{id}/reject` for `subject_type="graph"` | Graph-native approval resume | Calls `planner.resume_after_approval(session_id, approved=False)`. |
-| `POST /approvals/{id}/approve/reject` for `subject_type="plan"` | Compatibility | Plan approval rows remain supported. |
-| `POST /approvals/{id}/approve/reject` for `subject_type="step"` | Legacy | Returns `409` without mutation for graph-native sessions, still active for legacy sessions. |
+| `POST /approvals/{id}/approve/reject` for `subject_type="plan"` | Retired | Returns `410 Gone`. |
+| `POST /approvals/{id}/approve/reject` for `subject_type="step"` | Retired | Returns `410 Gone`. |
 | `POST /api/v1/agent/transaction/bundle-dry-run` | Graph-native backend support | Validates staged write bundles inside a backend transaction and rolls back, used by graph-native Phase 5 write flow before approval. |
 | `POST /api/v1/agent/transaction/commit` | Graph-native backend support | Commits approved staged write bundles inside one backend transaction with idempotency enforcement, used only after graph dry-run, final validation, and approval. |
-| `POST /dlq/{id}/replay` | Legacy | Explicitly blocks graph-native sessions but mutates legacy step state. |
-| Worker queue in `main.py` | Legacy | Background workers still execute relational plans through `ExecutionEngine`, but graph-native sessions are skipped via the shared detector; the legacy engine also rejects graph-native sessions directly. |
+| `POST /dlq/{id}/replay` | Retired | Returns `410 Gone`; rerun active graph sessions through `/sessions/{session_id}/execute`. |
+| Worker queue in `main.py` | Retired | No legacy engine execution is enqueued or run. |
 
 ## Behavior-Changing Fixes Requiring Approval
 
 1. Stop frontend `runIntent` from always creating a relational plan before execute; this changes the public workflow and should be approved before implementation.
-2. Broader worker replacement remains future work, but Phase 6 disables worker queue execution for graph-native sessions; `main.py` still assumes `ExecutionEngine` for legacy sessions.
+2. Broader worker replacement remains future work only if asynchronous graph execution is desired; legacy worker execution has been retired.
 3. Replace `/plans` as execution truth with a graph-only run endpoint or make it a pure preview/projection API.
 4. Replace the Phase 7 snapshot-polling SSE adapter with a direct LangGraph event-stream tap if lower-latency streaming is required; the current approved contract keeps snapshot hydration as recovery truth.
-5. Retire legacy step approval and DLQ replay code entirely after legacy-session support is no longer needed; Phase 6 prevents these paths from mutating graph-native sessions.
-6. Remove `QueryRouter`, route scoring, and legacy planner tests entirely only after eval/compatibility users no longer need them. Phase 8 confirms graph-native production runtime no longer imports or depends on them.
+5. Replace historical DLQ list/dismiss views if operators no longer need old DLQ records.
+6. Remove remaining strict-xfailed API tests that document retired legacy behavior once the team no longer wants those contracts recorded in test output.
 
 ## Safe Cleanup
 
-The original Phase 0 pass performed no runtime cleanup because reference checks found no proven-dead helper/import/comment that was both migration-relevant and risk-free to remove. Phase 8 did not remove legacy behavior needed by non-graph sessions; it added compatibility labels, shared graph-native detection, and a defensive legacy-engine guard after reference checks proved those changes were scoped to graph-native safety and contract clarity. Phase 9 kept fixes tightly scoped to verification blockers and graph-native safety evidence; no broad refactor or legacy retirement was performed.
+The original Phase 0 pass performed no runtime cleanup because reference checks found no proven-dead helper/import/comment that was both migration-relevant and risk-free to remove. Phase 8 did not remove legacy behavior needed by non-graph sessions; it added compatibility labels, shared graph-native detection, and a defensive legacy-engine guard after reference checks proved those changes were scoped to graph-native safety and contract clarity. After Phase 9, non-graph legacy-session support was explicitly retired and the legacy runtime modules/tests were removed.
 
 Validation for the latest pass:
 
@@ -194,7 +209,9 @@ Validation for the latest pass:
 - `go test ./internal/service -run '^$' -count=1`.
 - `go test ./internal/service -count=1`, `go test ./internal/e2e -count=1`, and practical split Go package tests for repository/router/seeddata/testutil.
 - `npm run build` in `eMas Front`.
+- `python -m pytest tests/test_api_endpoints.py -q` after legacy runtime cleanup.
+- `python -m pytest -q -m "not legacy_compatibility" --ignore=tests/test_rag_generation.py --ignore=tests/test_rag_ingestion.py --ignore=tests/test_rag_reranking.py` after legacy runtime cleanup.
 
 ## Phase 0 Exit Gap
 
-The Phase 0 baseline has been carried forward through Phase 9. Remaining gaps are no longer graph-native execution risks; they are intentional compatibility shims, documented test-scope exclusions, or behavior-changing cleanup items listed above for future legacy-session retirement. Migration completion is supported by durable graph checkpoint state as the graph-native execution truth and by guardrails proving legacy execution paths are not active for graph-native sessions.
+The Phase 0 baseline has been carried forward through Phase 9 and the post-Phase 9 cleanup. Remaining gaps are no longer legacy execution risks; they are public compatibility projections, historical DLQ views, documented test-scope exclusions, or future UX/API cleanup items. Migration completion is supported by durable graph checkpoint state as the execution truth and by removal of the legacy relational runtime from production code.

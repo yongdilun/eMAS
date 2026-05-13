@@ -345,7 +345,7 @@ async def test_legacy_step_reject_cannot_mutate_graph_native_session(sessionmake
             json={"decided_by": "u1", "rejection_reason": "no"},
         )
 
-    assert response.status_code == 409
+    assert response.status_code == 410
     approval = await db_session.get(Approval, approval_id)
     session = await db_session.get(Session, session_id)
     assert approval.status == "PENDING"

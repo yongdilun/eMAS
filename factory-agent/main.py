@@ -21,7 +21,6 @@ from factory_agent.api import build_router
 from factory_agent.config import get_settings
 from factory_agent.graph.session_detection import is_graph_native_session
 from factory_agent.observability.events import AgentEvent, EventBus
-from factory_agent.orchestration.execution import ExecutionEngine
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event, log_step_status_changed, setup_logging
 from factory_agent.registry.tool_registry import ToolRegistry
@@ -69,7 +68,6 @@ async def lifespan(app: FastAPI):
     tool_registry = ToolRegistry()
     event_bus = EventBus(redis_url=settings.redis_url)
     setattr(event_bus, "_fault_injected", False)
-    executor = ExecutionEngine(settings, event_bus)
 
     session_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.session_queue_size)
     queued_sessions: set[str] = set()
@@ -170,21 +168,11 @@ async def lifespan(app: FastAPI):
                         )
                         await refresh_operational_gauges(db)
                         continue
-                    tools_by_name = await tool_registry.get_tools_by_name(db)
-                    try:
-                        await executor.execute_until_blocked(db, session=session, tools_by_name=tools_by_name)
-                    except Exception as e:
-                        session.status = "BLOCKED"
-                        session.error = f"Worker execution error: {e}"
-                        session.updated_at = datetime.utcnow()
-                        await db.commit()
-                        log_event(
-                            "worker_session_error",
-                            level="ERROR",
-                            worker_id=worker_id,
-                            session_id=session_id,
-                            error=str(e),
-                        )
+                    log_event(
+                        "legacy_worker_execution_retired",
+                        worker_id=worker_id,
+                        session_id=session_id,
+                    )
                     await refresh_operational_gauges(db)
             finally:
                 async with queue_lock:
@@ -468,13 +456,24 @@ async def lifespan(app: FastAPI):
 
             redis_was_healthy = healthy
 
-    for i in range(max(0, settings.worker_count)):
-        worker_tasks.append(asyncio.create_task(worker_loop(i)))
-
-    await cold_start_recovery_sweep()
+    if settings.worker_count > 0:
+        log_event(
+            "legacy_worker_pool_retired",
+            worker_count=settings.worker_count,
+            reason="LangGraph sessions execute inline/checkpointed through the API",
+        )
 
     async def handle_event(event: AgentEvent) -> None:
         async with AsyncSessionLocal() as db:
+            if event.event_type in {"approval_decided", "session_cancel", "dlq_replay_requested"}:
+                log_event(
+                    "legacy_step_event_ignored",
+                    event_type=event.event_type,
+                    session_id=event.session_id,
+                )
+                await refresh_operational_gauges(db)
+                return
+
             if event.event_type == "approval_decided":
                 approval_id = event.payload.get("approval_id")
                 if not approval_id:
@@ -643,7 +642,7 @@ async def lifespan(app: FastAPI):
     if settings.redis_url:
         listener_task = asyncio.create_task(event_bus.listen(handle_event))
         redis_monitor_task = asyncio.create_task(redis_health_monitor())
-    stuck_step_task = asyncio.create_task(reconcile_stuck_in_progress_steps())
+    stuck_step_task = None
 
     app.state.settings = settings
     app.state.tool_registry = tool_registry

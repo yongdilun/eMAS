@@ -11,8 +11,8 @@ from urllib.parse import quote
 import httpx
 
 from ..config import Settings
-from ..orchestration.execution import _normalize_tool_args
 from ..schemas import ToolInfo
+from ..tools.arguments import normalize_tool_args
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
@@ -71,7 +71,7 @@ async def execute_tool_http(
 
     Returns a normalized envelope (never raises for HTTP 4xx — caller uses ``http_status``).
     """
-    path_args, query_args, body_args = _normalize_tool_args(tool, args)
+    path_args, query_args, body_args = normalize_tool_args(tool, args)
     rendered_endpoint, leftover_path = materialize_tool_endpoint(endpoint=tool.endpoint, args=path_args)
     if leftover_path:
         path_args.update(leftover_path)
