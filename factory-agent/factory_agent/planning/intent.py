@@ -330,7 +330,14 @@ def assess_intent(text: str) -> IntentAssessment:
         )
 
     intents = split_user_intents(raw)
-    if len(intents) == 1 and intents[0].category == "unknown" and len(lower.split()) <= 3 and not _QUESTION_RE.search(raw):
+    has_action_hint = any(p.search(raw) for _, p in _ACTION_PATTERNS)
+    if (
+        len(intents) == 1
+        and intents[0].category == "unknown"
+        and len(lower.split()) <= 3
+        and not _QUESTION_RE.search(raw)
+        and not has_action_hint
+    ):
         return IntentAssessment(
             kind="conversation",
             action=None,

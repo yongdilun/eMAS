@@ -2150,8 +2150,9 @@ def build_router(
             raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
 
         context = dict(sess.replan_context or {})
-        if generated.intent_contract:
-            context["intent_contract"] = generated.intent_contract
+        intent_contract = getattr(generated, "intent_contract", None)
+        if intent_contract:
+            context["intent_contract"] = intent_contract
         context.pop("langgraph_pending_approval", None)
         sess.replan_context = context
         sess.llm_call_count += selection.llm_calls + generated.llm_calls

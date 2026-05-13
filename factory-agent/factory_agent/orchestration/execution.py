@@ -1725,6 +1725,7 @@ class ExecutionEngine:
         session: SessionRow,
         tools_by_name: dict[str, ToolInfo],
     ) -> ExecuteResult:
+        session_id = session.session_id
         if await is_graph_native_session(db, session):
             raise RuntimeError(
                 "ExecutionEngine.execute_until_blocked is legacy compatibility code "
@@ -1739,15 +1740,15 @@ class ExecutionEngine:
         try:
             await self._memory_manager.save_checkpoint(
                 db,
-                session_id=session.session_id,
-                thread_id=session.session_id,
+                session_id=session_id,
+                thread_id=session_id,
                 state=self._checkpoint_state(session),
             )
         except Exception as exc:
             log_event(
                 "checkpoint_save_failed",
                 level="WARNING",
-                session_id=session.session_id,
+                session_id=session_id,
                 error=str(exc),
             )
         return result

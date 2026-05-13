@@ -96,8 +96,8 @@ async def _make_app(sessionmaker_override, planner_adapter):
 async def test_create_plan_injects_retrieved_memory_into_planner_context(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.planning.tool_selector import ToolSelector
 
-    async def _select_tools(self, *, intent, tools_by_name, mode, max_tools=30):
-        del self, intent, tools_by_name, mode, max_tools
+    async def _select_tools(self, *, intent, tools_by_name, mode, max_tools=30, context=None):
+        del self, intent, tools_by_name, mode, max_tools, context
         return type(
             "Sel",
             (),

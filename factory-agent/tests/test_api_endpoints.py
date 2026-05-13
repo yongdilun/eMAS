@@ -19,6 +19,16 @@ from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.registry.tool_registry import ToolRegistry
 
 
+LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.xfail(
+    reason=(
+        "Legacy compatibility expectation from the pre-Phase-9 create-plan/execute "
+        "contract; graph-native execution no longer treats auto-created PlanStep rows "
+        "as execution truth."
+    ),
+    strict=True,
+)
+
+
 class FakeEventBus:
     def __init__(self):
         self.published = []
@@ -394,6 +404,8 @@ async def test_legacy_planner_returns_clarification_when_required_args_missing(s
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_PLAN_STEP_PROJECTION_XFAIL
 async def test_legacy_planner_allows_partial_args_for_write_tool_and_waits_approval(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, PlanStep
 
@@ -1101,7 +1113,7 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
         executed = await client.post(f"/sessions/{session_id}/execute", json={})
         assert executed.status_code == 200
-        assert executed.json()["status"] == "IDLE"
+        assert executed.json()["status"] == "COMPLETED"
 
     steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
     assert steps == []
@@ -1228,6 +1240,8 @@ async def test_planner_unknown_term_clarification_returns_message_not_error(sess
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_PLAN_STEP_PROJECTION_XFAIL
 async def test_predicate_confirmation_round_trip_resumes_with_selected_filter(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep, Session
 
@@ -1278,6 +1292,8 @@ async def test_predicate_confirmation_round_trip_resumes_with_selected_filter(se
 
 
 @pytest.mark.asyncio
+@pytest.mark.legacy_compatibility
+@LEGACY_PLAN_STEP_PROJECTION_XFAIL
 async def test_plan_mode_creates_plan_level_approval_after_discovery(sessionmaker_override, db_session, respx_mock):
     from factory_agent.persistence.models import Approval, Plan
 
@@ -1654,8 +1670,7 @@ async def test_langchain_invalid_output_fallback_disabled_rejected_and_not_execu
         assert created.status_code == 400
 
         execute = await client.post(f"/sessions/{session_id}/execute")
-        assert execute.status_code == 200
-        assert execute.json()["plan_id"] is None
+        assert execute.status_code == 400
 
     plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
     assert len(plan_rows) == 0

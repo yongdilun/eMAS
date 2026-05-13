@@ -35,7 +35,7 @@ class FactExtractionResult:
 class ReasoningPipeline:
     def __init__(self, settings: Settings):
         self._settings = settings
-        self._bge_reranker = build_bge_reranker(settings)
+        self._bge_reranker = None
 
     _MAX_INLINE_RESULT_CHARS = 3200
     _MAX_PREVIEW_LIST_ITEMS = 8
@@ -107,6 +107,22 @@ class ReasoningPipeline:
         if backend not in {"auto", "langchain"}:
             return False
         return bool(self._component_base_url(component) or self._settings.openai_api_key)
+
+    def _get_bge_reranker(self):
+        if not self._settings.tool_selector_reranker_enabled:
+            return None
+        if self._bge_reranker is not None:
+            return self._bge_reranker
+        try:
+            self._bge_reranker = build_bge_reranker(self._settings)
+        except Exception as exc:
+            log_event(
+                "reasoning_tool_selection_bge_unavailable",
+                level="WARNING",
+                error=str(exc),
+            )
+            return None
+        return self._bge_reranker
 
     def _extract_json_obj(self, text: str) -> dict[str, Any] | None:
         candidate = (text or "").strip()
@@ -478,8 +494,14 @@ class ReasoningPipeline:
     ) -> ToolSelectionDecision | None:
         if not candidates:
             return None
+        if not self._enabled("reasoning_tool_selection"):
+            return None
 
         try:
+            reranker = self._get_bge_reranker()
+            if reranker is None:
+                return None
+
             # 1. Semantic Selection using BGE
             # We rank candidates based on how well their name, endpoint, and tags match the intent
             pairs = []
@@ -487,7 +509,7 @@ class ReasoningPipeline:
                 context = f"Tool: {c['name']} Endpoint: {c['endpoint']} Tags: {', '.join(c.get('capability_tags', []))}"
                 pairs.append([intent, context])
             
-            scores = self._bge_reranker.compute_score(pairs)
+            scores = reranker.compute_score(pairs)
             
             # Combine BGE score with "Readiness" score (missing args penalty)
             scored_candidates = []
