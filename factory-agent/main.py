@@ -12,7 +12,6 @@ import factory_agent.persistence.models as models  # noqa: F401 (ensure models a
 from factory_agent.persistence.database import AsyncSessionLocal, Base, engine
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import DeadLetter as DeadLetterRow
-from factory_agent.persistence.models import Plan as PlanRow
 from factory_agent.persistence.models import PlanStep as PlanStepRow
 from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.persistence.models import Tool as ToolRow
@@ -20,6 +19,7 @@ from factory_agent.persistence.models import generate_uuid
 
 from factory_agent.api import build_router
 from factory_agent.config import get_settings
+from factory_agent.graph.session_detection import is_graph_native_session
 from factory_agent.observability.events import AgentEvent, EventBus
 from factory_agent.orchestration.execution import ExecutionEngine
 from factory_agent.observability.metrics import metrics
@@ -59,15 +59,7 @@ def _ensure_schema_compatibility(sync_conn) -> None:
 
 
 async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
-    if session is None:
-        return False
-    context = session.replan_context if isinstance(session.replan_context, dict) else {}
-    if context.get("langgraph_pending_approval"):
-        return True
-    if not session.plan_id:
-        return False
-    plan = (await db.execute(select(PlanRow).where(PlanRow.plan_id == session.plan_id))).scalars().first()
-    return bool(plan and str(plan.created_by or "").strip().lower() == "langgraph")
+    return await is_graph_native_session(db, session)
 
 
 @asynccontextmanager

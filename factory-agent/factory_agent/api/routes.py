@@ -25,6 +25,7 @@ from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.persistence.models import generate_uuid
 
 from ..config import Settings
+from ..graph.session_detection import is_graph_native_session, is_langgraph_plan
 from ..observability.events import AgentEvent, EventBus
 from ..orchestration.execution import ExecutionEngine, compute_idempotency_key
 from ..orchestration.memory_manager import MemoryManager
@@ -304,17 +305,10 @@ def build_router(
         return (await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))).scalars().first()
 
     def _is_langgraph_plan(plan: PlanRow | None) -> bool:
-        return bool(plan and str(getattr(plan, "created_by", "") or "").strip().lower() == "langgraph")
+        return is_langgraph_plan(plan)
 
-    def _is_graph_native_session(sess: SessionRow | None, plan: PlanRow | None) -> bool:
-        if sess is None:
-            return False
-        if _is_langgraph_plan(plan):
-            return True
-        context = sess.replan_context if isinstance(sess.replan_context, dict) else {}
-        if bool(context.get("langgraph_pending_approval")):
-            return True
-        return False
+    async def _is_graph_native_session(db: AsyncSession, sess: SessionRow | None, plan: PlanRow | None) -> bool:
+        return await is_graph_native_session(db, sess, plan=plan)
 
     async def _persist_conversation_reply_as_empty_plan(
         *,
@@ -815,7 +809,7 @@ def build_router(
                     return candidate
             return state
 
-        graph_native_session = _is_graph_native_session(sess, current_plan)
+        graph_native_session = await _is_graph_native_session(db, sess, current_plan)
         if not graph_native_session and isinstance(checkpoint_payload, dict):
             state_payload = checkpoint_payload.get("state")
             graph_native_session = (
@@ -2194,7 +2188,7 @@ def build_router(
         if expected_version is not None and sess.version != expected_version:
             raise HTTPException(status_code=409, detail=f"version_conflict expected={expected_version} actual={sess.version}")
         current_plan = await _load_current_plan(db=db, session_id=session_id)
-        if _is_graph_native_session(sess, current_plan):
+        if await _is_graph_native_session(db, sess, current_plan):
             if sess.status == "WAITING_APPROVAL":
                 return _session_to_response(sess)
             if current_plan and current_plan.status == "COMPLETED" and sess.status == "COMPLETED":
@@ -2271,7 +2265,7 @@ def build_router(
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
         current_plan = await _load_current_plan(db=db, session_id=session_id)
-        if _is_graph_native_session(sess, current_plan):
+        if await _is_graph_native_session(db, sess, current_plan):
             pending_graph_approvals = (
                 await db.execute(
                     select(ApprovalRow)
@@ -2441,7 +2435,7 @@ def build_router(
             )
             return _approval_to_response(row)
 
-        if _is_graph_native_session(sess_for_mode, current_plan):
+        if await _is_graph_native_session(db, sess_for_mode, current_plan):
             raise HTTPException(
                 status_code=409,
                 detail="graph-native approvals must use subject_type=graph/plan paths; legacy step approval is disabled",
@@ -2531,7 +2525,7 @@ def build_router(
             )
             return _approval_to_response(row)
         sess = await session_mgr.get_session(db, session_id=row.session_id)
-        if _is_graph_native_session(sess, current_plan) and (getattr(row, "subject_type", "step") or "step") == "step":
+        if await _is_graph_native_session(db, sess, current_plan) and (getattr(row, "subject_type", "step") or "step") == "step":
             raise HTTPException(
                 status_code=409,
                 detail="graph-native approvals must use subject_type=graph/plan paths; legacy step approval is disabled",
@@ -2667,7 +2661,7 @@ def build_router(
             raise HTTPException(status_code=404, detail="dlq entry not found")
         sess = await session_mgr.get_session(db, session_id=row.session_id)
         current_plan = await _load_current_plan(db=db, session_id=row.session_id)
-        if _is_graph_native_session(sess, current_plan):
+        if await _is_graph_native_session(db, sess, current_plan):
             raise HTTPException(
                 status_code=409,
                 detail="DLQ replay is legacy step-based and disabled for graph-native sessions; rerun with /sessions/{session_id}/execute",

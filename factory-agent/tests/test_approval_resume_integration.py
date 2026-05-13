@@ -9,6 +9,13 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
 
+pytestmark = pytest.mark.legacy_compatibility
+
+LEGACY_COMPATIBILITY_SCOPE = (
+    "This module covers legacy step-approval resume behavior for non-graph "
+    "sessions. Graph approvals resume through LangGraph Command(resume=...) tests."
+)
+
 import database
 from factory_agent.api import build_router
 from factory_agent.config import Settings

@@ -16,3 +16,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["factory_agent*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "legacy_compatibility: tests that intentionally cover non-graph compatibility behavior after LangGraph migration",
+]

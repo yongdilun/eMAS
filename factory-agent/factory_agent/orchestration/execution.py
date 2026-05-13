@@ -26,6 +26,7 @@ from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.persistence.models import generate_uuid
 
 from ..config import Settings
+from ..graph.session_detection import is_graph_native_session
 from ..observability.events import AgentEvent, EventBus
 from .memory_manager import MemoryManager
 from ..observability.metrics import metrics
@@ -157,6 +158,13 @@ class ExecuteResult:
 
 
 class ExecutionEngine:
+    """Legacy relational plan-step execution engine.
+
+    LangGraph-native sessions use graph checkpoint state as execution truth.
+    This engine remains only for compatibility sessions that still execute
+    relational `PlanRow`/`PlanStepRow` records.
+    """
+
     def __init__(self, settings: Settings, event_bus: EventBus):
         self._settings = settings
         self._event_bus = event_bus
@@ -1717,6 +1725,11 @@ class ExecutionEngine:
         session: SessionRow,
         tools_by_name: dict[str, ToolInfo],
     ) -> ExecuteResult:
+        if await is_graph_native_session(db, session):
+            raise RuntimeError(
+                "ExecutionEngine.execute_until_blocked is legacy compatibility code "
+                "and is disabled for graph-native sessions."
+            )
         result = await execution_runtime.execute_until_blocked(
             self,
             db,

@@ -39,6 +39,12 @@ class SessionAdapterProtocol(Protocol):
 
 
 class Phase5Agent:
+    """Deprecated route-score compatibility orchestrator.
+
+    Graph-native execution does not use this module; it remains for legacy RAG
+    evaluation and compatibility tests that still exercise route decisions.
+    """
+
     ROUTES = {"API_ONLY", "RAG_ONLY", "API_THEN_RAG", "RAG_THEN_API", "CLARIFY"}
 
     def __init__(

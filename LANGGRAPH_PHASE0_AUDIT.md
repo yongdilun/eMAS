@@ -2,9 +2,9 @@
 
 Date: 2026-05-12
 
-Updated: 2026-05-13 reference-check pass; 2026-05-13 Phase 1 schema evidence update; 2026-05-13 Phase 2 intent evidence update; 2026-05-13 Phase 3 planner-loop evidence update; 2026-05-13 Phase 4 tool execution evidence update; 2026-05-13 Phase 5 dry-run/approval/commit evidence update; 2026-05-13 Phase 6 checkpoint/execution-truth evidence update; 2026-05-13 Phase 7 API/UI alignment evidence update
+Updated: 2026-05-13 reference-check pass; 2026-05-13 Phase 1 schema evidence update; 2026-05-13 Phase 2 intent evidence update; 2026-05-13 Phase 3 planner-loop evidence update; 2026-05-13 Phase 4 tool execution evidence update; 2026-05-13 Phase 5 dry-run/approval/commit evidence update; 2026-05-13 Phase 6 checkpoint/execution-truth evidence update; 2026-05-13 Phase 7 API/UI alignment evidence update; 2026-05-13 Phase 8 legacy retirement/contract cleanup evidence update
 
-Scope: evidence-only audit of active runtime paths for session creation, message submission, plan creation, execution, approval, snapshot, SSE, checkpointing, and legacy replay. No behavior-changing fixes were made in this pass.
+Scope: audit of active runtime paths for session creation, message submission, plan creation, execution, approval, snapshot, SSE, checkpointing, and legacy replay. The original Phase 0 pass was evidence-only; later phase updates below record approved implementation changes and verification evidence.
 
 ## Executive Status
 
@@ -13,30 +13,30 @@ Scope: evidence-only audit of active runtime paths for session creation, message
 | Session CRUD | PARTIAL | `SessionRow` is still the public session record and is used by API/UI compatibility paths in `factory-agent/factory_agent/api/routes.py:1307`, `factory-agent/factory_agent/api/routes.py:1320`, `factory-agent/factory_agent/api/routes.py:1332`, and `factory-agent/factory_agent/orchestration/session_manager.py:49`. |
 | Message submission | PARTIAL | Messages are persisted as relational `MessageRow` records at `factory-agent/factory_agent/api/routes.py:1472`; user messages can mutate legacy step state or graph approval rows depending on current plan classification. |
 | Plan creation | LEGACY STILL USED | `/sessions/{session_id}/plans` calls LangGraph through `PlannerService`, but persists the result as `PlanRow` and `PlanStepRow` compatibility records in `_persist_plan` at `factory-agent/factory_agent/api/routes.py:489`. It also still gates non-operation requests through `assess_intent` at `factory-agent/factory_agent/api/routes.py:1715`. |
-| Execution | PARTIAL | `/sessions/{session_id}/execute` routes graph-native sessions to `_run_langgraph_session` at `factory-agent/factory_agent/api/routes.py:2047`, but falls back to `ExecutionEngine.execute_until_blocked` at `factory-agent/factory_agent/api/routes.py:2113` for legacy/current-plan sessions. |
+| Execution | PARTIAL | `/sessions/{session_id}/execute` routes graph-native sessions to `_run_langgraph_session` and now uses the shared graph-native detector in `factory-agent/factory_agent/graph/session_detection.py`, including durable checkpoint-only graph sessions. It still falls back to `ExecutionEngine.execute_until_blocked` for non-graph legacy/current-plan sessions, but Phase 8 added a defensive legacy-engine guard that raises before any graph-native session can execute there. |
 | Approval | PARTIAL | Graph approvals use `subject_type="graph"` and resume via `Command(resume=...)` through `PlannerService.resume_after_approval`; Phase 6 proves resume survives process-local checkpointer reset. Plan/step approval paths remain for compatibility/legacy sessions, and legacy step approval now returns `409` without mutation for graph-native sessions. |
 | Snapshot | PARTIAL | `GET /sessions/{session_id}/snapshot` exists at `factory-agent/factory_agent/api/routes.py:1520`. For graph-native sessions, Phase 7 now treats durable `langgraph_native_checkpoint` rows as graph-native even without a compatibility plan/replan shim and projects checkpoint plan/tool progress into stable timeline events; non-graph snapshot/SSE compatibility paths remain relational. |
 | SSE | PARTIAL | Semantic SSE exists at `factory-agent/factory_agent/api/routes.py:1531`; Phase 7 keeps it as a snapshot timeline adapter, emits shared semantic payloads, and supports `Last-Event-ID` resume, but it is still not a direct LangGraph event-stream tap. |
 | Native LangGraph graph | PARTIAL | The compiled graph includes `input_layer -> intent_splitter -> prepare -> planner -> decision_guard -> tool_execution -> relevance_filter -> planner`, plus validation, dry-run, commit, fatal, and clarification nodes in `factory-agent/factory_agent/graph/builder.py:39`. Runtime entry is `graph.ainvoke` at `factory-agent/factory_agent/graph/planner_graph.py:72`; Phase 5 now detects native interrupt payloads from checkpoint snapshots and resumes with `Command(resume=...)`. |
 | Checkpointing | DONE for graph-native | Native LangGraph checkpointer is wired in `factory-agent/factory_agent/graph/builder.py:123`, and resume uses `thread_id=session_id` in `factory-agent/factory_agent/graph/planner_graph.py:103`. Phase 6 adds DB-backed durable LangGraph checkpoints in `factory-agent/factory_agent/graph/checkpointing.py` using `workflow_checkpoints`, with JSON-safe `agent_state` projection for snapshots and native checkpoint payload for resume. Legacy memory checkpoints remain only in legacy execution paths. |
 | Backend transaction bundle API | DONE | Go API now exposes `POST /api/v1/agent/transaction/bundle-dry-run` and `POST /api/v1/agent/transaction/commit` through `emas/internal/handler/agent_transaction_handler.go` and `emas/internal/router/router.go`; `emas/internal/service/agent_transaction_service.go` applies commit bundles inside one GORM transaction and requires backend idempotency on commit. |
-| DLQ replay | LEGACY STILL USED | `/dlq/{dlq_id}/replay` is still present at `factory-agent/factory_agent/api/routes.py:2536`; it blocks graph-native sessions and remains able to mutate legacy step sessions. Phase 6 also makes the `main.py` DLQ replay event listener skip graph-native sessions. |
-| Worker/cold-start recovery | LEGACY STILL USED | `main.py` worker execution still calls `executor.execute_until_blocked` for legacy sessions, and cold-start recovery/event listeners still mutate `PlanStepRow`/`SessionRow` for legacy sessions. Phase 6 adds graph-native guards so worker execution, cold-start recovery, stuck-step reconciliation, approval events, cancel events, and DLQ replay events skip graph-native sessions. |
+| DLQ replay | LEGACY STILL USED | `/dlq/{dlq_id}/replay` is still present and remains able to mutate legacy step sessions, but Phase 8 routes its graph-native check through `factory-agent/factory_agent/graph/session_detection.py`, so LangGraph plans, pending graph approvals, and checkpoint-only graph sessions are all blocked. Phase 6 also makes the `main.py` DLQ replay event listener skip graph-native sessions. |
+| Worker/cold-start recovery | LEGACY STILL USED | `main.py` worker execution still calls `executor.execute_until_blocked` for legacy sessions, and cold-start recovery/event listeners still mutate `PlanStepRow`/`SessionRow` for legacy sessions. Phase 8 routes worker/recovery guards through the shared graph-native detector and `ExecutionEngine.execute_until_blocked` now rejects graph-native sessions directly. |
 | Frontend chat recovery | PARTIAL | Frontend hydrates from snapshot and opens semantic SSE in `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:167` and `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:234`; Phase 7 now consumes named `event: semantic` frames and refreshes snapshot on stream open/error. It still calls create-plan then execute in `runIntent` at `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js:369`, which remains a future behavior-changing flow cleanup. |
 
 ## Reference-Check Pass
 
 | Candidate | Reference result | Phase 0 decision |
 | --- | --- | --- |
-| `ExecutionEngine.execute_until_blocked` | Runtime references remain in `factory-agent/factory_agent/api/routes.py:2113` and `factory-agent/main.py:162`; tests still cover it in `factory-agent/tests/test_execution_engine.py` and `factory-agent/tests/test_approval_resume_integration.py`. | Not safe cleanup. This is active legacy execution and must be retired in a behavior-changing phase. |
-| `QueryRouter` / route scores | No active production import of `QueryRouter` was found outside `factory-agent/factory_agent/orchestration/router.py`, but route-score-shaped assumptions remain in tests such as `factory-agent/tests/test_phase5_agent_integration.py:109`. | Approval-gated cleanup. The module is probably removable later, but only after compatibility tests and docs are deliberately rescaled. |
+| `ExecutionEngine.execute_until_blocked` | Runtime references remain in `factory-agent/factory_agent/api/routes.py` and `factory-agent/main.py` for legacy sessions. Phase 8 adds shared graph-native detection plus a direct guard in `factory-agent/factory_agent/orchestration/execution.py`, and `factory-agent/tests/test_phase8_legacy_retirement.py` proves checkpoint-only graph sessions do not reach it. Existing execution-engine tests are marked `legacy_compatibility`. | Keep as explicitly labeled legacy compatibility for non-graph sessions. Not graph-native execution truth. |
+| `QueryRouter` / route scores | Phase 8 reference checks found no production import of `QueryRouter` outside `factory-agent/factory_agent/orchestration/router.py`. The remaining `QueryRouter` use is in `tests/rag_eval/run_eval.py`, and route-score-shaped `Phase5Agent` tests are marked `legacy_compatibility`. | Keep deprecated compatibility/eval code clearly labeled. Graph-native runtime does not import or depend on it. |
 | `assess_intent` | Still used by `/sessions/{session_id}/plans` in `factory-agent/factory_agent/api/routes.py:1716`, `ToolSelector` in `factory-agent/factory_agent/planning/tool_selector.py:570`, and tool scope helpers in `factory-agent/factory_agent/planning/tool_scope.py:80`. | Not safe cleanup. It is compatibility-only by intent, but still active. |
 | `SessionRow` | Used across API, session manager, memory manager, worker recovery, and frontend-facing snapshot/session responses. | Keep for UI/history compatibility. |
 | `PlanRow` | Used by plan creation, graph-native detection through `created_by="langgraph"`, snapshot projection, approval paths, and legacy execution. | Keep for compatibility projection until graph checkpoint state becomes execution truth. |
 | `PlanStepRow` | Used by snapshot steps, legacy execution, cold-start recovery, approval mutations, DLQ replay, and tests. | Keep for legacy and compatibility projection. Not graph-native truth. |
 | DLQ replay | `/dlq/{dlq_id}/replay` remains live at `factory-agent/factory_agent/api/routes.py:2536` and event handling remains in `factory-agent/main.py:550`; it explicitly blocks graph-native sessions. | Legacy still used. Keep blocked for graph-native sessions; retire later. |
 | Frontend `createPlan -> execute` flow | `useFactoryAgentChat.js` still calls `createPlan` before execute in `runIntent` at line 360 and retry flows at lines 390 and 511. | Behavior-changing to alter. Needs approval before changing UX/API flow. |
-| Graph approval detection | Graph sessions are detected through `created_by="langgraph"` and `replan_context.langgraph_pending_approval` at `factory-agent/factory_agent/api/routes.py:292` and `factory-agent/factory_agent/api/routes.py:301`. | Compatibility shim. Keep until graph checkpoint/session metadata replaces it. |
+| Graph approval/session detection | Graph sessions are now detected through the shared detector in `factory-agent/factory_agent/graph/session_detection.py`, covering `created_by="langgraph"`, `replan_context.langgraph_pending_approval`, and durable `langgraph_native_checkpoint` rows. | Compatibility shim plus graph checkpoint marker. Keep until public session metadata can represent graph-native state directly. |
 
 ## Phase 1 Evidence Update
 
@@ -110,6 +110,16 @@ No Phase 0 legacy retirement behavior was changed. The frontend `createPlan -> e
 
 Verification for this Phase 7 update: `python -m pytest tests/test_phase7_api_ui_alignment.py -q`, `python -m pytest tests/test_planner_service_phase6.py -q`, `python -m pytest tests/test_agent_state.py tests/test_intent.py tests/test_intent_splitter.py tests/test_planner_phase3.py tests/test_tool_pipeline.py tests/test_phase5_final_validator.py tests/test_planner_service_phase6.py tests/test_phase7_api_ui_alignment.py -q`, `python -m compileall factory_agent ../factory-agent/main.py`, and `npm run build`.
 
+## Phase 8 Evidence Update
+
+Phase 8 confirmed and tightened the legacy retirement contract. `factory-agent/factory_agent/graph/session_detection.py` is now the shared graph-native session detector for API routes, worker/recovery code, and legacy execution guardrails. It recognizes graph-native sessions through any of the active persisted markers: LangGraph-created compatibility `PlanRow`, `replan_context.langgraph_pending_approval`, or durable `WorkflowCheckpoint.state.kind == "langgraph_native_checkpoint"`. This closes the Phase 7 checkpoint-only classification gap for `/sessions/{session_id}/execute`, approval safeguards, DLQ replay, and worker paths.
+
+`ExecutionEngine` is now explicitly documented as the legacy relational `PlanRow`/`PlanStepRow` compatibility engine and rejects `execute_until_blocked` for graph-native sessions before any relational step execution can begin. `execution_runtime.py` is labeled legacy compatibility runtime, and `Phase5Agent` is labeled the deprecated route-score compatibility orchestrator. No compatibility behavior was removed for non-graph sessions.
+
+Reference checks during Phase 8 found no production `QueryRouter` import outside the deprecated router module itself. The remaining `QueryRouter` usage is evaluation-only in `tests/rag_eval/run_eval.py`. Legacy execution and route-score tests are now explicitly scoped with the `legacy_compatibility` marker and explanatory constants in `factory-agent/tests/test_execution_engine.py`, `factory-agent/tests/test_approval_resume_integration.py`, and `factory-agent/tests/test_phase5_agent_integration.py`.
+
+Verification for this Phase 8 update: `python -m pytest tests/test_phase8_legacy_retirement.py -q`, `python -m pytest tests/test_agent_state.py tests/test_intent.py tests/test_intent_splitter.py tests/test_planner_phase3.py tests/test_tool_pipeline.py tests/test_phase5_final_validator.py tests/test_planner_service_phase6.py tests/test_phase7_api_ui_alignment.py tests/test_phase8_legacy_retirement.py -q`, `python -m pytest tests/test_approval_resume_integration.py tests/test_phase5_agent_integration.py -q`, `python -m pytest tests/test_execution_engine.py --collect-only -q`, and `python -m compileall factory_agent main.py`.
+
 ## Runtime Path Classification
 
 | Runtime path | Classification | Notes |
@@ -118,7 +128,7 @@ Verification for this Phase 7 update: `python -m pytest tests/test_phase7_api_ui
 | `POST /sessions/{id}/messages` | Compatibility with legacy branches | Persists `MessageRow`; cancellation/replan behavior still edits `PlanStepRow` for non-LangGraph plans and graph approval rows for graph-native sessions. |
 | `POST /sessions/{id}/plans` | Compatibility / legacy projection | Uses LangGraph planner when no client draft is supplied, but produces relational `PlanRow`/`PlanStepRow` as the public artifact. |
 | `POST /sessions/{id}/execute` with no current plan | Graph-native | Calls `_run_langgraph_session`, which invokes LangGraph and persists compatibility rows after completion. |
-| `POST /sessions/{id}/execute` with LangGraph-created plan or graph pending approval | Graph-native with compatibility projection | `_is_graph_native_session` detects `created_by="langgraph"` or `replan_context.langgraph_pending_approval`. |
+| `POST /sessions/{id}/execute` with LangGraph-created plan, graph pending approval, or durable LangGraph checkpoint | Graph-native with compatibility projection | Shared graph-native detection recognizes `created_by="langgraph"`, `replan_context.langgraph_pending_approval`, or `langgraph_native_checkpoint` rows. |
 | `POST /sessions/{id}/execute` with non-LangGraph plan | Legacy | Calls `ExecutionEngine.execute_until_blocked`. |
 | `GET /sessions/{id}/snapshot` for graph-native sessions | Graph-native compatibility projection | Derives steps and timeline events from LangGraph checkpoint `agent_state` or LangGraph-created compatibility plan rows; legacy step execution rows are suppressed for graph-native sessions, and raw checkpoint blobs stay internal. |
 | `GET /sessions/{id}/snapshot` for legacy sessions | Compatibility projection | Still derives legacy session views from relational session/plan/step/message/event rows. |
@@ -130,7 +140,7 @@ Verification for this Phase 7 update: `python -m pytest tests/test_phase7_api_ui
 | `POST /api/v1/agent/transaction/bundle-dry-run` | Graph-native backend support | Validates staged write bundles inside a backend transaction and rolls back, used by graph-native Phase 5 write flow before approval. |
 | `POST /api/v1/agent/transaction/commit` | Graph-native backend support | Commits approved staged write bundles inside one backend transaction with idempotency enforcement, used only after graph dry-run, final validation, and approval. |
 | `POST /dlq/{id}/replay` | Legacy | Explicitly blocks graph-native sessions but mutates legacy step state. |
-| Worker queue in `main.py` | Legacy | Background workers still execute relational plans through `ExecutionEngine`, but graph-native sessions are skipped. |
+| Worker queue in `main.py` | Legacy | Background workers still execute relational plans through `ExecutionEngine`, but graph-native sessions are skipped via the shared detector; the legacy engine also rejects graph-native sessions directly. |
 
 ## Behavior-Changing Fixes Requiring Approval
 
@@ -139,17 +149,21 @@ Verification for this Phase 7 update: `python -m pytest tests/test_phase7_api_ui
 3. Replace `/plans` as execution truth with a graph-only run endpoint or make it a pure preview/projection API.
 4. Replace the Phase 7 snapshot-polling SSE adapter with a direct LangGraph event-stream tap if lower-latency streaming is required; the current approved contract keeps snapshot hydration as recovery truth.
 5. Retire legacy step approval and DLQ replay code entirely after legacy-session support is no longer needed; Phase 6 prevents these paths from mutating graph-native sessions.
-6. Remove `QueryRouter`, route scoring, and legacy planner tests only after reference checks confirm graph-native runtime no longer imports or depends on them.
+6. Remove `QueryRouter`, route scoring, and legacy planner tests entirely only after eval/compatibility users no longer need them. Phase 8 confirms graph-native production runtime no longer imports or depends on them.
 
 ## Safe Cleanup
 
-No safe cleanup was performed in this pass. Reference checks found no proven-dead helper/import/comment that is both migration-relevant and risk-free to remove. The obvious cleanup candidates are either active runtime paths, compatibility projections, or test-covered legacy behavior.
+The original Phase 0 pass performed no runtime cleanup because reference checks found no proven-dead helper/import/comment that was both migration-relevant and risk-free to remove. Phase 8 did not remove legacy behavior needed by non-graph sessions; it added compatibility labels, shared graph-native detection, and a defensive legacy-engine guard after reference checks proved those changes were scoped to graph-native safety and contract clarity.
 
-Validation for this pass was reference-check only:
+Validation for the latest pass:
 
 - `rg` checks for `ExecutionEngine`, `execute_until_blocked`, `QueryRouter`, route scores, `assess_intent`, `PlanRow`, `PlanStepRow`, DLQ replay, graph approval shims, and frontend `createPlan -> execute`.
-- No unit tests were run because no runtime code changed.
+- `python -m pytest tests/test_phase8_legacy_retirement.py -q`.
+- `python -m pytest tests/test_agent_state.py tests/test_intent.py tests/test_intent_splitter.py tests/test_planner_phase3.py tests/test_tool_pipeline.py tests/test_phase5_final_validator.py tests/test_planner_service_phase6.py tests/test_phase7_api_ui_alignment.py tests/test_phase8_legacy_retirement.py -q`.
+- `python -m pytest tests/test_approval_resume_integration.py tests/test_phase5_agent_integration.py -q`.
+- `python -m pytest tests/test_execution_engine.py --collect-only -q`.
+- `python -m compileall factory_agent main.py`.
 
 ## Phase 0 Exit Gap
 
-Phase 0 audit evidence is now sufficient to start Phase 1 planning. Phase 0 should not be marked fully complete until the team approves the behavior-changing retirement list or accepts that no safe cleanup is available in this phase.
+The Phase 0 baseline has been carried forward through Phase 8. Remaining gaps are no longer graph-native execution risks; they are intentional compatibility shims or behavior-changing cleanup items listed above for future legacy-session retirement.

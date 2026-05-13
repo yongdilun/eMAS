@@ -1,3 +1,10 @@
+"""Legacy compatibility runtime for relational plan-step execution.
+
+LangGraph-native sessions execute through `factory_agent.graph` and durable
+LangGraph checkpoints. This module is intentionally retained for non-graph
+legacy sessions and compatibility tests only.
+"""
+
 from __future__ import annotations
 
 import asyncio

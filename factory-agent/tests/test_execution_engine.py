@@ -1,5 +1,12 @@
 ﻿import asyncio
 import pytest
+
+pytestmark = pytest.mark.legacy_compatibility
+
+LEGACY_COMPATIBILITY_SCOPE = (
+    "This module exercises the relational ExecutionEngine for non-graph legacy "
+    "sessions only; graph-native execution is covered by Phase 3+ LangGraph tests."
+)
 from datetime import datetime
 
 import httpx

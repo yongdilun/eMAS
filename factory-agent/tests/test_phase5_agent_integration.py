@@ -9,6 +9,13 @@ import pytest
 from factory_agent.orchestration.agent_integration import Phase5Agent
 from factory_agent.rag.schemas import SourceCitation
 
+pytestmark = pytest.mark.legacy_compatibility
+
+LEGACY_COMPATIBILITY_SCOPE = (
+    "Phase5Agent is the deprecated route-score compatibility orchestrator; "
+    "graph-native runtime no longer depends on QueryRouter route decisions."
+)
+
 
 @dataclass
 class _ExecResult:
