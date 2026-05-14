@@ -12,7 +12,12 @@ from ...observability.telemetry import log_event, log_llm_prompt
 from ...schemas import ControlAction, PlannerDecision, ToolCall, ToolInfo
 from ...security.guardrails import promote_user_provenance, sanitize_tool_args_against_schema, strip_unsupported_optional_args
 from ..errors import LangGraphPlannerError
-from ..planner_graph_helpers import _deterministic_plan_repair, _message_content_text, _tool_cards
+from ..planner_graph_helpers import (
+    _deterministic_plan_repair,
+    _infer_bulk_job_priority_mutation,
+    _message_content_text,
+    _tool_cards,
+)
 from ..state import AgentPlanOutput, AgentPlanStep, AgentState, user_query_text
 
 RouteKey = Literal["clarify_end", "continue_planner", "decision_guard", "synthesize_plan"]
@@ -277,6 +282,163 @@ def _risk_for_tools(tool_calls: list[ToolCall], tools_by_name: dict[str, ToolInf
     return "read"
 
 
+def _is_write_tool_name(tool_name: str, tools_by_name: dict[str, ToolInfo]) -> bool:
+    tool = tools_by_name.get(tool_name)
+    return tool is not None and not tool.is_read_only
+
+
+def _deterministic_write_decision_from_repair(
+    *,
+    clause: str,
+    scoped_tools: list[ToolInfo],
+    current_intent: dict[str, Any],
+    tools_by_name: dict[str, ToolInfo],
+) -> PlannerDecision | None:
+    repaired = _deterministic_plan_repair(clause, scoped_tools, context={})
+    if repaired is None or not repaired.steps:
+        return None
+    calls = [ToolCall(tool_name=s.tool_name, args=dict(s.args or {})) for s in repaired.steps]
+    if not calls or any(not _is_write_tool_name(tc.tool_name, tools_by_name) for tc in calls):
+        return None
+    return PlannerDecision(
+        intent_id=str(current_intent.get("intent_id") or "unknown"),
+        kind="domain_tool",
+        tool_calls=calls,
+        decision_summary="Deterministic write intent is complete; stage it for bundled approval.",
+        risk_level=_risk_for_tools(calls, tools_by_name),
+    )
+
+
+def _job_rows_from_result(result: Any) -> list[dict[str, Any]]:
+    if isinstance(result, list):
+        return [row for row in result if isinstance(row, dict)]
+    if not isinstance(result, dict):
+        return []
+    data = result.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    for key in ("items", "results"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _job_ids_from_rows(rows: list[dict[str, Any]], *, source_priority: str | None = None) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if source_priority:
+            priority = row.get("priority")
+            if isinstance(priority, str) and priority.strip().lower() != source_priority:
+                continue
+        value = row.get("job_id") or row.get("id")
+        if value in (None, ""):
+            continue
+        job_id = str(value).strip()
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        ids.append(job_id)
+    return ids
+
+
+def _bulk_job_selection_ids(
+    state: AgentState,
+    *,
+    source_priority: str,
+) -> list[str] | None:
+    outputs = state.get("tool_outputs") or []
+    if not isinstance(outputs, list):
+        return None
+    truncated_at = int(state.get("tool_outputs_truncated_at") or 0)
+    for row in reversed(outputs[max(0, truncated_at) :]):
+        if not isinstance(row, dict) or row.get("tool_name") != "get__jobs":
+            continue
+        args = row.get("args") if isinstance(row.get("args"), dict) else {}
+        if str(args.get("priority") or "").strip().lower() != source_priority:
+            continue
+        if row.get("http_status") is not None and int(row.get("http_status") or 0) >= 400:
+            continue
+        result = row.get("result")
+        return _job_ids_from_rows(_job_rows_from_result(result), source_priority=source_priority)
+    return None
+
+
+def _bulk_job_priority_decision(
+    *,
+    state: AgentState,
+    current_intent: dict[str, Any],
+    tools_by_name: dict[str, ToolInfo],
+    settings: Settings,
+) -> PlannerDecision | None:
+    mutation = _infer_bulk_job_priority_mutation(str(current_intent.get("description") or user_query_text(state)))
+    if mutation is None:
+        return None
+    source = mutation["source_priority"]
+    ids = _bulk_job_selection_ids(state, source_priority=source)
+    if ids is None:
+        if "get__jobs" not in tools_by_name:
+            return None
+        return PlannerDecision(
+            intent_id=str(current_intent.get("intent_id") or "unknown"),
+            kind="domain_tool",
+            tool_calls=[ToolCall(tool_name="get__jobs", args={"priority": source})],
+            decision_summary=f"Fetch only {source}-priority jobs before staging the requested bulk change.",
+            risk_level="read",
+        )
+    if not ids:
+        return PlannerDecision(
+            intent_id=str(current_intent.get("intent_id") or "unknown"),
+            kind="intent_completed",
+            tool_calls=[],
+            decision_summary=f"No {source}-priority jobs were found to change.",
+            risk_level="read",
+        )
+
+    capped = ids[: max(1, int(getattr(settings, "max_foreach_items", 50) or 50))]
+    if mutation["action"] == "delete":
+        if "delete__jobs_{id}" not in tools_by_name:
+            return None
+        calls = [ToolCall(tool_name="delete__jobs_{id}", args={"id": job_id}) for job_id in capped]
+        summary = f"Stage deletion for {len(calls)} {source}-priority job(s) in one approval bundle."
+    else:
+        target = mutation.get("target_priority")
+        if not target or "put__jobs_{id}" not in tools_by_name:
+            return None
+        calls = [
+            ToolCall(tool_name="put__jobs_{id}", args={"id": job_id, "priority": target})
+            for job_id in capped
+        ]
+        summary = f"Stage priority update for {len(calls)} {source}-priority job(s) in one approval bundle."
+    return PlannerDecision(
+        intent_id=str(current_intent.get("intent_id") or "unknown"),
+        kind="domain_tool",
+        tool_calls=calls,
+        decision_summary=summary,
+        risk_level="write_dry_run",
+    )
+
+
+def _next_bundleable_write_intent_index(state: AgentState) -> int | None:
+    working = [dict(x) for x in (state.get("working_intents") or []) if isinstance(x, dict)]
+    if not working:
+        return None
+    scoped = state.get("scoped_tools") or []
+    tools_by_name = {t.name: t for t in scoped if getattr(t, "name", None)}
+    cursor = int(state.get("intent_cursor") or 0)
+    nxt = _next_active_intent_index(working, cursor + 1)
+    if nxt is None:
+        return None
+    decision = _deterministic_write_decision_from_repair(
+        clause=str(working[nxt].get("description") or ""),
+        scoped_tools=scoped,
+        current_intent=working[nxt],
+        tools_by_name=tools_by_name,
+    )
+    return nxt if decision is not None else None
+
+
 def _read_not_found_summary(*, state: AgentState, tools_by_name: dict[str, ToolInfo]) -> str | None:
     outputs = state.get("tool_outputs") or []
     if not isinstance(outputs, list):
@@ -413,17 +575,51 @@ def _fallback_decision_from_repair(
 
 def make_planner_node(settings: Settings):
     async def planner_node(state: AgentState) -> dict[str, Any]:
-        if [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]:
+        staged_existing = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+        if staged_existing:
+            scoped_existing = state.get("scoped_tools") or []
+            tools_by_name_existing = {t.name: t for t in scoped_existing if getattr(t, "name", None)}
+            working_existing = [dict(x) for x in (state.get("working_intents") or []) if isinstance(x, dict)]
+            cursor_existing = int(state.get("intent_cursor") or 0)
+            next_write_idx = _next_bundleable_write_intent_index(state)
+            if next_write_idx is not None and 0 <= next_write_idx < len(working_existing):
+                if 0 <= cursor_existing < len(working_existing):
+                    working_existing[cursor_existing]["status"] = "completed"
+                current_next = working_existing[next_write_idx]
+                current_next["status"] = "in_progress"
+                working_existing[next_write_idx] = current_next
+                decision = _deterministic_write_decision_from_repair(
+                    clause=str(current_next.get("description") or ""),
+                    scoped_tools=scoped_existing,
+                    current_intent=current_next,
+                    tools_by_name=tools_by_name_existing,
+                )
+                if decision is not None:
+                    iteration = int(state.get("planner_iteration") or 0) + 1
+                    return {
+                        "planner_iteration": iteration,
+                        "working_intents": working_existing,
+                        "intent_cursor": next_write_idx,
+                        "current_intent": current_next,
+                        "pending_decision": decision.model_dump(mode="json"),
+                        "decisions": [decision.model_dump(mode="json")],
+                        "completed_actions": [
+                            {
+                                "phase": "planner",
+                                "intent_id": decision.intent_id,
+                                "kind": decision.kind,
+                                "summary": decision.decision_summary,
+                                "iteration": iteration,
+                            }
+                        ],
+                        "next_route": "decision_guard",
+                        "status": "planning",
+                    }
             return {
                 "pending_decision": None,
                 "next_route": "synthesize_plan",
                 "status": "validating",
             }
-
-        if not (settings.planner_openai_base_url or settings.openai_api_key):
-            raise LangGraphPlannerError(
-                "LangGraph planner requires PLANNER_OPENAI_BASE_URL (or OPENAI_BASE_URL) or OPENAI_API_KEY."
-            )
 
         scoped = state.get("scoped_tools") or []
         tools_by_name = {t.name: t for t in scoped if getattr(t, "name", None)}
@@ -488,6 +684,84 @@ def make_planner_node(settings: Settings):
         if current.get("status") == "pending":
             current["status"] = "in_progress"
         working[cursor] = current
+        prev_decisions = list(state.get("decisions") or [])
+
+        bulk_decision = _bulk_job_priority_decision(
+            state=state,
+            current_intent=current,
+            tools_by_name=tools_by_name,
+            settings=settings,
+        )
+        if bulk_decision is not None:
+            if bulk_decision.kind == "intent_completed":
+                current["status"] = "completed"
+                working[cursor] = current
+                later = _next_active_intent_index(working, cursor + 1)
+                return {
+                    "planner_iteration": iteration,
+                    "working_intents": working,
+                    "intent_cursor": later if later is not None else cursor,
+                    "current_intent": working[later] if later is not None else current,
+                    "pending_decision": None,
+                    "decisions": prev_decisions + [bulk_decision.model_dump(mode="json")],
+                    "completed_actions": [
+                        {
+                            "phase": "planner",
+                            "intent_id": bulk_decision.intent_id,
+                            "kind": bulk_decision.kind,
+                            "summary": bulk_decision.decision_summary,
+                            "iteration": iteration,
+                        }
+                    ],
+                    "next_route": "continue_planner" if later is not None else "synthesize_plan",
+                    "status": "planning" if later is not None else "validating",
+                }
+            return {
+                "planner_iteration": iteration,
+                "working_intents": working,
+                "intent_cursor": cursor,
+                "current_intent": current,
+                "pending_decision": bulk_decision.model_dump(mode="json"),
+                "decisions": prev_decisions + [bulk_decision.model_dump(mode="json")],
+                "completed_actions": [
+                    {
+                        "phase": "planner",
+                        "intent_id": bulk_decision.intent_id,
+                        "kind": bulk_decision.kind,
+                        "summary": bulk_decision.decision_summary,
+                        "iteration": iteration,
+                    }
+                ],
+                "next_route": "decision_guard",
+                "status": "planning",
+            }
+
+        direct_write_decision = _deterministic_write_decision_from_repair(
+            clause=str(current.get("description") or user_query_text(state)),
+            scoped_tools=scoped,
+            current_intent=current,
+            tools_by_name=tools_by_name,
+        )
+        if direct_write_decision is not None:
+            return {
+                "planner_iteration": iteration,
+                "working_intents": working,
+                "intent_cursor": cursor,
+                "current_intent": current,
+                "pending_decision": direct_write_decision.model_dump(mode="json"),
+                "decisions": prev_decisions + [direct_write_decision.model_dump(mode="json")],
+                "completed_actions": [
+                    {
+                        "phase": "planner",
+                        "intent_id": direct_write_decision.intent_id,
+                        "kind": direct_write_decision.kind,
+                        "summary": direct_write_decision.decision_summary,
+                        "iteration": iteration,
+                    }
+                ],
+                "next_route": "decision_guard",
+                "status": "planning",
+            }
 
         not_found_summary = _read_not_found_summary(state=state, tools_by_name=tools_by_name)
         if not_found_summary:
@@ -511,6 +785,11 @@ def make_planner_node(settings: Settings):
                 "next_route": "continue_planner" if later is not None else "synthesize_plan",
                 "status": "planning" if later is not None else "validating",
             }
+
+        if not (settings.planner_openai_base_url or settings.openai_api_key):
+            raise LangGraphPlannerError(
+                "LangGraph planner requires PLANNER_OPENAI_BASE_URL (or OPENAI_BASE_URL) or OPENAI_API_KEY."
+            )
 
         prompt = _build_planner_decision_prompt(state=state, current=current, tools_by_name=tools_by_name)
         log_llm_prompt(
@@ -697,6 +976,47 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
     raw_calls = pending.get("tool_calls") or []
     if not isinstance(raw_calls, list):
         raw_calls = []
+    raw_ref_calls = [dict(item) for item in raw_calls if isinstance(item, dict)]
+    _assign_missing_output_refs(raw_ref_calls, tools_by_name)
+    raw_ref_err = _forward_ref_violation(
+        raw_ref_calls,
+        tools_by_name,
+        tool_output_tail=planner_tool_output_tail(state),
+    )
+    if raw_ref_err:
+        pending2 = dict(pending)
+        pending2["violates_constraints"] = True
+        pending2["tool_calls"] = []
+        pending2["decision_summary"] = (
+            str(pending2.get("decision_summary") or "") + f" [guard: invalid transaction refs: {raw_ref_err}]"
+        ).strip()
+        log_event(
+            "decision_guard_blocked",
+            level="WARNING",
+            intent_id=pending2.get("intent_id"),
+            detail=raw_ref_err,
+        )
+        return {
+            "pending_decision": pending2,
+            "next_route": "continue_planner",
+            "failed_strategies": [
+                {
+                    "phase": "decision_guard",
+                    "intent_id": pending2.get("intent_id"),
+                    "reason": "transaction_ref_violation",
+                    "detail": raw_ref_err,
+                    "repair_instruction": "Revise the decision without forward, missing, duplicate, or self references.",
+                }
+            ],
+            "completed_actions": [
+                {
+                    "phase": "decision_guard",
+                    "intent_id": pending2.get("intent_id"),
+                    "kind": "transaction_ref_violation",
+                    "summary": raw_ref_err,
+                }
+            ],
+        }
     fixed_calls: list[dict[str, Any]] = []
     context = state.get("context") if isinstance(state.get("context"), dict) else {}
     intent_memory = context.get("intent_memory") if isinstance(context.get("intent_memory"), dict) else {}

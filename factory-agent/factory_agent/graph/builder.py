@@ -121,9 +121,18 @@ def compile_planner_graph(settings: Settings):
     )
     graph.add_edge("fatal_end", END)
     graph.add_edge("clarify_end", END)
-    from .checkpointing import build_graph_checkpointer
+    from .checkpointing import build_graph_checkpointer, get_process_memory_checkpointer
 
     checkpointer = build_graph_checkpointer(settings)
-    if checkpointer is not None:
-        return graph.compile(checkpointer=checkpointer)
-    return graph.compile()
+    if checkpointer is None:
+        backend = (settings.graph_checkpoint_backend or "auto").strip().lower() or "auto"
+        if backend == "off":
+            return graph.compile()
+        try:
+            checkpointer = get_process_memory_checkpointer()
+        except Exception as exc:
+            raise LangGraphPlannerError(
+                "LangGraph checkpointer is required for planner approvals (interrupt/resume). "
+                "Set GRAPH_CHECKPOINT_BACKEND=memory|auto|db, or ensure langgraph.checkpoint.memory is available."
+            ) from exc
+    return graph.compile(checkpointer=checkpointer)

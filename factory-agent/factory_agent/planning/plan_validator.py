@@ -84,6 +84,22 @@ def _extract_write_target(tool: ToolInfo, args: dict[str, Any]) -> str:
     return tool.endpoint
 
 
+def _collection_endpoint_for_item(endpoint: str) -> str:
+    parts = [part for part in endpoint.strip("/").split("/") if part]
+    if parts and parts[-1].startswith("{") and parts[-1].endswith("}"):
+        parts = parts[:-1]
+    return "/" + "/".join(parts) if parts else "/"
+
+
+def _read_preflights_delete(read_tool: ToolInfo, read_args: dict[str, Any], delete_tool: ToolInfo) -> bool:
+    if read_tool.method != "GET":
+        return False
+    if read_tool.endpoint == delete_tool.endpoint:
+        return True
+    collection_endpoint = _collection_endpoint_for_item(delete_tool.endpoint)
+    return read_tool.endpoint == collection_endpoint and bool(read_args)
+
+
 def _normalize_parallel_groups(steps: list[dict[str, Any]]) -> list[list[int]]:
     groups: dict[int, list[int]] = {}
     for s in steps:
@@ -302,8 +318,11 @@ def validate_plan(
         if tool.method == "DELETE":
             prior_reads = [
                 t
-                for idx, t in tools_by_step.items()
-                if t and idx < step.step_index and t.method == "GET" and t.endpoint == tool.endpoint
+                for prior in plan.steps
+                for t in [tools_by_step.get(prior.step_index)]
+                if t
+                and prior.step_index < step.step_index
+                and _read_preflights_delete(t, prior.args, tool)
             ]
             if not prior_reads:
                 errors.append(

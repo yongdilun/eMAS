@@ -38,7 +38,11 @@ def test_seed_pipeline_manifest_is_shared_and_complete():
 )
 def test_factory_agent_scenarios_define_executable_contracts(scenario):
     assert scenario["entrypoint"] == "factory_agent"
-    assert scenario["expected_tools"], "factory-agent scenarios must name expected tool calls"
+    allows_no_tool_plan = scenario.get("complexity") == "knowledge_only_no_tool_plan"
+    if allows_no_tool_plan:
+        assert scenario["expected_tools"] == []
+    else:
+        assert scenario["expected_tools"], "factory-agent scenarios must name expected tool calls"
     assert scenario["approval_policy"] in {"none", "approve", "reject"}
     assert scenario["expected_response_contains"], "artifact assertions need response evidence"
     assert scenario["coverage_area"], "factory-agent scenarios need a coverage_area"
@@ -52,6 +56,7 @@ def test_factory_agent_scenarios_define_executable_contracts(scenario):
         "approval_write_preflight",
         "approval_rejection",
         "soft_failure",
+        "knowledge_only_no_tool_plan",
     }
     assert scenario["difficulty"] in {"easy", "medium", "hard"}
 
@@ -70,3 +75,27 @@ def test_live_factory_agent_scenarios_are_categorized(scenario):
     assert scenario["coverage_area"], "live factory-agent scenarios need a coverage_area"
     assert scenario["complexity"], "live factory-agent scenarios need complexity"
     assert scenario["difficulty"] in {"easy", "medium", "hard"}
+
+
+def test_reliability_scenarios_cover_hard_workflow_edges():
+    scenarios = _load_scenarios()
+    reliability = {s.get("reliability_area"): s for s in scenarios if s.get("category") == "reliability"}
+
+    required = {
+        "pause_resume_workflow",
+        "llm_failure_recovery",
+        "transactional_rollback_safety",
+        "rag_normal_tool_mix",
+    }
+    assert required <= set(reliability), "reliability manifest is missing required hard-edge scenarios"
+
+    for area in required:
+        scenario = reliability[area]
+        assert scenario["difficulty"] == "hard"
+        assert scenario["test_surface"], f"{scenario['id']} must point at the executable test"
+        assert scenario["expected_response_contains"], f"{scenario['id']} needs observable evidence"
+
+    assert reliability["pause_resume_workflow"]["approval_policy"] == "approve"
+    assert reliability["llm_failure_recovery"]["approval_policy"] == "none"
+    assert reliability["transactional_rollback_safety"]["entrypoint"] == "go_e2e"
+    assert reliability["rag_normal_tool_mix"]["expected_tools"] == ["get__machines_{id}"]

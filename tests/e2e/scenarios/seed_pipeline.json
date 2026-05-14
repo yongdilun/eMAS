@@ -2193,6 +2193,154 @@
     "difficulty": "hard"
   },
   {
+    "id": "factory-bulk-update-low-priority-jobs",
+    "category": "factory_agent",
+    "input": "change all low priority jobs to high priority",
+    "entrypoint": "factory_agent",
+    "seed_profile": "canonical",
+    "expected_intent": "update",
+    "expected_tools": [
+      "get__jobs",
+      "put__jobs_{id}"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "approval",
+      "JOB-SEED-005",
+      "JOB-SEED-024"
+    ],
+    "expected_approval_count": 1,
+    "expected_bundle_write_count": 5,
+    "expected_approval_preview_contains": [
+      {
+        "tool_name": "put__jobs_{id}",
+        "args": {
+          "id": "JOB-SEED-005",
+          "priority": "high"
+        }
+      },
+      {
+        "tool_name": "put__jobs_{id}",
+        "args": {
+          "id": "JOB-SEED-024",
+          "priority": "high"
+        }
+      }
+    ],
+    "coverage_area": "job_write_bundle",
+    "complexity": "multi_step_approval",
+    "difficulty": "hard"
+  },
+  {
+    "id": "factory-bundle-two-job-creates",
+    "category": "factory_agent",
+    "input": "create job for product P-005 quantity 2 and create job for product P-006 quantity 3",
+    "entrypoint": "factory_agent",
+    "seed_profile": "canonical",
+    "expected_intent": "create",
+    "expected_tools": [
+      "post__jobs"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "approval",
+      "P-005",
+      "P-006"
+    ],
+    "expected_approval_count": 1,
+    "expected_bundle_write_count": 2,
+    "expected_approval_preview_contains": [
+      {
+        "tool_name": "post__jobs",
+        "args": {
+          "product_id": "P-005",
+          "quantity_total": 2
+        }
+      },
+      {
+        "tool_name": "post__jobs",
+        "args": {
+          "product_id": "P-006",
+          "quantity_total": 3
+        }
+      }
+    ],
+    "coverage_area": "job_write_bundle",
+    "complexity": "multi_step_approval",
+    "difficulty": "hard"
+  },
+  {
+    "id": "factory-bulk-delete-low-priority-jobs",
+    "category": "factory_agent",
+    "input": "delete all low priority jobs",
+    "entrypoint": "factory_agent",
+    "seed_profile": "canonical",
+    "expected_intent": "delete",
+    "expected_tools": [
+      "get__jobs",
+      "delete__jobs_{id}"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "approval",
+      "JOB-SEED-005",
+      "JOB-SEED-024"
+    ],
+    "expected_approval_count": 1,
+    "expected_bundle_write_count": 5,
+    "expected_approval_preview_contains": [
+      {
+        "tool_name": "delete__jobs_{id}",
+        "args": {
+          "id": "JOB-SEED-005"
+        }
+      },
+      {
+        "tool_name": "delete__jobs_{id}",
+        "args": {
+          "id": "JOB-SEED-024"
+        }
+      }
+    ],
+    "coverage_area": "job_write_bundle",
+    "complexity": "multi_step_approval",
+    "difficulty": "hard"
+  },
+  {
+    "id": "factory-create-bundle-skips-incomplete-requirement",
+    "category": "factory_agent",
+    "input": "create job for product P-005 quantity 2 and create job for product P-006",
+    "entrypoint": "factory_agent",
+    "seed_profile": "canonical",
+    "expected_intent": "create",
+    "expected_tools": [
+      "post__jobs"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "approval",
+      "P-005"
+    ],
+    "expected_approval_count": 1,
+    "expected_bundle_write_count": 1,
+    "expected_approval_preview_contains": [
+      {
+        "tool_name": "post__jobs",
+        "args": {
+          "product_id": "P-005",
+          "quantity_total": 2
+        }
+      }
+    ],
+    "coverage_area": "job_write_bundle",
+    "complexity": "multi_step_approval",
+    "difficulty": "hard"
+  },
+  {
     "id": "factory-approval-rejection",
     "category": "factory_agent",
     "input": "create job P-005 qty 3 but reject it",
@@ -2428,5 +2576,118 @@
     "expected_response_contains": [
       "UNIQUE constraint"
     ]
+  },
+  {
+    "id": "factory-agent-osha-loto-knowledge-question",
+    "category": "factory_agent",
+    "input": "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? Is there any specific OSHA regulation or standard that defines this?",
+    "entrypoint": "factory_agent",
+    "seed_profile": "canonical",
+    "expected_intent": "knowledge",
+    "expected_tools": [],
+    "approval_policy": "none",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "Lockout/Tagout",
+      "hazardous energy",
+      "29 CFR 1910.147"
+    ],
+    "coverage_area": "rag_knowledge_answer",
+    "complexity": "knowledge_only_no_tool_plan",
+    "difficulty": "medium",
+    "test_surface": "factory-agent/tests/test_api_endpoints.py::test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan"
+  },
+  {
+    "id": "reliability-pause-resume-live-update",
+    "category": "reliability",
+    "input": "create job for product P-005 quantity 2; before approval revise it to quantity 4 and continue",
+    "entrypoint": "factory_agent_reliability",
+    "seed_profile": "canonical",
+    "expected_intent": "create",
+    "expected_tools": [
+      "post__jobs"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "WAITING_APPROVAL",
+      "Superseded by user message",
+      "COMPLETED"
+    ],
+    "coverage_area": "workflow_resilience",
+    "complexity": "pause_resume_replan",
+    "difficulty": "hard",
+    "reliability_area": "pause_resume_workflow",
+    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_pause_resume_live_instruction_update_rejects_stale_approval_and_completes"
+  },
+  {
+    "id": "reliability-llm-transient-retry",
+    "category": "reliability",
+    "input": "show jobs while the planner model times out once and then recovers",
+    "entrypoint": "factory_agent_reliability",
+    "seed_profile": "canonical",
+    "expected_intent": "read",
+    "expected_tools": [
+      "get__jobs"
+    ],
+    "approval_policy": "none",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "planner_transient_retry",
+      "JOB-SEED-001",
+      "COMPLETED"
+    ],
+    "coverage_area": "llm_failure_recovery",
+    "complexity": "transient_retry",
+    "difficulty": "hard",
+    "reliability_area": "llm_failure_recovery",
+    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_transient_llm_failure_is_retried_without_losing_session_state"
+  },
+  {
+    "id": "reliability-transaction-rollback-bundle",
+    "category": "reliability",
+    "input": "commit a multi-write bundle where a later operation fails; verify earlier writes are rolled back",
+    "entrypoint": "go_e2e",
+    "seed_profile": "canonical",
+    "expected_intent": "transactional_rollback",
+    "expected_tools": [
+      "post__machines",
+      "post__machines_{id}_capabilities",
+      "post__maintenance"
+    ],
+    "approval_policy": "approve",
+    "expected_status": 400,
+    "expected_response_contains": [
+      "invalid maintenance_type",
+      "rolled back"
+    ],
+    "coverage_area": "transaction_safety",
+    "complexity": "atomic_bundle_rollback",
+    "difficulty": "hard",
+    "reliability_area": "transactional_rollback_safety",
+    "test_surface": "emas/internal/e2e/transaction_reliability_test.go::TestReliabilityTransactionBundleRollsBackEarlierWritesWhenLaterOperationFails"
+  },
+  {
+    "id": "reliability-rag-normal-tool-mix",
+    "category": "reliability",
+    "input": "Use OSHA LOTO guidance and show machine M-CNC-01 status",
+    "entrypoint": "factory_agent_reliability",
+    "seed_profile": "canonical",
+    "expected_intent": "read",
+    "expected_tools": [
+      "get__machines_{id}"
+    ],
+    "approval_policy": "none",
+    "expected_status": 200,
+    "expected_response_contains": [
+      "osha_3120_lockout_tagout",
+      "M-CNC-01",
+      "maintenance"
+    ],
+    "coverage_area": "rag_tool_mix",
+    "complexity": "api_then_rag",
+    "difficulty": "hard",
+    "reliability_area": "rag_normal_tool_mix",
+    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_rag_sources_and_normal_tool_output_share_the_same_snapshot"
   }
 ]

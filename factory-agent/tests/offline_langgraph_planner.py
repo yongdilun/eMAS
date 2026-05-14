@@ -128,7 +128,10 @@ class OfflineLangGraphPlanner:
         if draft is None:
             raise LangGraphPlannerError("Offline planner validation returned no draft.")
         contract = validated.get("intent_contract") or {"intent": intent, "backend": "langgraph", "steps": []}
-        return draft, contract
+        tool_outputs: list[dict[str, Any]] = []
+        if isinstance(validated.get("tool_outputs"), list):
+            tool_outputs = validated["tool_outputs"]
+        return draft, contract, tool_outputs
 
     def _plan_clause(
         self,

@@ -22,6 +22,25 @@ _MEMORY_CHECKPOINTERS: dict[str, Any] = {}
 _DB_CHECKPOINTERS: dict[str, Any] = {}
 
 
+def get_process_memory_checkpointer() -> Any:
+    """Process-local MemorySaver shared by ``build_graph_checkpointer`` and graph compile fallback.
+
+    Using one saver per process ensures ``generate`` and ``resume_after_approval`` see the same
+    interrupt checkpoints when no DB/Postgres saver is configured.
+    """
+    key = "memory"
+    saver = _MEMORY_CHECKPOINTERS.get(key)
+    if saver is not None:
+        return saver
+    try:
+        from langgraph.checkpoint.memory import MemorySaver
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("langgraph.checkpoint.memory.MemorySaver is unavailable.") from exc
+    saver = MemorySaver()
+    _MEMORY_CHECKPOINTERS[key] = saver
+    return saver
+
+
 def clear_graph_checkpointer_cache() -> None:
     """Drop process-local checkpointer singletons.
 
@@ -346,7 +365,7 @@ def build_graph_checkpointer(settings: Settings) -> Any | None:
     3) In-memory saver as local/dev fallback
     4) None when disabled
     """
-    backend = (settings.graph_checkpoint_backend or "auto").strip().lower()
+    backend = (settings.graph_checkpoint_backend or "auto").strip().lower() or "auto"
     if backend == "off":
         return None
 
@@ -379,14 +398,7 @@ def build_graph_checkpointer(settings: Settings) -> Any | None:
 
     if backend in {"auto", "memory"}:
         try:
-            from langgraph.checkpoint.memory import MemorySaver
-
-            key = "memory"
-            saver = _MEMORY_CHECKPOINTERS.get(key)
-            if saver is None:
-                saver = MemorySaver()
-                _MEMORY_CHECKPOINTERS[key] = saver
-            return saver
+            return get_process_memory_checkpointer()
         except Exception:
             return None
     return None

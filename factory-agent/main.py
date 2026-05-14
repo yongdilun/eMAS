@@ -39,6 +39,19 @@ def _ensure_schema_compatibility(sync_conn) -> None:
         if column_name not in columns:
             sync_conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}")
 
+    def ensure_nullable_column(table: str, column_name: str, mysql_ddl: str) -> None:
+        if table not in tables:
+            return
+        columns = {column["name"]: column for column in inspector.get_columns(table)}
+        column = columns.get(column_name)
+        if not column or column.get("nullable", True):
+            return
+        dialect = getattr(sync_conn.dialect, "name", "")
+        if dialect == "mysql":
+            sync_conn.exec_driver_sql(f"ALTER TABLE {table} MODIFY {column_name} {mysql_ddl} NULL")
+        elif dialect == "postgresql":
+            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN {column_name} DROP NOT NULL")
+
     ensure_column("sessions", "name", "VARCHAR(255)")
     ensure_column("messages", "mode", "VARCHAR(20) NOT NULL DEFAULT 'normal'")
     ensure_column("plans", "kind", "VARCHAR(20) NOT NULL DEFAULT 'execution'")
@@ -50,6 +63,10 @@ def _ensure_schema_compatibility(sync_conn) -> None:
     ensure_column("plan_steps", "bulk_state", "JSON")
     ensure_column("approvals", "subject_type", "VARCHAR(20) NOT NULL DEFAULT 'step'")
     ensure_column("approvals", "plan_id", "VARCHAR(36)")
+    # Graph-native approvals pause an entire LangGraph transaction bundle, not a
+    # legacy plan step, so older MySQL schemas with approvals.step_id NOT NULL
+    # must be relaxed before ApprovalRow(step_id=None) can be persisted.
+    ensure_nullable_column("approvals", "step_id", "VARCHAR(36)")
 
     # MySQL: older schemas used VARCHAR(1000) for capability_tags; toolgen can emit longer JSON.
     if "tools" in tables and getattr(sync_conn.dialect, "name", "") == "mysql":

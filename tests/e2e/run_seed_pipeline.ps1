@@ -406,10 +406,15 @@ try {
     $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
     try {
       $exitCodes += Invoke-LoggedCommand `
-        -Name "Python manifest contract checks" `
+        -Name "Python manifest and reliability contract checks" `
         -WorkingDirectory $RepoRoot `
         -FilePath $PythonExe `
-        -Arguments @("-m", "pytest", "factory-agent/tests/test_seed_pipeline_manifest.py", "-q")
+        -Arguments @(
+          "-m", "pytest",
+          "factory-agent/tests/test_seed_pipeline_manifest.py",
+          "factory-agent/tests/test_reliability_e2e.py",
+          "-q"
+        )
     } finally {
       if ($null -eq $oldPythonWarnings) {
         Remove-Item Env:PYTHONWARNINGS -ErrorAction SilentlyContinue

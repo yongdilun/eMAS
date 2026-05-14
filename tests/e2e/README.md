@@ -12,6 +12,12 @@ pytest factory-agent/tests/test_seed_pipeline_manifest.py
 ```
 
 The fast checks validate the manifest, seed the canonical data through `internal/seeddata`, verify the seed fingerprint, and exercise the chatbot approval driver.
+They also run the reliability edge checks for:
+
+- pause/resume with live instruction update and stale approval rejection
+- transient planner/model failure retry with session state preserved
+- all-or-nothing transaction bundle rollback
+- mixed RAG source metadata plus normal tool output in one agent snapshot
 
 ## Seeded Scenario Run
 

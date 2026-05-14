@@ -55,6 +55,106 @@ def _validated_state(**overrides):
     return state
 
 
+def _jobs_list_tool() -> ToolInfo:
+    return ToolInfo(
+        name="get__jobs",
+        description="List jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
+            },
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "job_id": {"type": "string"},
+                            "priority": {"type": "string"},
+                        },
+                    },
+                }
+            },
+        },
+        query_params=["priority"],
+        param_sources={"priority": "query"},
+        is_read_only=True,
+    )
+
+
+def _job_update_tool() -> ToolInfo:
+    return ToolInfo(
+        name="put__jobs_{id}",
+        description="Update a job",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        input_schema={
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {"type": "string"},
+                "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
+            },
+        },
+        path_params=["id"],
+        body_fields=["priority"],
+        param_sources={"id": "path", "priority": "body"},
+        is_read_only=False,
+        requires_approval=True,
+        side_effect_level="HIGH",
+    )
+
+
+def _job_create_tool() -> ToolInfo:
+    return ToolInfo(
+        name="post__jobs",
+        description="Create a job",
+        endpoint="/jobs",
+        method="POST",
+        input_schema={
+            "type": "object",
+            "required": ["product_id", "quantity_total"],
+            "properties": {
+                "product_id": {"type": "string"},
+                "quantity_total": {"type": "integer"},
+            },
+        },
+        body_fields=["product_id", "quantity_total"],
+        required_body_fields=["product_id", "quantity_total"],
+        param_sources={"product_id": "body", "quantity_total": "body"},
+        is_read_only=False,
+        requires_approval=True,
+        side_effect_level="HIGH",
+    )
+
+
+def _job_delete_tool() -> ToolInfo:
+    return ToolInfo(
+        name="delete__jobs_{id}",
+        description="Delete a job",
+        endpoint="/jobs/{id}",
+        method="DELETE",
+        input_schema={
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {"type": "string"},
+            },
+        },
+        path_params=["id"],
+        param_sources={"id": "path"},
+        is_read_only=False,
+        requires_approval=True,
+        side_effect_level="HIGH",
+    )
+
+
 def test_final_validator_commit_409_with_hard_constraint_requests_clarification():
     settings = get_settings()
     node = make_final_validator_node(settings)
@@ -333,7 +433,7 @@ async def test_approval_interrupt_resume_commits_from_checkpoint_without_replann
     planner = LangGraphPlanner(settings)
     with pytest.raises(LangGraphPlannerApprovalRequired) as exc:
         await planner.generate(
-            intent="Create a job for product P-001 quantity 10",
+            intent="Create the requested test job",
             scoped_tools=[write_tool],
             context={"session_id": session_id},
         )
@@ -348,3 +448,195 @@ async def test_approval_interrupt_resume_commits_from_checkpoint_without_replann
     assert len(planner_prompts) == 1
     assert draft.steps[0].tool_name == "post__jobs"
     assert contract["backend"] == "langgraph"
+
+
+@pytest.mark.asyncio
+async def test_bulk_low_priority_jobs_are_selected_by_filter_and_staged_as_one_approval_bundle(monkeypatch):
+    session_id = f"bulk-priority-{uuid.uuid4()}"
+    settings = replace(
+        get_settings(),
+        openai_api_key="test-key",
+        planner_openai_base_url=None,
+        graph_checkpoint_backend="memory",
+        max_foreach_items=50,
+    )
+    read_calls: list[dict[str, object]] = []
+    dry_run_counts: list[int] = []
+
+    def fail_model(*args, **kwargs):
+        raise AssertionError("bulk priority repair should not call the planner model")
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key):
+        read_calls.append({"tool_name": tool.name, "args": dict(args)})
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {
+                "data": [
+                    {"job_id": "JOB-SEED-005", "priority": "low"},
+                    {"job_id": "JOB-SEED-009", "priority": "low"},
+                    {"job_id": "JOB-SEED-012", "priority": "low"},
+                ]
+            },
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    async def fake_dry_run(state, *, settings):
+        staged = state["staged_writes"]
+        dry_run_counts.append(len(staged))
+        assert [item["args"]["id"] for item in staged] == [
+            "JOB-SEED-005",
+            "JOB-SEED-009",
+            "JOB-SEED-012",
+        ]
+        assert all(item["tool_name"] == "put__jobs_{id}" for item in staged)
+        assert all(item["args"]["priority"] == "high" for item in staged)
+        return {"bundle_dry_run_result": {"ok": True, "http_status": 200, "body": {"validated": True}}}
+
+    monkeypatch.setattr("factory_agent.graph.nodes.planner_loop.build_planner_chat_model", fail_model)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.execute_tool_http", fake_execute_tool_http)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", fake_dry_run)
+
+    planner = LangGraphPlanner(settings)
+    with pytest.raises(LangGraphPlannerApprovalRequired) as exc:
+        await planner.generate(
+            intent="change all low priority jobs to high priority",
+            scoped_tools=[_jobs_list_tool(), _job_update_tool()],
+            context={"session_id": session_id},
+        )
+
+    assert read_calls == [{"tool_name": "get__jobs", "args": {"priority": "low"}}]
+    assert dry_run_counts == [3]
+    payload = exc.value.payload
+    assert payload["count"] == 3
+    assert "JOB-SEED-005" in payload["summary"] and "priority" in payload["summary"].lower()
+    assert [item["args"] for item in payload["preview"]] == [
+        {"id": "JOB-SEED-005", "priority": "high"},
+        {"id": "JOB-SEED-009", "priority": "high"},
+        {"id": "JOB-SEED-012", "priority": "high"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_complete_create_intents_are_collected_into_one_bundle_approval(monkeypatch):
+    session_id = f"multi-create-{uuid.uuid4()}"
+    settings = replace(
+        get_settings(),
+        openai_api_key="test-key",
+        planner_openai_base_url=None,
+        graph_checkpoint_backend="memory",
+    )
+    dry_run_staged: list[list[dict[str, object]]] = []
+
+    def fail_model(*args, **kwargs):
+        raise AssertionError("complete create repairs should not call the planner model")
+
+    async def fake_dry_run(state, *, settings):
+        staged = list(state["staged_writes"])
+        dry_run_staged.append(staged)
+        return {"bundle_dry_run_result": {"ok": True, "http_status": 200, "body": {"validated": True}}}
+
+    monkeypatch.setattr("factory_agent.graph.nodes.planner_loop.build_planner_chat_model", fail_model)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", fake_dry_run)
+
+    planner = LangGraphPlanner(settings)
+    with pytest.raises(LangGraphPlannerApprovalRequired) as exc:
+        await planner.generate(
+            intent="create job for product P-005 quantity 2 and create job for product P-006 quantity 3",
+            scoped_tools=[_job_create_tool()],
+            context={"session_id": session_id},
+        )
+
+    assert len(dry_run_staged) == 1
+    staged = dry_run_staged[0]
+    assert len(staged) == 2
+    assert [item["args"] for item in staged] == [
+        {"product_id": "P-005", "quantity_total": 2},
+        {"product_id": "P-006", "quantity_total": 3},
+    ]
+    assert exc.value.payload["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_low_priority_jobs_are_deleted_as_one_approval_bundle(monkeypatch):
+    session_id = f"bulk-delete-{uuid.uuid4()}"
+    settings = replace(
+        get_settings(),
+        openai_api_key="test-key",
+        planner_openai_base_url=None,
+        graph_checkpoint_backend="memory",
+        max_foreach_items=50,
+    )
+    read_calls: list[dict[str, object]] = []
+    dry_run_staged: list[list[dict[str, object]]] = []
+
+    def fail_model(*args, **kwargs):
+        raise AssertionError("bulk delete repair should not call the planner model")
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key):
+        read_calls.append({"tool_name": tool.name, "args": dict(args)})
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {
+                "data": [
+                    {"job_id": "JOB-SEED-005", "priority": "low"},
+                    {"job_id": "JOB-SEED-009", "priority": "low"},
+                ]
+            },
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    async def fake_dry_run(state, *, settings):
+        dry_run_staged.append(list(state["staged_writes"]))
+        return {"bundle_dry_run_result": {"ok": True, "http_status": 200, "body": {"validated": True}}}
+
+    monkeypatch.setattr("factory_agent.graph.nodes.planner_loop.build_planner_chat_model", fail_model)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.execute_tool_http", fake_execute_tool_http)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", fake_dry_run)
+
+    planner = LangGraphPlanner(settings)
+    with pytest.raises(LangGraphPlannerApprovalRequired) as exc:
+        await planner.generate(
+            intent="delete all low priority jobs",
+            scoped_tools=[_jobs_list_tool(), _job_delete_tool()],
+            context={"session_id": session_id},
+        )
+
+    assert read_calls == [{"tool_name": "get__jobs", "args": {"priority": "low"}}]
+    assert len(dry_run_staged) == 1
+    assert [item["tool_name"] for item in dry_run_staged[0]] == ["delete__jobs_{id}", "delete__jobs_{id}"]
+    assert [item["args"] for item in dry_run_staged[0]] == [{"id": "JOB-SEED-005"}, {"id": "JOB-SEED-009"}]
+    assert exc.value.payload["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_incomplete_create_intent_is_not_added_to_bundle(monkeypatch):
+    session_id = f"incomplete-create-{uuid.uuid4()}"
+    settings = replace(
+        get_settings(),
+        openai_api_key="test-key",
+        planner_openai_base_url=None,
+        graph_checkpoint_backend="memory",
+    )
+    dry_run_counts: list[int] = []
+
+    async def fake_dry_run(state, *, settings):
+        dry_run_counts.append(len(state["staged_writes"]))
+        return {"bundle_dry_run_result": {"ok": True, "http_status": 200, "body": {"validated": True}}}
+
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", fake_dry_run)
+
+    planner = LangGraphPlanner(settings)
+    with pytest.raises(LangGraphPlannerApprovalRequired) as exc:
+        await planner.generate(
+            intent="create job for product P-005 quantity 2 and create job for product P-006",
+            scoped_tools=[_job_create_tool()],
+            context={"session_id": session_id},
+        )
+
+    assert dry_run_counts == [1]
+    assert exc.value.payload["count"] == 1
+    assert exc.value.payload["preview"][0]["args"] == {"product_id": "P-005", "quantity_total": 2}

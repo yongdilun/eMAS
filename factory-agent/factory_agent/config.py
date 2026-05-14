@@ -127,6 +127,13 @@ def _normalize_app_mode(value: str | None) -> str:
     return "development"
 
 
+def _normalize_graph_checkpoint_backend(raw: str | None) -> str:
+    """Avoid empty/typo env values skipping all savers and breaking Command(resume)."""
+    v = (raw or "auto").strip().lower() or "auto"
+    allowed = {"auto", "memory", "postgres", "off", "db", "database", "sqlalchemy"}
+    return v if v in allowed else "auto"
+
+
 def _env_for_mode(app_mode: str, key: str, default: str | None = None) -> str | None:
     prefix = "PRODUCTION" if app_mode == "production" else "DEVELOPMENT"
     scoped_key = f"{prefix}_{key}"
@@ -317,7 +324,9 @@ def get_settings() -> Settings:
             "AGENT_TRANSACTION_BUNDLE_DRY_RUN_PATH", "/agent/transaction/bundle-dry-run"
         ).strip(),
         agent_transaction_commit_path=os.getenv("AGENT_TRANSACTION_COMMIT_PATH", "/agent/transaction/commit").strip(),
-        graph_checkpoint_backend=os.getenv("GRAPH_CHECKPOINT_BACKEND", "auto").strip().lower(),
+        graph_checkpoint_backend=_normalize_graph_checkpoint_backend(
+            os.getenv("GRAPH_CHECKPOINT_BACKEND", "auto")
+        ),
         graph_checkpoint_postgres_dsn=os.getenv("GRAPH_CHECKPOINT_POSTGRES_DSN") or None,
         max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "3")),
         bge_reranker_model=os.getenv("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip(),

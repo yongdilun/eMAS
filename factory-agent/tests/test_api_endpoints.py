@@ -81,6 +81,7 @@ async def _make_app(
     min_healthy_tool_count=20,
     tool_selector_backend="auto",
     openai_base_url=None,
+    rag_pipeline_adapter=None,
 ):
     worker_count = 1 if enqueue_session is not None else 0
     settings = Settings(
@@ -122,6 +123,7 @@ async def _make_app(
             event_bus=event_bus,
             enqueue_session=enqueue_session,
             planner_adapter=planner_adapter,
+            rag_pipeline_adapter=rag_pipeline_adapter,
         )
     )
     return app, event_bus
@@ -342,6 +344,77 @@ async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_overr
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
         assert created.json()["created_by"] == "langgraph"
+
+
+@pytest.mark.asyncio
+async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override):
+    class FakeRAGPipeline:
+        def __init__(self):
+            self.calls = []
+
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            self.calls.append(
+                {
+                    "query": query,
+                    "session_id": session_id,
+                    "route": route,
+                    "api_data": api_data,
+                }
+            )
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": (
+                        "According to OSHA, Lockout/Tagout procedures control hazardous energy so "
+                        "machines are isolated and rendered safe before servicing or maintenance."
+                    ),
+                    "sources": [
+                        {
+                            "source_number": 1,
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "authority_level": "official_public_guidance",
+                        }
+                    ],
+                    "safety_content": (
+                        "This topic involves high-risk industrial procedures. Follow your site's approved SOP."
+                    ),
+                },
+            )()
+
+    rag = FakeRAGPipeline()
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=rag)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["status"] == "COMPLETED"
+        assert body["created_by"] == "system"
+        assert "29 CFR 1910.147" in body["plan_explanation"]
+        assert body["sources"][0]["organization"] == "OSHA"
+
+        steps = await client.get(f"/sessions/{session_id}/steps")
+        assert steps.status_code == 200
+        assert steps.json() == []
+
+    assert rag.calls
+    assert rag.calls[0]["route"] == "RAG_ONLY"
 
 
 @pytest.mark.asyncio

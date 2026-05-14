@@ -363,19 +363,15 @@ def make_final_validator_node(settings: Settings):
         return True
 
     def _approval_payload(state: AgentState) -> dict[str, Any]:
+        from ..approval_summary import approval_preview_rows, format_write_bundle_approval_summary
+
         staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+        summary = format_write_bundle_approval_summary(staged)
         return {
             "kind": "approval_required",
-            "summary": "High-risk write bundle requires approval before commit.",
+            "summary": summary,
             "count": len(staged),
-            "preview": [
-                {
-                    "tool_name": x.get("tool_name"),
-                    "output_ref": x.get("output_ref"),
-                    "args": x.get("args"),
-                }
-                for x in staged[:5]
-            ],
+            "preview": approval_preview_rows(staged, limit=min(50, max(len(staged), 1))),
         }
 
     def _hard_constraints_present(state: AgentState) -> bool:

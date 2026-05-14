@@ -5,7 +5,10 @@ import ApprovalCard from './ApprovalCard'
 import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
 import { TablePresentation } from '../turns/TurnBlocks'
-import { formatCitationChipLabel } from '../sourceFormatting'
+import {
+  formatInlineCitationLabel,
+  stripSourceFootnoteDefinitions,
+} from '../sourceFormatting'
 
 const CHAT_VIEW_MODE = (import.meta.env?.VITE_FACTORY_AGENT_CHAT_MODE || 'user').trim().toLowerCase() === 'dev' ? 'dev' : 'user'
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
@@ -151,11 +154,11 @@ function renderCitationsAndBold(text, sources = []) {
         const num = parseInt(match[1], 10)
         const source = (sources || []).find((s) => String(s.source_number) === String(num))
         const fullTitle = source?.title || source?.doc_id || `Source ${num}`
-        const chipLabel = formatCitationChipLabel(source || { source_number: num }, num)
+        const chipLabel = formatInlineCitationLabel(num)
 
         return (
           <span key={k} className="group relative mx-0.5 inline-flex items-center align-middle">
-            <span className="inline-flex max-w-[min(100%,19rem)] items-center gap-1.5 rounded-md border border-primary/25 bg-primary/[0.08] px-2 py-1 text-[11px] font-medium leading-tight text-primary shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.12]">
+            <span className="inline-flex max-w-[7rem] items-center gap-1 rounded-md border border-primary/25 bg-primary/[0.08] px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-primary shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.12]">
               <span className="min-w-0 flex-1 truncate text-left" title={fullTitle}>
                 {chipLabel}
               </span>
@@ -186,17 +189,18 @@ function renderCitationsAndBold(text, sources = []) {
 }
 
 function StreamedAssistantText({ text, streamKey, enabled, sources = [] }) {
-  const [displayed, setDisplayed] = useState(enabled ? '' : text)
+  const cleanText = useMemo(() => stripSourceFootnoteDefinitions(text), [text])
+  const [displayed, setDisplayed] = useState(enabled ? '' : cleanText)
 
   useEffect(() => {
     if (!enabled) {
-      setDisplayed(text)
+      setDisplayed(cleanText)
       return undefined
     }
 
-    const tokens = String(text || '').match(/\S+\s*/g) || []
+    const tokens = String(cleanText || '').match(/\S+\s*/g) || []
     if (!tokens.length) {
-      setDisplayed(text)
+      setDisplayed(cleanText)
       return undefined
     }
 
@@ -220,9 +224,9 @@ function StreamedAssistantText({ text, streamKey, enabled, sources = [] }) {
     }, Number.isFinite(STREAM_BUFFER_MS) && STREAM_BUFFER_MS > 0 ? STREAM_BUFFER_MS : 40)
 
     return () => window.clearInterval(timer)
-  }, [enabled, streamKey, text])
+  }, [enabled, streamKey, cleanText])
 
-  return <>{renderCitationsAndBold(displayed || (enabled ? '' : text), sources)}</>
+  return <>{renderCitationsAndBold(displayed || (enabled ? '' : cleanText), sources)}</>
 }
 
 function useStagedAssistantSummary(rawSummary) {
@@ -264,15 +268,75 @@ function useStagedAssistantSummary(rawSummary) {
  return displayed
 }
 
+/** Any LangGraph interrupt approval for a write bundle (not only while still PENDING). */
+function turnHasLangGraphWriteBundle(turn) {
+  const approvals = Array.isArray(turn?.approvals) ? turn.approvals : []
+  return approvals.some((a) => String(a.tool_name || a.details?.tool?.name || '') === '__langgraph_commit__')
+}
+
+function tablePriorityColumnKey(presentation) {
+  const cols = Array.isArray(presentation?.table?.columns) ? presentation.table.columns : []
+  const hit = cols.find(
+    (c) =>
+      String(c.key || '')
+        .toLowerCase()
+        .includes('priority') ||
+      String(c.label || '')
+        .toLowerCase()
+        .includes('priority'),
+  )
+  return hit?.key || null
+}
+
+function tableAllRowsPriorityLow(presentation) {
+  const key = tablePriorityColumnKey(presentation)
+  if (!key) return false
+  const rows = Array.isArray(presentation?.table?.rows) ? presentation.table.rows : []
+  if (!rows.length) return false
+  return rows.every((r) => String(r[key] || '').trim().toLowerCase() === 'low')
+}
+
+function interruptStyleSummary(summaryText) {
+  const s = String(summaryText || '').toLowerCase()
+  return s.includes('jobs affected:') || s.includes('current vs requested priority')
+}
+
+/** Snapshot table still all "low" while the bubble text is the approval bundle or claims high — hide. */
+function tableContradictsSummary(presentation, summaryText) {
+  if (!tableAllRowsPriorityLow(presentation)) return false
+  const s = String(summaryText || '').toLowerCase()
+  if (interruptStyleSummary(summaryText)) return true
+  return (
+    s.includes('set to high') ||
+    s.includes('priority set to high') ||
+    (s.includes('high') && (s.includes('prior') || s.includes('priority')))
+  )
+}
+
+/**
+ * Latest table presentation for the turn. For LangGraph write bundles, list/GET snapshots often
+ * still show pre-commit state (e.g. priority "low") while the narrative says "high" — hide those
+ * until session completes, and after complete skip stale tables when a newer snapshot is absent.
+ */
 function getLatestToolPresentation(turn) {
- const tools = Array.isArray(turn?.tools) ? turn.tools : []
- for (let index = tools.length - 1; index >= 0; index -= 1) {
- const presentation = tools[index]?.details?.presentation
- if (presentation?.render_hint === 'table' && presentation?.table?.rows?.length) {
- return presentation
- }
- }
- return null
+  const bundle = turnHasLangGraphWriteBundle(turn)
+  const completed = turn?.terminal?.event_type === 'session_completed'
+  if (bundle && !completed) {
+    return null
+  }
+
+  const tools = Array.isArray(turn?.tools) ? turn.tools : []
+  const summary = String(turn?.summary || '')
+  for (let index = tools.length - 1; index >= 0; index -= 1) {
+    const presentation = tools[index]?.details?.presentation
+    if (presentation?.render_hint === 'table' && presentation?.table?.rows?.length) {
+      if (bundle && completed && tableContradictsSummary(presentation, summary)) {
+        continue
+      }
+      return presentation
+    }
+  }
+  return null
 }
 
 function TurnDetails({ mode, turn }) {

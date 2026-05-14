@@ -450,6 +450,17 @@ def assess_intent(text: str) -> IntentAssessment:
             if entity:
                 break
 
+    operational_categories = {"reporting", "scheduling", "job", "inventory", "machine"}
+    has_operational_category = any(it.category in operational_categories for it in intents)
+    is_pure_knowledge_question = (
+        bool(_QUESTION_RE.search(raw))
+        and not entity
+        and not has_operational_category
+        and not ({"create", "update", "delete", "approval"} & matched_actions)
+    )
+    if is_pure_knowledge_question:
+        return IntentAssessment(kind="conversation", action=action, entity=None, confidence=0.86, reply=None)
+
     if action or entity or _QUESTION_RE.search(raw) or any(it.category != "unknown" for it in intents):
         confidence = 0.92 if (action and entity) else 0.78
         return IntentAssessment(kind="operations", action=action, entity=entity, confidence=confidence, reply=None)

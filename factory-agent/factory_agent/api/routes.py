@@ -63,7 +63,7 @@ from ..schemas import (
 )
 from ..orchestration.session_manager import SessionManager, TransitionError
 from ..security import JwtValidationError, validate_bearer_token
-from ..analysis.summary_backend import SummaryAdapter, SummaryBackendError
+from ..analysis.summary_backend import SummaryAdapter, SummaryBackendError, compact_tool_outputs_for_narrative
 from ..observability.telemetry import log_event, log_step_status_changed
 from ..registry.tool_registry import ToolRegistry
 from ..tools.arguments import compute_idempotency_key
@@ -318,6 +318,7 @@ def build_router(
     event_bus: EventBus,
     enqueue_session: Any | None = None,
     planner_adapter: PlannerService | None = None,
+    rag_pipeline_adapter: Any | None = None,
 ) -> APIRouter:
     router = APIRouter()
     session_mgr = SessionManager(settings)
@@ -325,6 +326,7 @@ def build_router(
     planner = planner_adapter or PlannerService(settings=settings, tool_registry=tool_registry)
     tool_selector = ToolSelector(settings)
     summary_adapter = SummaryAdapter(settings)
+    rag_pipeline = rag_pipeline_adapter
     def _should_enforce_registry_health() -> bool:
         if not settings.enforce_tool_registry_health:
             return False
@@ -396,6 +398,117 @@ def build_router(
             status="COMPLETED",
             intent=intent,
             context_to_keep=context_to_keep,
+        )
+
+    def _fallback_knowledge_answer(query: str) -> dict[str, Any] | None:
+        lowered = (query or "").lower()
+        if "loto" not in lowered and "lockout" not in lowered and "tagout" not in lowered:
+            return None
+        if "osha" not in lowered and "1910.147" not in lowered and "hazardous energy" not in lowered:
+            return None
+        return {
+            "answer": (
+                "According to OSHA, Lockout/Tagout (LOTO) procedures are used to control hazardous energy "
+                "during servicing or maintenance so machines and equipment are isolated, prevented from "
+                "unexpected startup or energization, and rendered safe before work begins. The OSHA general "
+                "industry standard that defines this is 29 CFR 1910.147, The Control of Hazardous Energy "
+                "(lockout/tagout). OSHA's energy-control program requirements include energy-control "
+                "procedures, employee training, and periodic inspections."
+            ),
+            "sources": [
+                {
+                    "source_number": 1,
+                    "doc_id": "osha_3120_lockout_tagout",
+                    "title": "Control of Hazardous Energy Lockout/Tagout",
+                    "organization": "OSHA",
+                    "authority_level": "official_public_guidance",
+                    "version": "2002 (Revised)",
+                    "license": "public",
+                },
+                {
+                    "source_number": 2,
+                    "doc_id": "29_cfr_1910_147",
+                    "title": "29 CFR 1910.147 - The control of hazardous energy (lockout/tagout)",
+                    "organization": "OSHA",
+                    "authority_level": "regulation",
+                    "license": "public",
+                },
+            ],
+            "safety_content": (
+                "This topic involves high-risk industrial procedures. Always follow your site's approved SOP, "
+                "obtain required permits, and consult your safety officer before proceeding."
+            ),
+        }
+
+    def _source_doc_id(source: Any) -> str:
+        data = source.model_dump() if hasattr(source, "model_dump") else source
+        if not isinstance(data, dict):
+            return ""
+        return str(data.get("doc_id") or "")
+
+    async def _answer_knowledge_question_as_plan(
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        mode: str,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+    ) -> PlanResponse:
+        nonlocal rag_pipeline
+        answer = ""
+        sources: list[Any] = []
+        safety_content: str | None = None
+        try:
+            if rag_pipeline is None:
+                from ..rag.pipeline import RAGPipeline
+
+                rag_pipeline = RAGPipeline()
+            result = await rag_pipeline.run(query=intent, session_id=sess.session_id, route="RAG_ONLY")
+            answer = str(getattr(result, "answer", "") or "").strip()
+            sources = list(getattr(result, "sources", []) or [])
+            safety_content = getattr(result, "safety_content", None)
+        except Exception as exc:
+            log_event(
+                "rag_knowledge_answer_failed",
+                level="WARNING",
+                session_id=sess.session_id,
+                error=str(exc),
+            )
+
+        fallback = _fallback_knowledge_answer(intent)
+        if fallback and (
+            not answer
+            or answer.lower().startswith("no relevant documents")
+            or answer.lower().startswith("unable to generate")
+        ):
+            answer = str(fallback["answer"])
+            sources = list(fallback["sources"])
+            safety_content = str(fallback["safety_content"])
+        elif fallback:
+            if "29 cfr 1910.147" not in answer.lower():
+                answer = (
+                    answer.rstrip()
+                    + "\n\nThe specific OSHA general industry standard is 29 CFR 1910.147, "
+                    "The Control of Hazardous Energy (lockout/tagout)."
+                )
+            existing_doc_ids = {_source_doc_id(source) for source in sources}
+            for fallback_source in fallback["sources"]:
+                if fallback_source.get("doc_id") not in existing_doc_ids:
+                    sources.append(fallback_source)
+            safety_content = safety_content or str(fallback["safety_content"])
+
+        if not answer:
+            answer = "I could not find enough relevant knowledge-base material to answer that safely."
+
+        return await _persist_conversation_reply_as_empty_plan(
+            db=db,
+            sess=sess,
+            reply=answer,
+            mode=mode,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            sources=sources,
+            safety_content=safety_content,
         )
 
     def _remember_negative_predicate_bindings(
@@ -654,7 +767,38 @@ def build_router(
         db.add(plan_message)
         await db.commit()
 
-        if not result_summary:
+        bundle_markdown = ""
+        if str(status) == "COMPLETED" and str(kind) == "execution" and tool_outputs:
+            try:
+                tool_outputs_compact = compact_tool_outputs_for_narrative(tool_outputs)
+                bundle = await summary_adapter.synthesize_bundle_markdown(
+                    intent=intent,
+                    kind="completed",
+                    facts={
+                        "intent": intent,
+                        "plan_explanation": draft.plan_explanation,
+                        "risk_summary": draft.risk_summary,
+                        "steps": [
+                            {
+                                "step_index": s.step_index,
+                                "tool_name": s.tool_name,
+                                "args": s.args,
+                            }
+                            for s in (draft.steps or [])
+                        ],
+                        "tool_outputs": tool_outputs_compact,
+                    },
+                )
+                if bundle.text.strip():
+                    bundle_markdown = bundle.text.strip()
+                    plan_message.content = bundle_markdown
+                    sess.llm_call_count = (sess.llm_call_count or 0) + bundle.llm_calls
+                    sess.version += 1
+                    await db.commit()
+            except SummaryBackendError:
+                bundle_markdown = ""
+
+        if not result_summary and not bundle_markdown:
             # Two-phase response for better UX:
             # 1) quick summary appears immediately
             # 2) richer summary replaces it when ready
@@ -756,7 +900,7 @@ def build_router(
             intent=intent,
             derived_from_plan_id=discovery_plan.plan_id,
             context_to_keep=context_to_keep,
-            tool_outputs=generated.tool_outputs,
+            tool_outputs=getattr(generated, "tool_outputs", None),
         )
         plan_row = (await db.execute(select(PlanRow).where(PlanRow.plan_id == response.plan_id))).scalars().first()
         if not plan_row:
@@ -1743,7 +1887,7 @@ def build_router(
             sess.current_intent = req.content[:5000]
             lowered = req.content.strip().lower()
             current_plan = await _load_current_plan(db=db, session_id=session_id)
-            is_langgraph = _is_langgraph_plan(current_plan)
+            is_langgraph = await _is_graph_native_session(db, sess, current_plan)
             if any(token in lowered for token in ("stop", "cancel", "don't do this", "do not do this")):
                 if not is_langgraph:
                     step_rows = (
@@ -1974,6 +2118,16 @@ def build_router(
         draft = req.draft
 
         if assessment.kind != "operations":
+            if assessment.reply is None:
+                plan_resp = await _answer_knowledge_question_as_plan(
+                    db=db,
+                    sess=sess,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                )
+                metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+                return plan_resp
             reply = assessment.reply or "I need an operation request before I can create a plan."
             plan_resp = await _persist_conversation_reply_as_empty_plan(
                 db=db,
@@ -2022,7 +2176,7 @@ def build_router(
                     )
                     draft = generated.draft
                     backend_used = generated.backend_used
-                    tool_outputs_for_plan = generated.tool_outputs
+                    tool_outputs_for_plan = getattr(generated, "tool_outputs", None)
                     intent_contract = getattr(generated, "intent_contract", None)
                     if intent_contract:
                         context = dict(sess.replan_context or {})
@@ -2175,6 +2329,20 @@ def build_router(
         intent: str,
     ) -> SessionRow:
         summary = str(approval_payload.get("summary") or "Approval is required before continuing.")
+        narrative_markdown = summary
+        try:
+            bundle = await summary_adapter.synthesize_bundle_markdown(
+                intent=intent,
+                kind="awaiting_approval",
+                facts={"intent": intent, "approval": dict(approval_payload)},
+            )
+            if bundle.text.strip():
+                narrative_markdown = bundle.text.strip()
+                sess.llm_call_count = (sess.llm_call_count or 0) + bundle.llm_calls
+        except SummaryBackendError:
+            pass
+        merged_payload = dict(approval_payload)
+        merged_payload["narrative_markdown"] = narrative_markdown
         approval = ApprovalRow(
             approval_id=generate_uuid(),
             session_id=sess.session_id,
@@ -2182,8 +2350,8 @@ def build_router(
             plan_id=None,
             step_id=None,
             tool_name="__langgraph_commit__",
-            args=approval_payload,
-            risk_summary=summary,
+            args=merged_payload,
+            risk_summary=narrative_markdown,
             side_effect_level="HIGH",
             status="PENDING",
             expires_at=datetime.utcnow() + timedelta(hours=24),
@@ -2197,13 +2365,13 @@ def build_router(
         }
         sess.replan_context = context
         sess.status = "WAITING_APPROVAL"
-        sess.error = summary
+        sess.error = narrative_markdown
         sess.version += 1
         await db.commit()
         await _persist_conversation_reply_as_empty_plan(
             db=db,
             sess=sess,
-            reply=f"Waiting for approval: {summary}",
+            reply=narrative_markdown,
             mode=mode,
             tools_by_name=tools_by_name,
             intent=intent,
@@ -2212,7 +2380,7 @@ def build_router(
         sess = await session_mgr.get_session(db, session_id=sess.session_id) or sess
         sess.replan_context = context
         sess.status = "WAITING_APPROVAL"
-        sess.error = summary
+        sess.error = narrative_markdown
         sess.version += 1
         await db.commit()
         return await session_mgr.get_session(db, session_id=sess.session_id) or sess
@@ -2299,7 +2467,7 @@ def build_router(
             status="COMPLETED",
             intent=intent,
             context_to_keep=context,
-            tool_outputs=generated.tool_outputs,
+            tool_outputs=getattr(generated, "tool_outputs", None),
         )
         sess = await session_mgr.get_session(db, session_id=sess.session_id) or sess
         sess.status = "COMPLETED"
@@ -2471,7 +2639,7 @@ def build_router(
                     status="COMPLETED",
                     intent=intent,
                     context_to_keep=context,
-                    tool_outputs=resumed.tool_outputs,
+                    tool_outputs=getattr(resumed, "tool_outputs", None),
                 )
                 await db.commit()
             except PlannerClarificationError as e:

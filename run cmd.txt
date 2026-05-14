@@ -3,24 +3,10 @@ cd "c:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent"
 
 
 cd "C:\Users\dilun\Downloads\llama-b8902-bin-win-cuda-13.1-x64"
-.\llama-server.exe `
-  -m "C:\models\Qwen2.5-7B-Instruct-Q4_K_M.gguf" `
-  -ngl 999 `
-  -c 16384 `
-  -b 512 `
-  --parallel 1 `
-  --port 900
+.\llama-server.exe -m "C:\models\Qwen2.5-7B-Instruct-Q4_K_M.gguf" -ngl 999 -c 32768 -b 512 --parallel 1 -fa on --port 900
 
 cd "C:\Users\dilun\Downloads\llama-b8902-bin-win-cuda-13.1-x64"
-.\llama-server.exe `
-  -hf bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M `
-  -ngl 999 `
-  -c 16384 `
-  -b 256 `
-  -t 6 `
-  -fa on `
-  --port 901
-
+.\llama-server.exe -hf bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M -ngl 999 -c 16384 -b 256 -t 6 -fa on --port 901
 
 cd "C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front"
 npm run dev

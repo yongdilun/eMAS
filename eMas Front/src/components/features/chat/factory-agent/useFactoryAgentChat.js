@@ -64,11 +64,11 @@ function inferProgressTarget(text) {
 
 function progressTextForStage(stage, text) {
   const target = inferProgressTarget(text)
-  if (stage === 'intent') return 'Splitting intent...'
+  if (stage === 'intent') return 'Understanding...'
   if (stage === 'planning') return 'Planning query...'
   if (stage === 'tool') return `Finding ${target}...`
   if (stage === 'answer') return 'Preparing answer...'
-  return 'Still checking results...'
+  return 'Validating results...'
 }
 
 function turnHasRealAssistantProgress(turn) {

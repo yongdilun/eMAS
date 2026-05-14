@@ -4,6 +4,7 @@ from typing import Any
 
 from ..config import Settings
 from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
+from .approval_summary import approval_preview_rows, format_write_bundle_approval_summary
 from .builder import compile_planner_graph
 from .errors import LangGraphPlannerApprovalRequired, LangGraphPlannerClarification, LangGraphPlannerError
 from .state import AgentState, normalize_graph_messages
@@ -44,16 +45,9 @@ def _approval_payload_from_state(state: Any) -> dict[str, Any] | None:
         return None
     return {
         "kind": "approval_required",
-        "summary": "High-risk write bundle requires approval before commit.",
+        "summary": format_write_bundle_approval_summary(staged),
         "count": len(staged),
-        "preview": [
-            {
-                "tool_name": x.get("tool_name"),
-                "output_ref": x.get("output_ref"),
-                "args": x.get("args"),
-            }
-            for x in staged[:5]
-        ],
+        "preview": approval_preview_rows(staged, limit=min(50, max(len(staged), 1))),
     }
 
 
@@ -217,7 +211,7 @@ class LangGraphPlanner:
             return None
         payload = _approval_payload_from_state(values) or {
             "kind": "approval_required",
-            "summary": "High-risk write bundle requires approval before commit.",
+            "summary": format_write_bundle_approval_summary(staged),
             "count": len(staged),
         }
         commit_state = {
@@ -295,8 +289,14 @@ class LangGraphPlanner:
             raise LangGraphPlannerError("LangGraph Command resume is unavailable in this runtime.")
         config = {"recursion_limit": 200, "configurable": {"thread_id": session_id}}
         try:
+            # LangGraph START maps Command.update through state keys; resume-only Command yields no
+            # tuples from Command._update_as_tuples(), which triggers InvalidUpdateError
+            # ("Must write to at least one of [...]"). Include a harmless state tick on session_id.
             result = await graph.ainvoke(
-                Command(resume={"approved": approved}),
+                Command(
+                    resume={"approved": approved},
+                    update={"session_id": str(session_id)},
+                ),
                 config=config,
             )
         except Exception:

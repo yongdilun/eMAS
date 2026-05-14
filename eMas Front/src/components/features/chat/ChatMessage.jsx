@@ -3,7 +3,12 @@
  * Linear-inspired UI (DESIGN-linear.app.md): surface ladder, lavender accent, rounded-lg cards.
  */
 import React from 'react'
-import { formatBasedOnLine, formatCitationChipLabel } from './sourceFormatting'
+import {
+  formatBasedOnLine,
+  formatCitationChipLabel,
+  formatInlineCitationLabel,
+  stripSourceFootnoteDefinitions,
+} from './sourceFormatting'
 
 const ChatMessage = ({
   message,
@@ -20,7 +25,7 @@ const ChatMessage = ({
 
   const renderFormattedText = (text) => {
     if (!text) return null
-    return <div className="whitespace-pre-wrap">{renderCitationsAndBold(text)}</div>
+    return <div className="whitespace-pre-wrap">{renderCitationsAndBold(stripSourceFootnoteDefinitions(text))}</div>
   }
 
   const renderCitationsAndBold = (text) => {
@@ -41,11 +46,11 @@ const ChatMessage = ({
           const num = parseInt(match[1], 10)
           const source = (sources || []).find((s) => String(s.source_number) === String(num))
           const fullTitle = source?.title || source?.doc_id || `Source ${num}`
-          const chipLabel = formatCitationChipLabel(source || { source_number: num }, num)
+          const chipLabel = formatInlineCitationLabel(num)
 
           return (
             <span key={k} className="group relative mx-0.5 inline-flex items-center align-middle">
-              <span className="inline-flex max-w-[min(100%,19rem)] items-center gap-1.5 rounded-md border border-primary/25 bg-primary/[0.08] px-2 py-1 text-[11px] font-medium leading-tight text-primary shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.12]">
+              <span className="inline-flex max-w-[7rem] items-center gap-1 rounded-md border border-primary/25 bg-primary/[0.08] px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-primary shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.12]">
                 <span className="min-w-0 flex-1 truncate text-left" title={fullTitle}>
                   {chipLabel}
                 </span>
@@ -91,13 +96,13 @@ const ChatMessage = ({
             return (
               <div
                 key={`${idx}-${num}`}
-                className="group flex max-w-full items-start gap-2 rounded-md border border-hairline bg-surface-2 px-2.5 py-1.5 text-left text-[11px] text-ink-muted shadow-sm transition-colors hover:border-hairline-strong hover:bg-surface-3 sm:max-w-md"
+                className="group flex max-w-full items-start gap-1.5 rounded-md border border-hairline bg-surface-2 px-2 py-1.5 text-left text-[10px] text-ink-muted shadow-sm transition-colors hover:border-hairline-strong hover:bg-surface-3 sm:max-w-[18rem]"
                 title={fullTitle}
               >
                 <span className="material-symbols-outlined mt-0.5 shrink-0 text-[14px] text-ink-tertiary group-hover:text-primary">
                   description
                 </span>
-                <span className="min-w-0 flex-1 break-words font-medium leading-snug">{label}</span>
+                <span className="min-w-0 flex-1 truncate font-medium leading-snug">{label}</span>
               </div>
             )
           })}

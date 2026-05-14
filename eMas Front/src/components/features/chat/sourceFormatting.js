@@ -1,5 +1,5 @@
 /**
- * Shared labels for RAG / citation chips (Linear-style: clear title · Source n).
+ * Shared labels and cleanup helpers for RAG citations.
  */
 
 export function formatDocDisplayName(source, fallbackNum) {
@@ -9,13 +9,29 @@ export function formatDocDisplayName(source, fallbackNum) {
   return fallbackNum != null ? `Source ${fallbackNum}` : 'Source'
 }
 
-/** Full chip label for inline citations and source rows */
 export function formatCitationChipLabel(source, sourceNumber) {
   const name = formatDocDisplayName(source, sourceNumber)
-  return `${name} · Source ${sourceNumber}`
+  return `${name} - Source ${sourceNumber}`
 }
 
-/** Subtitle under "Answer" — design copy */
+export function formatInlineCitationLabel(sourceNumber) {
+  return `Source ${sourceNumber}`
+}
+
+export function stripSourceFootnoteDefinitions(text) {
+  return String(text || '')
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim()
+      if (/^\[\^\d+\]:\s*\[SOURCE\s+\d+:/i.test(trimmed)) return false
+      if (/^\[SOURCE\s+\d+:/i.test(trimmed)) return false
+      return true
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function formatBasedOnLine(sources = []) {
   if (!sources.length) return ''
   if (sources.length === 1) {

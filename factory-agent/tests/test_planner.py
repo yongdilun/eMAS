@@ -454,6 +454,7 @@ def test_langgraph_generate_fallback_detects_approval_pause_state():
     assert payload is not None
     assert payload["kind"] == "approval_required"
     assert payload["preview"][0]["tool_name"] == "post__jobs"
+    assert "post__jobs" in payload["summary"]
 
 
 def test_langgraph_generate_fallback_detects_not_found_dry_run():

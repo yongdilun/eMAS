@@ -327,7 +327,63 @@ def run_scenario(
         if retrieval <= empty:
             non_empty_failed = True
 
-    passed = not missing_tools and not missing_contains and not llm_failed and not metric_failed and not non_empty_failed
+    approval_count_failed = False
+    expected_approval_count = scenario.get("expected_approval_count")
+    if expected_approval_count is not None:
+        try:
+            approval_count_failed = len(approvals) != int(expected_approval_count)
+        except Exception:
+            approval_count_failed = True
+
+    bundle_count_failed = False
+    expected_bundle_write_count = scenario.get("expected_bundle_write_count")
+    if expected_bundle_write_count is not None:
+        actual_counts = []
+        for approval in approvals:
+            payload = approval.get("args") if isinstance(approval, dict) and isinstance(approval.get("args"), dict) else {}
+            actual_counts.append(int(payload.get("count") or 0))
+        try:
+            bundle_count_failed = int(expected_bundle_write_count) not in actual_counts
+        except Exception:
+            bundle_count_failed = True
+
+    preview_failed: list[dict[str, Any]] = []
+    expected_preview_contains = scenario.get("expected_approval_preview_contains")
+    if isinstance(expected_preview_contains, list) and expected_preview_contains:
+        previews: list[dict[str, Any]] = []
+        for approval in approvals:
+            payload = approval.get("args") if isinstance(approval, dict) and isinstance(approval.get("args"), dict) else {}
+            preview = payload.get("preview")
+            if isinstance(preview, list):
+                previews.extend(item for item in preview if isinstance(item, dict))
+
+        def _contains_expected_preview(expected: dict[str, Any]) -> bool:
+            expected_tool = expected.get("tool_name")
+            expected_args = expected.get("args") if isinstance(expected.get("args"), dict) else {}
+            for item in previews:
+                if expected_tool and item.get("tool_name") != expected_tool:
+                    continue
+                args = item.get("args") if isinstance(item.get("args"), dict) else {}
+                if all(args.get(key) == value for key, value in expected_args.items()):
+                    return True
+            return False
+
+        preview_failed = [
+            expected
+            for expected in expected_preview_contains
+            if isinstance(expected, dict) and not _contains_expected_preview(expected)
+        ]
+
+    passed = (
+        not missing_tools
+        and not missing_contains
+        and not llm_failed
+        and not metric_failed
+        and not non_empty_failed
+        and not approval_count_failed
+        and not bundle_count_failed
+        and not preview_failed
+    )
     reason_parts: list[str] = []
     if missing_tools:
         reason_parts.append("missing expected tools: " + ", ".join(missing_tools))
@@ -345,6 +401,15 @@ def run_scenario(
             f"(memory_retrieval_total={metric_deltas.get('memory_retrieval_total', 0.0)}, "
             f"memory_retrieval_empty_total={metric_deltas.get('memory_retrieval_empty_total', 0.0)})"
         )
+    if approval_count_failed:
+        reason_parts.append(f"expected {expected_approval_count} approval(s), got {len(approvals)}")
+    if bundle_count_failed:
+        reason_parts.append(
+            f"expected approval bundle count {expected_bundle_write_count}, "
+            f"got {[((a.get('args') or {}).get('count') if isinstance(a, dict) else None) for a in approvals]}"
+        )
+    if preview_failed:
+        reason_parts.append(f"missing approval preview item(s): {preview_failed}")
 
     return {
         "status": "passed" if passed else "failed",

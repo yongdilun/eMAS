@@ -380,6 +380,22 @@ export function assembleFactoryAgentTurns(timeline = []) {
   return turns
 }
 
+/** Remove approval-wait copy that can leak into the completed-session bubble. */
+function stripApprovalWaitPhrases(text) {
+  if (!text || typeof text !== 'string') return text
+  if (!/please approve|waiting for your approval/i.test(text)) return text
+  const lines = text.split('\n')
+  const kept = lines.filter((line) => {
+    const t = line.trim().toLowerCase()
+    if (!t) return true
+    if (t.startsWith('please approve')) return false
+    if (t.startsWith('waiting for your approval')) return false
+    if (t === 'please approve to continue.' || t === 'please approve to continue') return false
+    return true
+  })
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim() || text
+}
+
 export function computeFactoryAgentTurnSummary(turn) {
   if (!turn) return 'Working...'
 
@@ -402,36 +418,42 @@ export function computeFactoryAgentTurnSummary(turn) {
   if (lastConfirmation?.event_type === 'confirmation_required' && waitingOnConfirmation) {
     return lastConfirmation.content || 'Please confirm the filter.'
   }
-  if (lastApproval?.event_type === 'approval_required' && waitingOnApproval) {
-    return lastApproval.content || 'Waiting for approval.'
-  }
-  if (lastApproval?.event_type === 'approval_decided' && waitingOnApproval) {
-    return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
-  }
 
+  // Terminal outcomes before approval heuristics: `waitingOnApproval` stays true after approve
+  // when tool/checkpoint timestamps precede `approval_decided`, which wrongly surfaced
+  // interrupt-era "Please approve…" copy even after `session_completed`.
   if (terminal?.event_type === 'session_blocked' || terminal?.event_type === 'session_failed') {
     return terminal.content || lastTool?.content || 'Execution stopped.'
   }
   if (terminal?.event_type === 'session_completed') {
     const lastPlan = Array.isArray(turn.thinking) ? turn.thinking[turn.thinking.length - 1] : null
-    
+
     // RAG / Conversation Support: If no tools were executed, the plan explanation IS the answer.
     if (lastPlan?.content && (!turn.tools || turn.tools.length === 0)) {
-      return lastPlan.content
+      return stripApprovalWaitPhrases(lastPlan.content)
     }
 
     // Prefer the last tool result when completion is a generic status line.
     const isGenericComplete = String(terminal.content || '').toLowerCase().includes('execution completed successfully')
     const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
     if (isGenericComplete || terminalIsPlanLike) {
-      if (toolSummary) return toolSummary
+      if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
       const deduped = nonGenericToolLines(turn)
-      if (deduped.length >= 2) return deduped.join('\n')
-      if (deduped.length === 1) return deduped[0]
-      if (lastPlan?.content && !isPlanLikeAnswer(lastPlan.content)) return lastPlan.content
-      if (lastTool?.content) return lastTool.content
+      if (deduped.length >= 2) return stripApprovalWaitPhrases(deduped.join('\n'))
+      if (deduped.length === 1) return stripApprovalWaitPhrases(deduped[0])
+      if (lastPlan?.content && !isPlanLikeAnswer(lastPlan.content)) {
+        return stripApprovalWaitPhrases(lastPlan.content)
+      }
+      if (lastTool?.content) return stripApprovalWaitPhrases(lastTool.content)
     }
-    return terminal.content || 'Execution completed.'
+    return stripApprovalWaitPhrases(terminal.content || 'Execution completed.')
+  }
+
+  if (lastApproval?.event_type === 'approval_required' && waitingOnApproval) {
+    return lastApproval.content || 'Waiting for approval.'
+  }
+  if (lastApproval?.event_type === 'approval_decided' && waitingOnApproval) {
+    return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
   }
 
   const lastPlan = Array.isArray(turn.thinking) ? turn.thinking[turn.thinking.length - 1] : null
@@ -441,14 +463,28 @@ export function computeFactoryAgentTurnSummary(turn) {
   // LangGraph snapshots can briefly or historically have a completed plan
   // without a terminal event. In that shape the plan summary is the answer.
   if (lastPlan?.content && planIsCompleted && lastToolDone) {
-    if ((isPlanLikeAnswer(lastPlan.content) || looksLikeRawJsonText(lastPlan.content)) && toolSummary) return toolSummary
-    return lastPlan.content
+    const lc = String(lastPlan.content).toLowerCase()
+    const looksLikeInterruptBundle =
+      lc.includes('jobs affected:') ||
+      lc.includes('current vs requested priority') ||
+      (lc.includes('from low') && lc.includes('high'))
+    if (looksLikeInterruptBundle && toolSummary) {
+      return stripApprovalWaitPhrases(toolSummary)
+    }
+    if (looksLikeInterruptBundle && !toolSummary) {
+      const deduped = nonGenericToolLines(turn)
+      if (deduped.length) return stripApprovalWaitPhrases(deduped.join('\n'))
+    }
+    if ((isPlanLikeAnswer(lastPlan.content) || looksLikeRawJsonText(lastPlan.content)) && toolSummary) {
+      return stripApprovalWaitPhrases(toolSummary)
+    }
+    return stripApprovalWaitPhrases(lastPlan.content)
   }
   if (lastPlan?.content && planIsCompleted && !lastTool && (!turn.status || turn.status.length === 0)) {
-    return lastPlan.content
+    return stripApprovalWaitPhrases(lastPlan.content)
   }
 
-  if (lastToolDone && toolSummary) return toolSummary
+  if (lastToolDone && toolSummary) return stripApprovalWaitPhrases(toolSummary)
   if (lastTool || turn.status?.length) {
     const label = readableToolTarget(lastTool?.tool_name)
     const action = lastTool?.action || getReadableAction(lastTool?.tool_name)

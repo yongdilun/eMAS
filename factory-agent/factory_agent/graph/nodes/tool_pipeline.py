@@ -565,10 +565,15 @@ def route_after_relevance(state: AgentState) -> str:
     if state.get("fatal_system_error"):
         return "fatal_end"
     # Writes are staged without HTTP rows in `pending_relevance_batch`, so the relevance
-    # node sees an empty batch. Routing back to the planner would loop until LangGraph
-    # recursion_limit; go straight to synthesis when we already have staged work.
+    # node sees an empty batch. Usually we go straight to synthesis when we already have
+    # staged work; the exception is another complete write intent that can be safely
+    # appended to the same approval bundle.
     staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
     if staged:
+        from .planner_loop import _next_bundleable_write_intent_index
+
+        if _next_bundleable_write_intent_index(state) is not None:
+            return "continue_planner"
         return "synthesize_plan"
     return "continue_planner"
 

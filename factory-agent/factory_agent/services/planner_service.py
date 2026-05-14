@@ -60,6 +60,19 @@ def _is_transient_exception(exc: BaseException) -> bool:
     )
 
 
+def _planner_attempt_count(settings: Settings) -> int:
+    retries = max(0, int(getattr(settings, "planner_max_retries", 2) or 0))
+    return retries + 1
+
+
+async def _sleep_before_retry(settings: Settings, *, attempt_index: int) -> None:
+    base = max(0.0, float(getattr(settings, "retry_base_delay_s", 0.25) or 0.0))
+    cap = max(base, float(getattr(settings, "retry_max_delay_s", 5.0) or base))
+    delay = min(cap, base * (2 ** max(0, attempt_index)))
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+
 class PlannerClarificationError(PlannerBackendError):
     def __init__(
         self,
@@ -307,27 +320,45 @@ class PlannerService:
 
         self._tool_registry.load_tools_markdown()
 
-        try:
-            draft, contract, tool_outputs = await planner_cls(self._settings).generate(
+        last_backend_error: PlannerBackendError | None = None
+        for attempt in range(_planner_attempt_count(self._settings)):
+            try:
+                draft, contract, tool_outputs = await planner_cls(self._settings).generate(
+                    intent=intent,
+                    scoped_tools=scoped_tools,
+                    context=context,
+                )
+                break
+            except LangGraphPlannerClarification as exc:
+                raise PlannerClarificationError(str(exc)) from exc
+            except LangGraphPlannerApprovalRequired as exc:
+                payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
+                raise PlannerApprovalRequired(str(exc), approval=payload) from exc
+            except PlannerConfirmationRequired:
+                raise
+            except LangGraphPlannerError as exc:
+                if not _is_transient_exception(exc):
+                    raise PlannerPlanRejected(str(exc)) from exc
+                last_backend_error = PlannerBackendError(str(exc))
+            except Exception as exc:
+                if not _is_transient_exception(exc):
+                    raise PlannerBackendError(str(exc)) from exc
+                last_backend_error = PlannerBackendError(str(exc))
+
+            if attempt >= _planner_attempt_count(self._settings) - 1:
+                assert last_backend_error is not None
+                raise last_backend_error
+            log_event(
+                "planner_transient_retry",
+                level="WARNING",
                 intent=intent,
-                scoped_tools=scoped_tools,
-                context=context,
+                attempt=attempt + 1,
+                max_attempts=_planner_attempt_count(self._settings),
+                error=str(last_backend_error),
             )
-        except LangGraphPlannerClarification as exc:
-            raise PlannerClarificationError(str(exc)) from exc
-        except LangGraphPlannerApprovalRequired as exc:
-            payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
-            raise PlannerApprovalRequired(str(exc), approval=payload) from exc
-        except PlannerConfirmationRequired:
-            raise
-        except LangGraphPlannerError as exc:
-            if _is_transient_exception(exc):
-                raise PlannerBackendError(str(exc)) from exc
-            raise PlannerPlanRejected(str(exc)) from exc
-        except Exception as exc:
-            if _is_transient_exception(exc):
-                raise PlannerBackendError(str(exc)) from exc
-            raise PlannerBackendError(str(exc)) from exc
+            await _sleep_before_retry(self._settings, attempt_index=attempt)
+        else:  # pragma: no cover - loop always breaks or raises
+            raise PlannerBackendError("Planner retry loop exited without a result.")
 
         result = PlannerResult(
             draft=draft,
@@ -420,24 +451,43 @@ class PlannerService:
                 from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415
             except Exception as exc:
                 raise PlannerBackendError("LangGraph planner unavailable.") from exc
-        try:
-            draft, contract, tool_outputs = await planner_cls(self._settings).resume_after_approval(
+        last_backend_error: PlannerBackendError | None = None
+        for attempt in range(_planner_attempt_count(self._settings)):
+            try:
+                draft, contract, tool_outputs = await planner_cls(self._settings).resume_after_approval(
+                    session_id=session_id,
+                    approved=approved,
+                )
+                break
+            except LangGraphPlannerClarification as exc:
+                raise PlannerClarificationError(str(exc)) from exc
+            except LangGraphPlannerApprovalRequired as exc:
+                payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
+                raise PlannerApprovalRequired(str(exc), approval=payload) from exc
+            except LangGraphPlannerError as exc:
+                if not _is_transient_exception(exc):
+                    raise PlannerPlanRejected(str(exc)) from exc
+                last_backend_error = PlannerBackendError(str(exc))
+            except Exception as exc:
+                if not _is_transient_exception(exc):
+                    raise PlannerBackendError(str(exc)) from exc
+                last_backend_error = PlannerBackendError(str(exc))
+
+            if attempt >= _planner_attempt_count(self._settings) - 1:
+                assert last_backend_error is not None
+                raise last_backend_error
+            log_event(
+                "planner_resume_transient_retry",
+                level="WARNING",
                 session_id=session_id,
                 approved=approved,
+                attempt=attempt + 1,
+                max_attempts=_planner_attempt_count(self._settings),
+                error=str(last_backend_error),
             )
-        except LangGraphPlannerClarification as exc:
-            raise PlannerClarificationError(str(exc)) from exc
-        except LangGraphPlannerApprovalRequired as exc:
-            payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
-            raise PlannerApprovalRequired(str(exc), approval=payload) from exc
-        except LangGraphPlannerError as exc:
-            if _is_transient_exception(exc):
-                raise PlannerBackendError(str(exc)) from exc
-            raise PlannerPlanRejected(str(exc)) from exc
-        except Exception as exc:
-            if _is_transient_exception(exc):
-                raise PlannerBackendError(str(exc)) from exc
-            raise PlannerBackendError(str(exc)) from exc
+            await _sleep_before_retry(self._settings, attempt_index=attempt)
+        else:  # pragma: no cover - loop always breaks or raises
+            raise PlannerBackendError("Planner retry loop exited without a result.")
         return PlannerResult(
             draft=draft,
             backend_used="langgraph",
@@ -445,5 +495,3 @@ class PlannerService:
             intent_contract=contract,
             tool_outputs=tool_outputs,
         )
-
-

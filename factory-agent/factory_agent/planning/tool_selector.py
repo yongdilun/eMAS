@@ -814,6 +814,20 @@ class ToolSelector:
             return ["get__jobs"]
         if "404" in lowered and "read" in lowered and "get__jobs_{id}" in tools_by_name:
             return ["get__jobs_{id}"]
+        if (
+            re.search(r"\b(?:change|set|update|mark|make)\b", lowered)
+            and re.search(r"\b(?:low|medium|high|urgent)[\s_-]+priority\s+jobs?\b", lowered)
+            and "get__jobs" in tools_by_name
+            and "put__jobs_{id}" in tools_by_name
+        ):
+            return ["get__jobs", "put__jobs_{id}"]
+        if (
+            re.search(r"\b(?:delete|remove)\b", lowered)
+            and re.search(r"\b(?:low|medium|high|urgent)[\s_-]+priority\s+jobs?\b", lowered)
+            and "get__jobs" in tools_by_name
+            and "delete__jobs_{id}" in tools_by_name
+        ):
+            return ["get__jobs", "delete__jobs_{id}"]
         if re.search(r"\bcreate\b.*\bjob\b", lowered) and "post__jobs" in tools_by_name:
             return ["post__jobs"]
         if "update" in lowered and "missing" in lowered and "machine" in lowered and "put__machines_{id}" in tools_by_name:
