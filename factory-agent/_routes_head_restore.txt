@@ -1,8 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import contextlib
 import asyncio
-import hashlib
 from datetime import datetime, timedelta
 import json
 import os
@@ -13,7 +12,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Approval as ApprovalRow
@@ -43,7 +41,6 @@ from ..services.planner_service import PlannerService
 from ..planning.plan_validator import validate_plan
 from ..planning.tool_output_alignment import align_tool_outputs_to_steps, summarize_tool_result
 from ..schemas import (
-    ActivityStepResponse,
     ApprovalDecisionRequest,
     ApprovalResponse,
     ConfirmationDecisionRequest,
@@ -87,7 +84,6 @@ def _session_to_response(s: SessionRow) -> SessionResponse:
         status=s.status,
         current_intent=s.current_intent,
         plan_id=s.plan_id,
-        operation_id=s.plan_id,
         plan_version=s.plan_version or 0,
         plan_hash=s.plan_hash,
         current_step_index=s.current_step_index or 0,
@@ -284,69 +280,6 @@ _TIMELINE_EVENT_PRIORITY = {
     "session_completed": 9,
 }
 
-
-def _timeline_event_plan_id(ev: TimelineEventResponse) -> str | None:
-    d = ev.details if isinstance(ev.details, dict) else {}
-    pid = d.get("plan_id")
-    if isinstance(pid, str) and pid.strip():
-        return pid.strip()
-    sc = ev.step_context if isinstance(ev.step_context, dict) else {}
-    pid2 = sc.get("plan_id")
-    if isinstance(pid2, str) and pid2.strip():
-        return pid2.strip()
-    return None
-
-
-def _timeline_plan_spans(events: list[TimelineEventResponse]) -> list[tuple[datetime, str]]:
-    spans: list[tuple[datetime, str]] = []
-    for ev in events:
-        if ev.event_type != "plan_created":
-            continue
-        pid = _timeline_event_plan_id(ev)
-        if pid:
-            spans.append((ev.created_at, pid))
-    spans.sort(key=lambda item: item[0])
-    return spans
-
-
-def _operation_id_for_timestamp(ts: datetime, spans: list[tuple[datetime, str]]) -> str | None:
-    last: str | None = None
-    for created, pid in spans:
-        if created <= ts:
-            last = pid
-    if last:
-        return last
-    for created, pid in spans:
-        if created > ts:
-            return pid
-    return None
-
-
-def _annotate_timeline_operation_ids(events: list[TimelineEventResponse]) -> list[TimelineEventResponse]:
-    if not events:
-        return events
-    spans = _timeline_plan_spans(events)
-    ordered = sorted(
-        events,
-        key=lambda ev: (
-            ev.created_at,
-            _TIMELINE_EVENT_PRIORITY.get(ev.event_type, 99),
-            ev.event_id,
-        ),
-    )
-    out: list[TimelineEventResponse] = []
-    for ev in ordered:
-        oid: str | None
-        if ev.event_type == "plan_created":
-            oid = _timeline_event_plan_id(ev)
-        elif ev.event_type == "user_message":
-            oid = _operation_id_for_timestamp(ev.created_at, spans)
-        else:
-            oid = _timeline_event_plan_id(ev) or _operation_id_for_timestamp(ev.created_at, spans)
-        out.append(ev.model_copy(update={"operation_id": oid}))
-    return out
-
-
 _APPROVAL_AUX_TAGS = {"list", "lookup", "status", "pending", "create", "update", "delete", "approve", "reject"}
 
 _SEMANTIC_EVENT_MAP: dict[str, str] = {
@@ -364,195 +297,6 @@ _SEMANTIC_EVENT_MAP: dict[str, str] = {
 }
 
 
-_ACTIVITY_MAX_VISIBLE_STEPS = 12
-_ACTIVITY_FINALIZE_STATES = {"running", "retry", "waiting"}
-_ACTIVITY_MERGEABLE_STATES = {"running", "success"}
-_ACTIVITY_ALLOWED_DOMAIN_TOKENS = {
-    "approval": "approval requests",
-    "approvals": "approval requests",
-    "inventory": "inventory records",
-    "job": "job records",
-    "jobs": "job records",
-    "machine": "machine records",
-    "machines": "machine records",
-    "maintenance": "maintenance records",
-    "material": "inventory records",
-    "materials": "inventory records",
-    "process": "process records",
-    "processes": "process records",
-    "product": "product records",
-    "products": "product records",
-    "production": "production records",
-    "proposal": "proposal records",
-    "proposals": "proposal records",
-    "quality": "quality records",
-    "report": "report records",
-    "reports": "report records",
-    "scheduling": "scheduling records",
-    "storage": "storage records",
-}
-
-
-def _safe_activity_domain_label(ev: TimelineEventResponse) -> str:
-    candidates = [
-        ev.tool_name or "",
-        str((ev.step_context or {}).get("tool_name") or ""),
-        str((ev.details or {}).get("tool_name") or ""),
-        str((ev.details or {}).get("subject_type") or ""),
-        ev.content or "",
-    ]
-    text = " ".join(candidates).lower()
-    text = text.replace("{id}", " ")
-    text = text.replace("__", " ")
-    text = text.replace("_", " ")
-    text = text.replace("-", " ")
-    for token, label in _ACTIVITY_ALLOWED_DOMAIN_TOKENS.items():
-        if token in text:
-            return label
-    return "relevant records"
-
-
-def _activity_detail_for_event(ev: TimelineEventResponse, *, label: str) -> str | None:
-    domain = _safe_activity_domain_label(ev)
-    if ev.event_type == "plan_created":
-        return "Reviewing your request and recent context"
-    if ev.event_type == "execution_started":
-        return "Preparing the next safe action"
-    if ev.event_type == "tool_started":
-        return f"Checking {domain}"
-    if ev.event_type == "tool_result":
-        if label == "Could not complete that check":
-            return "A check could not be completed"
-        return f"Checked {domain}"
-    if ev.event_type == "approval_required":
-        return "Reviewing approval requirements"
-    if ev.event_type == "approval_decided":
-        if str(ev.status or "").upper() == "APPROVED":
-            return "Continuing with your approved changes"
-        return "Approval decision recorded"
-    if ev.event_type == "replan_requested":
-        return "Refining the response with updated information"
-    if ev.event_type == "session_completed":
-        return "Ready to show the answer"
-    if ev.event_type in {"session_failed", "session_blocked"}:
-        return "The request could not be completed"
-    return None
-
-
-def _activity_base_for_timeline_event(ev: TimelineEventResponse) -> dict[str, str] | None:
-    event_type = ev.event_type
-    status = str(ev.status or "").upper()
-    if event_type == "user_message":
-        return None
-    if event_type == "plan_created":
-        return {"group": "planning", "label": "Understanding your request", "state": "success"}
-    if event_type == "execution_started":
-        return {"group": "planning", "label": "Preparing the next step", "state": "running"}
-    if event_type == "tool_started":
-        return {"group": "research", "label": "Gathering information", "state": "running"}
-    if event_type == "tool_result":
-        if status in {"FAILED", "AMBIGUOUS"}:
-            return {"group": "research", "label": "Could not complete that check", "state": "error"}
-        return {"group": "research", "label": "Information checked", "state": "success"}
-    if event_type == "approval_required":
-        if status not in {"", "PENDING"}:
-            return None
-        return {"group": "approval", "label": "Waiting for your approval", "state": "waiting"}
-    if event_type == "approval_decided":
-        state = "error" if status == "REJECTED" else "success"
-        if status == "APPROVED":
-            return {"group": "approval", "label": "Approval received", "state": state}
-        return {"group": "approval", "label": "Approval updated", "state": state}
-    if event_type == "confirmation_required":
-        return {"group": "approval", "label": "Waiting for your confirmation", "state": "waiting"}
-    if event_type == "confirmation_decided":
-        return {"group": "approval", "label": "Confirmation received", "state": "success"}
-    if event_type == "replan_requested":
-        return {"group": "planning", "label": "Improving the response", "state": "retry"}
-    if event_type in {"session_failed", "session_blocked"}:
-        return {"group": "system", "label": "Something needs attention", "state": "error"}
-    if event_type == "session_completed":
-        return {"group": "response", "label": "Finalizing answer", "state": "complete"}
-    return None
-
-
-def _activity_step_stable_id(ev: TimelineEventResponse, signature: tuple[str, str, str, str]) -> str:
-    """Stable id so activity SSE + snapshot merges do not treat re-ordered rows as all-new steps."""
-    eid = str(getattr(ev, "event_id", None) or "").strip()
-    if eid:
-        return f"act:{eid}"
-    digest = hashlib.sha256(
-        f"{ev.event_type}|{ev.created_at.isoformat() if ev.created_at else ''}|{signature!r}".encode()
-    ).hexdigest()[:16]
-    return f"act:fb:{digest}"
-
-
-def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[ActivityStepResponse]:
-    raw_steps: list[dict[str, Any]] = []
-    repeated_by_signature: dict[tuple[str, str, str, str], int] = {}
-    index_by_signature: dict[tuple[str, str, str, str], int] = {}
-
-    for ev in snapshot.timeline:
-        base = _activity_base_for_timeline_event(ev)
-        if base is None:
-            continue
-        detail = _activity_detail_for_event(ev, label=base["label"])
-        signature = (base["group"], base["label"], detail or "", base["state"])
-        if base["state"] in _ACTIVITY_MERGEABLE_STATES and signature in index_by_signature:
-            count = repeated_by_signature.get(signature, 1) + 1
-            repeated_by_signature[signature] = count
-            idx = index_by_signature[signature]
-            raw_steps[idx]["detail"] = f"{detail or base['label']} ({count} updates)"
-            raw_steps[idx]["timestamp"] = int(ev.created_at.timestamp())
-            raw_steps[idx]["state"] = base["state"]
-            continue
-        index_by_signature[signature] = len(raw_steps)
-        repeated_by_signature[signature] = 1
-        raw_steps.append(
-            {
-                "id": _activity_step_stable_id(ev, signature),
-                "timestamp": int(ev.created_at.timestamp()),
-                "group": base["group"],
-                "label": base["label"],
-                "detail": detail,
-                "state": base["state"],
-            }
-        )
-
-    terminal_index = next(
-        (idx for idx, step in enumerate(raw_steps) if step.get("state") in {"complete", "error"}),
-        len(raw_steps) - 1,
-    )
-    for idx, step in enumerate(raw_steps):
-        if idx < terminal_index and step.get("state") in _ACTIVITY_FINALIZE_STATES:
-            step["state"] = "success"
-
-    if len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
-        older = raw_steps[: -(_ACTIVITY_MAX_VISIBLE_STEPS - 1)]
-        recent = raw_steps[-(_ACTIVITY_MAX_VISIBLE_STEPS - 1) :]
-        grouped = {
-            "id": "act:grouped_earlier",
-            "timestamp": older[-1]["timestamp"],
-            "group": "system",
-            "label": "Earlier activity",
-            "detail": f"{len(older)} earlier updates grouped",
-            "state": "success",
-        }
-        raw_steps = [grouped, *recent]
-
-    return [
-        ActivityStepResponse(
-            id=str(step["id"]),
-            timestamp=int(step["timestamp"]),
-            group=step["group"],
-            label=step["label"],
-            detail=step.get("detail"),
-            state=step["state"],
-        )
-        for step in raw_steps
-    ]
-
-
 def _semantic_payload_for_timeline_event(ev: TimelineEventResponse, *, session_id: str) -> dict[str, Any]:
     return {
         "type": _SEMANTIC_EVENT_MAP.get(ev.event_type, str(ev.event_type).upper()),
@@ -565,14 +309,6 @@ def _semantic_payload_for_timeline_event(ev: TimelineEventResponse, *, session_i
         "approval_id": ev.approval_id,
         "status": ev.status,
     }
-
-
-def _should_skip_semantic_timeline_event(ev: TimelineEventResponse) -> bool:
-    """Non-pending approval_required rows stay on the timeline for audit; SSE clients ignore them."""
-    if ev.event_type != "approval_required":
-        return False
-    st = str(ev.status or "").upper()
-    return st not in {"", "PENDING"}
 
 
 def build_router(
@@ -591,7 +327,6 @@ def build_router(
     tool_selector = ToolSelector(settings)
     summary_adapter = SummaryAdapter(settings)
     rag_pipeline = rag_pipeline_adapter
-    active_approval_resume_tasks: set[str] = set()
     def _should_enforce_registry_health() -> bool:
         if not settings.enforce_tool_registry_health:
             return False
@@ -1027,7 +762,6 @@ def build_router(
             role="assistant",
             content=quick_summary,
             mode=(latest_user.mode if latest_user else "normal"),
-            step_id=plan_row.plan_id,
             tool_name="__plan__",
         )
         db.add(plan_message)
@@ -1302,12 +1036,6 @@ def build_router(
         user_messages = [row for row in message_rows if row.role == "user"]
         assistant_messages = [row for row in message_rows if row.role == "assistant"]
         plan_messages = [row for row in assistant_messages if row.tool_name == "__plan__"]
-        plan_messages_by_plan_id = {
-            row.step_id: row
-            for row in plan_messages
-            if isinstance(row.step_id, str) and row.step_id.strip()
-        }
-        unscoped_plan_messages = [row for row in plan_messages if not row.step_id]
         conversation_messages = [row for row in assistant_messages if row.tool_name == "__conversation__"]
         confirmation_messages = [row for row in assistant_messages if row.tool_name == "__confirmation__"]
         snapshot_step_rows = step_rows if allow_step_projection else []
@@ -1337,19 +1065,6 @@ def build_router(
                 "plan_version": sess.plan_version or 0,
                 "current_step_index": sess.current_step_index or 0,
             }
-
-        _raw_plan_id = (current_plan.plan_id if current_plan else None) or sess.plan_id
-        snapshot_plan_id = (
-            _raw_plan_id.strip()
-            if isinstance(_raw_plan_id, str) and _raw_plan_id.strip()
-            else None
-        )
-
-        def _step_ctx(extra: dict[str, Any] | None = None) -> dict[str, Any]:
-            base: dict[str, Any] = {**_session_ctx(), **(extra or {})}
-            if snapshot_plan_id:
-                base.setdefault("plan_id", snapshot_plan_id)
-            return base
 
         def _missing_required_fields(tool_name: str | None, args: dict[str, Any] | None) -> list[str]:
             if not tool_name:
@@ -1440,34 +1155,6 @@ def build_router(
                 return False
             return len(step_ids_by_plan.get(plan_row.plan_id, [])) == 0
 
-        graph_approval_rows = [
-            row
-            for row in approval_rows
-            if (getattr(row, "subject_type", "step") or "step") == "graph"
-        ]
-        graph_plan_order = {
-            row.plan_id: idx
-            for idx, row in enumerate([p for p in plan_rows if _is_langgraph_plan(p)])
-        }
-        graph_plan_count = max(1, len(graph_plan_order))
-
-        def _plan_timeline_created_at(plan_row: PlanRow) -> datetime:
-            if not _is_langgraph_plan(plan_row) or not graph_approval_rows:
-                return plan_row.created_at
-            first_approval_at = min(row.created_at for row in graph_approval_rows if row.created_at)
-            order = graph_plan_order.get(plan_row.plan_id, 0)
-            latest_user_before_approval = None
-            for msg in user_messages_sorted:
-                if msg.created_at <= first_approval_at:
-                    latest_user_before_approval = msg
-                else:
-                    break
-            if latest_user_before_approval:
-                candidate = latest_user_before_approval.created_at + timedelta(milliseconds=10, microseconds=order)
-                if candidate < first_approval_at:
-                    return candidate
-            return first_approval_at - timedelta(microseconds=graph_plan_count - order)
-
         events: list[TimelineEventResponse] = []
         for msg in user_messages:
             events.append(
@@ -1541,10 +1228,7 @@ def build_router(
         for idx, plan_row in enumerate(plan_rows):
             if _is_noop_plan(plan_row):
                 continue
-            plan_message = plan_messages_by_plan_id.get(plan_row.plan_id)
-            if plan_message is None and idx < len(unscoped_plan_messages):
-                plan_message = unscoped_plan_messages[idx]
-            plan_event_created_at = _plan_timeline_created_at(plan_row)
+            plan_message = plan_messages[idx] if idx < len(plan_messages) else None
             content = (
                 plan_message.content
                 if plan_message and plan_message.content
@@ -1555,10 +1239,10 @@ def build_router(
                     event_id=f"plan:{plan_row.plan_id}",
                     event_type="plan_created",
                     content=content,
-                    created_at=plan_event_created_at,
+                    created_at=plan_row.created_at,
                     status="PLANNING",
                     mode=(plan_message.mode if plan_message and getattr(plan_message, "mode", None) else None),
-                    turn_id=_turn_id_for_time(plan_event_created_at),
+                    turn_id=_turn_id_for_time(plan_row.created_at),
                     step_context={**_session_ctx(), "plan_id": plan_row.plan_id, "plan_version": plan_row.version},
                     details={
                         "plan_id": plan_row.plan_id,
@@ -1597,7 +1281,7 @@ def build_router(
                     created_at=execution_started_at,
                     status="EXECUTING",
                     turn_id=_turn_id_for_time(execution_started_at),
-                    step_context=_step_ctx(),
+                    step_context=_session_ctx(),
                 )
             )
 
@@ -1611,14 +1295,13 @@ def build_router(
                         content="Step started.",
                         created_at=step.started_at,
                         turn_id=_turn_id_for_time(step.started_at),
-                        step_context=_step_ctx(
-                            {
-                                "step_id": step.step_id,
-                                "step_index": step.step_index,
-                                "tool_name": step.tool_name,
-                                "approval_id": step.approval_id,
-                            }
-                        ),
+                        step_context={
+                            **_session_ctx(),
+                            "step_id": step.step_id,
+                            "step_index": step.step_index,
+                            "tool_name": step.tool_name,
+                            "approval_id": step.approval_id,
+                        },
                         step_id=step.step_id,
                         tool_name=step.tool_name,
                         status=step.status,
@@ -1653,14 +1336,13 @@ def build_router(
                     content=content,
                     created_at=created_at,
                     turn_id=_turn_id_for_time(created_at),
-                    step_context=_step_ctx(
-                        {
-                            "step_id": step.step_id,
-                            "step_index": step.step_index,
-                            "tool_name": step.tool_name,
-                            "approval_id": step.approval_id,
-                        }
-                    ),
+                    step_context={
+                        **_session_ctx(),
+                        "step_id": step.step_id,
+                        "step_index": step.step_index,
+                        "tool_name": step.tool_name,
+                        "approval_id": step.approval_id,
+                    },
                     step_id=step.step_id,
                     tool_name=step.tool_name,
                     status=step.status,
@@ -1707,9 +1389,8 @@ def build_router(
                         created_at=_graph_event_time(10),
                         status="PLANNING",
                         turn_id=_turn_id_for_time(_graph_event_time(10)),
-                        step_context=_step_ctx({"source": "checkpoint_projection"}),
+                        step_context={**_session_ctx(), "source": "checkpoint_projection"},
                         details={
-                            "plan_id": snapshot_plan_id,
                             "plan_explanation": plan_content,
                             "risk_summary": checkpoint_draft.get("risk_summary"),
                         },
@@ -1734,12 +1415,11 @@ def build_router(
                         content="Tool started.",
                         created_at=created_at,
                         turn_id=_turn_id_for_time(created_at),
-                        step_context=_step_ctx(
-                            {
-                                "source": "checkpoint_projection",
-                                "tool_name": tool_name,
-                            }
-                        ),
+                        step_context={
+                            **_session_ctx(),
+                            "source": "checkpoint_projection",
+                            "tool_name": tool_name,
+                        },
                         step_id=f"lg-step-{idx_action}",
                         tool_name=tool_name,
                         status="IN_PROGRESS",
@@ -1774,12 +1454,11 @@ def build_router(
                         content=content,
                         created_at=created_at,
                         turn_id=_turn_id_for_time(created_at),
-                        step_context=_step_ctx(
-                            {
-                                "source": "checkpoint_projection",
-                                "tool_name": tool_name,
-                            }
-                        ),
+                        step_context={
+                            **_session_ctx(),
+                            "source": "checkpoint_projection",
+                            "tool_name": tool_name,
+                        },
                         step_id=f"lg-step-{idx_out}",
                         tool_name=tool_name,
                         status=status,
@@ -1798,8 +1477,7 @@ def build_router(
             tool = tools_by_name.get(approval.tool_name)
             missing_required = _missing_required_fields(approval.tool_name, approval.args)
             tool_schema = tool.input_schema if tool else None
-            approval_subject_type = getattr(approval, "subject_type", "step") or "step"
-            if approval.status == "PENDING" or approval_subject_type == "graph":
+            if approval.status == "PENDING":
                 events.append(
                     _timeline_event(
                         event_id=f"approval-required:{approval.approval_id}",
@@ -1811,20 +1489,18 @@ def build_router(
                         ),
                         created_at=approval.created_at,
                         turn_id=_turn_id_for_time(approval.created_at),
-                        step_context=_step_ctx(
-                            {
-                                "approval_id": approval.approval_id,
-                                "step_id": approval.step_id,
-                                "tool_name": approval.tool_name,
-                                "plan_id": getattr(approval, "plan_id", None) or snapshot_plan_id,
-                            }
-                        ),
+                        step_context={
+                            **_session_ctx(),
+                            "approval_id": approval.approval_id,
+                            "step_id": approval.step_id,
+                            "tool_name": approval.tool_name,
+                        },
                         approval_id=approval.approval_id,
                         step_id=approval.step_id,
                         tool_name=approval.tool_name,
                         status=approval.status,
                         details={
-                            "subject_type": approval_subject_type,
+                            "subject_type": getattr(approval, "subject_type", "step"),
                             "plan_id": getattr(approval, "plan_id", None),
                             "args": approval.args,
                             "side_effect_level": approval.side_effect_level,
@@ -1849,20 +1525,18 @@ def build_router(
                         content=content,
                         created_at=approval.decided_at,
                         turn_id=_turn_id_for_time(approval.decided_at),
-                        step_context=_step_ctx(
-                            {
-                                "approval_id": approval.approval_id,
-                                "step_id": approval.step_id,
-                                "tool_name": approval.tool_name,
-                                "plan_id": getattr(approval, "plan_id", None) or snapshot_plan_id,
-                            }
-                        ),
+                        step_context={
+                            **_session_ctx(),
+                            "approval_id": approval.approval_id,
+                            "step_id": approval.step_id,
+                            "tool_name": approval.tool_name,
+                        },
                         approval_id=approval.approval_id,
                         step_id=approval.step_id,
                         tool_name=approval.tool_name,
                         status=approval.status,
                         details={
-                            "subject_type": approval_subject_type,
+                            "subject_type": getattr(approval, "subject_type", "step"),
                             "plan_id": getattr(approval, "plan_id", None),
                             "decided_by": approval.decided_by,
                             "rejection_reason": approval.rejection_reason,
@@ -1952,7 +1626,7 @@ def build_router(
                     created_at=completed_at,
                     status="COMPLETED",
                     turn_id=_turn_id_for_time(completed_at),
-                    step_context=_step_ctx(),
+                    step_context=_session_ctx(),
                     details={
                         "plan_id": current_plan.plan_id if current_plan else sess.plan_id,
                         "sources": current_plan.sources if current_plan else [],
@@ -1968,33 +1642,6 @@ def build_router(
                 event.event_id,
             )
         )
-        events = _annotate_timeline_operation_ids(events)
-        if graph_approval_rows and snapshot_plan_id:
-            approval_turn_ids = {
-                turn_id
-                for turn_id in (_turn_id_for_time(row.created_at) for row in graph_approval_rows)
-                if turn_id
-            }
-            if approval_turn_ids:
-                operation_event_types = {
-                    "user_message",
-                    "plan_created",
-                    "execution_started",
-                    "tool_started",
-                    "tool_result",
-                    "approval_required",
-                    "approval_decided",
-                    "replan_requested",
-                    "session_completed",
-                    "session_blocked",
-                    "session_failed",
-                }
-                events = [
-                    event.model_copy(update={"operation_id": snapshot_plan_id})
-                    if event.turn_id in approval_turn_ids and event.event_type in operation_event_types
-                    else event
-                    for event in events
-                ]
 
         checkpoint_step_responses: list[PlanStepResponse] = []
         if graph_native_session and checkpoint_steps:
@@ -2152,7 +1799,6 @@ def build_router(
             heartbeat_s = 12
             poll_s = 1.0
             seen_event_ids: set[str] = set()
-            emitted_resume_markers: set[str] = set()
             idle_heartbeats = 0
 
             async def _fresh_snapshot() -> SessionSnapshotResponse | None:
@@ -2181,129 +1827,16 @@ def build_router(
                     if ev.event_id in seen_event_ids:
                         continue
                     seen_event_ids.add(ev.event_id)
-                    if _should_skip_semantic_timeline_event(ev):
-                        continue
                     payload = _semantic_payload_for_timeline_event(ev, session_id=session_id)
                     emitted = True
                     yield f"id: {ev.event_id}\nevent: semantic\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-                resume_ctx = None
-                sess_payload = snapshot.session
-                rc = getattr(sess_payload, "replan_context", None) if sess_payload is not None else None
-                if isinstance(rc, dict):
-                    resume_ctx = rc.get("langgraph_approval_resume")
-                sess_status = str(getattr(sess_payload, "status", "") or "").upper()
-                if (
-                    isinstance(resume_ctx, dict)
-                    and str(resume_ctx.get("status") or "").lower() == "approved"
-                    and sess_status == "EXECUTING"
-                ):
-                    aid = str(resume_ctx.get("approval_id") or "").strip()
-                    decided_at = str(resume_ctx.get("decided_at") or "").strip()
-                    marker = f"{aid}:{decided_at}" if aid else ""
-                    if marker and marker not in emitted_resume_markers:
-                        emitted_resume_markers.add(marker)
-                        resume_payload = {
-                            "type": "SESSION_WILL_RESUME",
-                            "session_id": session_id,
-                            "approval_id": aid,
-                            "decided_at": decided_at or None,
-                        }
-                        emitted = True
-                        yield (
-                            "event: semantic\ndata: "
-                            + json.dumps(resume_payload, ensure_ascii=False)
-                            + "\n\n"
-                        )
-
-                if emitted:
-                    idle_heartbeats = 0
-                else:
-                    idle_heartbeats += 1
-                    if idle_heartbeats * poll_s >= heartbeat_s:
-                        pending_id = (
-                            snapshot.pending_approval.approval_id
-                            if snapshot.pending_approval is not None
-                            else None
-                        )
-                        hb = {
-                            "type": "HEARTBEAT",
-                            "session_id": session_id,
-                            "pending_approval_id": pending_id,
-                            "ts": datetime.utcnow().isoformat() + "Z",
-                        }
-                        yield f"event: semantic\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
-                        idle_heartbeats = 0
-                await asyncio.sleep(poll_s)
-
-        return StreamingResponse(
-            _event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @router.get("/sessions/{session_id}/events/activity")
-    async def stream_activity_events(
-        session_id: str,
-        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        db: AsyncSession = Depends(get_db),
-    ):
-        """
-        User-facing activity SSE adapter.
-
-        This stream is intentionally narrower than the semantic/debug timeline:
-        it exposes only stable, sanitized activity steps suitable for the chat UI.
-        """
-
-        async def _event_gen():
-            heartbeat_s = 12
-            poll_s = 1.0
-            seen_steps: dict[str, str] = {}
-            idle_heartbeats = 0
-
-            async def _fresh_snapshot() -> SessionSnapshotResponse | None:
-                await db.rollback()
-                db.expire_all()
-                return await load_session_snapshot(db=db, session_id=session_id)
-
-            if last_event_id:
-                initial_snapshot = await _fresh_snapshot()
-                if initial_snapshot is not None:
-                    for step in _activity_steps_for_snapshot(initial_snapshot):
-                        seen_steps[step.id] = json.dumps(step.model_dump(exclude_none=True), sort_keys=True, default=str)
-                        if step.id == last_event_id:
-                            break
-
-            ready = {"type": "STREAM_READY", "session_id": session_id}
-            yield f"event: control\ndata: {json.dumps(ready, ensure_ascii=False)}\n\n"
-            while True:
-                snapshot = await _fresh_snapshot()
-                if snapshot is None:
-                    gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
-                    yield f"event: control\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
-                    return
-
-                emitted = False
-                for step in _activity_steps_for_snapshot(snapshot):
-                    payload = step.model_dump(exclude_none=True)
-                    payload_signature = json.dumps(payload, sort_keys=True, default=str)
-                    if seen_steps.get(step.id) == payload_signature:
-                        continue
-                    seen_steps[step.id] = payload_signature
-                    emitted = True
-                    yield f"id: {step.id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
                 if emitted:
                     idle_heartbeats = 0
                 else:
                     idle_heartbeats += 1
                     if idle_heartbeats * poll_s >= heartbeat_s:
                         hb = {"type": "HEARTBEAT", "session_id": session_id, "ts": datetime.utcnow().isoformat() + "Z"}
-                        yield f"event: control\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
+                        yield f"event: semantic\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
                         idle_heartbeats = 0
                 await asyncio.sleep(poll_s)
 
@@ -2944,150 +2477,6 @@ def build_router(
         await db.commit()
         return sess
 
-    async def _publish_agent_event(event_type: str, session_id: str, payload: dict[str, Any]) -> None:
-        with contextlib.suppress(Exception):
-            await event_bus.publish(
-                AgentEvent(
-                    event_type=event_type,  # type: ignore[arg-type]
-                    session_id=session_id,
-                    payload=payload,
-                    published_at=datetime.utcnow(),
-                )
-            )
-
-    async def _resume_approved_graph_approval(
-        *,
-        db: AsyncSession,
-        approval_id: str,
-    ) -> None:
-        row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
-        if not row:
-            return
-        if (getattr(row, "subject_type", "step") or "step") != "graph":
-            return
-        if row.status != "APPROVED":
-            return
-        sess = await session_mgr.get_session(db, session_id=row.session_id)
-        if not sess:
-            return
-        if sess.status == "COMPLETED":
-            context_done = sess.replan_context if isinstance(sess.replan_context, dict) else {}
-            if not context_done.get("langgraph_approval_resume"):
-                return
-
-        intent = str(sess.current_intent or "")
-        try:
-            tools_by_name = await _ensure_registry_health(db=db)
-            resumed = await planner.resume_after_approval(session_id=sess.session_id, approved=True)
-            draft = resumed.draft
-            backend_used = resumed.backend_used
-            context = dict(sess.replan_context or {})
-            if resumed.intent_contract:
-                context["intent_contract"] = resumed.intent_contract
-            context.pop("langgraph_pending_approval", None)
-            context.pop("langgraph_approval_resume", None)
-            sess.replan_context = context
-            sess.error = None
-            sess.status = "COMPLETED"
-            sess.version += 1
-            await db.commit()
-            await _persist_plan(
-                db=db,
-                sess=sess,
-                draft=draft,
-                tools_by_name=tools_by_name,
-                backend_used=backend_used,
-                kind="execution",
-                status="COMPLETED",
-                intent=intent,
-                context_to_keep=context,
-                tool_outputs=getattr(resumed, "tool_outputs", None),
-            )
-            await db.commit()
-            await _publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row.approval_id, "status": "COMPLETED", "subject_type": "graph"},
-            )
-        except PlannerClarificationError as e:
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "BLOCKED"
-            sess.error = str(e)
-            sess.version += 1
-            await db.commit()
-            await _publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
-            )
-        except PlannerPlanRejected as e:
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "BLOCKED"
-            sess.error = str(e)
-            sess.version += 1
-            await db.commit()
-            await _publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
-            )
-        except PlannerBackendError as e:
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "FAILED"
-            sess.error = str(e)
-            sess.version += 1
-            await db.commit()
-            await _publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row.approval_id, "status": "FAILED", "subject_type": "graph"},
-            )
-        except Exception as e:
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "FAILED"
-            sess.error = str(e)
-            sess.version += 1
-            await db.commit()
-            await _publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row.approval_id, "status": "FAILED", "subject_type": "graph"},
-            )
-
-    def _start_graph_approval_resume_task(db: AsyncSession, approval_id: str) -> None:
-        if approval_id in active_approval_resume_tasks:
-            return
-        bind = getattr(db, "bind", None) or db.get_bind()
-        bg_sessionmaker = sessionmaker(bind=bind, class_=AsyncSession, expire_on_commit=False)
-        active_approval_resume_tasks.add(approval_id)
-
-        async def _runner() -> None:
-            try:
-                async with bg_sessionmaker() as bg_db:
-                    await _resume_approved_graph_approval(db=bg_db, approval_id=approval_id)
-            finally:
-                active_approval_resume_tasks.discard(approval_id)
-
-        task = asyncio.create_task(_runner())
-
-        def _consume_task_result(done: asyncio.Task) -> None:
-            with contextlib.suppress(Exception):
-                done.result()
-
-        task.add_done_callback(_consume_task_result)
-
     @router.post("/sessions/{session_id}/execute", response_model=SessionResponse)
     async def execute(
         session_id: str,
@@ -3102,13 +2491,6 @@ def build_router(
         if expected_version is not None and sess.version != expected_version:
             raise HTTPException(status_code=409, detail=f"version_conflict expected={expected_version} actual={sess.version}")
         current_plan = await _load_current_plan(db=db, session_id=session_id)
-        resume_context = sess.replan_context if isinstance(sess.replan_context, dict) else {}
-        pending_resume = resume_context.get("langgraph_approval_resume") if isinstance(resume_context, dict) else None
-        if sess.status == "EXECUTING" and isinstance(pending_resume, dict):
-            approval_id = str(pending_resume.get("approval_id") or "").strip()
-            if approval_id:
-                _start_graph_approval_resume_task(db, approval_id)
-            return _session_to_response(sess)
         if sess.status == "WAITING_APPROVAL":
             return _session_to_response(sess)
         if current_plan and current_plan.status == "COMPLETED" and sess.status == "COMPLETED":
@@ -3222,40 +2604,69 @@ def build_router(
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
         if (getattr(row, "subject_type", "step") or "step") == "graph":
-            if row.status == "APPROVED":
-                sess = await session_mgr.get_session(db, session_id=row.session_id)
-                context = sess.replan_context if sess and isinstance(sess.replan_context, dict) else {}
-                if isinstance(context.get("langgraph_approval_resume"), dict):
-                    _start_graph_approval_resume_task(db, row.approval_id)
-                return _approval_to_response(row)
-            if row.status != "PENDING":
-                raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
             row.status = "APPROVED"
             row.decided_by = req.decided_by
             row.decided_at = datetime.utcnow()
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
                 raise HTTPException(status_code=404, detail="session not found")
-            context = dict(sess.replan_context or {})
-            context["langgraph_approval_resume"] = {
-                "approval_id": row.approval_id,
-                "thread_id": sess.session_id,
-                "status": "approved",
-                "decided_at": row.decided_at.isoformat() if row.decided_at else None,
-            }
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "EXECUTING"
-            sess.completed_at = None
-            sess.error = "Approval received. Continuing with approved changes."
-            sess.version += 1
-            await db.commit()
-            await _publish_agent_event(
-                "approval_decided",
-                row.session_id,
-                {"approval_id": row.approval_id, "status": "APPROVED", "subject_type": "graph"},
+            intent = str(sess.current_intent or "")
+            mode = "normal"
+            latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
+            if latest_user and isinstance(latest_user.mode, str):
+                mode = latest_user.mode
+            tools_by_name = await _ensure_registry_health(db=db)
+            try:
+                resumed = await planner.resume_after_approval(session_id=sess.session_id, approved=True)
+                draft = resumed.draft
+                backend_used = resumed.backend_used
+                context = dict(sess.replan_context or {})
+                if resumed.intent_contract:
+                    context["intent_contract"] = resumed.intent_contract
+                context.pop("langgraph_pending_approval", None)
+                sess.replan_context = context
+                sess.error = None
+                sess.status = "COMPLETED"
+                sess.version += 1
+                await db.commit()
+                await _persist_plan(
+                    db=db,
+                    sess=sess,
+                    draft=draft,
+                    tools_by_name=tools_by_name,
+                    backend_used=backend_used,
+                    kind="execution",
+                    status="COMPLETED",
+                    intent=intent,
+                    context_to_keep=context,
+                    tool_outputs=getattr(resumed, "tool_outputs", None),
+                )
+                await db.commit()
+            except PlannerClarificationError as e:
+                sess.status = "BLOCKED"
+                sess.error = str(e)
+                sess.version += 1
+                await db.commit()
+            except PlannerPlanRejected as e:
+                sess.status = "BLOCKED"
+                sess.error = str(e)
+                sess.version += 1
+                await db.commit()
+                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
+            except PlannerBackendError as e:
+                sess.status = "FAILED"
+                sess.error = str(e)
+                sess.version += 1
+                await db.commit()
+                raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
+            await event_bus.publish(
+                AgentEvent(
+                    event_type="approval_decided",
+                    session_id=row.session_id,
+                    payload={"approval_id": row.approval_id, "status": "APPROVED", "subject_type": "graph"},
+                    published_at=datetime.utcnow(),
+                )
             )
-            _start_graph_approval_resume_task(db, row.approval_id)
             return _approval_to_response(row)
 
         if (getattr(row, "subject_type", "step") or "step") == "plan":

@@ -290,7 +290,7 @@ def strip_unsupported_optional_args(
                 or (isinstance(resolved_predicates, dict) and field in resolved_predicates)
             )
         )
-        control_supported = field in _SAFE_CONTROL_FIELDS and supported
+        control_supported = field in _SAFE_CONTROL_FIELDS and not is_placeholder(value)
         if supported or control_supported:
             clean[field] = value
             continue

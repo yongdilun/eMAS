@@ -14,6 +14,28 @@ SummaryBackendName = Literal["deterministic", "langchain"]
 BundleNarrativeKind = Literal["awaiting_approval", "completed"]
 
 
+def awaiting_approval_markdown_from_bundle_ui(facts: dict[str, Any]) -> str | None:
+    """Fixed narrative when ``facts["approval"]["bundle_ui"]`` carries the job table.
+
+    The client renders ``bundle_ui`` as a native table; ``risk_summary`` must not repeat
+    per-job rows or markdown tables (avoids fighting the UI and saves LLM tokens).
+    """
+    ap = facts.get("approval") if isinstance(facts.get("approval"), dict) else {}
+    bui = ap.get("bundle_ui") if isinstance(ap.get("bundle_ui"), dict) else None
+    if not bui or not str(bui.get("headline") or "").strip():
+        return None
+    hl = str(bui["headline"]).strip()
+    return "\n".join(
+        [
+            hl,
+            "",
+            "The change list is shown in the in-app table next to this message.",
+            "",
+            "Please approve to continue.",
+        ]
+    ).strip()
+
+
 @dataclass(frozen=True)
 class SummaryResult:
     text: str
@@ -258,6 +280,9 @@ class SummaryAdapter:
 
     def _deterministic_bundle_narrative(self, *, intent: str, kind: BundleNarrativeKind, facts: dict[str, Any]) -> str:
         if kind == "awaiting_approval":
+            structured = awaiting_approval_markdown_from_bundle_ui(facts)
+            if structured is not None:
+                return structured
             ap = facts.get("approval") if isinstance(facts.get("approval"), dict) else {}
             preview = ap.get("preview") if isinstance(ap.get("preview"), list) else []
             lines: list[str] = []
@@ -300,6 +325,28 @@ class SummaryAdapter:
         facts: dict[str, Any],
     ) -> SummaryResult:
         """LLM-written Markdown for approval wait copy or post-commit recap (structured facts in JSON)."""
+        if kind == "completed":
+            recap = _job_recap_markdown_from_facts(facts)
+            if recap:
+                log_llm_prompt_skipped(
+                    component="bundle_narrative",
+                    backend="deterministic",
+                    reason="completed_job_write_recap",
+                    metadata={"intent": intent, "kind": kind},
+                )
+                return SummaryResult(text=recap, backend_used="deterministic", llm_calls=0)
+
+        if kind == "awaiting_approval":
+            structured = awaiting_approval_markdown_from_bundle_ui(facts)
+            if structured is not None:
+                log_llm_prompt_skipped(
+                    component="bundle_narrative",
+                    backend="deterministic",
+                    reason="awaiting_approval_bundle_ui",
+                    metadata={"intent": intent, "kind": kind},
+                )
+                return SummaryResult(text=structured, backend_used="deterministic", llm_calls=0)
+
         backend = (self._settings.summary_backend or "auto").strip().lower()
         if backend == "auto":
             backend = "langchain" if (self._settings.summary_openai_base_url or self._settings.openai_api_key) else "deterministic"
@@ -333,16 +380,16 @@ class SummaryAdapter:
         model = self._build_chat_model(max_tokens=max(900, int(self._settings.summary_max_tokens or 512)))
         facts_block = self._facts_json(facts)
         if kind == "awaiting_approval":
+            # ``bundle_ui`` approvals never reach this path: ``synthesize_bundle_markdown`` returns first.
             prompt = (
-                "You are writing a short, friendly Markdown message for an operator who must approve a backend write "
-                "bundle in a factory scheduling assistant.\n\n"
+                "You are writing a short Markdown message for an operator who must approve a staged write bundle.\n\n"
                 "Rules:\n"
-                "- Use ONLY information present in the JSON facts (intent + approval payload). "
-                "Never invent job IDs, priorities, products, deadlines, or counts.\n"
-                "- If the approval preview lists jobs with fields like id, job_id, priority, product_id, status, "
-                "deadline, mirror them in a clear numbered list. Show current vs requested priority when both exist.\n"
-                "- If you cannot list entities because data is missing, summarize what is known and what will happen.\n"
-                "- Do NOT include HTML or wide markdown tables.\n"
+                "- Use ONLY the JSON facts (intent + approval). Never invent job IDs, priorities, products, or counts.\n"
+                "- Summarize ``approval.summary`` and, if useful, ``approval.preview`` (tool names + key args only). "
+                "Do not paste raw JSON blobs.\n"
+                "- If job-like IDs or priorities appear, you may use a short numbered list; "
+                "do not use markdown pipe tables or HTML.\n"
+                "- If facts are thin, state what is known and that execution waits on approval.\n"
                 "- End with the exact line: Please approve to continue.\n\n"
                 f"User intent:\n{intent}\n\n"
                 f"Facts JSON:\n{facts_block}\n"

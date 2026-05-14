@@ -1,16 +1,22 @@
 /* eslint-disable react/prop-types */
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ChatMessage from '../ChatMessage'
 import ApprovalCard from './ApprovalCard'
+import ActivityTimeline from './ActivityTimeline'
 import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
+import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { TablePresentation } from '../turns/TurnBlocks'
+import { friendlySessionStatus } from './activityTimelineUtils'
 import {
   formatInlineCitationLabel,
   stripSourceFootnoteDefinitions,
 } from '../sourceFormatting'
 
 const CHAT_VIEW_MODE = (import.meta.env?.VITE_FACTORY_AGENT_CHAT_MODE || 'user').trim().toLowerCase() === 'dev' ? 'dev' : 'user'
+const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
+  String(import.meta.env?.VITE_FACTORY_AGENT_ACTIVITY_TIMELINE ?? 'true').trim().toLowerCase(),
+)
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
 const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
 
@@ -42,9 +48,19 @@ function isPlanLikeAnswer(value) {
  )
 }
 
+function containsInternalText(value) {
+ const text = String(value || '')
+ return (
+ text.includes('__') ||
+ text.includes('{id}') ||
+ /\b(IN_PROGRESS|DONE|NOT_STARTED|AMBIGUOUS)\b/.test(text) ||
+ /\b(tool_name|validator_failed|planner_reentered|tool_rerun|trace id|args|result)\b/i.test(text)
+ )
+}
+
 function isUserVisibleDetailText(value) {
  const text = String(value || '').trim()
- return Boolean(text) && !isProgressSummary(text) && !looksLikeRawJsonText(text) && !isPlanLikeAnswer(text)
+ return Boolean(text) && !isProgressSummary(text) && !looksLikeRawJsonText(text) && !isPlanLikeAnswer(text) && !containsInternalText(text)
 }
 
 function dedupeLines(lines = []) {
@@ -188,19 +204,27 @@ function renderCitationsAndBold(text, sources = []) {
   })
 }
 
-function StreamedAssistantText({ text, streamKey, enabled, sources = [] }) {
+function StreamedAssistantText({ text, streamKey, enabled, sources = [], onStreamComplete }) {
   const cleanText = useMemo(() => stripSourceFootnoteDefinitions(text), [text])
   const [displayed, setDisplayed] = useState(enabled ? '' : cleanText)
+  const onStreamCompleteRef = useRef(onStreamComplete)
+  onStreamCompleteRef.current = onStreamComplete
 
   useEffect(() => {
+    const notifyComplete = () => {
+      onStreamCompleteRef.current?.()
+    }
+
     if (!enabled) {
       setDisplayed(cleanText)
+      notifyComplete()
       return undefined
     }
 
     const tokens = String(cleanText || '').match(/\S+\s*/g) || []
     if (!tokens.length) {
       setDisplayed(cleanText)
+      notifyComplete()
       return undefined
     }
 
@@ -220,6 +244,7 @@ function StreamedAssistantText({ text, streamKey, enabled, sources = [] }) {
 
       if (index >= tokens.length) {
         window.clearInterval(timer)
+        notifyComplete()
       }
     }, Number.isFinite(STREAM_BUFFER_MS) && STREAM_BUFFER_MS > 0 ? STREAM_BUFFER_MS : 40)
 
@@ -288,12 +313,11 @@ function tablePriorityColumnKey(presentation) {
   return hit?.key || null
 }
 
-function tableAllRowsPriorityLow(presentation) {
+function tablePriorityValues(presentation) {
   const key = tablePriorityColumnKey(presentation)
-  if (!key) return false
+  if (!key) return []
   const rows = Array.isArray(presentation?.table?.rows) ? presentation.table.rows : []
-  if (!rows.length) return false
-  return rows.every((r) => String(r[key] || '').trim().toLowerCase() === 'low')
+  return rows.map((r) => String(r?.[key] || '').trim().toLowerCase()).filter(Boolean)
 }
 
 function interruptStyleSummary(summaryText) {
@@ -302,15 +326,39 @@ function interruptStyleSummary(summaryText) {
 }
 
 /** Snapshot table still all "low" while the bubble text is the approval bundle or claims high — hide. */
-function tableContradictsSummary(presentation, summaryText) {
-  if (!tableAllRowsPriorityLow(presentation)) return false
+function targetPriorityFromSummary(summaryText) {
   const s = String(summaryText || '').toLowerCase()
+  const match = s.match(/\bpriority\s+(?:set\s+)?(?:to|as)\s+(low|medium|high|urgent)\b/)
+  if (match) return match[1]
+  const compact = s.match(/\b(low|medium|high|urgent)-priority\b/)
+  return compact ? compact[1] : null
+}
+
+function tableContradictsSummary(presentation, summaryText) {
+  const values = tablePriorityValues(presentation)
+  if (!values.length) return false
+  const s = String(summaryText || '').toLowerCase()
+  const target = targetPriorityFromSummary(summaryText)
+  if (target && values.every((value) => value !== target)) return true
   if (interruptStyleSummary(summaryText)) return true
   return (
-    s.includes('set to high') ||
-    s.includes('priority set to high') ||
+    /\bpriority\s+(?:set\s+)?(?:to|as)\s+(low|medium|high|urgent)\b/.test(s) ||
     (s.includes('high') && (s.includes('prior') || s.includes('priority')))
   )
+}
+
+function bundleFromDecidedApprovals(approvals, getStashed) {
+  const decided = (Array.isArray(approvals) ? approvals : []).filter(
+    (a) => a?.event_type === 'approval_decided' && a?.approval_id,
+  )
+  for (let i = decided.length - 1; i >= 0; i -= 1) {
+    const row = decided[i]
+    const fromRow = resolveApprovalTablePresentation(row)
+    if (fromRow) return fromRow
+    const stashed = getStashed(row.approval_id)
+    if (stashed) return stashed
+  }
+  return null
 }
 
 /**
@@ -318,6 +366,46 @@ function tableContradictsSummary(presentation, summaryText) {
  * still show pre-commit state (e.g. priority "low") while the narrative says "high" — hide those
  * until session completes, and after complete skip stale tables when a newer snapshot is absent.
  */
+function bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePresentation) {
+  const getStashed =
+    typeof getStashedBundlePresentation === 'function' ? getStashedBundlePresentation : () => null
+  if (pendingApproval) {
+    const fromPending = resolveApprovalTablePresentation({
+      event_type: 'approval_required',
+      content: pendingApproval.risk_summary
+        ? `Waiting for your approval: ${pendingApproval.risk_summary}`
+        : '',
+      risk_summary: pendingApproval.risk_summary,
+      details: { args: pendingApproval.args || {} },
+      args: pendingApproval.args,
+    })
+    if (fromPending) return fromPending
+  }
+  const approvals = Array.isArray(turn?.approvals) ? turn.approvals : []
+  const completed = turn?.terminal?.event_type === 'session_completed'
+
+  if (completed) {
+    const fromDecided = bundleFromDecidedApprovals(approvals, getStashed)
+    if (fromDecided) return fromDecided
+    return null
+  }
+
+  if (approvals.some((a) => a?.event_type === 'approval_decided')) {
+    const fromDecided = bundleFromDecidedApprovals(approvals, getStashed)
+    if (fromDecided) return fromDecided
+  }
+
+  const reqs = approvals.filter((a) => a?.event_type === 'approval_required')
+  for (let i = reqs.length - 1; i >= 0; i -= 1) {
+    const row = reqs[i]
+    const fromRow = resolveApprovalTablePresentation(row)
+    if (fromRow) return fromRow
+    const stashed = row?.approval_id ? getStashed(row.approval_id) : null
+    if (stashed) return stashed
+  }
+  return null
+}
+
 function getLatestToolPresentation(turn) {
   const bundle = turnHasLangGraphWriteBundle(turn)
   const completed = turn?.terminal?.event_type === 'session_completed'
@@ -427,8 +515,10 @@ function ConfirmationOptions({ turn, onConfirm, disabled }) {
 function AssistantTurnBubble({
  turn,
  timestamp,
+ activitySteps,
  showApprovalCard,
  pendingApproval,
+ getStashedBundlePresentation,
  approvalReason,
  setApprovalReason,
  decideApproval,
@@ -437,12 +527,34 @@ function AssistantTurnBubble({
   isSending,
   mode,
   shouldAnimateText,
+  hideProgressSummary,
+  showResumeBanner,
 }) {
  const rawSummary = turn?.summary || 'Working...'
  const summary = useStagedAssistantSummary(rawSummary)
- const showDetails = !isProgressSummary(summary)
- const presentation = getLatestToolPresentation(turn)
+ const summaryIsProgress = isProgressSummary(summary)
+ const showSummary = !(hideProgressSummary && summaryIsProgress)
+ const showDetails = showSummary && !summaryIsProgress
+ const streamEnabled = shouldAnimateText && showDetails
+ const [textStreamDone, setTextStreamDone] = useState(() => !streamEnabled)
+
+ useLayoutEffect(() => {
+ setTextStreamDone(!streamEnabled)
+ }, [streamEnabled, summary, turn?.id])
+
+ const handleAssistantTextStreamComplete = useCallback(() => {
+ setTextStreamDone(true)
+ }, [])
+
+ const bundlePresentation = bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePresentation)
+ const presentation = bundlePresentation || getLatestToolPresentation(turn)
  const tableAnimKey = `${turn?.id || 'turn'}:${presentation?.table?.total_rows || 0}:${summary}`
+ const collapseBundleTable = Boolean(
+  presentation &&
+   !pendingApproval &&
+   Array.isArray(turn?.approvals) &&
+   turn.approvals.some((a) => a?.event_type === 'approval_decided'),
+ )
 
  return (
  <ChatMessage
@@ -451,29 +563,41 @@ function AssistantTurnBubble({
   timestamp={timestamp}
   sources={turn.sources}
   safetyContent={turn.safetyContent}
-  renderBlocks={() => (
+  showStreamGatedExtras={textStreamDone}
+ renderBlocks={() => (
  <>
+ <ActivityTimeline steps={activitySteps} />
+ {showResumeBanner ? (
+ <div className="mb-2 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-ink">
+ Applying approved changes…
+ </div>
+ ) : null}
+ {showSummary ? (
  <div className="whitespace-pre-wrap break-words text-ink">
  <StreamedAssistantText
  text={summary}
  streamKey={`${turn?.id || 'turn'}:${summary}`}
- enabled={shouldAnimateText && showDetails}
+ enabled={streamEnabled}
  sources={turn.sources}
+ onStreamComplete={handleAssistantTextStreamComplete}
  />
  </div>
+ ) : null}
  {presentation && showDetails ? (
  <TablePresentation
  presentation={presentation}
  animate={shouldAnimateText && showDetails}
  animateKey={tableAnimKey}
+ defaultCollapsed={collapseBundleTable}
  />
  ) : null}
- {showDetails ? <TurnDetails mode={mode} turn={turn} /> : null}
+ {showDetails && !showApprovalCard ? <TurnDetails mode={mode} turn={turn} /> : null}
  <ConfirmationOptions turn={turn} onConfirm={decideConfirmation} disabled={isSending} />
  {showApprovalCard ? (
  <div className="mt-3">
  <ApprovalCard
  approval={pendingApproval}
+ mode={mode}
  reason={approvalReason}
  onReasonChange={setApprovalReason}
  onApprove={(args) => decideApproval('approve', args)}
@@ -489,8 +613,8 @@ function AssistantTurnBubble({
 }
 
 function statusLoadingText(status) {
- if (status === FACTORY_AGENT_STATUS.PLANNING) return 'Building plan...'
- if (status === FACTORY_AGENT_STATUS.EXECUTING) return 'Executing steps...'
+ if (status === FACTORY_AGENT_STATUS.PLANNING) return 'Understanding your request...'
+ if (status === FACTORY_AGENT_STATUS.EXECUTING) return 'Gathering information...'
  if (status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) return 'Waiting for approval...'
  if (status === FACTORY_AGENT_STATUS.WAITING_CONFIRMATION) return 'Waiting for confirmation...'
  return 'Working...'
@@ -503,6 +627,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  session,
  messages,
  turns,
+ activitySteps,
  sessionList,
  activeSessionName,
  input,
@@ -518,6 +643,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  setApprovalReason,
  setMessageMode,
  isDecidingApproval,
+ isPollingSession,
+ getStashedBundlePresentation,
+ isResumingAfterApproval,
  handleSend,
  handleCancel,
  decideApproval,
@@ -550,7 +678,23 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  shouldAutoScrollRef.current = true
  }, [session?.session_id])
 
- const inputDisabled = isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING
+ const inputDisabled =
+  isSending ||
+  isDecidingApproval ||
+  session?.status === FACTORY_AGENT_STATUS.PLANNING
+
+ const showTopSessionProgress = Boolean(
+  session?.session_id &&
+   (isDecidingApproval ||
+    isPollingSession ||
+    isSending ||
+    [
+     FACTORY_AGENT_STATUS.PLANNING,
+     FACTORY_AGENT_STATUS.EXECUTING,
+     FACTORY_AGENT_STATUS.WAITING_APPROVAL,
+     FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+    ].includes(session?.status)),
+ )
  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(session?.status)
  const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
@@ -558,7 +702,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  if (session?.status === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
  if (session?.status === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Request a plan change while approval is pending...'
- const displayStatus = isSending ? 'WORKING' : (session?.status || 'Ready')
+ const displayStatus = friendlySessionStatus(session?.status, isSending)
 
  return (
  <div className="flex h-full relative">
@@ -717,7 +861,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  {item.name}
  </div>
  <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-subtle">
- {item.status || FACTORY_AGENT_STATUS.IDLE}
+ {friendlySessionStatus(item.status)}
  </div>
  </div>
  <span
@@ -803,6 +947,15 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  </div>
  </div>
 
+ {showTopSessionProgress ? (
+ <div
+ className="h-1 w-full shrink-0 bg-primary/35 motion-safe:animate-pulse"
+ role="status"
+ aria-busy="true"
+ aria-label={displayStatus}
+ />
+ ) : null}
+
  {error && (
  <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
  {error}
@@ -848,6 +1001,8 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  {(turns || []).map((turn, index) => {
  const hasApprovalCard =
  pendingApproval &&
+ !isResumingAfterApproval &&
+ session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
  Array.isArray(turn.approvals) &&
  turn.approvals.some((a) => a?.event_type === 'approval_required' && a?.approval_id === pendingApproval.approval_id)
 
@@ -861,17 +1016,29 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  const shouldAnimateText =
  isLatestTurn &&
  ![FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(session?.status)
+ const hideLegacyProgress = ACTIVITY_TIMELINE_ENABLED && isLatestTurn && isProgressSummary(turn?.summary)
+ const latestActivitySteps = isLatestTurn ? activitySteps : []
+ const shouldRenderAssistant =
+ !hideLegacyProgress || latestActivitySteps.length > 0 || hasApprovalCard
+ const showResumeBanner =
+ isLatestTurn &&
+ isResumingAfterApproval &&
+ session?.status === FACTORY_AGENT_STATUS.EXECUTING &&
+ !hasApprovalCard
 
  return (
  <Fragment key={turn.id}>
  {turn.user?.content ? (
  <ChatMessage message={turn.user.content} isUser timestamp={userTs} />
  ) : null}
+ {shouldRenderAssistant ? (
  <AssistantTurnBubble
  turn={turn}
  timestamp={assistantTs}
+ activitySteps={latestActivitySteps}
  showApprovalCard={hasApprovalCard}
  pendingApproval={pendingApproval}
+ getStashedBundlePresentation={getStashedBundlePresentation}
  approvalReason={approvalReason}
  setApprovalReason={setApprovalReason}
  decideApproval={decideApproval}
@@ -880,7 +1047,10 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  isSending={isSending}
  mode={mode}
  shouldAnimateText={shouldAnimateText}
+ hideProgressSummary={hideLegacyProgress}
+ showResumeBanner={showResumeBanner}
  />
+ ) : null}
  </Fragment>
  )
  })}
@@ -894,12 +1064,23 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
  )}
 
 {isSending && (turns?.length || 0) === 0 && (
+ ACTIVITY_TIMELINE_ENABLED ? (
+ activitySteps.length > 0 ? (
+ <ChatMessage
+ message=""
+ isUser={false}
+ timestamp={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+ renderBlocks={() => <ActivityTimeline steps={activitySteps} />}
+ />
+ ) : null
+ ) : (
  <ChatMessage
  message={clientProgress?.content || statusLoadingText(session?.status)}
  isUser={false}
  timestamp={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
  />
- )}
+ )
+)}
  </div>
 
  <form

@@ -220,6 +220,10 @@ class SessionResponse(BaseModel):
     status: SessionStatus
     current_intent: str | None = None
     plan_id: str | None = None
+    operation_id: str | None = Field(
+        default=None,
+        description="Primary plan id for the active logical operation; matches timeline.operation_id when set.",
+    )
     plan_version: int
     plan_hash: str | None = None
     current_step_index: int
@@ -351,12 +355,25 @@ class TimelineEventResponse(BaseModel):
     role: Literal["user", "assistant", "system"] = "assistant"
     mode: MessageMode | None = None
     turn_id: str | None = None
+    operation_id: str | None = Field(
+        default=None,
+        description="Logical operation scope (plan_id) for grouping activity across turns and approval resumes.",
+    )
     step_context: dict[str, Any] | None = None
     step_id: str | None = None
     approval_id: str | None = None
     tool_name: str | None = None
     status: str | None = None
     details: dict[str, Any] | None = None
+
+
+class ActivityStepResponse(BaseModel):
+    id: str
+    timestamp: int
+    group: Literal["planning", "research", "approval", "response", "system"]
+    label: str
+    detail: str | None = None
+    state: Literal["running", "success", "retry", "waiting", "error", "complete"]
 
 
 class SessionSnapshotResponse(BaseModel):

@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"emas/internal/domain"
 	"emas/internal/handler/dto"
 	"emas/internal/repository"
 	"emas/internal/service"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -89,6 +91,7 @@ func (h *JobHandler) ListSteps(c *gin.Context) {
 // @Param sort_dir query string false "asc|desc" Enums(asc,desc)
 // @Param limit query int false "Page size"
 // @Param offset query int false "Offset"
+// @Param fields query string false "Comma-separated fields to return (job_id,priority,product_id,status,deadline)"
 // @Success 200 {object} dto.Response{data=[]domain.Job}
 // @Failure 500 {object} dto.Response
 // @Router /jobs [get]
@@ -105,6 +108,7 @@ func (h *JobHandler) List(c *gin.Context) {
 	f.MachineID = query.MachineID
 	f.SortBy = query.SortBy
 	f.SortDir = string(query.SortDir)
+	f.Fields = parseJobFields(query.Fields)
 
 	if v := query.Start; v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -130,7 +134,75 @@ func (h *JobHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, dto.Response{Success: false, Error: err.Error()})
 		return
 	}
+	if len(f.Fields) > 0 {
+		c.JSON(http.StatusOK, dto.Response{Success: true, Data: projectJobs(jobs, f.Fields)})
+		return
+	}
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: jobs})
+}
+
+func parseJobFields(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	allowed := map[string]string{
+		"id":                 "job_id",
+		"job_id":             "job_id",
+		"product_id":         "product_id",
+		"quantity_total":     "quantity_total",
+		"quantity_completed": "quantity_completed",
+		"priority":           "priority",
+		"deadline":           "deadline",
+		"status":             "status",
+		"created_at":         "created_at",
+		"updated_at":         "updated_at",
+		"notes":              "notes",
+	}
+	fields := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, token := range strings.Split(raw, ",") {
+		normalized := strings.ToLower(strings.TrimSpace(token))
+		field, ok := allowed[normalized]
+		if !ok || seen[field] {
+			continue
+		}
+		seen[field] = true
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func projectJobs(jobs []domain.Job, fields []string) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(jobs))
+	for _, job := range jobs {
+		row := make(map[string]interface{}, len(fields))
+		for _, field := range fields {
+			switch field {
+			case "job_id":
+				row["job_id"] = job.JobID
+			case "product_id":
+				row["product_id"] = job.ProductID
+			case "quantity_total":
+				row["quantity_total"] = job.QuantityTotal
+			case "quantity_completed":
+				row["quantity_completed"] = job.QuantityCompleted
+			case "priority":
+				row["priority"] = job.Priority
+			case "deadline":
+				row["deadline"] = job.Deadline
+			case "status":
+				row["status"] = job.Status
+			case "created_at":
+				row["created_at"] = job.CreatedAt
+			case "updated_at":
+				row["updated_at"] = job.UpdatedAt
+			case "notes":
+				row["notes"] = job.Notes
+			}
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // @Summary Update a job

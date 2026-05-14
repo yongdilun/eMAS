@@ -12,6 +12,7 @@ from factory_agent.config import get_settings
 from factory_agent.graph.builder import compile_planner_graph
 from factory_agent.graph.nodes.planner_loop import make_planner_node
 from factory_agent.graph.nodes.planner_loop import decision_guard_node
+from factory_agent.graph.nodes.planner_loop import _bulk_job_priority_decision
 from factory_agent.graph.planner_graph import _initial_planner_state
 from factory_agent.graph.state import AgentState
 from factory_agent.schemas import ToolInfo
@@ -29,12 +30,21 @@ def _settings():
 
 
 def _tool(name: str, endpoint: str = "/test") -> ToolInfo:
+    input_schema = {"type": "object"}
+    query_params: list[str] = []
+    param_sources: dict[str, str] = {}
+    if name == "get__machines":
+        input_schema = {"type": "object", "properties": {"machine_id": {"type": "string"}}}
+        query_params = ["machine_id"]
+        param_sources = {"machine_id": "query"}
     return ToolInfo(
         name=name,
         description=name,
         endpoint=endpoint,
         method="GET",
-        input_schema={"type": "object"},
+        input_schema=input_schema,
+        query_params=query_params,
+        param_sources=param_sources,
         is_read_only=True,
     )
 
@@ -94,6 +104,109 @@ def test_decision_guard_passes_matching_constraint():
     }
     out = decision_guard_node(state)
     assert out["next_route"] == "tool_execution"
+
+
+def test_decision_guard_keeps_safe_read_projection_controls_without_user_provenance():
+    state: AgentState = {
+        "original_query": "change all medium priority job to high",
+        "intent": "change all medium priority job to high",
+        "messages": [],
+        "scoped_tools": [
+            ToolInfo(
+                name="get__jobs",
+                description="List jobs",
+                endpoint="/jobs",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
+                        "fields": {"type": "string"},
+                        "sort_by": {"type": "string"},
+                        "sort_dir": {"type": "string", "enum": ["asc", "desc"]},
+                        "limit": {"type": "integer"},
+                    },
+                },
+                query_params=["priority", "fields", "sort_by", "sort_dir", "limit"],
+                param_sources={
+                    "priority": "query",
+                    "fields": "query",
+                    "sort_by": "query",
+                    "sort_dir": "query",
+                    "limit": "query",
+                },
+                is_read_only=True,
+            )
+        ],
+        "context": {},
+        "current_intent": {
+            "intent_id": "i1",
+            "description": "change all medium priority job to high",
+            "explicit_constraints": [],
+            "status": "in_progress",
+        },
+        "pending_decision": {
+            "intent_id": "i1",
+            "kind": "domain_tool",
+            "tool_calls": [
+                {
+                    "tool_name": "get__jobs",
+                    "args": {
+                        "priority": "medium",
+                        "fields": "job_id,priority",
+                        "limit": 500,
+                    },
+                }
+            ],
+            "decision_summary": "filtered lookup",
+        },
+    }
+
+    out = decision_guard_node(state)
+
+    assert out["next_route"] == "tool_execution"
+    args = out["pending_decision"]["tool_calls"][0]["args"]
+    assert args == {
+        "priority": "medium",
+        "fields": "job_id,priority",
+        "limit": 500,
+    }
+
+
+def test_bulk_job_priority_lookup_uses_filter_and_minimal_fields():
+    get_jobs = ToolInfo(
+        name="get__jobs",
+        description="List jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={"type": "object"},
+        query_params=["priority", "fields", "sort_by", "sort_dir", "limit"],
+        is_read_only=True,
+    )
+    state: AgentState = {
+        "original_query": "change all medium priority job to high",
+        "intent": "change all medium priority job to high",
+        "messages": [],
+        "tool_outputs": [],
+    }
+
+    decision = _bulk_job_priority_decision(
+        state=state,
+        current_intent={
+            "intent_id": "i1",
+            "description": "change all medium priority job to high",
+        },
+        tools_by_name={"get__jobs": get_jobs},
+        settings=_settings(),
+    )
+
+    assert decision is not None
+    assert decision.tool_calls[0].tool_name == "get__jobs"
+    assert decision.tool_calls[0].args == {
+        "priority": "medium",
+        "fields": "job_id,priority",
+        "limit": 500,
+    }
 
 
 def test_decision_guard_passes_machine_ref_constraint_for_machine_id_path_arg():

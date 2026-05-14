@@ -4,10 +4,10 @@ from typing import Any
 
 from ..config import Settings
 from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
-from .approval_summary import approval_preview_rows, format_write_bundle_approval_summary
+from .approval_summary import build_approval_required_payload
 from .builder import compile_planner_graph
 from .errors import LangGraphPlannerApprovalRequired, LangGraphPlannerClarification, LangGraphPlannerError
-from .state import AgentState, normalize_graph_messages
+from .state import AgentState, normalize_graph_messages, user_query_text
 
 try:
     from langgraph.types import Command
@@ -43,12 +43,13 @@ def _approval_payload_from_state(state: Any) -> dict[str, Any] | None:
     dry = state.get("bundle_dry_run_result")
     if not isinstance(dry, dict) or dry.get("ok") is not True:
         return None
-    return {
-        "kind": "approval_required",
-        "summary": format_write_bundle_approval_summary(staged),
-        "count": len(staged),
-        "preview": approval_preview_rows(staged, limit=min(50, max(len(staged), 1))),
-    }
+    intent_text = ""
+    cur = state.get("current_intent")
+    if isinstance(cur, dict):
+        intent_text = str(cur.get("description") or "").strip()
+    if not intent_text:
+        intent_text = user_query_text(state)
+    return build_approval_required_payload(staged, intent_text=intent_text)
 
 
 def _not_found_clarification_from_state(state: Any) -> str | None:
@@ -209,11 +210,15 @@ class LangGraphPlanner:
         draft = validated.get("validated_plan")
         if not isinstance(draft, PlanDraft):
             return None
-        payload = _approval_payload_from_state(values) or {
-            "kind": "approval_required",
-            "summary": format_write_bundle_approval_summary(staged),
-            "count": len(staged),
-        }
+        intent_text = ""
+        cur = values.get("current_intent")
+        if isinstance(cur, dict):
+            intent_text = str(cur.get("description") or "").strip()
+        if not intent_text:
+            intent_text = user_query_text(values)
+        payload = _approval_payload_from_state(values) or build_approval_required_payload(
+            staged, intent_text=intent_text
+        )
         commit_state = {
             **values,
             **validated,

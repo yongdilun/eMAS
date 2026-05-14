@@ -6,6 +6,7 @@
  * @property {'IDLE'|'PLANNING'|'WAITING_APPROVAL'|'WAITING_CONFIRMATION'|'EXECUTING'|'BLOCKED'|'FAILED'|'COMPLETED'} status
  * @property {string|null} [current_intent]
  * @property {string|null} [plan_id]
+ * @property {string|null} [operation_id] Logical operation scope (plan_id) for grouping activity across turns and approval resumes.
  * @property {number} [plan_version]
  * @property {string|null} [plan_hash]
  * @property {number} [current_step_index]
@@ -78,6 +79,8 @@
  * @property {string} created_at
  * @property {'user'|'assistant'|'system'} role
  * @property {'normal'|'plan'|null} [mode]
+ * @property {string|null} [turn_id]
+ * @property {string|null} [operation_id] Same as plan scope once known; used for activity grouping (not message turn_id).
  * @property {string|null} [step_id]
  * @property {string|null} [approval_id]
  * @property {string|null} [tool_name]
@@ -92,6 +95,16 @@
  * @property {PlanStepResponse[]} steps
  * @property {ApprovalResponse|null} [pending_approval]
  * @property {TimelineEventResponse[]} timeline
+ */
+
+/**
+ * @typedef {Object} ActivityStep
+ * @property {string} id
+ * @property {number} timestamp
+ * @property {'planning'|'research'|'approval'|'response'|'system'} group
+ * @property {string} label
+ * @property {string|null} [detail]
+ * @property {'running'|'success'|'retry'|'waiting'|'error'|'complete'} state
  */
 
 export {}

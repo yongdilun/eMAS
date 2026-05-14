@@ -72,6 +72,28 @@ func TestJobHandler_CreateGetListUpdateDelete(t *testing.T) {
 		t.Errorf("list jobs: success=%v, len=%d", listResp.Success, len(listResp.Data))
 	}
 
+	w = testutil.Request(r, "GET", "/api/v1/jobs?priority=high&fields=job_id,priority", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list projected jobs: got %d", w.Code)
+	}
+	var projectedResp struct {
+		Success bool                     `json:"success"`
+		Data    []map[string]interface{} `json:"data"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &projectedResp)
+	if !projectedResp.Success || len(projectedResp.Data) < 1 {
+		t.Fatalf("list projected jobs: success=%v, len=%d", projectedResp.Success, len(projectedResp.Data))
+	}
+	if _, ok := projectedResp.Data[0]["job_id"]; !ok {
+		t.Fatalf("projected job missing job_id: %#v", projectedResp.Data[0])
+	}
+	if _, ok := projectedResp.Data[0]["priority"]; !ok {
+		t.Fatalf("projected job missing priority: %#v", projectedResp.Data[0])
+	}
+	if _, ok := projectedResp.Data[0]["notes"]; ok {
+		t.Fatalf("projected job should not include notes: %#v", projectedResp.Data[0])
+	}
+
 	// Update
 	updateBody := map[string]interface{}{"status": "scheduled"}
 	w = testutil.Request(r, "PUT", "/api/v1/jobs/"+jobID, updateBody)

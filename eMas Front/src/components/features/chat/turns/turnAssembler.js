@@ -1,3 +1,5 @@
+import { compactInterruptApprovalHeadline } from '../factory-agent/approvalInterruptDisplay.js'
+
 export const getReadableAction = (toolName) => {
   const raw = String(toolName || '').trim()
   const lower = raw.toLowerCase()
@@ -174,6 +176,17 @@ function latestToolSummary(turn) {
     if (summary) return summary
   }
   return null
+}
+
+function latestPlanForAnswer(turn) {
+  const thinking = Array.isArray(turn?.thinking) ? turn.thinking : []
+  if (!thinking.length) return null
+  for (let i = thinking.length - 1; i >= 0; i -= 1) {
+    const row = thinking[i]
+    const status = String(row?.details?.status || row?.status || '').toUpperCase()
+    if (status === 'COMPLETED') return row
+  }
+  return thinking[thinking.length - 1]
 }
 
 function nonGenericToolLines(turn) {
@@ -426,7 +439,7 @@ export function computeFactoryAgentTurnSummary(turn) {
     return terminal.content || lastTool?.content || 'Execution stopped.'
   }
   if (terminal?.event_type === 'session_completed') {
-    const lastPlan = Array.isArray(turn.thinking) ? turn.thinking[turn.thinking.length - 1] : null
+    const lastPlan = latestPlanForAnswer(turn)
 
     // RAG / Conversation Support: If no tools were executed, the plan explanation IS the answer.
     if (lastPlan?.content && (!turn.tools || turn.tools.length === 0)) {
@@ -450,13 +463,18 @@ export function computeFactoryAgentTurnSummary(turn) {
   }
 
   if (lastApproval?.event_type === 'approval_required' && waitingOnApproval) {
-    return lastApproval.content || 'Waiting for approval.'
+    const bui = lastApproval.details?.args?.bundle_ui
+    if (bui && typeof bui === 'object' && bui.headline) return String(bui.headline)
+    const raw = lastApproval.content || ''
+    const compact = compactInterruptApprovalHeadline(raw)
+    if (compact) return compact
+    return raw || 'Waiting for approval.'
   }
   if (lastApproval?.event_type === 'approval_decided' && waitingOnApproval) {
     return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
   }
 
-  const lastPlan = Array.isArray(turn.thinking) ? turn.thinking[turn.thinking.length - 1] : null
+  const lastPlan = latestPlanForAnswer(turn)
   const planIsCompleted = String(lastPlan?.details?.status || '').toUpperCase() === 'COMPLETED'
   const lastToolDone = String(lastTool?.status || '').toUpperCase() === 'DONE'
   
@@ -490,8 +508,8 @@ export function computeFactoryAgentTurnSummary(turn) {
     const action = lastTool?.action || getReadableAction(lastTool?.tool_name)
     return `${action} ${label}...`
   }
-  if (lastPlan?.content) return 'Planning...'
-  if (turn.user?.content) return 'Splitting intent...'
+  if (lastPlan?.content) return 'Understanding your request...'
+  if (turn.user?.content) return 'Understanding your request...'
 
   return 'Working...'
 }

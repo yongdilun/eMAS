@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { factoryAgentApi } from '../../../../services/factoryAgentApi'
 import { toList } from '../../../../services/api'
+import { isInterruptBundleApprovalText, shortenApprovalRiskSummary } from './approvalInterruptDisplay.js'
 
 const levelStyles = {
  NONE: 'bg-primary/10 text-primary',
@@ -13,6 +14,15 @@ const levelStyles = {
 function normalizeArgs(args) {
  if (!args || typeof args !== 'object' || Array.isArray(args)) return {}
  return args
+}
+
+function humanizeFieldName(name) {
+ return String(name || 'field')
+ .replace(/\{.*?\}/g, '')
+ .replace(/[_-]+/g, ' ')
+ .replace(/\bid\b/gi, 'ID')
+ .replace(/\s+/g, ' ')
+ .trim()
 }
 
 function resolveSchemaType(schema = {}) {
@@ -273,12 +283,13 @@ function castFieldValue(rawValue, field) {
  return String(rawValue)
 }
 
-const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, deciding }) => {
+const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onApprove, onReject, deciding }) => {
  const safeApproval = approval || {}
 
  const level = safeApproval.side_effect_level || 'HIGH'
  const badgeClass = levelStyles[level] || levelStyles.HIGH
  const isPlanApproval = safeApproval.subject_type === 'plan'
+ const isDevMode = mode === 'dev'
  const [tools, setTools] = useState([])
  const [formValues, setFormValues] = useState(() => normalizeArgs(safeApproval.args))
  const [dynamicOptionsByField, setDynamicOptionsByField] = useState({})
@@ -391,6 +402,13 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  }
  }, [fields])
 
+ const displayRiskSummary = useMemo(() => {
+ const raw = safeApproval.risk_summary || ''
+ if (!raw.trim()) return 'No risk summary provided.'
+ if (isInterruptBundleApprovalText(raw)) return shortenApprovalRiskSummary(raw) || raw.trim()
+ return raw
+ }, [safeApproval.risk_summary])
+
  const resolved = useMemo(() => {
  const baseArgs = normalizeArgs(safeApproval.args)
  const unknownArgs = { ...baseArgs }
@@ -403,11 +421,11 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  const raw = formValues[field.name]
  const casted = castFieldValue(raw, field)
  if (field.required && (casted === undefined || casted === null || casted === '')) {
- errors.push(`${field.name} is required`)
+ errors.push(`${humanizeFieldName(field.name)} is required`)
  continue
  }
  if (Number.isNaN(casted)) {
- errors.push(`${field.name} has invalid ${field.type} value`)
+ errors.push(`${humanizeFieldName(field.name)} has invalid value`)
  continue
  }
  if (casted !== undefined) {
@@ -438,13 +456,17 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  </div>
 
  <div className="mt-2 text-xs text-ink-muted">
+ {isDevMode ? (
  <div><span className="font-semibold">{isPlanApproval ? 'Plan' : 'Tool'}:</span> {isPlanApproval ? (safeApproval.plan_id || 'Execution proposal') : safeApproval.tool_name}</div>
- <div className="mt-1"><span className="font-semibold">Risk:</span> {safeApproval.risk_summary || 'No risk summary provided.'}</div>
+ ) : (
+ <div><span className="font-semibold">Action:</span> {isPlanApproval ? 'Review execution proposal' : 'Review proposed factory action'}</div>
+ )}
+ <div className="mt-1"><span className="font-semibold">Risk:</span> {displayRiskSummary}</div>
  </div>
 
  {required.length > 0 ? (
  <div className="mt-2 text-[11px] text-ink-muted">
- <span className="font-semibold">Required fields:</span>{' '}
+ <span className="font-semibold">{isDevMode ? 'Required fields' : 'Required information'}:</span>{' '}
  {required.map((k) => (
  <span
  key={k}
@@ -454,7 +476,7 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  : 'bg-surface-3 text-ink-subtle'
  }`}
  >
- {k}
+ {isDevMode ? k : humanizeFieldName(k)}
  </span>
  ))}
  </div>
@@ -483,7 +505,7 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  return (
  <label key={field.name} htmlFor={id} className="block">
  <span className="text-[11px] text-ink-subtle">
- {field.name}{field.required ? ' *' : ''}
+ {isDevMode ? field.name : humanizeFieldName(field.name)}{field.required ? ' *' : ''}
  </span>
  {hasSelectSource && allSelectOptions.length > 0 ? (
  <select
@@ -514,7 +536,7 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  rows={3}
  value={typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2)}
  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
- placeholder={`Enter ${field.type} as JSON`}
+ placeholder={isDevMode ? `Enter ${field.type} as JSON` : 'Enter details'}
  />
  ) : (
  <input
@@ -553,10 +575,21 @@ const ApprovalCard = ({ approval, reason, onReasonChange, onApprove, onReject, d
  <button
  type="button"
  disabled={deciding}
+ aria-busy={deciding ? 'true' : 'false'}
  onClick={handleApprove}
- className="px-3 py-1.5 rounded-md text-xs font-semibold bg-primary text-white hover:bg-primary-hover disabled:opacity-60"
+ className="inline-flex min-w-[7.5rem] items-center justify-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold bg-primary text-white hover:bg-primary-hover disabled:opacity-70"
  >
- Approve
+ {deciding ? (
+ <>
+ <span
+ className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/35 border-t-white"
+ aria-hidden
+ />
+ <span>Approving...</span>
+ </>
+ ) : (
+ 'Approve'
+ )}
  </button>
  <button
  type="button"

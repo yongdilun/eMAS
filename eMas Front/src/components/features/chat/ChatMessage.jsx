@@ -19,6 +19,8 @@ const ChatMessage = ({
   messageAfterBlocks = false,
   sources = [],
   safetyContent = null,
+  /** When false, hides RAG chrome (sources list, safety block, “Based on…” line) until streaming copy finishes. */
+  showStreamGatedExtras = true,
 }) => {
   const hasMessage = message != null && String(message).trim() !== ''
   const bubbleAnim = !isUser && animateIn ? 'emas-chat-enter' : ''
@@ -177,8 +179,8 @@ const ChatMessage = ({
           >
             {hasAssistantBody ? (
               <div className="border-b border-hairline bg-surface-2 px-5 py-3">
-                <div className="text-eyebrow uppercase tracking-[0.04em] text-ink-tertiary">Answer</div>
-                {sources?.length > 0 && (
+                <div className="text-eyebrow tracking-[0.04em] text-ink-tertiary">eMAS Response</div>
+                {showStreamGatedExtras && sources?.length > 0 && (
                   <p className="mt-1.5 text-caption leading-snug text-ink-subtle">{formatBasedOnLine(sources)}</p>
                 )}
               </div>
@@ -188,13 +190,12 @@ const ChatMessage = ({
                 {messageAfterBlocks ? renderBlocks?.() : null}
                 {hasMessage ? <div>{renderFormattedText(message)}</div> : null}
                 {!messageAfterBlocks ? renderBlocks?.() : null}
-                {!isUser && renderSourcesList()}
+                {!isUser && showStreamGatedExtras && renderSourcesList()}
               </div>
+              {!isUser && showStreamGatedExtras && renderSafetySection()}
             </div>
           </div>
         )}
-
-        {!isUser && renderSafetySection()}
       </div>
     </div>
   )

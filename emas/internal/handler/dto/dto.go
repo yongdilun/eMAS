@@ -36,6 +36,7 @@ type JobListQuery struct {
 	SortDir   SortDirection `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit     int           `form:"limit" binding:"omitempty,gte=0"`
 	Offset    int           `form:"offset" binding:"omitempty,gte=0"`
+	Fields    string        `form:"fields"`
 }
 
 type ProductListQuery struct {

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { classifyFactoryAgentError, normalizeFactoryAgentError } from '../../../../services/factoryAgentErrors'
-import { FACTORY_AGENT_STATUS, factoryAgentApi, factoryAgentStreamUrl } from '../../../../services/factoryAgentApi'
+import { FACTORY_AGENT_STATUS, factoryAgentApi } from '../../../../services/factoryAgentApi'
 import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../turns/turnAssembler'
+import { buildActivityStepsFromSnapshot, finalizeHistoricalActivityStates } from './activityTimelineUtils'
+import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 
 const DEFAULT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend-operator'
+const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
+  String(import.meta.env?.VITE_FACTORY_AGENT_ACTIVITY_TIMELINE ?? 'true').trim().toLowerCase(),
+)
 const ACTIVE_SESSION_KEY = 'factory_agent_active_session_id'
 const SESSION_COUNTER_KEY = 'factory_agent_session_counter'
 const MESSAGE_MODE_KEY = 'factory_agent_message_mode'
@@ -44,31 +49,6 @@ function nextSessionName() {
 
 function normalizeTextKey(value) {
   return String(value || '').trim().toLowerCase()
-}
-
-function inferProgressTarget(text) {
-  const lower = normalizeTextKey(text)
-  const priority =
-    /\blow[-\s]+priority\b/.test(lower) ? 'low-priority ' :
-    /\bhigh[-\s]+priority\b/.test(lower) ? 'high-priority ' :
-    /\bmedium[-\s]+priority\b/.test(lower) ? 'medium-priority ' :
-    ''
-
-  if (/\bjob(s)?\b/.test(lower)) return `${priority}jobs`.trim()
-  if (/\bmachine(s)?\b/.test(lower)) return `${priority}machines`.trim()
-  if (/\b(material|materials|inventory)\b/.test(lower)) return `${priority}inventory`.trim()
-  if (/\bproposal(s)?\b/.test(lower)) return `${priority}proposals`.trim()
-  if (/\bapproval(s)?\b/.test(lower)) return `${priority}approvals`.trim()
-  return `${priority}records`.trim()
-}
-
-function progressTextForStage(stage, text) {
-  const target = inferProgressTarget(text)
-  if (stage === 'intent') return 'Understanding...'
-  if (stage === 'planning') return 'Planning query...'
-  if (stage === 'tool') return `Finding ${target}...`
-  if (stage === 'answer') return 'Preparing answer...'
-  return 'Validating results...'
 }
 
 function turnHasRealAssistantProgress(turn) {
@@ -129,6 +109,7 @@ export function useFactoryAgentChat() {
   const [plan, setPlan] = useState(null)
   const [steps, setSteps] = useState([])
   const [timeline, setTimeline] = useState([])
+  const [activitySteps, setActivitySteps] = useState([])
   const [sessionList, setSessionList] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -139,7 +120,7 @@ export function useFactoryAgentChat() {
   const [approvalReason, setApprovalReason] = useState('')
   const [isDecidingApproval, setIsDecidingApproval] = useState(false)
   const [isPollingSession, setIsPollingSession] = useState(false)
-  const [isPollingApprovals, setIsPollingApprovals] = useState(false)
+  const [isResumingAfterApproval, setIsResumingAfterApproval] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState(null)
   const [optimisticMessages, setOptimisticMessages] = useState([])
   const [clientProgress, setClientProgress] = useState(null)
@@ -149,8 +130,12 @@ export function useFactoryAgentChat() {
   })
 
   const sessionPollTimerRef = useRef(null)
-  const semanticSourceRef = useRef(null)
   const clientProgressTimersRef = useRef([])
+  /** Persisted table presentation keyed by approval_id after approve (timeline may omit args). */
+  const bundleTableByApprovalIdRef = useRef(new Map())
+  /** Suppress server stale `pending_approval` until snapshot clears it (same approval_id). */
+  const dismissedPendingApprovalIdsRef = useRef(new Set())
+  const lastSnapshotSessionIdRef = useRef(null)
 
   const mergeSessionSummary = useCallback((summary) => {
     if (!summary?.session_id) return
@@ -180,6 +165,18 @@ export function useFactoryAgentChat() {
   const startClientProgress = useCallback((sessionId, text) => {
     if (!sessionId) return
     clearClientProgressTimers()
+    if (ACTIVITY_TIMELINE_ENABLED) {
+      setClientProgress(null)
+      setActivitySteps([{
+        id: 'client_activity_pending',
+        timestamp: Date.now() / 1000,
+        group: 'planning',
+        label: 'Working on your request',
+        detail: 'This updates as the session progresses',
+        state: 'running',
+      }])
+      return
+    }
     const startedAt = new Date().toISOString()
     const requestKey = `${sessionId}:${Date.now()}`
 
@@ -188,7 +185,15 @@ export function useFactoryAgentChat() {
         requestKey,
         sessionId,
         text,
-        content: progressTextForStage(stage, text),
+        content: stage === 'intent'
+          ? 'Understanding...'
+          : stage === 'planning'
+          ? 'Understanding your request...'
+          : stage === 'tool'
+          ? 'Checking information...'
+          : stage === 'answer'
+          ? 'Finalizing answer...'
+          : 'Reviewing results...',
         stage,
         startedAt,
       })
@@ -218,11 +223,48 @@ export function useFactoryAgentChat() {
 
   const applySnapshot = useCallback((snapshot) => {
     const nextSession = snapshot?.session || null
+    const sid = nextSession?.session_id || null
+    if (sid && lastSnapshotSessionIdRef.current && sid !== lastSnapshotSessionIdRef.current) {
+      dismissedPendingApprovalIdsRef.current.clear()
+      setIsResumingAfterApproval(false)
+    }
+    lastSnapshotSessionIdRef.current = sid
+
     setSession(nextSession)
     setPlan(snapshot?.plan || null)
     setSteps(Array.isArray(snapshot?.steps) ? snapshot.steps : [])
-    setTimeline(Array.isArray(snapshot?.timeline) ? snapshot.timeline : [])
-    setPendingApproval(snapshot?.pending_approval || null)
+    const nextTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
+    setTimeline(nextTimeline)
+    if (ACTIVITY_TIMELINE_ENABLED) {
+      setActivitySteps((prev) => {
+        const clientOnly = (Array.isArray(prev) ? prev : []).filter((s) =>
+          String(s?.id || '').startsWith('client_activity_'),
+        )
+        const built = buildActivityStepsFromSnapshot({
+          session: nextSession,
+          plan: snapshot?.plan || null,
+          steps: Array.isArray(snapshot?.steps) ? snapshot.steps : [],
+          timeline: nextTimeline,
+          pending_approval: snapshot?.pending_approval || null,
+        })
+        if (built.length) return finalizeHistoricalActivityStates(built)
+        return clientOnly
+      })
+    }
+    if (nextSession?.status !== FACTORY_AGENT_STATUS.WAITING_APPROVAL) {
+      setIsResumingAfterApproval(false)
+    }
+    const serverPending = snapshot?.pending_approval || null
+    const spId = serverPending?.approval_id || null
+    const waitingApproval = nextSession?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL
+    if (!spId) {
+      dismissedPendingApprovalIdsRef.current.clear()
+      setPendingApproval(null)
+    } else if (!waitingApproval || dismissedPendingApprovalIdsRef.current.has(spId)) {
+      setPendingApproval(null)
+    } else {
+      setPendingApproval(serverPending)
+    }
     setLastSyncedAt(new Date().toISOString())
     if (nextSession?.session_id && hasStorage()) {
       localStorage.setItem(ACTIVE_SESSION_KEY, nextSession.session_id)
@@ -240,7 +282,17 @@ export function useFactoryAgentChat() {
     setPlan(null)
     setSteps([])
     setTimeline([])
+    setActivitySteps([])
     setPendingApproval(null)
+    bundleTableByApprovalIdRef.current.clear()
+    dismissedPendingApprovalIdsRef.current.clear()
+    lastSnapshotSessionIdRef.current = null
+    setIsResumingAfterApproval(false)
+  }, [])
+
+  const getStashedBundlePresentation = useCallback((approvalId) => {
+    if (!approvalId) return null
+    return bundleTableByApprovalIdRef.current.get(approvalId) ?? null
   }, [])
 
   const refreshSessionList = useCallback(async () => {
@@ -269,6 +321,11 @@ export function useFactoryAgentChat() {
     }
   }, [clearSnapshotState, refreshSnapshot])
 
+  const appendUserMessageAndRefresh = useCallback(async (sessionId, text, mode) => {
+    await factoryAgentApi.addMessage(sessionId, { role: 'user', content: text, mode })
+    await safelyRefreshSnapshot(sessionId)
+  }, [safelyRefreshSnapshot])
+
   const clearSessionPoll = useCallback(() => {
     if (sessionPollTimerRef.current) {
       clearInterval(sessionPollTimerRef.current)
@@ -281,11 +338,10 @@ export function useFactoryAgentChat() {
     if (!session?.session_id) return
     try {
       await safelyRefreshSnapshot(session.session_id)
-      setIsPollingApprovals(session.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL)
     } catch (err) {
       setError(normalizeFactoryAgentError(err, 'Failed to refresh session'))
     }
-  }, [safelyRefreshSnapshot, session?.session_id, session?.status])
+  }, [safelyRefreshSnapshot, session?.session_id])
 
   const sessionPollIntervalMs = useMemo(() => {
     if (!session?.status) return null
@@ -300,71 +356,11 @@ export function useFactoryAgentChat() {
     clearSessionPoll()
     if (!sessionPollIntervalMs || !session?.session_id) return
     setIsPollingSession(true)
-    setIsPollingApprovals(session.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL)
     sessionPollTimerRef.current = setInterval(pollSnapshot, sessionPollIntervalMs)
     return clearSessionPoll
   }, [clearSessionPoll, pollSnapshot, session?.session_id, session?.status, sessionPollIntervalMs])
 
-  useEffect(() => clearSessionPoll, [clearSessionPoll])
   useEffect(() => clearClientProgressTimers, [clearClientProgressTimers])
-
-  useEffect(() => {
-    if (semanticSourceRef.current) {
-      semanticSourceRef.current.close()
-      semanticSourceRef.current = null
-    }
-    if (!session?.session_id) return
-
-    const sessionId = session.session_id
-    const url = factoryAgentStreamUrl(factoryAgentApi.semanticEventsPath(sessionId))
-    const es = new EventSource(url)
-    semanticSourceRef.current = es
-
-    const handleSemanticEvent = async (evt) => {
-      try {
-        const data = JSON.parse(evt.data || '{}')
-        const kind = String(data?.type || '')
-        if (!kind || kind === 'HEARTBEAT' || kind === 'STREAM_READY') return
-        if (
-          kind === 'TOOL_STARTED' ||
-          kind === 'TOOL_RESULT' ||
-          kind === 'APPROVAL_REQUIRED' ||
-          kind === 'APPROVAL_DECIDED' ||
-          kind === 'SESSION_COMPLETED' ||
-          kind === 'SESSION_FAILED' ||
-          kind === 'SESSION_BLOCKED' ||
-          kind === 'PLANNER_THINKING' ||
-          kind === 'REPLAN_REQUESTED' ||
-          kind === 'EXECUTION_STARTED'
-        ) {
-          await safelyRefreshSnapshot(sessionId)
-        }
-      } catch {
-        // Keep polling fallback active.
-      }
-    }
-
-    es.addEventListener('semantic', handleSemanticEvent)
-    es.onmessage = handleSemanticEvent
-
-    es.onopen = () => {
-      safelyRefreshSnapshot(sessionId).catch(() => {
-        // Snapshot polling remains the recovery fallback.
-      })
-    }
-
-    es.onerror = () => {
-      safelyRefreshSnapshot(sessionId).catch(() => {
-        // EventSource will retry; polling also remains active for live sessions.
-      })
-    }
-
-    return () => {
-      es.removeEventListener('semantic', handleSemanticEvent)
-      es.close()
-      if (semanticSourceRef.current === es) semanticSourceRef.current = null
-    }
-  }, [safelyRefreshSnapshot, session?.session_id])
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -481,19 +477,16 @@ export function useFactoryAgentChat() {
       if ([FACTORY_AGENT_STATUS.IDLE, FACTORY_AGENT_STATUS.BLOCKED, FACTORY_AGENT_STATUS.FAILED, FACTORY_AGENT_STATUS.COMPLETED].includes(current.status)) {
         await runIntent(current.session_id, text, messageMode)
       } else if (current.status === FACTORY_AGENT_STATUS.WAITING_CONFIRMATION) {
-        await factoryAgentApi.addMessage(current.session_id, { role: 'user', content: text, mode: messageMode })
-        await safelyRefreshSnapshot(current.session_id)
+        await appendUserMessageAndRefresh(current.session_id, text, messageMode)
       } else if (current.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) {
-        await factoryAgentApi.addMessage(current.session_id, { role: 'user', content: text, mode: messageMode })
-        await safelyRefreshSnapshot(current.session_id)
+        await appendUserMessageAndRefresh(current.session_id, text, messageMode)
         const planResp = await factoryAgentApi.createPlan(current.session_id)
         if (!(planResp?.status === 'COMPLETED')) {
           await executeWithRetry(current.session_id, { background: messageMode !== 'plan' })
         }
         await safelyRefreshSnapshot(current.session_id)
       } else if (current.status === FACTORY_AGENT_STATUS.EXECUTING) {
-        await factoryAgentApi.addMessage(current.session_id, { role: 'user', content: text, mode: messageMode })
-        await safelyRefreshSnapshot(current.session_id)
+        await appendUserMessageAndRefresh(current.session_id, text, messageMode)
       } else {
         await safelyRefreshSnapshot(current.session_id)
       }
@@ -507,6 +500,7 @@ export function useFactoryAgentChat() {
     }
   }, [
     appendOptimisticUserMessage,
+    appendUserMessageAndRefresh,
     clearClientProgress,
     executeWithRetry,
     input,
@@ -517,7 +511,6 @@ export function useFactoryAgentChat() {
     runIntent,
     safelyRefreshSnapshot,
     session,
-    setMessageMode,
     startClientProgress,
     startNewSession,
   ])
@@ -558,35 +551,58 @@ export function useFactoryAgentChat() {
     if (!pendingApproval?.approval_id || isDecidingApproval) return
     setIsDecidingApproval(true)
     setError(null)
+
+    const stashBundle = (appr, argsForBundle) => {
+      const args = argsForBundle && typeof argsForBundle === 'object' ? argsForBundle : {}
+      const frozen = resolveApprovalTablePresentation({
+        event_type: 'approval_required',
+        content: appr.risk_summary ? `Waiting for your approval: ${appr.risk_summary}` : '',
+        risk_summary: appr.risk_summary,
+        details: { args },
+        args,
+      })
+      const aid = appr.approval_id
+      if (frozen && aid) bundleTableByApprovalIdRef.current.set(aid, frozen)
+    }
+
     try {
       if (decision === 'approve') {
         const payload = { decided_by: DEFAULT_USER_ID }
         if (argsOverride && typeof argsOverride === 'object') payload.args = argsOverride
-        await factoryAgentApi.approve(pendingApproval.approval_id, payload)
-        if (session?.session_id) {
-          try {
-            await executeWithRetry(session.session_id)
-          } catch {
-            // Backend worker may already have resumed the session.
-          }
-        }
+        const snapshotApproval = pendingApproval
+        const resolvedId = snapshotApproval.approval_id
+        await factoryAgentApi.approve(resolvedId, payload)
+        setIsResumingAfterApproval(true)
+        dismissedPendingApprovalIdsRef.current.add(resolvedId)
+        const mergedArgs =
+          argsOverride && typeof argsOverride === 'object'
+            ? { ...(snapshotApproval.args && typeof snapshotApproval.args === 'object' ? snapshotApproval.args : {}), ...argsOverride }
+            : snapshotApproval.args || {}
+        stashBundle(snapshotApproval, mergedArgs)
+        setPendingApproval(null)
       } else {
-        await factoryAgentApi.reject(pendingApproval.approval_id, {
+        const rejectId = pendingApproval.approval_id
+        await factoryAgentApi.reject(rejectId, {
           decided_by: DEFAULT_USER_ID,
           rejection_reason: approvalReason?.trim() || undefined,
         })
+        dismissedPendingApprovalIdsRef.current.add(rejectId)
+        setIsResumingAfterApproval(false)
+        stashBundle(pendingApproval, pendingApproval.args || {})
+        setPendingApproval(null)
       }
       setApprovalReason('')
       if (session?.session_id) {
-        await safelyRefreshSnapshot(session.session_id)
+        if (decision !== 'approve') await safelyRefreshSnapshot(session.session_id)
         await refreshSessionList()
       }
     } catch (err) {
       setError(normalizeFactoryAgentError(err, 'Failed to submit approval decision'))
+      setIsResumingAfterApproval(false)
     } finally {
       setIsDecidingApproval(false)
     }
-  }, [approvalReason, executeWithRetry, isDecidingApproval, pendingApproval?.approval_id, refreshSessionList, safelyRefreshSnapshot, session?.session_id])
+  }, [approvalReason, isDecidingApproval, pendingApproval, refreshSessionList, safelyRefreshSnapshot, session?.session_id])
 
   const retryFromCurrent = useCallback(async () => {
     if (!session?.session_id) return
@@ -653,7 +669,13 @@ export function useFactoryAgentChat() {
       ...t,
       summary: computeFactoryAgentTurnSummary(t),
     }))
-    if (!isSending || !clientProgress || clientProgress.sessionId !== session?.session_id || !mapped.length) {
+    if (
+      ACTIVITY_TIMELINE_ENABLED ||
+      !isSending ||
+      !clientProgress ||
+      clientProgress.sessionId !== session?.session_id ||
+      !mapped.length
+    ) {
       return mapped
     }
 
@@ -681,6 +703,7 @@ export function useFactoryAgentChat() {
     plan,
     steps,
     timeline,
+    activitySteps,
     messages,
     turns,
     sessionList,
@@ -698,7 +721,8 @@ export function useFactoryAgentChat() {
     setMessageMode,
     isDecidingApproval,
     isPollingSession,
-    isPollingApprovals,
+    isResumingAfterApproval,
+    getStashedBundlePresentation,
     lastSyncedAt,
     clientProgress,
     handleSend,

@@ -14,7 +14,7 @@ function JsonDetails({ summary, value }) {
  )
 }
 
-export function TablePresentation({ presentation, animate = false, animateKey = 'table' }) {
+export function TablePresentation({ presentation, animate = false, animateKey = 'table', defaultCollapsed = false }) {
  const table = presentation?.table
  const columns = Array.isArray(table?.columns) ? table.columns : []
  const rows = Array.isArray(table?.rows) ? table.rows : []
@@ -42,8 +42,12 @@ export function TablePresentation({ presentation, animate = false, animateKey = 
  if (!columns.length || !rows.length) return null
  const renderedRows = animate ? rows.slice(0, visibleRows) : rows
 
- return (
- <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-surface-1">
+ const tableSurfaceClass = defaultCollapsed
+  ? 'overflow-hidden bg-surface-1'
+  : 'overflow-hidden rounded-lg border border-hairline bg-surface-1'
+
+ const tableBlock = (
+ <div className={tableSurfaceClass}>
  {analysisFacts.length ? (
  <div className="border-b border-hairline bg-surface-2 px-3 py-2 text-[11px] text-ink-muted">
  <div className="space-y-1">
@@ -85,6 +89,28 @@ export function TablePresentation({ presentation, animate = false, animateKey = 
  </div>
  ) : null}
  </div>
+ )
+
+ if (!defaultCollapsed) {
+ return <div className="mt-3">{tableBlock}</div>
+ }
+
+ const rowCount = rows.length
+ const summaryLabel =
+  rowCount > 0 ? `Affected records (${rowCount}) — tap to expand` : 'Affected records — tap to expand'
+
+ return (
+ <details className="mt-3 group rounded-lg border border-hairline bg-surface-1">
+ <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-ink-subtle marker:content-none [&::-webkit-details-marker]:hidden">
+ <span className="inline-flex items-center gap-1">
+ <span className="material-symbols-outlined text-sm text-ink-muted transition-transform group-open:rotate-180">
+ expand_more
+ </span>
+ {summaryLabel}
+ </span>
+ </summary>
+ <div className="border-t border-hairline px-0 pb-0 pt-2">{tableBlock}</div>
+ </details>
  )
 }
 

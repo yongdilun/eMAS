@@ -104,3 +104,113 @@ def approval_preview_rows(staged: list[dict[str, Any]], *, limit: int = 5) -> li
         for x in staged[:limit]
         if isinstance(x, dict)
     ]
+
+
+def _tool_is_job_put(tool_name: Any) -> bool:
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return False
+    return "put__jobs" in tool_name.lower()
+
+
+def build_job_priority_bundle_uiview(
+    staged: list[dict[str, Any]],
+    *,
+    intent_text: str = "",
+) -> dict[str, Any] | None:
+    """Structured UI bundle for bulk job priority updates (no LLM).
+
+    Returned shape is stable for API/UI:
+    ``{ "kind": "job_priority_bundle", "headline": str, "rows": [...], "previous_priority": str, "new_priority": str }``
+    """
+    from .planner_graph_helpers import _infer_bulk_job_priority_mutation
+
+    clean = [x for x in staged if isinstance(x, dict)]
+    if not clean or not all(_tool_is_job_put(x.get("tool_name")) for x in clean):
+        return None
+
+    pairs: list[tuple[str, str]] = []
+    for x in clean:
+        args = x.get("args") if isinstance(x.get("args"), dict) else {}
+        jid = args.get("id") or args.get("job_id")
+        if not isinstance(jid, str) or not jid.strip():
+            return None
+        pri = args.get("priority")
+        if not isinstance(pri, str) or not pri.strip():
+            return None
+        pairs.append((jid.strip(), pri.strip().lower()))
+
+    new_vals = [p[1] for p in pairs]
+    uniform_new = len(set(new_vals)) == 1
+
+    mut = _infer_bulk_job_priority_mutation(intent_text.strip())
+    prev_from_intent: str | None = None
+    if isinstance(mut, dict) and mut.get("action") == "update_priority":
+        prev_from_intent = str(mut.get("source_priority") or "").strip().lower() or None
+
+    rows_out: list[dict[str, str]] = []
+    if prev_from_intent and uniform_new:
+        for jid, new_p in pairs:
+            rows_out.append(
+                {"job_id": jid, "previous_priority": prev_from_intent, "new_priority": new_p},
+            )
+        n = len(rows_out)
+        prev_u = prev_from_intent
+        new_u = new_vals[0]
+        headline = f"{n} job{'s' if n != 1 else ''} will be updated from {prev_u} to {new_u} priority."
+        return {
+            "kind": "job_priority_bundle",
+            "headline": headline,
+            "previous_priority": prev_u,
+            "new_priority": new_u,
+            "rows": rows_out,
+        }
+
+    if uniform_new:
+        prev_arg = _staged_uniform_arg(clean, "previous_priority")
+        if isinstance(prev_arg, str) and prev_arg.strip():
+            prev_u = prev_arg.strip().lower()
+            new_u = new_vals[0]
+            for jid, new_p in pairs:
+                rows_out.append({"job_id": jid, "previous_priority": prev_u, "new_priority": new_p})
+            n = len(rows_out)
+            headline = f"{n} job{'s' if n != 1 else ''} will be updated from {prev_u} to {new_u} priority."
+            return {
+                "kind": "job_priority_bundle",
+                "headline": headline,
+                "previous_priority": prev_u,
+                "new_priority": new_u,
+                "rows": rows_out,
+            }
+
+    if not uniform_new:
+        if not prev_from_intent:
+            return None
+        for jid, new_p in pairs:
+            rows_out.append({"job_id": jid, "previous_priority": prev_from_intent, "new_priority": new_p})
+        n = len(rows_out)
+        headline = f"{n} job{'s' if n != 1 else ''} pending approval (mixed priority changes)."
+        return {
+            "kind": "job_priority_bundle",
+            "headline": headline,
+            "previous_priority": prev_from_intent,
+            "new_priority": "",
+            "rows": rows_out,
+        }
+
+    return None
+
+
+def build_approval_required_payload(staged: list[dict[str, Any]], *, intent_text: str = "") -> dict[str, Any]:
+    """Graph interrupt / validator payload: summary + preview + optional ``bundle_ui``."""
+    clean = [x for x in staged if isinstance(x, dict)]
+    summary = format_write_bundle_approval_summary(clean)
+    payload: dict[str, Any] = {
+        "kind": "approval_required",
+        "summary": summary,
+        "count": len(clean),
+        "preview": approval_preview_rows(clean, limit=min(50, max(len(clean), 1))),
+    }
+    ui = build_job_priority_bundle_uiview(clean, intent_text=intent_text)
+    if ui:
+        payload["bundle_ui"] = ui
+    return payload

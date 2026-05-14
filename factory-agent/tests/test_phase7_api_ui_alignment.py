@@ -11,13 +11,17 @@ from sqlalchemy import select
 
 import database
 from factory_agent.api import build_router
-from factory_agent.api.routes import _semantic_payload_for_timeline_event
+from factory_agent.api.routes import (
+    _activity_steps_for_snapshot,
+    _semantic_payload_for_timeline_event,
+    _should_skip_semantic_timeline_event,
+)
 from factory_agent.config import Settings
 from factory_agent.observability.events import AgentEvent
 from factory_agent.persistence import database as persistence_database
 from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, Session, WorkflowCheckpoint
 from factory_agent.registry.tool_registry import ToolRegistry
-from factory_agent.schemas import TimelineEventResponse
+from factory_agent.schemas import SessionSnapshotResponse, TimelineEventResponse
 
 
 class _FakeEventBus:
@@ -29,6 +33,29 @@ class _FakeEventBus:
 
     async def listen(self, handler: Any) -> None:
         return None
+
+
+RAW_ACTIVITY_LEAK_PATTERNS = [
+    "__",
+    "{id}",
+    "tool_name",
+    "get__",
+    "post__",
+    "planner_reentered",
+    "validator_failed",
+    "tool_rerun",
+    "IN_PROGRESS",
+    "DONE",
+    "args",
+    "result",
+    "checkpoint",
+]
+
+
+def _assert_no_activity_leaks(steps):
+    serialized = json.dumps([step.model_dump(exclude_none=True) for step in steps])
+    for pattern in RAW_ACTIVITY_LEAK_PATTERNS:
+        assert pattern not in serialized
 
 
 async def _make_phase7_app(sessionmaker_override) -> FastAPI:
@@ -176,6 +203,136 @@ async def test_phase7_snapshot_projects_graph_checkpoint_without_legacy_steps(se
     serialized = json.dumps(body)
     assert "agent_state" not in serialized
     assert "langgraph_checkpoint" not in serialized
+
+
+def test_phase7_activity_adapter_sanitizes_tool_and_runtime_details():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-s1",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 2,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=5),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="user:activity",
+                event_type="user_message",
+                content="Check machine status",
+                created_at=created_at,
+                role="user",
+            ),
+            TimelineEventResponse(
+                event_id="plan:activity",
+                event_type="plan_created",
+                content="planner_reentered validator_failed",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+                details={"status": "DRAFT", "node": "planner_reentered"},
+            ),
+            TimelineEventResponse(
+                event_id="step-started:activity",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=2),
+                step_id="trace-step-1",
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+                details={"args": {"id": "M-001"}, "node": "tool_router_v2"},
+            ),
+            TimelineEventResponse(
+                event_id="step:activity",
+                event_type="tool_result",
+                content="get__machines_{id} completed.",
+                created_at=created_at + timedelta(seconds=3),
+                step_id="trace-step-1",
+                tool_name="get__machines_{id}",
+                status="DONE",
+                details={"result": {"machine_id": "M-001"}},
+            ),
+            TimelineEventResponse(
+                event_id="replan:activity",
+                event_type="replan_requested",
+                content="tool_rerun after validator_failed",
+                created_at=created_at + timedelta(seconds=4),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:activity",
+                event_type="session_completed",
+                content="Execution completed successfully.",
+                created_at=created_at + timedelta(seconds=5),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    assert [step.label for step in steps] == [
+        "Understanding your request",
+        "Gathering information",
+        "Information checked",
+        "Improving the response",
+        "Finalizing answer",
+    ]
+    assert steps[-1].state == "complete"
+    assert steps[1].detail == "Checking machine records"
+    assert steps[3].state == "success"
+    assert set(step.state for step in steps) <= {"running", "success", "retry", "waiting", "error", "complete"}
+    _assert_no_activity_leaks(steps)
+
+
+def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    domains = ["machines", "jobs", "products", "inventory", "reports"]
+    timeline = [
+        TimelineEventResponse(
+            event_id=f"tool:{idx}",
+            event_type="tool_result",
+            content=f"get__{domains[idx % len(domains)]} completed.",
+            created_at=created_at + timedelta(seconds=idx),
+            tool_name=f"get__{domains[idx % len(domains)]}_{idx}",
+            status="DONE",
+            details={"args": {"idx": idx}, "result": {"ok": True}},
+        )
+        for idx in range(20)
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-cap",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 20,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=20),
+        },
+        timeline=timeline,
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    assert len(steps) == 5
+    assert [step.detail for step in steps] == [
+        "Checked machine records (4 updates)",
+        "Checked job records (4 updates)",
+        "Checked product records (4 updates)",
+        "Checked inventory records (4 updates)",
+        "Checked report records (4 updates)",
+    ]
+    assert len({step.id for step in steps}) == len(steps)
+    assert all(str(step.id).startswith("act:") for step in steps)
+    _assert_no_activity_leaks(steps)
 
 
 def test_phase7_semantic_payload_names_terminal_events():
@@ -416,3 +573,64 @@ async def test_phase7_completed_graph_checkpoint_prefers_result_summary_over_pla
     assert tool_events[-1]["content"] == expected
     assert completed_events[-1]["content"] == expected
     assert "Operators can" not in completed_events[-1]["content"]
+
+
+def test_phase7_semantic_skips_non_pending_approval_required_event():
+    ev = TimelineEventResponse(
+        event_id="ar:x",
+        event_type="approval_required",
+        content="wait",
+        created_at=datetime(2026, 5, 13, 9, 0, 0),
+        status="APPROVED",
+    )
+    assert _should_skip_semantic_timeline_event(ev) is True
+    pending_ev = ev.model_copy(update={"status": "PENDING"})
+    assert _should_skip_semantic_timeline_event(pending_ev) is False
+
+
+def test_phase7_activity_adapter_skips_non_pending_approval_required():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-ar-skip",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=2),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="user:ar-skip",
+                event_type="user_message",
+                content="bulk",
+                created_at=created_at,
+                role="user",
+            ),
+            TimelineEventResponse(
+                event_id="ar:hist",
+                event_type="approval_required",
+                content="Waiting",
+                created_at=created_at + timedelta(seconds=1),
+                approval_id="a-hist",
+                status="APPROVED",
+            ),
+            TimelineEventResponse(
+                event_id="ad:hist",
+                event_type="approval_decided",
+                content="Approved.",
+                created_at=created_at + timedelta(seconds=2),
+                approval_id="a-hist",
+                status="APPROVED",
+            ),
+        ],
+    )
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [s.label for s in steps]
+    assert "Waiting for your approval" not in labels
+    assert "Approval received" in labels

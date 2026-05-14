@@ -218,8 +218,19 @@ func (s *JobService) ListFiltered(f repository.JobListFilter) ([]domain.Job, err
 	if err != nil {
 		return nil, err
 	}
-	s.enrichJobsWithDeadlineStatus(jobs)
+	if len(f.Fields) == 0 || jobFieldRequested(f.Fields, "deadline") || jobFieldRequested(f.Fields, "deadline_status") {
+		s.enrichJobsWithDeadlineStatus(jobs)
+	}
 	return jobs, nil
+}
+
+func jobFieldRequested(fields []string, target string) bool {
+	for _, field := range fields {
+		if strings.EqualFold(strings.TrimSpace(field), target) {
+			return true
+		}
+	}
+	return false
 }
 
 // enrichJobWithDeadlineStatus sets job.DeadlineStatus when job has a deadline and active slots.

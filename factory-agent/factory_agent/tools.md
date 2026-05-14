@@ -4933,7 +4933,7 @@
 **Description**: List jobs
 **Method**: GET
 **Endpoint**: /jobs
-**Capability Tags**: ["job", "list", "filter", "product", "id", "statu", "priority", "machine", "start", "end", "sort", "by", "dir", "limit", "offset", "data", "created", "at", "deadline", "is", "late", "human", "readable", "2", "day", "4", "hour", "on", "time", "note", "quantity", "completed", "total", "updated", "error", "success"]
+**Capability Tags**: ["job", "list", "filter", "product", "id", "statu", "priority", "machine", "start", "end", "sort", "by", "dir", "limit", "offset", "field", "data", "created", "at", "deadline", "is", "late", "human", "readable", "2", "day", "4", "hour", "on", "time", "note", "quantity", "completed", "total", "updated", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -4990,6 +4990,10 @@
     },
     "offset": {
       "type": "integer"
+    },
+    "fields": {
+      "type": "string",
+      "description": "Comma-separated fields to return (job_id,priority,product_id,status,deadline)"
     }
   },
   "x-path-params": [],
@@ -5003,7 +5007,8 @@
     "sort_by",
     "sort_dir",
     "limit",
-    "offset"
+    "offset",
+    "fields"
   ],
   "x-param-sources": {
     "product_id": "query",
@@ -5015,7 +5020,8 @@
     "sort_by": "query",
     "sort_dir": "query",
     "limit": "query",
-    "offset": "query"
+    "offset": "query",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",

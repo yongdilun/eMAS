@@ -47,7 +47,7 @@ async def is_graph_native_session(
         return False
 
     context = session.replan_context if isinstance(session.replan_context, dict) else {}
-    if bool(context.get("langgraph_pending_approval")):
+    if bool(context.get("langgraph_pending_approval")) or bool(context.get("langgraph_approval_resume")):
         return True
 
     current_plan = plan

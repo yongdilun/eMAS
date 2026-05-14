@@ -1,7 +1,8 @@
 ﻿import pytest
 import sys
 import types
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 import base64
 import hashlib
 import hmac
@@ -2104,6 +2105,176 @@ async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline
         assert "user_message" in event_types
         assert "plan_created" in event_types
         assert "approval_required" in event_types
+
+
+@pytest.mark.asyncio
+async def test_graph_approval_returns_before_resume_and_keeps_one_activity_operation(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Approval, Message, Plan, Session
+    from factory_agent.services.planner_service import PlannerResult
+
+    class BlockingResumePlanner:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.calls = 0
+
+        async def resume_after_approval(self, *, session_id: str, approved: bool):
+            self.calls += 1
+            assert approved is True
+            self.started.set()
+            await self.release.wait()
+            return PlannerResult(
+                draft=PlanDraft(
+                    plan_explanation="Updated job priority after approval.",
+                    risk_summary="Approved write completed.",
+                    steps=[
+                        PlanStepDraft(
+                            step_index=0,
+                            tool_name="put__jobs_{id}",
+                            args={"id": "JOB-SEED-002", "priority": "high"},
+                        )
+                    ],
+                ),
+                backend_used="langgraph",
+                intent_contract={"backend": "langgraph", "steps": []},
+                tool_outputs=[
+                    {
+                        "tool_name": "put__jobs_{id}",
+                        "status": "DONE",
+                        "summary": "Updated job JOB-SEED-002 to high priority.",
+                        "result": {"job_id": "JOB-SEED-002", "priority": "high"},
+                    }
+                ],
+            )
+
+    created_at = datetime.utcnow() - timedelta(minutes=5)
+    session_id = "graph-approval-nonblocking"
+    initial_plan_id = "graph-approval-nonblocking-plan-initial"
+    approval_id = "graph-approval-nonblocking-apr"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_APPROVAL",
+            current_intent="Set JOB-SEED-002 priority to high",
+            plan_id=initial_plan_id,
+            plan_version=1,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={
+                "langgraph_pending_approval": {
+                    "approval_id": approval_id,
+                    "thread_id": session_id,
+                }
+            },
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=initial_plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="PENDING_APPROVAL",
+            dependency_graph={},
+            parallel_groups=[],
+            plan_hash="hash-initial-approval-plan",
+            plan_explanation="1 job will be updated.",
+            risk_summary="1 job will be updated.",
+            created_by="langgraph",
+            created_at=created_at + timedelta(milliseconds=500),
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="graph-approval-user-message",
+            session_id=session_id,
+            role="user",
+            content="Set JOB-SEED-002 priority to high",
+            mode="normal",
+            created_at=created_at,
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__langgraph_commit__",
+            args={"bundle_ui": {"headline": "1 job will be updated."}},
+            risk_summary="1 job will be updated.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=created_at + timedelta(hours=1),
+            created_at=created_at + timedelta(seconds=1),
+        )
+    )
+    await db_session.commit()
+    await _seed_tool(
+        db_session,
+        name="put__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
+            "required": ["id", "priority"],
+        },
+        capability_tags='["job"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    planner = BlockingResumePlanner()
+    app, event_bus = await _make_app(
+        sessionmaker_override,
+        planner_adapter=planner,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        approved = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "APPROVED"
+
+        await asyncio.wait_for(planner.started.wait(), timeout=1)
+        during = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert during["session"]["status"] == "EXECUTING"
+        assert during["pending_approval"] is None
+        during_events = [event["event_type"] for event in during["timeline"]]
+        assert "approval_required" in during_events
+        assert "approval_decided" in during_events
+        assert any(event.event_type == "approval_decided" for event in event_bus.published)
+
+        planner.release.set()
+        final_body = None
+        for _ in range(40):
+            await asyncio.sleep(0.025)
+            final_body = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+            if final_body["session"]["status"] == "COMPLETED":
+                break
+
+    assert final_body is not None
+    assert final_body["session"]["status"] == "COMPLETED"
+    event_types = [event["event_type"] for event in final_body["timeline"]]
+    assert event_types.index("plan_created") < event_types.index("approval_required")
+    assert event_types.index("approval_required") < event_types.index("approval_decided")
+    assert event_types.index("approval_decided") < event_types.index("tool_result")
+    assert event_types.index("tool_result") < event_types.index("session_completed")
+    plan_events = [event for event in final_body["timeline"] if event["event_type"] == "plan_created"]
+    assert len(plan_events) >= 2
+    assert plan_events[-1]["details"]["status"] == "COMPLETED"
+    assert "JOB-SEED-002" in plan_events[-1]["content"]
+    assert "high" in plan_events[-1]["content"].lower()
+    assert plan_events[-1]["content"] != "1 job will be updated."
+    operation_events = [
+        event
+        for event in final_body["timeline"]
+        if event["event_type"] in {"plan_created", "approval_required", "approval_decided", "tool_result", "session_completed"}
+    ]
+    operation_ids = {event.get("operation_id") for event in operation_events}
+    assert operation_ids == {final_body["session"]["operation_id"]}
 
 
 @pytest.mark.asyncio

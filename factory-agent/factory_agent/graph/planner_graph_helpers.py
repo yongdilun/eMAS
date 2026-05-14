@@ -236,16 +236,23 @@ def _infer_bulk_job_priority_selection_plan(intent: str, scoped_tools: list[Tool
     if not mutation:
         return None
     tools = {tool.name: tool for tool in scoped_tools}
-    if "get__jobs" not in tools:
+    get_jobs = tools.get("get__jobs")
+    if get_jobs is None:
         return None
     source = mutation["source_priority"]
+    args: dict[str, Any] = {"priority": source}
+    query_params = set(get_jobs.query_params or [])
+    if "fields" in query_params:
+        args["fields"] = "job_id,priority"
+    if "limit" in query_params:
+        args["limit"] = 500
     return AgentPlanOutput(
         plan_explanation=f"Fetch {source}-priority jobs before preparing the approval-gated bundle.",
         risk_summary="Read-only filtered lookup before a bulk write approval.",
         steps=[
             AgentPlanStep(
                 tool_name="get__jobs",
-                args={"priority": source},
+                args=args,
                 evidence={"priority": f"{source} priority jobs"},
                 confidence=0.94,
             )

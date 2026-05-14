@@ -3030,6 +3030,12 @@ const docTemplate = `{
                         "description": "Offset",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return (job_id,priority,product_id,status,deadline)",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {

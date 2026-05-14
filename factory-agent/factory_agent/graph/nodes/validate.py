@@ -363,16 +363,17 @@ def make_final_validator_node(settings: Settings):
         return True
 
     def _approval_payload(state: AgentState) -> dict[str, Any]:
-        from ..approval_summary import approval_preview_rows, format_write_bundle_approval_summary
+        from ..approval_summary import build_approval_required_payload
+        from ..state import user_query_text
 
         staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
-        summary = format_write_bundle_approval_summary(staged)
-        return {
-            "kind": "approval_required",
-            "summary": summary,
-            "count": len(staged),
-            "preview": approval_preview_rows(staged, limit=min(50, max(len(staged), 1))),
-        }
+        intent_text = ""
+        cur = state.get("current_intent")
+        if isinstance(cur, dict):
+            intent_text = str(cur.get("description") or "").strip()
+        if not intent_text:
+            intent_text = user_query_text(state)
+        return build_approval_required_payload(staged, intent_text=intent_text)
 
     def _hard_constraints_present(state: AgentState) -> bool:
         cur = state.get("current_intent")

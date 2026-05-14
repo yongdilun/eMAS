@@ -46,10 +46,31 @@ type JobListFilter struct {
 	SortDir   string     // asc, desc
 	Limit     int
 	Offset    int
+	Fields    []string
 }
 
 func (r *JobRepository) ListFiltered(f JobListFilter) ([]domain.Job, error) {
 	q := r.db.Model(&domain.Job{})
+	if len(f.Fields) > 0 {
+		columns := make([]string, 0, len(f.Fields))
+		seen := make(map[string]bool)
+		for _, field := range f.Fields {
+			normalized := strings.ToLower(strings.TrimSpace(field))
+			if normalized == "id" {
+				normalized = "job_id"
+			}
+			switch normalized {
+			case "job_id", "product_id", "quantity_total", "quantity_completed", "priority", "deadline", "status", "created_at", "updated_at", "notes":
+				if !seen[normalized] {
+					columns = append(columns, normalized)
+					seen[normalized] = true
+				}
+			}
+		}
+		if len(columns) > 0 {
+			q = q.Select(columns)
+		}
+	}
 
 	if f.ProductID != "" {
 		q = q.Where("product_id = ?", f.ProductID)

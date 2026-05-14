@@ -365,6 +365,18 @@ def _bulk_job_selection_ids(
     return None
 
 
+def _bulk_job_priority_lookup_args(source_priority: str, tool: ToolInfo | None) -> dict[str, Any]:
+    args: dict[str, Any] = {"priority": source_priority}
+    if tool is None:
+        return args
+    query_params = set(tool.query_params or [])
+    if "fields" in query_params:
+        args["fields"] = "job_id,priority"
+    if "limit" in query_params:
+        args["limit"] = 500
+    return args
+
+
 def _bulk_job_priority_decision(
     *,
     state: AgentState,
@@ -378,13 +390,16 @@ def _bulk_job_priority_decision(
     source = mutation["source_priority"]
     ids = _bulk_job_selection_ids(state, source_priority=source)
     if ids is None:
-        if "get__jobs" not in tools_by_name:
+        get_jobs = tools_by_name.get("get__jobs")
+        if get_jobs is None:
             return None
         return PlannerDecision(
             intent_id=str(current_intent.get("intent_id") or "unknown"),
             kind="domain_tool",
-            tool_calls=[ToolCall(tool_name="get__jobs", args={"priority": source})],
-            decision_summary=f"Fetch only {source}-priority jobs before staging the requested bulk change.",
+            tool_calls=[ToolCall(tool_name="get__jobs", args=_bulk_job_priority_lookup_args(source, get_jobs))],
+            decision_summary=(
+                f"Fetch only {source}-priority job identifiers before staging the requested bulk change."
+            ),
             risk_level="read",
         )
     if not ids:
@@ -485,6 +500,9 @@ def _build_planner_decision_prompt(*, state: AgentState, current: dict[str, Any]
         "the guard auto-fills missing output_ref.\n"
         "- $ref:j refers to the j-th row in Recent tool_outputs (0-based); additional reads in this same decision continue indexing after those rows.\n"
         "- Prefer read-only GET tools before writes; keep args minimal and schema-safe.\n"
+        "- For every GET, use available filters/sort/limit/fields from the tool catalog to avoid broad table reads.\n"
+        "- If a GET is only selecting records for a later write, request only identifiers plus predicate fields "
+        "(for jobs, prefer fields=job_id,priority when available).\n"
         "- If mandatory user facts are missing, use kind request_clarification with control_action "
         '{"name":"request_clarification","payload":{"question":"..."}} and empty tool_calls.\n'
         "- Do NOT request clarification for a job/entity id when the user query or recent conversation already "
