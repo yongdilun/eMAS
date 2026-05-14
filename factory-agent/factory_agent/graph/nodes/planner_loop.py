@@ -22,6 +22,14 @@ from ..state import AgentPlanOutput, AgentPlanStep, AgentState, user_query_text
 
 RouteKey = Literal["clarify_end", "continue_planner", "decision_guard", "synthesize_plan"]
 
+# Intent splitters emit *_ref / *_id fields; OpenAPI path templates often use ``id`` only.
+# Only consult these when the tool's route collection matches ``_constraint_entity(field)``.
+ENTITY_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "machine_ref": ("id", "machine_id", "machineID", "machineId", "machine_name", "machineName"),
+    "job_ref": ("id", "job_id", "jobID", "jobId", "job_name", "jobName"),
+    "product_ref": ("id", "product_id", "productID", "productId", "product_name", "productName"),
+}
+
 
 def _get_by_path(obj: dict[str, Any], path: str) -> Any:
     cur: Any = obj
@@ -59,6 +67,46 @@ def _constraint_entity(field: str) -> str | None:
     return None
 
 
+def _tool_route_collection_entity(tool: ToolInfo) -> str | None:
+    """First path segment of the tool name after METHOD__, e.g. ``get__machines_{id}`` → ``machine``."""
+    m = re.match(r"^[a-z]+__(.+)$", (tool.name or "").strip(), re.I)
+    if not m:
+        return None
+    tail = m.group(1)
+    head = tail.split("_")[0].split("{")[0]
+    if not head:
+        return None
+    return _singular_entity(head.replace("-", "_"))
+
+
+def _constraint_applies_to_tool(
+    *,
+    constraint: dict[str, Any],
+    tool_args: dict[str, Any],
+    tool: ToolInfo | None,
+) -> bool:
+    """Whether a hard user constraint should bind to this tool call (skip unrelated reads in batches)."""
+    field = str(constraint.get("field") or "")
+    if not field:
+        return False
+    if tool_args.get(field) not in (None, ""):
+        return True
+    if tool is None:
+        return True
+    entity = _constraint_entity(field)
+    if not entity:
+        return True
+    for pn in tool.path_params or re.findall(r"\{([a-zA-Z0-9_]+)\}", tool.endpoint or ""):
+        if _endpoint_entity_before_param(tool.endpoint or "", pn) == entity:
+            return True
+    if _tool_route_collection_entity(tool) == entity:
+        return True
+    for key in (f"{entity}_id", f"{entity}_ref", f"{entity}_name"):
+        if key in tool_args and tool_args.get(key) not in (None, ""):
+            return True
+    return False
+
+
 def _constraint_actual(
     *,
     constraint: dict[str, Any],
@@ -83,7 +131,12 @@ def _constraint_actual(
     # tools use machine_id (query) or id (path). Without this mapping, DecisionGuard treats
     # correct calls as violations and loops planner→guard until LangGraph recursion_limit.
     if entity:
-        for key in (f"{entity}_id", f"{entity}_ref"):
+        if _tool_route_collection_entity(tool) == entity:
+            for alias in ENTITY_FIELD_ALIASES.get(field, ()):
+                v = tool_args.get(alias)
+                if v is not None and v != "":
+                    return v
+        for key in (f"{entity}_id", f"{entity}_ref", f"{entity}_name"):
             v = tool_args.get(key)
             if v is not None and v != "":
                 return v
@@ -221,12 +274,24 @@ def _constraints_violated(
     tool_calls: list[dict[str, Any]],
     tools_by_name: dict[str, ToolInfo] | None = None,
 ) -> bool:
-    for tc in tool_calls:
-        args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
-        tool = (tools_by_name or {}).get(str(tc.get("tool_name") or ""))
-        for c in constraints:
-            if not isinstance(c, dict):
+    """Each hard constraint must be satisfiable by at least one *applicable* tool, and no applicable tool may violate it."""
+    tbn = tools_by_name or {}
+    for c in constraints:
+        if not isinstance(c, dict) or c.get("strength") == "soft":
+            continue
+        applicable: list[dict[str, Any]] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
                 continue
+            args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+            tool = tbn.get(str(tc.get("tool_name") or ""))
+            if _constraint_applies_to_tool(constraint=c, tool_args=args, tool=tool):
+                applicable.append(tc)
+        if not applicable:
+            return True
+        for tc in applicable:
+            args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+            tool = tbn.get(str(tc.get("tool_name") or ""))
             if _constraint_violated(constraint=c, tool_args=args, tool=tool):
                 return True
     return False

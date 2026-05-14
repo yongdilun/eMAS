@@ -990,9 +990,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
               </p>
               <div className="flex flex-wrap justify-center gap-2 mt-4">
                 {[
-                  'Show status for machine M-CNC-01',
-                  'Set lathe M-LTH-02 to maintenance',
-                  'List pending approval requests',
+                  'Show status for machine with machine id M-CNC-01',
+                  'Find all low priority jobs',
+                  'According to the LOTO procedure, what notification is required before starting lockout',
                 ].map((prompt) => (
                   <button
                     key={prompt}

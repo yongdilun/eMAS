@@ -45,11 +45,12 @@ func (h *FormulaHandler) Create(c *gin.Context) {
 }
 
 // @Summary Get a formula by ID
-// @Description Get a formula by ID
+// @Description Get a formula by ID. Supports optional field selection.
 // @Tags formula
 // @Accept json
 // @Produce json
 // @Param id path string true "Formula ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.Formula}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response

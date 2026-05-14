@@ -90,11 +90,12 @@ func (h *InventoryHandler) Receive(c *gin.Context) {
 }
 
 // @Summary Get a material by ID
-// @Description Get a material by ID
+// @Description Get a material by ID. Supports optional field selection.
 // @Tags inventory
 // @Accept json
 // @Produce json
 // @Param id path string true "Material ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.InventoryMaterials}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -250,7 +251,7 @@ func (h *InventoryHandler) CreateProductInventory(c *gin.Context) {
 // @Produce json
 // @Param product_id query string false "Filter by product ID"
 // @Param status query string false "Filter by status" Enums(available,reserved,blocked,planned)
-// @Param sort_by query string false "Field to sort by (product_id, available_from, last_updated, quantity_on_hand, quantity_reserved, status)"
+// @Param sort_by query string false "Field to sort by" Enums(product_id,available_from,last_updated,quantity_on_hand,quantity_reserved,status)
 // @Param sort_dir query string false "Sort direction (asc, desc)" Enums(asc,desc)
 // @Param limit query int false "Limit number of results"
 // @Param offset query int false "Offset for pagination"

@@ -57,11 +57,12 @@ func (h *MachineHandler) Create(c *gin.Context) {
 
 // GetByID godoc
 // @Summary Get machine by ID
-// @Description Retrieve details of a specific machine
+// @Description Retrieve details of a specific machine. Supports optional field selection.
 // @Tags machines
 // @Accept json
 // @Produce json
 // @Param id path string true "Machine ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.Machine}
 // @Failure 404 {object} dto.Response
 // @Router /machines/{id} [get]
@@ -85,7 +86,7 @@ func (h *MachineHandler) GetByID(c *gin.Context) {
 // @Param machine_name query string false "Filter by machine name (case-insensitive contains)"
 // @Param machine_type query string false "Filter by machine type"
 // @Param location query string false "Filter by location"
-// @Param sort_by query string false "Field to sort by (machine_id, machine_name, status, created_at)"
+// @Param sort_by query string false "Field to sort by" Enums(machine_id,machine_name,machine_type,status,location,capacity_per_hour,utilization_rate,last_maintenance_date,created_at)
 // @Param sort_dir query string false "Sort direction (asc, desc)" Enums(asc,desc)
 // @Param limit query int false "Limit number of results"
 // @Param offset query int false "Offset for pagination"

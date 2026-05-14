@@ -73,6 +73,7 @@ from ..registry.tool_registry import ToolRegistry
 from ..tools.arguments import compute_idempotency_key
 from ..planning.tool_selector import ToolSelector
 from ..analysis.presentation import extract_table_from_result
+from ..analysis.result_normalizer import normalize_tool_result
 
 
 def _normalize_session_name(name: str | None) -> str | None:
@@ -231,6 +232,16 @@ def _build_tool_result_details(
     if presentation:
         presentation["message"] = content or ""
         details["presentation"] = presentation
+    answer = normalize_tool_result(tool_name=tool_name, endpoint=None, result=result, intent=intent)
+    if answer is not None:
+        details["answer_model"] = {
+            "answer_type": answer.answer_type,
+            "entity_type": answer.entity_type,
+            "entity_id": answer.entity_id,
+            "title": answer.title,
+            "primary_status": answer.primary_status,
+            "fields": [{"label": f.label, "value": f.value, "key": f.key, "primary": f.primary} for f in answer.fields],
+        }
     return details
 
 

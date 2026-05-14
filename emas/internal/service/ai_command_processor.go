@@ -5,10 +5,10 @@ import (
 	"emas/internal/handler/dto"
 	"emas/pkg/id"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
-	"net/url"
 )
 
 // AICommandProcessor processes natural language commands and optionally executes read-only insights.
@@ -835,7 +835,6 @@ func generateRejectionMessage(rejected []RejectedParam) string {
 	}
 	return "\n\nNote: The following filters could not be applied:" + strings.Join(msgs, "")
 }
-
 
 func entityFloat(entities map[string]interface{}, k string) float64 {
 	if v, ok := entities[k]; ok {

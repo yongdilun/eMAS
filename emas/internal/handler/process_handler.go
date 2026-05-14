@@ -43,11 +43,12 @@ func (h *ProcessHandler) Create(c *gin.Context) {
 }
 
 // @Summary Get a process by ID
-// @Description Get a process by ID
+// @Description Get a process by ID. Supports optional field selection.
 // @Tags process
 // @Accept json
 // @Produce json
 // @Param id path string true "Process ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.ProductProcess}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -63,11 +64,12 @@ func (h *ProcessHandler) GetByID(c *gin.Context) {
 }
 
 // @Summary Get a process by product ID
-// @Description Get a process by product ID
+// @Description Get a process by product ID. Supports optional field selection.
 // @Tags process
 // @Accept json
 // @Produce json
 // @Param id path string true "Product ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.ProductProcess}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -123,11 +125,12 @@ func (h *ProcessHandler) List(c *gin.Context) {
 }
 
 // @Summary List steps by process ID
-// @Description List steps by process ID
+// @Description List steps by process ID. Supports optional field selection.
 // @Tags process
 // @Accept json
 // @Produce json
 // @Param id path string true "Process ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=[]domain.ProcessSteps}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

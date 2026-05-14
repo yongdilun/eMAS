@@ -47,11 +47,12 @@ func (h *JobHandler) Create(c *gin.Context) {
 }
 
 // @Summary Get a job by ID
-// @Description Get a job by ID
+// @Description Get a job by ID. Supports optional field selection.
 // @Tags job
 // @Accept json
 // @Produce json
 // @Param id path string true "Job ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.Job}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -87,7 +88,7 @@ func (h *JobHandler) ListSteps(c *gin.Context) {
 // @Param machine_id query string false "Filter by machine"
 // @Param start query string false "RFC3339 start"
 // @Param end query string false "RFC3339 end"
-// @Param sort_by query string false "created_at|deadline|priority|quantity_total|completion"
+// @Param sort_by query string false "Field to sort by" Enums(created_at,deadline,priority,quantity_total,completion)
 // @Param sort_dir query string false "asc|desc" Enums(asc,desc)
 // @Param limit query int false "Page size"
 // @Param offset query int false "Offset"

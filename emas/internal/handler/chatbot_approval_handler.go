@@ -25,11 +25,12 @@ func NewChatbotApprovalHandler(
 }
 
 // @Summary Get an approval by ID
-// @Description Get an approval by ID
+// @Description Get an approval by ID. Supports optional field selection.
 // @Tags chatbot approval
 // @Accept json
 // @Produce json
 // @Param id path string true "Approval ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.ChatbotApproval}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

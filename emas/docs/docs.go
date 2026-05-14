@@ -355,7 +355,7 @@ const docTemplate = `{
         },
         "/ai/scheduling/job-steps/{id}/split-suggestion": {
             "get": {
-                "description": "Split suggestion",
+                "description": "Split suggestion. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -373,6 +373,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -526,7 +532,7 @@ const docTemplate = `{
         },
         "/ai/scheduling/jobs/{id}/assist": {
             "get": {
-                "description": "Assist a job",
+                "description": "Assist a job. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -544,6 +550,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -697,7 +709,7 @@ const docTemplate = `{
         },
         "/ai/scheduling/jobs/{id}/proposal": {
             "get": {
-                "description": "Generate a proposal",
+                "description": "Generate a proposal. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -715,6 +727,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -809,7 +827,7 @@ const docTemplate = `{
         },
         "/ai/scheduling/jobs/{id}/proposals": {
             "get": {
-                "description": "List proposals",
+                "description": "List proposals. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -827,6 +845,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -980,7 +1004,7 @@ const docTemplate = `{
         },
         "/ai/scheduling/proposals/{id}": {
             "get": {
-                "description": "Get a proposal",
+                "description": "Get a proposal. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -998,6 +1022,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1324,6 +1354,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/alerts": {
+            "get": {
+                "description": "Get alerts",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get alerts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by status (active)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by alert type (maintenance, inventory, downtime)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Field to sort by (time, type, title)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction (asc, desc)",
+                        "name": "sort_dir",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Limit number of results",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset for pagination",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return (type,title,time,machine_id)",
+                        "name": "fields",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/dto.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/handler.AlertItem"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/chatbot/approval/pending": {
             "get": {
                 "description": "List pending approvals",
@@ -1385,7 +1509,7 @@ const docTemplate = `{
         },
         "/chatbot/approval/{id}": {
             "get": {
-                "description": "Get an approval by ID",
+                "description": "Get an approval by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1403,6 +1527,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1531,100 +1661,6 @@ const docTemplate = `{
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/domain.ChatbotApproval"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/dto.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/dto.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/alerts": {
-            "get": {
-                "description": "Get alerts",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "dashboard"
-                ],
-                "summary": "Get alerts",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by status (active)",
-                        "name": "status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by alert type (maintenance, inventory, downtime)",
-                        "name": "type",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Field to sort by (time, type, title)",
-                        "name": "sort_by",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort direction (asc, desc)",
-                        "name": "sort_dir",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Limit number of results",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Offset for pagination",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated fields to return (type,title,time,machine_id)",
-                        "name": "fields",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/dto.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/handler.AlertItem"
-                                            }
                                         }
                                     }
                                 }
@@ -1839,7 +1875,7 @@ const docTemplate = `{
         },
         "/formula/{id}": {
             "get": {
-                "description": "Get a formula by ID",
+                "description": "Get a formula by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1857,6 +1893,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2426,7 +2468,7 @@ const docTemplate = `{
         },
         "/inventory/materials/{id}": {
             "get": {
-                "description": "Get a material by ID",
+                "description": "Get a material by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2444,6 +2486,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2513,8 +2561,16 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "product_id",
+                            "available_from",
+                            "last_updated",
+                            "quantity_on_hand",
+                            "quantity_reserved",
+                            "status"
+                        ],
                         "type": "string",
-                        "description": "Field to sort by (product_id, available_from, last_updated, quantity_on_hand, quantity_reserved, status)",
+                        "description": "Field to sort by",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -3004,8 +3060,15 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "created_at",
+                            "deadline",
+                            "priority",
+                            "quantity_total",
+                            "completion"
+                        ],
                         "type": "string",
-                        "description": "created_at|deadline|priority|quantity_total|completion",
+                        "description": "Field to sort by",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -3127,7 +3190,7 @@ const docTemplate = `{
         },
         "/jobs/{id}": {
             "get": {
-                "description": "Get a job by ID",
+                "description": "Get a job by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3145,6 +3208,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -3390,8 +3459,19 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "machine_id",
+                            "machine_name",
+                            "machine_type",
+                            "status",
+                            "location",
+                            "capacity_per_hour",
+                            "utilization_rate",
+                            "last_maintenance_date",
+                            "created_at"
+                        ],
                         "type": "string",
-                        "description": "Field to sort by (machine_id, machine_name, status, created_at)",
+                        "description": "Field to sort by",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -3731,7 +3811,7 @@ const docTemplate = `{
         },
         "/machines/{id}": {
             "get": {
-                "description": "Retrieve details of a specific machine",
+                "description": "Retrieve details of a specific machine. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3749,6 +3829,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4486,7 +4572,7 @@ const docTemplate = `{
         },
         "/processes/product/{id}": {
             "get": {
-                "description": "Get a process by product ID",
+                "description": "Get a process by product ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4504,6 +4590,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4542,7 +4634,7 @@ const docTemplate = `{
         },
         "/processes/{id}": {
             "get": {
-                "description": "Get a process by ID",
+                "description": "Get a process by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4560,6 +4652,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4640,7 +4738,7 @@ const docTemplate = `{
         },
         "/processes/{id}/steps": {
             "get": {
-                "description": "List steps by process ID",
+                "description": "List steps by process ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4658,6 +4756,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4849,8 +4953,13 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "product_id",
+                            "product_name",
+                            "created_at"
+                        ],
                         "type": "string",
-                        "description": "product_id|product_name|created_at",
+                        "description": "Field to sort by",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -4972,7 +5081,7 @@ const docTemplate = `{
         },
         "/products/{id}": {
             "get": {
-                "description": "Get a product by ID",
+                "description": "Get a product by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4990,6 +5099,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -7187,7 +7302,7 @@ const docTemplate = `{
         },
         "/slots/{id}": {
             "get": {
-                "description": "Get a slot by ID",
+                "description": "Get a slot by ID. Supports optional field selection.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7205,6 +7320,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated fields to return",
+                        "name": "fields",
+                        "in": "query"
                     }
                 ],
                 "responses": {

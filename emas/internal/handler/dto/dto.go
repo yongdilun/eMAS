@@ -18,7 +18,7 @@ type MachineListQuery struct {
 	MachineName string        `form:"machine_name"`
 	MachineType string        `form:"machine_type"`
 	Location    string        `form:"location"`
-	SortBy      string        `form:"sort_by" binding:"omitempty,oneof=machine_id machine_name status created_at"`
+	SortBy      string        `form:"sort_by" binding:"omitempty,oneof=machine_id machine_name machine_type status location capacity_per_hour utilization_rate last_maintenance_date created_at" enums:"machine_id,machine_name,machine_type,status,location,capacity_per_hour,utilization_rate,last_maintenance_date,created_at"`
 	SortDir     SortDirection `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit       int           `form:"limit" binding:"omitempty,gte=0"`
 	Offset      int           `form:"offset" binding:"omitempty,gte=0"`
@@ -32,7 +32,7 @@ type JobListQuery struct {
 	MachineID string        `form:"machine_id"`
 	Start     string        `form:"start"`
 	End       string        `form:"end"`
-	SortBy    string        `form:"sort_by" binding:"omitempty,oneof=created_at deadline priority quantity_total completion"`
+	SortBy    string        `form:"sort_by" binding:"omitempty,oneof=created_at deadline priority quantity_total completion" enums:"created_at,deadline,priority,quantity_total,completion"`
 	SortDir   SortDirection `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit     int           `form:"limit" binding:"omitempty,gte=0"`
 	Offset    int           `form:"offset" binding:"omitempty,gte=0"`
@@ -42,7 +42,7 @@ type JobListQuery struct {
 type ProductListQuery struct {
 	Status      ProductStatus `form:"status" binding:"omitempty,oneof=active obsolete" enums:"active,obsolete"`
 	ProductType string        `form:"product_type"`
-	SortBy      string        `form:"sort_by" binding:"omitempty,oneof=product_id product_name created_at"`
+	SortBy      string        `form:"sort_by" binding:"omitempty,oneof=product_id product_name created_at" enums:"product_id,product_name,created_at"`
 	SortDir     SortDirection `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit       int           `form:"limit" binding:"omitempty,gte=0"`
 	Offset      int           `form:"offset" binding:"omitempty,gte=0"`
@@ -52,7 +52,7 @@ type ProductListQuery struct {
 type InventoryMaterialsListQuery struct {
 	Status  InventoryStatus `form:"status" binding:"omitempty,oneof=in_stock low_stock out_of_stock" enums:"in_stock,low_stock,out_of_stock"`
 	Q       string          `form:"q"`
-	SortBy  string          `form:"sort_by" binding:"omitempty,oneof=material_name current_stock last_updated"`
+	SortBy  string          `form:"sort_by" binding:"omitempty,oneof=material_name current_stock last_updated" enums:"material_name,current_stock,last_updated"`
 	SortDir SortDirection   `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit   int             `form:"limit" binding:"omitempty,gte=0"`
 	Offset  int             `form:"offset" binding:"omitempty,gte=0"`
@@ -68,7 +68,7 @@ type ExpectedArrivalListQuery struct {
 type ProductInventoryListQuery struct {
 	ProductID string                 `form:"product_id"`
 	Status    ProductInventoryStatus `form:"status" binding:"omitempty,oneof=available reserved blocked planned" enums:"available,reserved,blocked,planned"`
-	SortBy    string                 `form:"sort_by" binding:"omitempty,oneof=product_id available_from last_updated quantity_on_hand quantity_reserved status"`
+	SortBy    string                 `form:"sort_by" binding:"omitempty,oneof=product_id available_from last_updated quantity_on_hand quantity_reserved status" enums:"product_id,available_from,last_updated,quantity_on_hand,quantity_reserved,status"`
 	SortDir   SortDirection          `form:"sort_dir" binding:"omitempty,oneof=asc desc" enums:"asc,desc"`
 	Limit     int                    `form:"limit" binding:"omitempty,gte=0"`
 	Offset    int                    `form:"offset" binding:"omitempty,gte=0"`

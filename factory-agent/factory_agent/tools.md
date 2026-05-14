@@ -595,7 +595,11 @@
                 "type": "string"
               },
               "material_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^MAT-[A-Za-z0-9-]+$",
+                "x-ai-entity": "inventory",
+                "x-ai-id-prefix": "MAT-",
+                "x-ai-id-field": "material_id"
               },
               "version": {
                 "type": "string"
@@ -603,7 +607,11 @@
             }
           },
           "material_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^MAT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "inventory",
+            "x-ai-id-prefix": "MAT-",
+            "x-ai-id-field": "material_id"
           },
           "notes": {
             "type": "string"
@@ -642,7 +650,11 @@
                 "type": "string"
               },
               "material_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^MAT-[A-Za-z0-9-]+$",
+                "x-ai-entity": "inventory",
+                "x-ai-id-prefix": "MAT-",
+                "x-ai-id-field": "material_id"
               },
               "version": {
                 "type": "string"
@@ -650,7 +662,11 @@
             }
           },
           "material_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^MAT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "inventory",
+            "x-ai-id-prefix": "MAT-",
+            "x-ai-id-field": "material_id"
           },
           "notes": {
             "type": "string"
@@ -699,7 +715,11 @@
                   "type": "string"
                 },
                 "material_id": {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^MAT-[A-Za-z0-9-]+$",
+                  "x-ai-entity": "inventory",
+                  "x-ai-id-prefix": "MAT-",
+                  "x-ai-id-field": "material_id"
                 },
                 "version": {
                   "type": "string"
@@ -707,7 +727,11 @@
               }
             },
             "material_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^MAT-[A-Za-z0-9-]+$",
+              "x-ai-entity": "inventory",
+              "x-ai-id-prefix": "MAT-",
+              "x-ai-id-field": "material_id"
             },
             "notes": {
               "type": "string"
@@ -746,7 +770,11 @@
                   "type": "string"
                 },
                 "material_id": {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^MAT-[A-Za-z0-9-]+$",
+                  "x-ai-entity": "inventory",
+                  "x-ai-id-prefix": "MAT-",
+                  "x-ai-id-field": "material_id"
                 },
                 "version": {
                   "type": "string"
@@ -754,7 +782,11 @@
               }
             },
             "material_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^MAT-[A-Za-z0-9-]+$",
+              "x-ai-entity": "inventory",
+              "x-ai-id-prefix": "MAT-",
+              "x-ai-id-field": "material_id"
             },
             "notes": {
               "type": "string"
@@ -1014,7 +1046,7 @@
 **Description**: Split suggestion
 **Method**: GET
 **Endpoint**: /ai/scheduling/job-steps/{id}/split-suggestion
-**Capability Tags**: ["ai", "scheduling", "job", "step", "split", "suggestion", "lookup", "id", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "job", "step", "split", "suggestion", "lookup", "support", "optional", "field", "selection", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -1025,6 +1057,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -1033,9 +1068,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -1177,7 +1215,7 @@
 **Description**: Assist a job
 **Method**: GET
 **Endpoint**: /ai/scheduling/jobs/{id}/assist
-**Capability Tags**: ["ai", "scheduling", "job", "assist", "lookup", "a", "id", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "job", "assist", "lookup", "a", "support", "optional", "field", "selection", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -1188,6 +1226,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -1196,9 +1237,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -1342,7 +1386,7 @@
 **Description**: Generate a proposal
 **Method**: GET
 **Endpoint**: /ai/scheduling/jobs/{id}/proposal
-**Capability Tags**: ["ai", "scheduling", "job", "proposal", "lookup", "generate", "a", "id", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "job", "proposal", "lookup", "generate", "a", "support", "optional", "field", "selection", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -1353,6 +1397,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -1361,9 +1408,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -1451,7 +1501,7 @@
 **Description**: List proposals
 **Method**: GET
 **Endpoint**: /ai/scheduling/jobs/{id}/proposals
-**Capability Tags**: ["ai", "scheduling", "job", "proposal", "lookup", "list", "id", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "job", "proposal", "lookup", "list", "support", "optional", "field", "selection", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -1462,6 +1512,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -1470,9 +1523,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -1615,7 +1671,7 @@
 **Description**: Get a proposal
 **Method**: GET
 **Endpoint**: /ai/scheduling/proposals/{id}
-**Capability Tags**: ["ai", "scheduling", "proposal", "lookup", "a", "id", "data", "error", "success"]
+**Capability Tags**: ["ai", "scheduling", "proposal", "lookup", "a", "support", "optional", "field", "selection", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -1626,6 +1682,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -1634,9 +1693,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -1935,10 +1997,18 @@
         "type": "object",
         "properties": {
           "job_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JOB-[A-Za-z0-9-]+$",
+            "x-ai-entity": "job",
+            "x-ai-id-prefix": "JOB-",
+            "x-ai-id-field": "job_id"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "proposed_slots": {
             "type": "array",
@@ -1946,10 +2016,18 @@
               "type": "object",
               "properties": {
                 "job_step_id": {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^JS-[A-Za-z0-9-]+$",
+                  "x-ai-entity": "step",
+                  "x-ai-id-prefix": "JS-",
+                  "x-ai-id-field": "job_step_id"
                 },
                 "machine_id": {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^M-[A-Za-z0-9-]+$",
+                  "x-ai-entity": "machine",
+                  "x-ai-id-prefix": "M-",
+                  "x-ai-id-field": "machine_id"
                 },
                 "scheduled_end": {
                   "type": "string"
@@ -2000,10 +2078,18 @@
           "type": "object",
           "properties": {
             "job_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^JOB-[A-Za-z0-9-]+$",
+              "x-ai-entity": "job",
+              "x-ai-id-prefix": "JOB-",
+              "x-ai-id-field": "job_id"
             },
             "proposal_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+              "x-ai-entity": "proposal",
+              "x-ai-id-prefix": "AIPROP-",
+              "x-ai-id-field": "proposal_id"
             },
             "proposed_slots": {
               "type": "array",
@@ -2011,10 +2097,18 @@
                 "type": "object",
                 "properties": {
                   "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                   },
                   "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                   },
                   "scheduled_end": {
                     "type": "string"
@@ -2056,6 +2150,108 @@
     "data": {
       "type": "object",
       "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__alerts
+**Description**: Get alerts
+**Method**: GET
+**Endpoint**: /alerts
+**Capability Tags**: ["alert", "dashboard", "list", "statu", "type", "sort", "by", "dir", "limit", "offset", "field", "data", "machine", "id", "time", "title", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "sort_by": {
+      "type": "string"
+    },
+    "sort_dir": {
+      "type": "string"
+    },
+    "limit": {
+      "type": "integer"
+    },
+    "offset": {
+      "type": "integer"
+    },
+    "fields": {
+      "type": "string"
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [
+    "status",
+    "type",
+    "sort_by",
+    "sort_dir",
+    "limit",
+    "offset",
+    "fields"
+  ],
+  "x-param-sources": {
+    "status": "query",
+    "type": "query",
+    "sort_by": "query",
+    "sort_dir": "query",
+    "limit": "query",
+    "offset": "query",
+    "fields": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machine_id": {
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
+          },
+          "time": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      }
     },
     "error": {
       "type": "string"
@@ -2186,7 +2382,7 @@
 **Description**: Get an approval by ID
 **Method**: GET
 **Endpoint**: /chatbot/approval/{id}
-**Capability Tags**: ["chatbot", "approval", "lookup", "an", "id", "data", "arg", "json", "conversation", "created", "at", "decided", "by", "execution", "error", "idempotency", "key", "method", "path", "request", "requested", "result", "snapshot", "risk", "summary", "side", "effect", "level", "statu", "pending", "approved", "rejected", "executed", "expired", "failed", "tool", "name", "turn", "audit", "success"]
+**Capability Tags**: ["chatbot", "approval", "lookup", "an", "id", "support", "optional", "field", "selection", "data", "arg", "json", "conversation", "created", "at", "decided", "by", "execution", "error", "idempotency", "key", "method", "path", "request", "requested", "result", "snapshot", "risk", "summary", "side", "effect", "level", "statu", "pending", "approved", "rejected", "executed", "expired", "failed", "tool", "name", "turn", "audit", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -2197,6 +2393,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -2205,9 +2404,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -2457,104 +2659,6 @@
 }
 `
 ---
-## get__alerts
-**Description**: Get alerts
-**Method**: GET
-**Endpoint**: /alerts
-**Capability Tags**: ["alert", "dashboard", "list", "statu", "type", "sort", "by", "dir", "limit", "offset", "field", "data", "machine", "id", "time", "title", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "status": {
-      "type": "string"
-    },
-    "type": {
-      "type": "string"
-    },
-    "sort_by": {
-      "type": "string"
-    },
-    "sort_dir": {
-      "type": "string"
-    },
-    "limit": {
-      "type": "integer"
-    },
-    "offset": {
-      "type": "integer"
-    },
-    "fields": {
-      "type": "string"
-    }
-  },
-  "x-path-params": [],
-  "x-query-params": [
-    "status",
-    "type",
-    "sort_by",
-    "sort_dir",
-    "limit",
-    "offset",
-    "fields"
-  ],
-  "x-param-sources": {
-    "status": "query",
-    "type": "query",
-    "sort_by": "query",
-    "sort_dir": "query",
-    "limit": "query",
-    "offset": "query",
-    "fields": "query"
-  },
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "machine_id": {
-            "type": "string"
-          },
-          "time": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
 ## get__dashboard_kpis
 **Description**: Get KPIs
 **Method**: GET
@@ -2744,7 +2848,12 @@
   "properties": {
     "formula_id": {
       "description": "Optional; generated with F- prefix when omitted.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^F-[A-Za-z0-9-]+$",
+      "x-ai-entity": "formula",
+      "x-ai-id-prefix": "F-",
+      "x-ai-id-field": "formula_id",
+      "x-ai-generated": true
     },
     "formula_name": {
       "type": "string"
@@ -2779,7 +2888,12 @@
     "properties": {
       "formula_id": {
         "description": "Optional; generated with F- prefix when omitted.",
-        "type": "string"
+        "type": "string",
+        "pattern": "^F-[A-Za-z0-9-]+$",
+        "x-ai-entity": "formula",
+        "x-ai-id-prefix": "F-",
+        "x-ai-id-field": "formula_id",
+        "x-ai-generated": true
       },
       "formula_name": {
         "type": "string"
@@ -2861,7 +2975,7 @@
 **Description**: Get a formula by ID
 **Method**: GET
 **Endpoint**: /formula/{id}
-**Capability Tags**: ["formula", "lookup", "a", "id", "data", "createdat", "effectivefrom", "effectiveto", "formulaid", "formulaname", "instruction", "safetynote", "version", "error", "success"]
+**Capability Tags**: ["formula", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "createdat", "effectivefrom", "effectiveto", "formulaid", "formulaname", "instruction", "safetynote", "version", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -2872,6 +2986,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -2880,9 +2997,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -3040,19 +3160,31 @@
             "type": "string"
           },
           "formula_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^F-[A-Za-z0-9-]+$",
+            "x-ai-entity": "formula",
+            "x-ai-id-prefix": "F-",
+            "x-ai-id-field": "formula_id"
           },
           "ingredient_id": {
             "type": "string"
           },
           "material_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^MAT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "inventory",
+            "x-ai-id-prefix": "MAT-",
+            "x-ai-id-field": "material_id"
           },
           "material_name": {
             "type": "string"
           },
           "product_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^P-[A-Za-z0-9-]+$",
+            "x-ai-entity": "product",
+            "x-ai-id-prefix": "P-",
+            "x-ai-id-field": "product_id"
           },
           "product_name": {
             "type": "string"
@@ -3098,14 +3230,22 @@
     },
     "material_id": {
       "description": "required if product_id not set",
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "percentage": {
       "type": "number"
     },
     "product_id": {
       "description": "required if material_id not set (sub-product)",
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id"
     },
     "quantity": {
       "description": "backward compat, maps to quantity_per_unit",
@@ -3145,14 +3285,22 @@
     "properties": {
       "material_id": {
         "description": "required if product_id not set",
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "percentage": {
         "type": "number"
       },
       "product_id": {
         "description": "required if material_id not set (sub-product)",
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id"
       },
       "quantity": {
         "description": "backward compat, maps to quantity_per_unit",
@@ -3200,7 +3348,11 @@
           "type": "string"
         },
         "formula_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^F-[A-Za-z0-9-]+$",
+          "x-ai-entity": "formula",
+          "x-ai-id-prefix": "F-",
+          "x-ai-id-field": "formula_id"
         },
         "ingredient_id": {
           "type": "string"
@@ -3210,13 +3362,21 @@
           "type": "integer"
         },
         "material_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^MAT-[A-Za-z0-9-]+$",
+          "x-ai-entity": "inventory",
+          "x-ai-id-prefix": "MAT-",
+          "x-ai-id-field": "material_id"
         },
         "percentage": {
           "type": "number"
         },
         "product_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^P-[A-Za-z0-9-]+$",
+          "x-ai-entity": "product",
+          "x-ai-id-prefix": "P-",
+          "x-ai-id-field": "product_id"
         },
         "quantity_per_unit": {
           "type": "number"
@@ -3258,7 +3418,11 @@
   "type": "object",
   "properties": {
     "material_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "quantity": {
       "type": "number"
@@ -3267,7 +3431,11 @@
       "type": "string"
     },
     "slot_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^SLOT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "slot",
+      "x-ai-id-prefix": "SLOT-",
+      "x-ai-id-field": "slot_id"
     }
   },
   "required": [
@@ -3290,7 +3458,11 @@
     ],
     "properties": {
       "material_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "quantity": {
         "type": "number"
@@ -3299,7 +3471,11 @@
         "type": "string"
       },
       "slot_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "slot",
+        "x-ai-id-prefix": "SLOT-",
+        "x-ai-id-field": "slot_id"
       }
     }
   },
@@ -3465,7 +3641,11 @@
       "type": "string"
     },
     "material_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "notes": {
       "type": "string"
@@ -3499,7 +3679,11 @@
         "type": "string"
       },
       "material_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "notes": {
         "type": "string"
@@ -3725,7 +3909,12 @@
     },
     "material_id": {
       "description": "Optional; generated with MAT- prefix when omitted.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id",
+      "x-ai-generated": true
     },
     "material_name": {
       "type": "string"
@@ -3768,7 +3957,12 @@
       },
       "material_id": {
         "description": "Optional; generated with MAT- prefix when omitted.",
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id",
+        "x-ai-generated": true
       },
       "material_name": {
         "type": "string"
@@ -3863,7 +4057,7 @@
 **Description**: Get a material by ID
 **Method**: GET
 **Endpoint**: /inventory/materials/{id}
-**Capability Tags**: ["inventory", "material", "lookup", "a", "id", "data", "currentstock", "lastupdated", "materialid", "materialname", "minstock", "reorderlevel", "statu", "storagelocation", "unit", "error", "success"]
+**Capability Tags**: ["inventory", "material", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "currentstock", "lastupdated", "materialid", "materialname", "minstock", "reorderlevel", "statu", "storagelocation", "unit", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -3874,6 +4068,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -3882,9 +4079,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -3973,7 +4173,15 @@
       ]
     },
     "sort_by": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "product_id",
+        "available_from",
+        "last_updated",
+        "quantity_on_hand",
+        "quantity_reserved",
+        "status"
+      ]
     },
     "sort_dir": {
       "type": "string",
@@ -4090,7 +4298,11 @@
       "type": "string"
     },
     "product_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id"
     },
     "quantity_on_hand": {
       "type": "number",
@@ -4137,7 +4349,11 @@
         "type": "string"
       },
       "product_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id"
       },
       "quantity_on_hand": {
         "type": "number",
@@ -4244,7 +4460,11 @@
   "type": "object",
   "properties": {
     "material_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "quantity": {
       "type": "number"
@@ -4268,7 +4488,11 @@
     ],
     "properties": {
       "material_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "quantity": {
         "type": "number"
@@ -4324,13 +4548,25 @@
   "type": "object",
   "properties": {
     "job_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^JOB-[A-Za-z0-9-]+$",
+      "x-ai-entity": "job",
+      "x-ai-id-prefix": "JOB-",
+      "x-ai-id-field": "job_id"
     },
     "job_step_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^JS-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "JS-",
+      "x-ai-id-field": "job_step_id"
     },
     "material_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "needed_at": {
       "type": "string"
@@ -4360,13 +4596,25 @@
     ],
     "properties": {
       "job_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^JOB-[A-Za-z0-9-]+$",
+        "x-ai-entity": "job",
+        "x-ai-id-prefix": "JOB-",
+        "x-ai-id-field": "job_id"
       },
       "job_step_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^JS-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "JS-",
+        "x-ai-id-field": "job_step_id"
       },
       "material_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "needed_at": {
         "type": "string"
@@ -4461,7 +4709,11 @@
   "type": "object",
   "properties": {
     "job_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^JOB-[A-Za-z0-9-]+$",
+      "x-ai-entity": "job",
+      "x-ai-id-prefix": "JOB-",
+      "x-ai-id-field": "job_id"
     }
   },
   "required": [
@@ -4479,7 +4731,11 @@
     ],
     "properties": {
       "job_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^JOB-[A-Za-z0-9-]+$",
+        "x-ai-entity": "job",
+        "x-ai-id-prefix": "JOB-",
+        "x-ai-id-field": "job_id"
       }
     }
   },
@@ -4507,10 +4763,18 @@
         "type": "object",
         "properties": {
           "job_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JOB-[A-Za-z0-9-]+$",
+            "x-ai-entity": "job",
+            "x-ai-id-prefix": "JOB-",
+            "x-ai-id-field": "job_id"
           },
           "job_step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "quantity_completed": {
             "type": "integer"
@@ -4529,7 +4793,11 @@
             ]
           },
           "step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^STP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "STP-",
+            "x-ai-id-field": "step_id"
           },
           "step_sequence": {
             "type": "integer"
@@ -4562,7 +4830,11 @@
   "type": "object",
   "properties": {
     "job_step_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^JS-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "JS-",
+      "x-ai-id-field": "job_step_id"
     },
     "splits": {
       "type": "array",
@@ -4595,10 +4867,18 @@
           },
           "job_step_id": {
             "description": "optional, for split",
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "machine_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
           },
           "prep_mins": {
             "type": "integer"
@@ -4607,7 +4887,11 @@
             "type": "integer"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "quantity": {
             "type": "integer"
@@ -4641,7 +4925,11 @@
     ],
     "properties": {
       "job_step_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^JS-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "JS-",
+        "x-ai-id-field": "job_step_id"
       },
       "splits": {
         "type": "array",
@@ -4674,10 +4962,18 @@
             },
             "job_step_id": {
               "description": "optional, for split",
-              "type": "string"
+              "type": "string",
+              "pattern": "^JS-[A-Za-z0-9-]+$",
+              "x-ai-entity": "step",
+              "x-ai-id-prefix": "JS-",
+              "x-ai-id-field": "job_step_id"
             },
             "machine_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^M-[A-Za-z0-9-]+$",
+              "x-ai-entity": "machine",
+              "x-ai-id-prefix": "M-",
+              "x-ai-id-field": "machine_id"
             },
             "prep_mins": {
               "type": "integer"
@@ -4686,7 +4982,11 @@
               "type": "integer"
             },
             "proposal_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+              "x-ai-entity": "proposal",
+              "x-ai-id-prefix": "AIPROP-",
+              "x-ai-id-field": "proposal_id"
             },
             "quantity": {
               "type": "integer"
@@ -4753,10 +5053,18 @@
             "type": "boolean"
           },
           "job_step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "machine_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
           },
           "preparation_time_minutes": {
             "type": "integer"
@@ -4765,7 +5073,11 @@
             "type": "integer"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "quantity_planned": {
             "type": "integer"
@@ -4777,7 +5089,11 @@
             "type": "string"
           },
           "slot_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^SLOT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "slot",
+            "x-ai-id-prefix": "SLOT-",
+            "x-ai-id-field": "slot_id"
           },
           "split_group_id": {
             "type": "string"
@@ -4876,10 +5192,18 @@
             "type": "boolean"
           },
           "job_step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "machine_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
           },
           "preparation_time_minutes": {
             "type": "integer"
@@ -4888,7 +5212,11 @@
             "type": "integer"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "quantity_planned": {
             "type": "integer"
@@ -4900,7 +5228,11 @@
             "type": "string"
           },
           "slot_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^SLOT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "slot",
+            "x-ai-id-prefix": "SLOT-",
+            "x-ai-id-field": "slot_id"
           },
           "split_group_id": {
             "type": "string"
@@ -4976,7 +5308,14 @@
       "type": "string"
     },
     "sort_by": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "created_at",
+        "deadline",
+        "priority",
+        "quantity_total",
+        "completion"
+      ]
     },
     "sort_dir": {
       "type": "string",
@@ -4992,8 +5331,7 @@
       "type": "integer"
     },
     "fields": {
-      "type": "string",
-      "description": "Comma-separated fields to return (job_id,priority,product_id,status,deadline)"
+      "type": "string"
     }
   },
   "x-path-params": [],
@@ -5060,7 +5398,11 @@
             }
           },
           "job_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JOB-[A-Za-z0-9-]+$",
+            "x-ai-entity": "job",
+            "x-ai-id-prefix": "JOB-",
+            "x-ai-id-field": "job_id"
           },
           "notes": {
             "type": "string"
@@ -5075,7 +5417,11 @@
             ]
           },
           "product_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^P-[A-Za-z0-9-]+$",
+            "x-ai-entity": "product",
+            "x-ai-id-prefix": "P-",
+            "x-ai-id-field": "product_id"
           },
           "quantity_completed": {
             "type": "integer"
@@ -5142,7 +5488,11 @@
       ]
     },
     "product_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id"
     },
     "quantity_total": {
       "type": "integer"
@@ -5179,10 +5529,18 @@
           },
           "job_step_id": {
             "description": "optional, for split",
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "machine_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
           },
           "prep_mins": {
             "type": "integer"
@@ -5191,7 +5549,11 @@
             "type": "integer"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "quantity": {
             "type": "integer"
@@ -5245,7 +5607,11 @@
         ]
       },
       "product_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id"
       },
       "quantity_total": {
         "type": "integer"
@@ -5282,10 +5648,18 @@
             },
             "job_step_id": {
               "description": "optional, for split",
-              "type": "string"
+              "type": "string",
+              "pattern": "^JS-[A-Za-z0-9-]+$",
+              "x-ai-entity": "step",
+              "x-ai-id-prefix": "JS-",
+              "x-ai-id-field": "job_step_id"
             },
             "machine_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^M-[A-Za-z0-9-]+$",
+              "x-ai-entity": "machine",
+              "x-ai-id-prefix": "M-",
+              "x-ai-id-field": "machine_id"
             },
             "prep_mins": {
               "type": "integer"
@@ -5294,7 +5668,11 @@
               "type": "integer"
             },
             "proposal_id": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+              "x-ai-entity": "proposal",
+              "x-ai-id-prefix": "AIPROP-",
+              "x-ai-id-field": "proposal_id"
             },
             "quantity": {
               "type": "integer"
@@ -5357,7 +5735,11 @@
           }
         },
         "job_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^JOB-[A-Za-z0-9-]+$",
+          "x-ai-entity": "job",
+          "x-ai-id-prefix": "JOB-",
+          "x-ai-id-field": "job_id"
         },
         "notes": {
           "type": "string"
@@ -5372,7 +5754,11 @@
           ]
         },
         "product_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^P-[A-Za-z0-9-]+$",
+          "x-ai-entity": "product",
+          "x-ai-id-prefix": "P-",
+          "x-ai-id-field": "product_id"
         },
         "quantity_completed": {
           "type": "integer"
@@ -5412,7 +5798,7 @@
 **Description**: Get a job by ID
 **Method**: GET
 **Endpoint**: /jobs/{id}
-**Capability Tags**: ["job", "lookup", "a", "id", "data", "created", "at", "deadline", "statu", "is", "late", "by", "human", "readable", "2", "day", "4", "hour", "on", "time", "note", "priority", "product", "quantity", "completed", "total", "updated", "error", "success"]
+**Capability Tags**: ["job", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "created", "at", "deadline", "statu", "is", "late", "by", "human", "readable", "2", "day", "4", "hour", "on", "time", "note", "priority", "product", "quantity", "completed", "total", "updated", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -5423,6 +5809,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -5431,9 +5820,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -5470,7 +5862,11 @@
           }
         },
         "job_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^JOB-[A-Za-z0-9-]+$",
+          "x-ai-entity": "job",
+          "x-ai-id-prefix": "JOB-",
+          "x-ai-id-field": "job_id"
         },
         "notes": {
           "type": "string"
@@ -5485,7 +5881,11 @@
           ]
         },
         "product_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^P-[A-Za-z0-9-]+$",
+          "x-ai-entity": "product",
+          "x-ai-id-prefix": "P-",
+          "x-ai-id-field": "product_id"
         },
         "quantity_completed": {
           "type": "integer"
@@ -5660,7 +6060,11 @@
           }
         },
         "job_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^JOB-[A-Za-z0-9-]+$",
+          "x-ai-entity": "job",
+          "x-ai-id-prefix": "JOB-",
+          "x-ai-id-field": "job_id"
         },
         "notes": {
           "type": "string"
@@ -5675,7 +6079,11 @@
           ]
         },
         "product_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^P-[A-Za-z0-9-]+$",
+          "x-ai-entity": "product",
+          "x-ai-id-prefix": "P-",
+          "x-ai-id-field": "product_id"
         },
         "quantity_completed": {
           "type": "integer"
@@ -5834,10 +6242,18 @@
             "type": "boolean"
           },
           "job_step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
           },
           "machine_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^M-[A-Za-z0-9-]+$",
+            "x-ai-entity": "machine",
+            "x-ai-id-prefix": "M-",
+            "x-ai-id-field": "machine_id"
           },
           "preparation_time_minutes": {
             "type": "integer"
@@ -5846,7 +6262,11 @@
             "type": "integer"
           },
           "proposal_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "proposal",
+            "x-ai-id-prefix": "AIPROP-",
+            "x-ai-id-field": "proposal_id"
           },
           "quantity_planned": {
             "type": "integer"
@@ -5858,7 +6278,11 @@
             "type": "string"
           },
           "slot_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^SLOT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "slot",
+            "x-ai-id-prefix": "SLOT-",
+            "x-ai-id-field": "slot_id"
           },
           "split_group_id": {
             "type": "string"
@@ -5919,7 +6343,18 @@
       "type": "string"
     },
     "sort_by": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "machine_id",
+        "machine_name",
+        "machine_type",
+        "status",
+        "location",
+        "capacity_per_hour",
+        "utilization_rate",
+        "last_maintenance_date",
+        "created_at"
+      ]
     },
     "sort_dir": {
       "type": "string",
@@ -6066,7 +6501,12 @@
     },
     "machine_id": {
       "description": "Optional; generated with M- prefix when omitted.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id",
+      "x-ai-generated": true
     },
     "machine_name": {
       "type": "string"
@@ -6119,7 +6559,12 @@
       },
       "machine_id": {
         "description": "Optional; generated with M- prefix when omitted.",
-        "type": "string"
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id",
+        "x-ai-generated": true
       },
       "machine_name": {
         "type": "string"
@@ -6241,7 +6686,11 @@
       "type": "string"
     },
     "machine_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id"
     },
     "start_time": {
       "type": "string"
@@ -6275,7 +6724,11 @@
         "type": "string"
       },
       "machine_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id"
       },
       "start_time": {
         "type": "string"
@@ -6540,7 +6993,7 @@
 **Description**: Get machine by ID
 **Method**: GET
 **Endpoint**: /machines/{id}
-**Capability Tags**: ["machine", "lookup", "id", "retrieve", "detail", "a", "specific", "data", "capacityperhour", "defaultchangeovertime", "defaultcleaningtime", "defaultsetuptime", "lastmaintenancedate", "location", "machineid", "machinename", "machinetype", "cnc", "press", "coating", "etc", "maintenanceintervalday", "statu", "utilizationrate", "error", "success"]
+**Capability Tags**: ["machine", "lookup", "id", "retrieve", "detail", "a", "specific", "support", "optional", "field", "selection", "data", "capacityperhour", "defaultchangeovertime", "defaultcleaningtime", "defaultsetuptime", "lastmaintenancedate", "location", "machineid", "machinename", "machinetype", "cnc", "press", "coating", "etc", "maintenanceintervalday", "statu", "utilizationrate", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -6551,6 +7004,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -6559,9 +7015,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -6845,7 +7304,11 @@
       "type": "number"
     },
     "step_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^STP-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "STP-",
+      "x-ai-id-field": "step_id"
     }
   },
   "required": [
@@ -6871,7 +7334,11 @@
         "type": "number"
       },
       "step_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^STP-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "STP-",
+        "x-ai-id-field": "step_id"
       }
     }
   },
@@ -6943,7 +7410,11 @@
       "type": "string"
     },
     "machine_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id"
     },
     "maintenance_type": {
       "type": "string"
@@ -6981,7 +7452,11 @@
         "type": "string"
       },
       "machine_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id"
       },
       "maintenance_type": {
         "type": "string"
@@ -7193,7 +7668,11 @@
             "type": "string"
           },
           "job_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^JOB-[A-Za-z0-9-]+$",
+            "x-ai-entity": "job",
+            "x-ai-id-prefix": "JOB-",
+            "x-ai-id-field": "job_id"
           },
           "machine_name": {
             "type": "string"
@@ -7384,11 +7863,19 @@
     },
     "material_id": {
       "description": "required if product_id not set",
-      "type": "string"
+      "type": "string",
+      "pattern": "^MAT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "inventory",
+      "x-ai-id-prefix": "MAT-",
+      "x-ai-id-field": "material_id"
     },
     "product_id": {
       "description": "required if material_id not set",
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id"
     },
     "quantity_per_unit": {
       "description": "required",
@@ -7422,11 +7909,19 @@
     "properties": {
       "material_id": {
         "description": "required if product_id not set",
-        "type": "string"
+        "type": "string",
+        "pattern": "^MAT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "inventory",
+        "x-ai-id-prefix": "MAT-",
+        "x-ai-id-field": "material_id"
       },
       "product_id": {
         "description": "required if material_id not set",
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id"
       },
       "quantity_per_unit": {
         "description": "required",
@@ -7686,13 +8181,22 @@
     },
     "process_id": {
       "description": "Optional; generated with PRC- prefix when omitted.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^PRC-[A-Za-z0-9-]+$",
+      "x-ai-entity": "process",
+      "x-ai-id-prefix": "PRC-",
+      "x-ai-id-field": "process_id",
+      "x-ai-generated": true
     },
     "process_name": {
       "type": "string"
     },
     "product_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id"
     },
     "version": {
       "type": "integer"
@@ -7723,13 +8227,22 @@
       },
       "process_id": {
         "description": "Optional; generated with PRC- prefix when omitted.",
-        "type": "string"
+        "type": "string",
+        "pattern": "^PRC-[A-Za-z0-9-]+$",
+        "x-ai-entity": "process",
+        "x-ai-id-prefix": "PRC-",
+        "x-ai-id-field": "process_id",
+        "x-ai-generated": true
       },
       "process_name": {
         "type": "string"
       },
       "product_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id"
       },
       "version": {
         "type": "integer"
@@ -7808,7 +8321,7 @@
 **Description**: Get a process by product ID
 **Method**: GET
 **Endpoint**: /processes/product/{id}
-**Capability Tags**: ["process", "product", "lookup", "a", "id", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
+**Capability Tags**: ["process", "product", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -7819,6 +8332,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -7827,9 +8343,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -7893,7 +8412,7 @@
 **Description**: Get a process by ID
 **Method**: GET
 **Endpoint**: /processes/{id}
-**Capability Tags**: ["process", "lookup", "a", "id", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
+**Capability Tags**: ["process", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -7904,6 +8423,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -7912,9 +8434,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -8031,7 +8556,7 @@
 **Description**: List steps by process ID
 **Method**: GET
 **Endpoint**: /processes/{id}/steps
-**Capability Tags**: ["process", "step", "lookup", "list", "id", "data", "allow", "parallel", "execution", "batch", "size", "0", "no", "constraint", "default", "changeover", "time", "minute", "cleaning", "preparation", "processing", "is", "true", "if", "run", "in", "batche", "machine", "type", "required", "max", "min", "minimum", "when", "splitting", "split", "qty", "wait", "e", "g", "cooling", "before", "next", "note", "predecessor", "ids", "json", "array", "of", "empty", "infer", "from", "stepsequence", "quality", "check", "name", "sequence", "matche", "reference", "transfer", "transport", "to", "error", "success"]
+**Capability Tags**: ["process", "step", "lookup", "list", "id", "support", "optional", "field", "selection", "data", "allow", "parallel", "execution", "batch", "size", "0", "no", "constraint", "default", "changeover", "time", "minute", "cleaning", "preparation", "processing", "is", "true", "if", "run", "in", "batche", "machine", "type", "required", "max", "min", "minimum", "when", "splitting", "split", "qty", "wait", "e", "g", "cooling", "before", "next", "note", "predecessor", "ids", "json", "array", "of", "empty", "infer", "from", "stepsequence", "quality", "check", "name", "sequence", "matche", "reference", "transfer", "transport", "to", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -8042,6 +8567,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -8050,9 +8578,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -8124,13 +8655,21 @@
             "type": "string"
           },
           "process_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^PRC-[A-Za-z0-9-]+$",
+            "x-ai-entity": "process",
+            "x-ai-id-prefix": "PRC-",
+            "x-ai-id-field": "process_id"
           },
           "quality_check_required": {
             "type": "boolean"
           },
           "step_id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^STP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "STP-",
+            "x-ai-id-field": "step_id"
           },
           "step_name": {
             "type": "string"
@@ -8210,7 +8749,11 @@
       "type": "boolean"
     },
     "step_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^STP-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "STP-",
+      "x-ai-id-field": "step_id"
     },
     "step_name": {
       "type": "string"
@@ -8288,7 +8831,11 @@
         "type": "boolean"
       },
       "step_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^STP-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "STP-",
+        "x-ai-id-field": "step_id"
       },
       "step_name": {
         "type": "string"
@@ -8391,13 +8938,21 @@
           "type": "string"
         },
         "process_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^PRC-[A-Za-z0-9-]+$",
+          "x-ai-entity": "process",
+          "x-ai-id-prefix": "PRC-",
+          "x-ai-id-field": "process_id"
         },
         "quality_check_required": {
           "type": "boolean"
         },
         "step_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^STP-[A-Za-z0-9-]+$",
+          "x-ai-entity": "step",
+          "x-ai-id-prefix": "STP-",
+          "x-ai-id-field": "step_id"
         },
         "step_name": {
           "type": "string"
@@ -8459,7 +9014,11 @@
       "type": "integer"
     },
     "slot_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^SLOT-[A-Za-z0-9-]+$",
+      "x-ai-entity": "slot",
+      "x-ai-id-prefix": "SLOT-",
+      "x-ai-id-field": "slot_id"
     },
     "start_time": {
       "type": "string"
@@ -8502,7 +9061,11 @@
         "type": "integer"
       },
       "slot_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+        "x-ai-entity": "slot",
+        "x-ai-id-prefix": "SLOT-",
+        "x-ai-id-field": "slot_id"
       },
       "start_time": {
         "type": "string"
@@ -8598,7 +9161,12 @@
       "type": "string"
     },
     "sort_by": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "product_id",
+        "product_name",
+        "created_at"
+      ]
     },
     "sort_dir": {
       "type": "string",
@@ -8720,14 +9288,27 @@
       "type": "string"
     },
     "formula_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^F-[A-Za-z0-9-]+$",
+      "x-ai-entity": "formula",
+      "x-ai-id-prefix": "F-",
+      "x-ai-id-field": "formula_id"
     },
     "process_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^PRC-[A-Za-z0-9-]+$",
+      "x-ai-entity": "process",
+      "x-ai-id-prefix": "PRC-",
+      "x-ai-id-field": "process_id"
     },
     "product_id": {
       "description": "Optional; generated with P- prefix when omitted.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^P-[A-Za-z0-9-]+$",
+      "x-ai-entity": "product",
+      "x-ai-id-prefix": "P-",
+      "x-ai-id-field": "product_id",
+      "x-ai-generated": true
     },
     "product_name": {
       "type": "string"
@@ -8763,14 +9344,27 @@
         "type": "string"
       },
       "formula_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^F-[A-Za-z0-9-]+$",
+        "x-ai-entity": "formula",
+        "x-ai-id-prefix": "F-",
+        "x-ai-id-field": "formula_id"
       },
       "process_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^PRC-[A-Za-z0-9-]+$",
+        "x-ai-entity": "process",
+        "x-ai-id-prefix": "PRC-",
+        "x-ai-id-field": "process_id"
       },
       "product_id": {
         "description": "Optional; generated with P- prefix when omitted.",
-        "type": "string"
+        "type": "string",
+        "pattern": "^P-[A-Za-z0-9-]+$",
+        "x-ai-entity": "product",
+        "x-ai-id-prefix": "P-",
+        "x-ai-id-field": "product_id",
+        "x-ai-generated": true
       },
       "product_name": {
         "type": "string"
@@ -8862,7 +9456,7 @@
 **Description**: Get a product by ID
 **Method**: GET
 **Endpoint**: /products/{id}
-**Capability Tags**: ["product", "lookup", "a", "id", "data", "createdat", "description", "formulaid", "linked", "formula", "for", "bom", "recipe", "processid", "active", "routing", "scheduling", "productid", "productname", "producttype", "statu", "obsolete", "unitofmeasure", "pcs", "kg", "liter", "error", "success"]
+**Capability Tags**: ["product", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "createdat", "description", "formulaid", "linked", "formula", "for", "bom", "recipe", "processid", "active", "routing", "scheduling", "productid", "productname", "producttype", "statu", "obsolete", "unitofmeasure", "pcs", "kg", "liter", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -8873,6 +9467,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -8881,9 +9478,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -8972,11 +9572,19 @@
         "properties": {
           "material_id": {
             "description": "required if product_id not set",
-            "type": "string"
+            "type": "string",
+            "pattern": "^MAT-[A-Za-z0-9-]+$",
+            "x-ai-entity": "inventory",
+            "x-ai-id-prefix": "MAT-",
+            "x-ai-id-field": "material_id"
           },
           "product_id": {
             "description": "sub-product, required if material_id not set",
-            "type": "string"
+            "type": "string",
+            "pattern": "^P-[A-Za-z0-9-]+$",
+            "x-ai-entity": "product",
+            "x-ai-id-prefix": "P-",
+            "x-ai-id-field": "product_id"
           },
           "quantity_per_unit": {
             "description": "required; qty per 1 unit of parent",
@@ -8996,10 +9604,18 @@
       }
     },
     "formula_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^F-[A-Za-z0-9-]+$",
+      "x-ai-entity": "formula",
+      "x-ai-id-prefix": "F-",
+      "x-ai-id-field": "formula_id"
     },
     "process_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^PRC-[A-Za-z0-9-]+$",
+      "x-ai-entity": "process",
+      "x-ai-id-prefix": "PRC-",
+      "x-ai-id-field": "process_id"
     }
   },
   "required": [
@@ -9025,11 +9641,19 @@
           "properties": {
             "material_id": {
               "description": "required if product_id not set",
-              "type": "string"
+              "type": "string",
+              "pattern": "^MAT-[A-Za-z0-9-]+$",
+              "x-ai-entity": "inventory",
+              "x-ai-id-prefix": "MAT-",
+              "x-ai-id-field": "material_id"
             },
             "product_id": {
               "description": "sub-product, required if material_id not set",
-              "type": "string"
+              "type": "string",
+              "pattern": "^P-[A-Za-z0-9-]+$",
+              "x-ai-entity": "product",
+              "x-ai-id-prefix": "P-",
+              "x-ai-id-field": "product_id"
             },
             "quantity_per_unit": {
               "description": "required; qty per 1 unit of parent",
@@ -9049,10 +9673,18 @@
         }
       },
       "formula_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^F-[A-Za-z0-9-]+$",
+        "x-ai-entity": "formula",
+        "x-ai-id-prefix": "F-",
+        "x-ai-id-field": "formula_id"
       },
       "process_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^PRC-[A-Za-z0-9-]+$",
+        "x-ai-entity": "process",
+        "x-ai-id-prefix": "PRC-",
+        "x-ai-id-field": "process_id"
       }
     }
   },
@@ -9206,19 +9838,31 @@
                 "type": "string"
               },
               "formula_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^F-[A-Za-z0-9-]+$",
+                "x-ai-entity": "formula",
+                "x-ai-id-prefix": "F-",
+                "x-ai-id-field": "formula_id"
               },
               "ingredient_id": {
                 "type": "string"
               },
               "material_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^MAT-[A-Za-z0-9-]+$",
+                "x-ai-entity": "inventory",
+                "x-ai-id-prefix": "MAT-",
+                "x-ai-id-field": "material_id"
               },
               "material_name": {
                 "type": "string"
               },
               "product_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^P-[A-Za-z0-9-]+$",
+                "x-ai-entity": "product",
+                "x-ai-id-prefix": "P-",
+                "x-ai-id-field": "product_id"
               },
               "product_name": {
                 "type": "string"
@@ -9366,13 +10010,21 @@
                 "type": "string"
               },
               "process_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^PRC-[A-Za-z0-9-]+$",
+                "x-ai-entity": "process",
+                "x-ai-id-prefix": "PRC-",
+                "x-ai-id-field": "process_id"
               },
               "quality_check_required": {
                 "type": "boolean"
               },
               "step_id": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^STP-[A-Za-z0-9-]+$",
+                "x-ai-entity": "step",
+                "x-ai-id-prefix": "STP-",
+                "x-ai-id-field": "step_id"
               },
               "step_name": {
                 "type": "string"
@@ -9427,7 +10079,11 @@
       "type": "string"
     },
     "job_step_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^JS-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "JS-",
+      "x-ai-id-field": "job_step_id"
     },
     "notes": {
       "type": "string"
@@ -9462,7 +10118,11 @@
         "type": "string"
       },
       "job_step_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^JS-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "JS-",
+        "x-ai-id-field": "job_step_id"
       },
       "notes": {
         "type": "string"
@@ -12091,7 +12751,7 @@
 **Description**: Get a slot by ID
 **Method**: GET
 **Endpoint**: /slots/{id}
-**Capability Tags**: ["slot", "job", "lookup", "a", "id", "data", "actual", "end", "start", "allocation", "percent", "batch", "sequence", "buffer", "time", "minute", "changeover", "cleaning", "is", "parallel", "step", "machine", "preparation", "processing", "proposal", "quantity", "planned", "scheduled", "split", "group", "statu", "error", "success"]
+**Capability Tags**: ["slot", "job", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "actual", "end", "start", "allocation", "percent", "batch", "sequence", "buffer", "time", "minute", "changeover", "cleaning", "is", "parallel", "step", "machine", "preparation", "processing", "proposal", "quantity", "planned", "scheduled", "split", "group", "statu", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -12102,6 +12762,9 @@
   "properties": {
     "id": {
       "type": "string"
+    },
+    "fields": {
+      "type": "string"
     }
   },
   "required": [
@@ -12110,9 +12773,12 @@
   "x-path-params": [
     "id"
   ],
-  "x-query-params": [],
+  "x-query-params": [
+    "fields"
+  ],
   "x-param-sources": {
-    "id": "path"
+    "id": "path",
+    "fields": "query"
   },
   "x-allowed-roles": [
     "viewer",
@@ -12155,10 +12821,18 @@
           "type": "boolean"
         },
         "job_step_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^JS-[A-Za-z0-9-]+$",
+          "x-ai-entity": "step",
+          "x-ai-id-prefix": "JS-",
+          "x-ai-id-field": "job_step_id"
         },
         "machine_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^M-[A-Za-z0-9-]+$",
+          "x-ai-entity": "machine",
+          "x-ai-id-prefix": "M-",
+          "x-ai-id-field": "machine_id"
         },
         "preparation_time_minutes": {
           "type": "integer"
@@ -12167,7 +12841,11 @@
           "type": "integer"
         },
         "proposal_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+          "x-ai-entity": "proposal",
+          "x-ai-id-prefix": "AIPROP-",
+          "x-ai-id-field": "proposal_id"
         },
         "quantity_planned": {
           "type": "integer"
@@ -12179,7 +12857,11 @@
           "type": "string"
         },
         "slot_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^SLOT-[A-Za-z0-9-]+$",
+          "x-ai-entity": "slot",
+          "x-ai-id-prefix": "SLOT-",
+          "x-ai-id-field": "slot_id"
         },
         "split_group_id": {
           "type": "string"
@@ -12240,7 +12922,11 @@
       "type": "boolean"
     },
     "machine_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id"
     },
     "quantity_planned": {
       "type": "integer"
@@ -12302,7 +12988,11 @@
         "type": "boolean"
       },
       "machine_id": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id"
       },
       "quantity_planned": {
         "type": "integer"
@@ -12378,10 +13068,18 @@
           "type": "boolean"
         },
         "job_step_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^JS-[A-Za-z0-9-]+$",
+          "x-ai-entity": "step",
+          "x-ai-id-prefix": "JS-",
+          "x-ai-id-field": "job_step_id"
         },
         "machine_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^M-[A-Za-z0-9-]+$",
+          "x-ai-entity": "machine",
+          "x-ai-id-prefix": "M-",
+          "x-ai-id-field": "machine_id"
         },
         "preparation_time_minutes": {
           "type": "integer"
@@ -12390,7 +13088,11 @@
           "type": "integer"
         },
         "proposal_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+          "x-ai-entity": "proposal",
+          "x-ai-id-prefix": "AIPROP-",
+          "x-ai-id-field": "proposal_id"
         },
         "quantity_planned": {
           "type": "integer"
@@ -12402,7 +13104,11 @@
           "type": "string"
         },
         "slot_id": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^SLOT-[A-Za-z0-9-]+$",
+          "x-ai-entity": "slot",
+          "x-ai-id-prefix": "SLOT-",
+          "x-ai-id-field": "slot_id"
         },
         "split_group_id": {
           "type": "string"

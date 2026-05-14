@@ -102,11 +102,12 @@ func (h *AIChatHandler) Create(c *gin.Context) {
 }
 
 // @Summary Get a conversation by ID
-// @Description Get a conversation by ID
+// @Description Get a conversation by ID. Supports optional field selection.
 // @Tags ai chats
 // @Accept json
 // @Produce json
 // @Param id path string true "Conversation ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.AIConversation}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

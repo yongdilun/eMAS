@@ -27,11 +27,12 @@ func NewAISchedulingHandler(service *service.AIPredictiveService) *AISchedulingH
 }
 
 // @Summary Assist a job
-// @Description Assist a job
+// @Description Assist a job. Supports optional field selection.
 // @Tags ai scheduling
 // @Accept json
 // @Produce json
 // @Param id path string true "Job ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=map[string]interface{}}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -47,11 +48,12 @@ func (h *AISchedulingHandler) Assist(c *gin.Context) {
 }
 
 // @Summary Generate a proposal
-// @Description Generate a proposal
+// @Description Generate a proposal. Supports optional field selection.
 // @Tags ai scheduling
 // @Accept json
 // @Produce json
 // @Param id path string true "Job ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=map[string]interface{}}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -276,11 +278,12 @@ func (h *AISchedulingHandler) VerifyOverlaps(c *gin.Context) {
 }
 
 // @Summary List proposals
-// @Description List proposals
+// @Description List proposals. Supports optional field selection.
 // @Tags ai scheduling
 // @Accept json
 // @Produce json
 // @Param id path string true "Job ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=map[string]interface{}}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -297,11 +300,12 @@ func (h *AISchedulingHandler) ListProposals(c *gin.Context) {
 }
 
 // @Summary Get a proposal
-// @Description Get a proposal
+// @Description Get a proposal. Supports optional field selection.
 // @Tags ai scheduling
 // @Accept json
 // @Produce json
 // @Param id path string true "Proposal ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=map[string]interface{}}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response
@@ -414,11 +418,12 @@ func (h *AISchedulingHandler) ApplyProposalByID(c *gin.Context) {
 }
 
 // @Summary Split suggestion
-// @Description Split suggestion
+// @Description Split suggestion. Supports optional field selection.
 // @Tags ai scheduling
 // @Accept json
 // @Produce json
 // @Param id path string true "Job Step ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=map[string]interface{}}
 // @Failure 400 {object} dto.Response
 // @Failure 500 {object} dto.Response

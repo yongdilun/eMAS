@@ -8,6 +8,8 @@ from typing import Any, Literal
 from ..config import Settings
 from ..schemas import PlanDraft
 from ..observability.telemetry import log_llm_prompt, log_llm_prompt_skipped
+from .answer_model import render_answer_model_markdown
+from .result_normalizer import normalize_tool_result
 
 
 SummaryBackendName = Literal["deterministic", "langchain"]
@@ -172,6 +174,46 @@ def _job_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
     return "\n".join(lines).strip()
 
 
+def _entity_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
+    """Readable recap for single-entity GET results using the generic AnswerModel."""
+    rows = facts.get("tool_outputs")
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    answers: list[str] = []
+    intent = str(facts.get("intent") or "").strip()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        # Skip write-side tools
+        tn = str(row.get("tool_name") or "")
+        if re.search(r"\b(post|put|patch|delete)\b", tn, re.IGNORECASE):
+            continue
+        # Try raw result dict first, then parse excerpt
+        result = row.get("result")
+        if not isinstance(result, dict):
+            excerpt = row.get("result_excerpt")
+            if isinstance(excerpt, str) and excerpt.strip():
+                try:
+                    result = json.loads(excerpt)
+                except Exception:
+                    result = None
+            if not isinstance(result, dict):
+                continue
+        answer = normalize_tool_result(
+            tool_name=tn,
+            endpoint=None,
+            result=result,
+            intent=intent,
+        )
+        if answer is not None:
+            answers.append(render_answer_model_markdown(answer))
+
+    if not answers:
+        return None
+    return "\n\n".join(answers)
+
+
 def _sanitize_completed_bundle_text(text: str) -> str:
     """Strip approval-wait phrases if the model echoes them on completed bundles."""
     t = (text or "").strip()
@@ -306,6 +348,9 @@ class SummaryAdapter:
         recap = _job_recap_markdown_from_facts(facts)
         if recap:
             return recap
+        entity_recap = _entity_recap_markdown_from_facts(facts)
+        if entity_recap:
+            return entity_recap
         steps = facts.get("steps") if isinstance(facts.get("steps"), list) else []
         lines = ["**Success**", "", (intent or "").strip() or "Execution completed."]
         if steps:
@@ -335,6 +380,15 @@ class SummaryAdapter:
                     metadata={"intent": intent, "kind": kind},
                 )
                 return SummaryResult(text=recap, backend_used="deterministic", llm_calls=0)
+            entity_recap = _entity_recap_markdown_from_facts(facts)
+            if entity_recap:
+                log_llm_prompt_skipped(
+                    component="bundle_narrative",
+                    backend="deterministic",
+                    reason="completed_entity_lookup_recap",
+                    metadata={"intent": intent, "kind": kind},
+                )
+                return SummaryResult(text=entity_recap, backend_used="deterministic", llm_calls=0)
 
         if kind == "awaiting_approval":
             structured = awaiting_approval_markdown_from_bundle_ui(facts)

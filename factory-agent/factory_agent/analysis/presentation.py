@@ -136,6 +136,71 @@ def _ordered_table_keys(
     return ordered
 
 
+def _scalar_row_from_dict(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in data.items() if _is_scalar(v) and v not in (None, "")}
+
+
+def _ordered_card_keys(data: dict[str, Any], *, intent: str | None, max_columns: int) -> list[str]:
+    seen = [k for k, v in data.items() if _is_scalar(v) and v not in (None, "")]
+    requested = _requested_keys_from_intent(intent, seen)
+    if requested and _intent_has_projection_cue(intent):
+        ordered = [k for k in requested if k in seen]
+    else:
+        # prefer identifiers first, then requested, then alphabetical
+        identity = [k for k in seen if _is_identifier_key(k)]
+        rest = [k for k in seen if k not in identity]
+        ordered = identity + requested + rest
+    return ordered[:max_columns]
+
+
+def extract_entity_card_from_result(
+    *,
+    tool_name: str | None,
+    result: dict[str, Any] | None,
+    intent: str | None = None,
+    max_columns: int = 12,
+) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+
+    data = None
+    for key in ("data", "item", "result"):
+        value = result.get(key)
+        if isinstance(value, dict) and value:
+            data = value
+            break
+    if data is None:
+        # result itself may be the entity if there is no wrapper
+        if any(_is_scalar(v) for v in result.values()):
+            data = result
+        else:
+            return None
+
+    row = _scalar_row_from_dict(data)
+    if not row:
+        return None
+
+    keys = _ordered_card_keys(row, intent=intent, max_columns=max_columns)
+    if not keys:
+        return None
+
+    fields = [{"key": k, "label": _label_for_key(k), "value": row[k]} for k in keys]
+    presentation: dict[str, Any] = {
+        "render_hint": "card",
+        "card": {
+            "title": _title_from_tool_name(tool_name),
+            "fields": fields,
+        },
+    }
+    analysis = result.get("_analysis")
+    if isinstance(analysis, dict) and isinstance(analysis.get("facts"), list) and analysis["facts"]:
+        presentation["analysis"] = {
+            "facts": [str(fact) for fact in analysis["facts"][:6]],
+            "results": analysis.get("results") if isinstance(analysis.get("results"), list) else [],
+        }
+    return presentation
+
+
 def extract_table_from_result(
     *,
     tool_name: str | None,
@@ -153,35 +218,34 @@ def extract_table_from_result(
         if isinstance(value, list) and value:
             rows_source = value
             break
-    if not isinstance(rows_source, list) or not rows_source:
-        return None
+    if isinstance(rows_source, list) and rows_source:
+        dict_rows = [row for row in rows_source if isinstance(row, dict)]
+        if len(dict_rows) >= 2:
+            candidate_keys = _ordered_table_keys(dict_rows, result=result, intent=intent, max_columns=max_columns)
+            if candidate_keys:
+                table_rows: list[dict[str, Any]] = []
+                for row in dict_rows[:max_rows]:
+                    table_rows.append({key: row.get(key) for key in candidate_keys})
 
-    dict_rows = [row for row in rows_source if isinstance(row, dict)]
-    if len(dict_rows) < 2:
-        return None
+                presentation: dict[str, Any] = {
+                    "render_hint": "table",
+                    "table": {
+                        "title": _title_from_tool_name(tool_name),
+                        "columns": [{"key": key, "label": _label_for_key(key)} for key in candidate_keys],
+                        "rows": table_rows,
+                        "total_rows": len(dict_rows),
+                        "displayed_rows": len(table_rows),
+                    },
+                }
+                analysis = result.get("_analysis")
+                if isinstance(analysis, dict) and isinstance(analysis.get("facts"), list) and analysis["facts"]:
+                    presentation["analysis"] = {
+                        "facts": [str(fact) for fact in analysis["facts"][:6]],
+                        "results": analysis.get("results") if isinstance(analysis.get("results"), list) else [],
+                    }
+                return presentation
 
-    candidate_keys = _ordered_table_keys(dict_rows, result=result, intent=intent, max_columns=max_columns)
-    if not candidate_keys:
-        return None
-
-    table_rows: list[dict[str, Any]] = []
-    for row in dict_rows[:max_rows]:
-        table_rows.append({key: row.get(key) for key in candidate_keys})
-
-    presentation = {
-        "render_hint": "table",
-        "table": {
-            "title": _title_from_tool_name(tool_name),
-            "columns": [{"key": key, "label": _label_for_key(key)} for key in candidate_keys],
-            "rows": table_rows,
-            "total_rows": len(dict_rows),
-            "displayed_rows": len(table_rows),
-        },
-    }
-    analysis = result.get("_analysis")
-    if isinstance(analysis, dict) and isinstance(analysis.get("facts"), list) and analysis["facts"]:
-        presentation["analysis"] = {
-            "facts": [str(fact) for fact in analysis["facts"][:6]],
-            "results": analysis.get("results") if isinstance(analysis.get("results"), list) else [],
-        }
-    return presentation
+    # Fall back to single-entity card when data is a dict or list has <2 rows
+    return extract_entity_card_from_result(
+        tool_name=tool_name, result=result, intent=intent, max_columns=max_columns
+    )

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
@@ -133,8 +133,12 @@ def sanitize_tool_args_against_schema(
 ) -> tuple[dict[str, Any], list[str]]:
     schema = tool.input_schema or {}
     properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
-    if not isinstance(args, dict) or not properties:
-        return ({}, sorted(args.keys())) if isinstance(args, dict) and not properties else (args or {}, [])
+    if not isinstance(args, dict):
+        return (args or {}, [])
+    # Legacy/minimal schemas often omit ``properties``; do not wipe path/query args (e.g. ``id`` on
+    # ``GET /machines/{id}``) or DecisionGuard will see empty args and block on ``machine_ref``.
+    if not properties:
+        return (dict(args), [])
 
     sanitized: dict[str, Any] = {}
     dropped: list[str] = []

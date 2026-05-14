@@ -91,11 +91,12 @@ func (h *JobSlotHandler) UpdateSlot(c *gin.Context) {
 }
 
 // @Summary Get a slot by ID
-// @Description Get a slot by ID
+// @Description Get a slot by ID. Supports optional field selection.
 // @Tags job slot
 // @Accept json
 // @Produce json
 // @Param id path string true "Slot ID"
+// @Param fields query string false "Comma-separated fields to return"
 // @Success 200 {object} dto.Response{data=domain.JobStepScheduleSlots}
 // @Failure 404 {object} dto.Response
 // @Failure 500 {object} dto.Response

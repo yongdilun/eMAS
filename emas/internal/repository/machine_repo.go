@@ -59,10 +59,15 @@ func (r *MachineRepository) ListFiltered(f MachineListFilter) ([]domain.Machine,
 	}
 
 	allowedSort := map[string]string{
-		"machine_id":   "machine_id",
-		"machine_name": "machine_name",
-		"status":       "status",
-		"created_at":   "created_at",
+		"machine_id":            "machine_id",
+		"machine_name":          "machine_name",
+		"machine_type":          "machine_type",
+		"status":                "status",
+		"location":              "location",
+		"capacity_per_hour":     "capacity_per_hour",
+		"utilization_rate":      "utilization_rate",
+		"last_maintenance_date": "last_maintenance_date",
+		"created_at":            "created_at",
 	}
 	db = f.ApplySorting(db, "machine_id ASC", allowedSort)
 

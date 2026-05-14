@@ -106,6 +106,55 @@ def test_decision_guard_passes_matching_constraint():
     assert out["next_route"] == "tool_execution"
 
 
+def test_decision_guard_passes_machine_ref_when_get__machines_uses_machine_name():
+    """List machines filter uses machine_name (production); machine_ref must map to it."""
+    state: AgentState = {
+        "original_query": "Show status for machine M-CNC-01",
+        "intent": "Show status for machine M-CNC-01",
+        "messages": [],
+        "scoped_tools": [
+            ToolInfo(
+                name="get__machines",
+                description="List machines",
+                endpoint="/machines",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "machine_name": {"type": "string"},
+                        "fields": {"type": "string"},
+                    },
+                },
+                query_params=["machine_name", "fields"],
+                param_sources={"machine_name": "query", "fields": "query"},
+                is_read_only=True,
+            ),
+        ],
+        "context": {},
+        "current_intent": {
+            "intent_id": "intent-000-bf6f3846",
+            "description": "Show status for machine M-CNC-01",
+            "explicit_constraints": [
+                {"field": "machine_ref", "operator": "=", "value": "M-CNC-01", "strength": "hard"},
+            ],
+            "status": "in_progress",
+        },
+        "pending_decision": {
+            "intent_id": "intent-000-bf6f3846",
+            "kind": "domain_tool",
+            "tool_calls": [
+                {
+                    "tool_name": "get__machines",
+                    "args": {"machine_name": "M-CNC-01", "fields": "machineName,status"},
+                }
+            ],
+            "decision_summary": "filter machines",
+        },
+    }
+    out = decision_guard_node(state)
+    assert out["next_route"] == "tool_execution"
+
+
 def test_decision_guard_keeps_safe_read_projection_controls_without_user_provenance():
     state: AgentState = {
         "original_query": "change all medium priority job to high",
@@ -252,6 +301,49 @@ def test_decision_guard_passes_machine_ref_constraint_for_machine_id_path_arg():
     assert out["next_route"] == "tool_execution"
 
 
+def test_decision_guard_passes_machine_ref_when_input_schema_has_no_properties():
+    """Minimal tool schemas must not cause sanitize to drop ``id`` before constraint checks."""
+    state: AgentState = {
+        "original_query": "Show status for machine M-CNC-01",
+        "intent": "Show status for machine M-CNC-01",
+        "messages": [],
+        "scoped_tools": [
+            ToolInfo(
+                name="get__machines_{id}",
+                description="Get machine by ID",
+                endpoint="/machines/{id}",
+                method="GET",
+                input_schema={"type": "object"},
+                path_params=["id"],
+                param_sources={"id": "path"},
+                is_read_only=True,
+            )
+        ],
+        "context": {},
+        "current_intent": {
+            "intent_id": "i1",
+            "description": "Show status for machine M-CNC-01",
+            "explicit_constraints": [
+                {"field": "machine_ref", "value": "M-CNC-01", "strength": "hard"},
+            ],
+            "status": "in_progress",
+        },
+        "pending_decision": {
+            "intent_id": "i1",
+            "kind": "domain_tool",
+            "tool_calls": [{"tool_name": "get__machines_{id}", "args": {"id": "M-CNC-01"}}],
+            "decision_summary": "lookup machine",
+        },
+    }
+
+    out = decision_guard_node(state)
+
+    assert out["next_route"] == "tool_execution"
+    pd = out["pending_decision"]
+    assert isinstance(pd, dict)
+    assert pd["tool_calls"][0]["args"] == {"id": "M-CNC-01"}
+
+
 def test_decision_guard_blocks_wrong_machine_ref_for_machine_id_path_arg():
     state: AgentState = {
         "original_query": "Check machine 5 status",
@@ -294,6 +386,64 @@ def test_decision_guard_blocks_wrong_machine_ref_for_machine_id_path_arg():
 
     assert out["next_route"] == "continue_planner"
     assert out["failed_strategies"][0]["reason"] == "constraint_violation"
+
+
+def test_decision_guard_machine_ref_passes_parallel_read_when_only_machine_tool_carries_id():
+    """Hard machine_ref must not be checked against unrelated tools in the same batch."""
+    state: AgentState = {
+        "original_query": "Show status for machine M-CNC-01",
+        "intent": "Show status for machine M-CNC-01",
+        "messages": [],
+        "scoped_tools": [
+            ToolInfo(
+                name="get__jobs",
+                description="List jobs",
+                endpoint="/jobs",
+                method="GET",
+                input_schema={"type": "object", "properties": {"limit": {"type": "integer"}}},
+                is_read_only=True,
+            ),
+            ToolInfo(
+                name="get__machines_{id}",
+                description="Get machine by ID",
+                endpoint="/machines/{id}",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string"}},
+                },
+                path_params=["id"],
+                param_sources={"id": "path"},
+                is_read_only=True,
+            ),
+        ],
+        "context": {},
+        "current_intent": {
+            "intent_id": "i1",
+            "description": "Show status for machine M-CNC-01",
+            "explicit_constraints": [
+                {"field": "machine_ref", "operator": "=", "value": "M-CNC-01", "strength": "hard"},
+            ],
+            "status": "in_progress",
+        },
+        "pending_decision": {
+            "intent_id": "i1",
+            "kind": "parallel_read_tools",
+            "tool_calls": [
+                {"tool_name": "get__jobs", "args": {"limit": 10}},
+                {"tool_name": "get__machines_{id}", "args": {"id": "M-CNC-01"}},
+            ],
+            "decision_summary": "parallel context + machine lookup",
+        },
+    }
+
+    out = decision_guard_node(state)
+
+    assert out["next_route"] == "tool_execution"
+    pd = out.get("pending_decision")
+    assert isinstance(pd, dict)
+    assert [c.get("tool_name") for c in pd.get("tool_calls") or []] == ["get__jobs", "get__machines_{id}"]
 
 
 def test_decision_guard_does_not_apply_machine_ref_alias_to_other_entity_id_path():
