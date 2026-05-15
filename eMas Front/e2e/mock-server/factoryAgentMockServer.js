@@ -1,8 +1,10 @@
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import {
+  activityStreamForScenario,
   createScenarioSession,
   getScenario,
+  notificationStreamForScenario,
   resolveScenarioForPrompt,
   scenarioNames,
   summarizeScenarioSession,
@@ -16,6 +18,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 const port = Number(args.get('--port') || process.env.PORT || 8015)
 const sessions = new Map()
 let requestLog = []
+let connectionLog = []
 
 function now() {
   return new Date().toISOString()
@@ -42,6 +45,22 @@ function sendSseEvent(res, event, data, id = 1) {
   res.write(`id: ${id}\n`)
   res.write(`event: ${event}\n`)
   res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function logConnection({ req, url, event, connectionId, sessionId, scenarioName = null, stream, status = null }) {
+  connectionLog.push({
+    at: now(),
+    event,
+    connection_id: connectionId,
+    method: req.method,
+    path: url.pathname,
+    query: Object.fromEntries(url.searchParams.entries()),
+    session_id: sessionId,
+    scenario_name: scenarioName,
+    stream,
+    last_event_id: req.headers['last-event-id'] || null,
+    status,
+  })
 }
 
 function logRequest({ req, url, sessionId = null, scenarioName = null, prompt = null, body = null, status = null }) {
@@ -104,9 +123,67 @@ function filteredRequestLog(url) {
   })
 }
 
+function filteredConnectionLog(url) {
+  const sessionId = url.searchParams.get('session_id')
+  const scenarioName = url.searchParams.get('scenario')
+  const stream = url.searchParams.get('stream')
+  const event = url.searchParams.get('event')
+  return connectionLog.filter((entry) => {
+    if (sessionId && entry.session_id !== sessionId) return false
+    if (scenarioName && entry.scenario_name !== scenarioName) return false
+    if (stream && entry.stream !== stream) return false
+    if (event && entry.event !== event) return false
+    return true
+  })
+}
+
 function snapshot(session) {
   const scenario = getScenario(session.scenario_name)
   return scenario.snapshot(session)
+}
+
+async function runSseScript({ req, res, url, sessionId, stream, frames }) {
+  const session = sessions.get(sessionId)
+  const scenarioName = session?.scenario_name || null
+  const connectionId = `pw-sse-${randomUUID()}`
+  let closed = false
+
+  const markClosed = () => {
+    if (closed) return
+    closed = true
+    logConnection({
+      req,
+      url,
+      event: 'close',
+      connectionId,
+      sessionId,
+      scenarioName,
+      stream,
+    })
+  }
+
+  writeSseHeaders(res)
+  logRequest({ req, url, sessionId, scenarioName, status: 200 })
+  logConnection({
+    req,
+    url,
+    event: 'open',
+    connectionId,
+    sessionId,
+    scenarioName,
+    stream,
+    status: 200,
+  })
+
+  res.on('close', markClosed)
+  req.on('aborted', markClosed)
+
+  for (const frame of frames) {
+    if (closed || res.writableEnded) return
+    if (frame.delayMs) await sleep(frame.delayMs)
+    if (closed || res.writableEnded) return
+    sendSseEvent(res, frame.event, frame.data, frame.id)
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -132,9 +209,15 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'GET' && url.pathname === '/__test/sse-connections') {
+    sendJson(req, url, res, 200, { connections: filteredConnectionLog(url) })
+    return
+  }
+
   if (req.method === 'POST' && url.pathname === '/__test/reset') {
     sessions.clear()
     requestLog = []
+    connectionLog = []
     sendJson(req, url, res, 200, { ok: true })
     return
   }
@@ -244,19 +327,35 @@ const server = http.createServer(async (req, res) => {
 
   const eventsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events$/)
   if (req.method === 'GET' && eventsMatch) {
-    writeSseHeaders(res)
-    logRequest({ req, url, sessionId: eventsMatch[1], status: 200 })
-    sendSseEvent(res, 'notification', { type: 'hello', cursor: 1 })
-    req.on('close', () => res.end())
+    const sessionId = eventsMatch[1]
+    const session = sessions.get(sessionId)
+    runSseScript({
+      req,
+      res,
+      url,
+      sessionId,
+      stream: 'notification',
+      frames: notificationStreamForScenario(session),
+    }).catch((err) => {
+      if (!res.writableEnded) res.destroy(err)
+    })
     return
   }
 
   const activityEventsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events\/activity$/)
   if (req.method === 'GET' && activityEventsMatch) {
-    writeSseHeaders(res)
-    logRequest({ req, url, sessionId: activityEventsMatch[1], status: 200 })
-    sendSseEvent(res, 'control', { type: 'STREAM_READY' })
-    req.on('close', () => res.end())
+    const sessionId = activityEventsMatch[1]
+    const session = sessions.get(sessionId)
+    runSseScript({
+      req,
+      res,
+      url,
+      sessionId,
+      stream: 'activity',
+      frames: activityStreamForScenario(session),
+    }).catch((err) => {
+      if (!res.writableEnded) res.destroy(err)
+    })
     return
   }
 

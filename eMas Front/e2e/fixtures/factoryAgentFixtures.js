@@ -9,6 +9,16 @@ export const emptyAssistantPrompt = 'Return an empty completed answer'
 
 export const emptyAssistantFallbackAnswer = 'Execution completed.'
 
+export const notificationSsePrompt = 'Validate notification SSE refresh for M-CNC-01'
+
+export const notificationSseAnswer =
+  'Notification SSE refreshed the Factory Agent snapshot and confirmed M-CNC-01 is complete with no alarms.'
+
+export const activitySsePrompt = 'Validate ordered activity SSE steps for M-CNC-01'
+
+export const activitySseAnswer =
+  'Activity SSE completed in order before the final M-CNC-01 response was shown.'
+
 const baseTime = Date.parse('2026-05-16T04:00:00.000Z')
 
 export function fixtureTime(offsetSeconds = 0) {
@@ -246,6 +256,48 @@ export function completedActivitySteps() {
       state: 'complete',
     },
   ]
+}
+
+export function orderedSseActivitySteps({ terminal = false } = {}) {
+  const steps = [
+    {
+      id: 'pw-sse-activity-understanding',
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'SSE understanding request',
+      detail: 'Notification stream opened and the request was accepted',
+      state: 'success',
+    },
+    {
+      id: 'pw-sse-activity-checking-machine',
+      timestamp: Date.parse(fixtureTime(2)) / 1000,
+      group: 'research',
+      label: 'SSE checking machine telemetry',
+      detail: 'Reading M-CNC-01 status and alarm records',
+      state: terminal ? 'success' : 'running',
+    },
+    {
+      id: 'pw-sse-activity-validating',
+      timestamp: Date.parse(fixtureTime(3)) / 1000,
+      group: 'research',
+      label: 'SSE validating result',
+      detail: 'Ordering the streamed activity rows before final response',
+      state: terminal ? 'success' : 'waiting',
+    },
+  ]
+
+  if (terminal) {
+    steps.push({
+      id: 'pw-sse-activity-complete',
+      timestamp: Date.parse(fixtureTime(4)) / 1000,
+      group: 'response',
+      label: 'Run complete',
+      detail: 'All steps finished. See the thread below.',
+      state: 'complete',
+    })
+  }
+
+  return steps
 }
 
 export function sessionSummary(session) {

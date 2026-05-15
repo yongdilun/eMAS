@@ -23,7 +23,7 @@ Use one of:
 | 1 | Playwright setup and baseline browser tests | Done | Marked In Progress during implementation; completed with Playwright config, mock Factory Agent server, and two Chromium baseline specs. |
 | 2 | Chatbot happy-path E2E tests | Done | Marked In Progress during implementation; completed with deterministic mocked session/message/plan/execute/snapshot lifecycle and one Chromium happy-path browser spec. |
 | 3 | Deterministic mocking for chatbot responses | Done | Completed with a lightweight named scenario store, per-session scenario state, in-memory request logs, reset endpoint, reusable fixture builders, preserved happy path, and two additional REST-backed L1 scenarios. |
-| 4 | SSE streaming tests | Not Started | Depends on fixture-driven mock server with real `text/event-stream`. |
+| 4 | SSE streaming tests | Done | Completed with lightweight scripted notification/activity `text/event-stream` support, scoped EventSource connection logs, and two Chromium SSE specs. |
 | 5 | Failure, timeout, retry, and disconnect scenarios | Not Started | Depends on SSE and fixture framework. |
 | 6 | CI integration | Not Started | No root CI config found yet. |
 | 7 | Cleanup and replacement of old pipeline | Not Started | Do only after Playwright suite is stable and accepted. |
@@ -34,7 +34,7 @@ Use one of:
 |---|---|---|---|
 | L0 Browser smoke | Done | App opens, chat opens, composer usable. | Covered by Phase 1 Chromium baseline specs. |
 | L1 Deterministic mocked chat | In Progress | REST-backed mocked session/message/plan/execute/snapshot flows. | Scenario 5 happy path is covered; broader L1 scenarios remain for later phases. |
-| L2 Deterministic mocked SSE | Not Started | Real `text/event-stream` from mock server for notification/activity scenarios. | Adds stream lifecycle, chunk order, fallback, and disconnect coverage. |
+| L2 Deterministic mocked SSE | In Progress | Real `text/event-stream` from mock server for notification/activity scenarios. | Phase 4 covers notification hello/invalidation, ordered activity rows, final snapshot completion, and simple heartbeat suppression; broader failure/reconnect/cancel coverage remains for Phase 5+. |
 | L3 Seeded full-stack browser | Not Started | Vite plus seeded Go API and Factory Agent fake planner/model provider. | Scheduled or release-branch gate, not first PR requirement. |
 | L4 Production-like release validation | Not Started | Compose/staging with nginx paths, auth mode, polling fallback. | Release candidate gate. |
 | L5 Production synthetic monitoring | Not Started | Safe read-only canary prompts and health/latency checks. | Post-deploy monitoring only. |
@@ -55,11 +55,11 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 | 8 | Follow-up message after completion creates a second distinct turn. | Not Started | L1 |
 | 9 | Plan mode submission preserves mode and produces expected planning/progress copy. | Not Started | L1 |
 | 10 | Final assistant text animates to completion before sources/details appear. | Not Started | L1 |
-| 11 | Notification SSE `hello` opens, invalidates snapshot, and triggers refresh. | Not Started | L2 |
+| 11 | Notification SSE `hello` opens, invalidates snapshot, and triggers refresh. | Done | L2 |
 | 12 | Multiple notification events update in cursor order without duplicate refreshes. | Not Started | L2 |
-| 13 | Activity stream emits multiple steps and the activity UI shows them in order. | Not Started | L2 |
-| 14 | Final completion arrives through SSE plus snapshot and removes busy UI. | Not Started | L2 |
-| 15 | SSE heartbeat frames do not create noisy visible messages. | Not Started | L2 |
+| 13 | Activity stream emits multiple steps and the activity UI shows them in order. | Done | L2 |
+| 14 | Final completion arrives through SSE plus snapshot and removes busy UI. | Done | L2 |
+| 15 | SSE heartbeat frames do not create noisy visible messages. | Done | L2 |
 | 16 | SSE reconnect uses `Last-Event-ID` and does not duplicate prior activity. | Not Started | L2 |
 | 17 | Static bearer token mode disables EventSource and uses polling fallback. | Not Started | L2 |
 | 18 | Malformed SSE payload is ignored and the next valid event still updates UI. | Not Started | L2 |
@@ -140,13 +140,14 @@ Phase 3 note: RAG/source and approval-required fixtures remain available L1 expa
 
 ### Phase 4: SSE Streaming Tests
 
-- [ ] Add scripted notification SSE support.
-- [ ] Add scripted activity SSE support.
-- [ ] Test successful notification stream and final completion.
-- [ ] Test multiple activity chunks arriving in order.
-- [ ] Test final completion event/state.
-- [ ] Test reconnect and `Last-Event-ID` behavior if practical.
-- [ ] Assert EventSource connection lifecycle from mock server logs.
+- [x] Add scripted notification SSE support.
+- [x] Add scripted activity SSE support.
+- [x] Test successful notification stream and final completion.
+- [x] Test multiple activity chunks arriving in order.
+- [x] Test final completion event/state.
+- [ ] Test reconnect and `Last-Event-ID` behavior if practical. Deferred because the Phase 4 implementation request explicitly excluded reconnect coverage.
+- [x] Assert EventSource connection lifecycle from mock server logs.
+- [x] Assert simple heartbeat frames do not create visible noisy messages.
 
 ### Phase 5: Failure, Timeout, Retry, and Disconnect Scenarios
 
@@ -182,7 +183,7 @@ Phase 3 note: RAG/source and approval-required fixtures remain available L1 expa
 
 ## Current Blockers
 
-- None for Phase 4.
+- None for completed Phase 4.
 - There is still no root CI workflow to extend; keep CI integration for Phase 6.
 
 ## Open Questions
@@ -301,6 +302,15 @@ Phase 3:
 - `npm run test:e2e -- --project=chromium`: passed, 5 Chromium Playwright tests.
 - `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
 
+Phase 4:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; Phase 4 working tree changes present before commit.
+- `npm run test:e2e -- --project=chromium --grep "SSE"`: initially passed the notification SSE spec and failed the activity SSE spec because separately arriving activity frames were paced by the UI hook and the final snapshot closed the stream before queued middle rows rendered. Adjusted the activity SSE script cadence and final invalidation timing; re-run passed, 2 Chromium Playwright tests.
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed Phase 4 modified/untracked files before final verification.
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 7 Chromium Playwright tests.
+- `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -344,8 +354,18 @@ Phase 3 implementation:
 - `eMas Front/e2e/mock-server/fixtureStore.js`
 - `eMas Front/e2e/specs/chat-fixtures.spec.js`
 
+Phase 4 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/fixtures/factoryAgentFixtures.js`
+- `eMas Front/e2e/fixtures/sseScripts.js`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/specs/chat-sse-activity.spec.js`
+- `eMas Front/e2e/specs/chat-sse-notification.spec.js`
+
 ## Next Action
 
-Begin Phase 4 by adding scripted notification/activity SSE support and browser tests for EventSource-driven snapshot invalidation and activity ordering.
+Begin Phase 5 by adding failure/timeout/retry/cancel/disconnect scenarios only when requested. Keep reconnect, malformed SSE, timeout, and disconnect lifecycle matrix out of Phase 4.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.

@@ -1,5 +1,7 @@
 import {
   activeHappyPathSnapshot,
+  activitySseAnswer,
+  activitySsePrompt,
   backendUnavailablePrompt,
   buildFactoryAgentPlan,
   buildHappyPathPlan,
@@ -11,6 +13,9 @@ import {
   fixtureTime,
   machineStatusAnswer,
   machineStatusPrompt,
+  notificationSseAnswer,
+  notificationSsePrompt,
+  orderedSseActivitySteps,
   planCreatedEvent,
   sessionCompletedEvent,
   sessionFailedEvent,
@@ -19,6 +24,12 @@ import {
   toolResultEvent,
   userMessageEvent,
 } from '../fixtures/factoryAgentFixtures.js'
+import {
+  defaultActivityStream,
+  defaultNotificationStream,
+  notificationCompletionStream,
+  orderedActivityStream,
+} from '../fixtures/sseScripts.js'
 
 export const DEFAULT_SCENARIO = 'readMachineHappyPath'
 
@@ -42,6 +53,8 @@ function addUserTurn(session, content, prefix) {
   const turnId = turnIdFor(session, prefix)
   session.current_turn_id = turnId
   session.status = 'PLANNING'
+  session.completion_scheduled = false
+  session.completion_promise = null
   appendTimeline(session, userMessageEvent({ turnId, content }))
   return turnId
 }
@@ -52,6 +65,54 @@ function completeSteps(session) {
     status: 'DONE',
     updated_at: fixtureTime(4),
   }))
+}
+
+function scheduleCompletion(session, sleep, {
+  delayMs = 450,
+  turnId,
+  planId,
+  stepId,
+  toolName,
+  answer,
+  eventPrefix,
+} = {}) {
+  if (session.completion_scheduled) return
+  session.completion_scheduled = true
+  session.completion_promise = (async () => {
+    await sleep(delayMs)
+    session.status = 'COMPLETED'
+    completeSteps(session)
+    appendTimeline(
+      session,
+      toolResultEvent({
+        turnId,
+        eventId: `${eventPrefix}-tool-result`,
+        stepId,
+        planId,
+        toolName,
+        content: answer,
+        details: {
+          args: { machine_id: 'M-CNC-01' },
+          result: {
+            machine_id: 'M-CNC-01',
+            status: 'RUNNING',
+            alarms: [],
+            _summary: answer,
+          },
+        },
+      }),
+    )
+    appendTimeline(
+      session,
+      sessionCompletedEvent({
+        turnId,
+        eventId: `${eventPrefix}-completed`,
+        planId,
+        content: answer,
+        reason: 'sse_fixture',
+      }),
+    )
+  })()
 }
 
 function defaultIdleSnapshot(session) {
@@ -211,6 +272,133 @@ export const scenarioCatalog = {
       return defaultIdleSnapshot(session)
     },
   },
+
+  notificationSseCompletion: {
+    name: 'notificationSseCompletion',
+    description: 'Notification SSE hello and snapshot invalidation refresh a completed snapshot.',
+    prompts: [notificationSsePrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || notificationSsePrompt, 'pw-turn-notification-sse')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-notification-sse'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-notification-sse'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-notification-sse',
+        objective: 'Validate browser notification SSE refresh behavior',
+        stepId: 'pw-step-notification-sse',
+        toolName: 'get_machine_status',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-notification-sse-plan-created',
+          planId: 'pw-plan-notification-sse',
+          content: 'Waiting for the notification stream to invalidate the snapshot.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-notification-sse' } }
+    },
+    async onExecute(session, sleep) {
+      const turnId = session.current_turn_id || 'pw-turn-notification-sse'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-notification-sse-execution-started',
+          planId: 'pw-plan-notification-sse',
+        }),
+      )
+      scheduleCompletion(session, sleep, {
+        delayMs: 420,
+        turnId,
+        planId: 'pw-plan-notification-sse',
+        stepId: 'pw-step-notification-sse',
+        toolName: 'get_machine_status',
+        answer: notificationSseAnswer,
+        eventPrefix: 'pw-notification-sse',
+      })
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, completedActivitySteps())
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return activeHappyPathSnapshot(session)
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return notificationCompletionStream()
+    },
+  },
+
+  activitySseOrdered: {
+    name: 'activitySseOrdered',
+    description: 'Activity SSE emits ordered steps before final completion appears from the snapshot.',
+    prompts: [activitySsePrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySsePrompt, 'pw-turn-activity-sse')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-sse'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse',
+        objective: 'Validate ordered browser activity stream behavior',
+        stepId: 'pw-step-activity-sse',
+        toolName: 'get_machine_status',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-plan-created',
+          planId: 'pw-plan-activity-sse',
+          content: 'Keeping the assistant answer gated until activity and snapshot completion.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse' } }
+    },
+    async onExecute(session, sleep) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-execution-started',
+          planId: 'pw-plan-activity-sse',
+        }),
+      )
+      scheduleCompletion(session, sleep, {
+        delayMs: 3200,
+        turnId,
+        planId: 'pw-plan-activity-sse',
+        stepId: 'pw-step-activity-sse',
+        toolName: 'get_machine_status',
+        answer: activitySseAnswer,
+        eventPrefix: 'pw-activity-sse',
+      })
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, orderedSseActivitySteps({ terminal: true }))
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return snapshotFromSession(session)
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return notificationCompletionStream({ invalidationDelayMs: 3400 })
+    },
+    activityStream() {
+      return orderedActivityStream()
+    },
+  },
 }
 
 export function scenarioNames() {
@@ -236,4 +424,14 @@ export function createScenarioSession({ sessionId, userId, name, scenarioName = 
 
 export function summarizeScenarioSession(session) {
   return sessionSummary(session)
+}
+
+export function notificationStreamForScenario(session) {
+  const scenario = getScenario(session?.scenario_name)
+  return scenario.notificationStream?.(session) || defaultNotificationStream()
+}
+
+export function activityStreamForScenario(session) {
+  const scenario = getScenario(session?.scenario_name)
+  return scenario.activityStream?.(session) || defaultActivityStream()
 }
