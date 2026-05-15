@@ -1,0 +1,43 @@
+{
+  "method": "GET",
+  "path": "/api/v1/inventory/materials?sort_by=material_name\u0026sort_dir=asc\u0026limit=3",
+  "status_code": 200,
+  "body": {
+    "success": true,
+    "data": [
+      {
+        "MaterialID": "MAT-003",
+        "MaterialName": "Alloy Steel Billet 4140",
+        "Unit": "kg",
+        "CurrentStock": 30000,
+        "MinStock": 300,
+        "ReorderLevel": 0,
+        "StorageLocation": "Rack-A3",
+        "status": "in_stock",
+        "LastUpdated": "2026-05-15T19:34:34.2577246+08:00"
+      },
+      {
+        "MaterialID": "MAT-008",
+        "MaterialName": "Aluminium Alloy A380",
+        "Unit": "kg",
+        "CurrentStock": 30000,
+        "MinStock": 400,
+        "ReorderLevel": 0,
+        "StorageLocation": "Rack-C1",
+        "status": "in_stock",
+        "LastUpdated": "2026-05-15T19:34:34.2577246+08:00"
+      },
+      {
+        "MaterialID": "MAT-013",
+        "MaterialName": "Bearing SKF 6205",
+        "Unit": "pcs",
+        "CurrentStock": 5000,
+        "MinStock": 50,
+        "ReorderLevel": 0,
+        "StorageLocation": "Bin-E1",
+        "status": "in_stock",
+        "LastUpdated": "2026-05-15T19:34:34.2577246+08:00"
+      }
+    ]
+  }
+}

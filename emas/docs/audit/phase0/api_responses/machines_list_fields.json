@@ -1,0 +1,52 @@
+{
+  "method": "GET",
+  "path": "/api/v1/machines?fields=machine_id,machine_name,machine_type,status\u0026sort_by=machine_id\u0026sort_dir=asc\u0026limit=3",
+  "status_code": 200,
+  "body": {
+    "success": true,
+    "data": [
+      {
+        "MachineID": "M-ASM-01",
+        "MachineName": "Assembly Station 01",
+        "MachineType": "Assembly Station",
+        "Location": "",
+        "status": "running",
+        "CapacityPerHour": 0,
+        "DefaultSetupTime": 0,
+        "DefaultCleaningTime": 0,
+        "DefaultChangeoverTime": 0,
+        "UtilizationRate": 0,
+        "LastMaintenanceDate": null,
+        "MaintenanceIntervalDays": 0
+      },
+      {
+        "MachineID": "M-CNC-01",
+        "MachineName": "CNC Mill 01",
+        "MachineType": "CNC Mill",
+        "Location": "",
+        "status": "running",
+        "CapacityPerHour": 0,
+        "DefaultSetupTime": 0,
+        "DefaultCleaningTime": 0,
+        "DefaultChangeoverTime": 0,
+        "UtilizationRate": 0,
+        "LastMaintenanceDate": null,
+        "MaintenanceIntervalDays": 0
+      },
+      {
+        "MachineID": "M-CNC-02",
+        "MachineName": "CNC Mill 02",
+        "MachineType": "CNC Mill",
+        "Location": "",
+        "status": "running",
+        "CapacityPerHour": 0,
+        "DefaultSetupTime": 0,
+        "DefaultCleaningTime": 0,
+        "DefaultChangeoverTime": 0,
+        "UtilizationRate": 0,
+        "LastMaintenanceDate": null,
+        "MaintenanceIntervalDays": 0
+      }
+    ]
+  }
+}

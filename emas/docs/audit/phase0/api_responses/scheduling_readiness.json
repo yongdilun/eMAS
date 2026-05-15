@@ -1,0 +1,105 @@
+{
+  "method": "GET",
+  "path": "/api/v1/scheduling/products/P-001/readiness",
+  "status_code": 200,
+  "body": {
+    "success": true,
+    "data": {
+      "product_id": "P-001",
+      "quantity": 1,
+      "can_start_now": true,
+      "materials": [
+        {
+          "material_id": "MAT-001",
+          "material_name": "Carbon Steel Bar Ø50mm",
+          "required_qty": 2.5,
+          "unit": "kg",
+          "enough_now": true,
+          "available_qty": 30000,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-002",
+          "material_name": "Stainless Steel Sheet 2mm",
+          "required_qty": 0.585,
+          "unit": "kg",
+          "ready_at": "2026-05-16T19:34:34.5698502+08:00",
+          "enough_now": true,
+          "available_qty": 300,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-004",
+          "material_name": "Chrome Steel Rod Ø60mm",
+          "required_qty": 0.808,
+          "unit": "kg",
+          "enough_now": true,
+          "available_qty": 25000,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-005",
+          "material_name": "Epoxy Coating Agent",
+          "required_qty": 1,
+          "unit": "L",
+          "ready_at": "2026-05-17T19:34:34.5698502+08:00",
+          "enough_now": true,
+          "available_qty": 14900,
+          "reserved_qty": 100,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-010",
+          "material_name": "M8 Hex Bolt (Box 500)",
+          "required_qty": 8.16,
+          "unit": "pcs",
+          "enough_now": true,
+          "available_qty": 9000,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-011",
+          "material_name": "O-Ring Kit (Hydraulic)",
+          "required_qty": 1.02,
+          "unit": "set",
+          "enough_now": true,
+          "available_qty": 25000,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        },
+        {
+          "material_id": "MAT-014",
+          "material_name": "Hydraulic Seal Set",
+          "required_qty": 0.51,
+          "unit": "set",
+          "enough_now": true,
+          "available_qty": 25000,
+          "reserved_qty": 0,
+          "shortage_qty": 0
+        }
+      ],
+      "sub_products": [
+        {
+          "product_id": "P-007",
+          "product_name": "Seal Kit",
+          "required_qty": 1.02,
+          "available_qty": 80,
+          "reserved_qty": 10,
+          "shortage_qty": 0
+        },
+        {
+          "product_id": "P-008",
+          "product_name": "Valve Spool Assembly",
+          "required_qty": 1.01,
+          "available_qty": 62,
+          "reserved_qty": 8,
+          "shortage_qty": 0
+        }
+      ]
+    }
+  }
+}

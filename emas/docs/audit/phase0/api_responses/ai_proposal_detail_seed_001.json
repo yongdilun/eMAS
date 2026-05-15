@@ -1,0 +1,110 @@
+{
+  "method": "GET",
+  "path": "/api/v1/ai/scheduling/proposals/AIPROP-SEED-001",
+  "status_code": 200,
+  "body": {
+    "success": true,
+    "data": {
+      "proposal_id": "AIPROP-SEED-001",
+      "job_id": "JOB-SEED-001",
+      "product_id": "P-001",
+      "version": 1,
+      "status": "draft",
+      "engine": "heuristic",
+      "engine_version": "1.0",
+      "objective_score": 850,
+      "snapshot_hash": "seed-hash-001",
+      "generated_at": "2026-05-15T19:34:34.5509885+08:00",
+      "feasible": true,
+      "earliest_start": "0001-01-01T00:00:00Z",
+      "summary": null,
+      "proposed_slots": [
+        {
+          "job_step_id": "JS-SEED-001-1",
+          "step_id": "STP-P001-1",
+          "step_name": "STP-P001-1",
+          "machine_id": "M-CNC-01",
+          "machine_name": "CNC Mill 01",
+          "scheduled_start": "2026-05-16T11:00:00Z",
+          "scheduled_end": "2026-05-16T12:00:00Z",
+          "quantity_planned": 320,
+          "allocation_percent": 100,
+          "is_parallel": false,
+          "batch_sequence": 0,
+          "estimated_duration_mins": 60,
+          "reasoning": [
+            "Seed fallback proposal for approval/apply tests."
+          ]
+        },
+        {
+          "job_step_id": "JS-SEED-001-2",
+          "step_id": "STP-P001-2",
+          "step_name": "STP-P001-2",
+          "machine_id": "M-CNC-01",
+          "machine_name": "CNC Mill 01",
+          "scheduled_start": "2026-05-16T12:30:00Z",
+          "scheduled_end": "2026-05-16T13:30:00Z",
+          "quantity_planned": 320,
+          "allocation_percent": 100,
+          "is_parallel": false,
+          "batch_sequence": 0,
+          "estimated_duration_mins": 60,
+          "reasoning": [
+            "Seed fallback proposal for approval/apply tests."
+          ]
+        },
+        {
+          "job_step_id": "JS-SEED-001-3",
+          "step_id": "STP-P001-3",
+          "step_name": "STP-P001-3",
+          "machine_id": "M-CNC-01",
+          "machine_name": "CNC Mill 01",
+          "scheduled_start": "2026-05-16T14:00:00Z",
+          "scheduled_end": "2026-05-16T15:00:00Z",
+          "quantity_planned": 320,
+          "allocation_percent": 100,
+          "is_parallel": false,
+          "batch_sequence": 0,
+          "estimated_duration_mins": 60,
+          "reasoning": [
+            "Seed fallback proposal for approval/apply tests."
+          ]
+        },
+        {
+          "job_step_id": "JS-SEED-001-4",
+          "step_id": "STP-P001-4",
+          "step_name": "STP-P001-4",
+          "machine_id": "M-CNC-01",
+          "machine_name": "CNC Mill 01",
+          "scheduled_start": "2026-05-16T15:30:00Z",
+          "scheduled_end": "2026-05-16T16:30:00Z",
+          "quantity_planned": 320,
+          "allocation_percent": 100,
+          "is_parallel": false,
+          "batch_sequence": 0,
+          "estimated_duration_mins": 60,
+          "reasoning": [
+            "Seed fallback proposal for approval/apply tests."
+          ]
+        },
+        {
+          "job_step_id": "JS-SEED-001-5",
+          "step_id": "STP-P001-5",
+          "step_name": "STP-P001-5",
+          "machine_id": "M-CNC-01",
+          "machine_name": "CNC Mill 01",
+          "scheduled_start": "2026-05-16T17:00:00Z",
+          "scheduled_end": "2026-05-16T18:00:00Z",
+          "quantity_planned": 320,
+          "allocation_percent": 100,
+          "is_parallel": false,
+          "batch_sequence": 0,
+          "estimated_duration_mins": 60,
+          "reasoning": [
+            "Seed fallback proposal for approval/apply tests."
+          ]
+        }
+      ]
+    }
+  }
+}

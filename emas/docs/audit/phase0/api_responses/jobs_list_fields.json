@@ -1,0 +1,31 @@
+{
+  "method": "GET",
+  "path": "/api/v1/jobs?fields=job_id,product_id,status,priority,deadline\u0026sort_by=deadline\u0026sort_dir=asc\u0026limit=3",
+  "status_code": 200,
+  "body": {
+    "success": true,
+    "data": [
+      {
+        "deadline": "2026-05-23T00:00:00Z",
+        "job_id": "JOB-SEED-022",
+        "priority": "medium",
+        "product_id": "P-001",
+        "status": "planned"
+      },
+      {
+        "deadline": "2026-05-23T00:00:00Z",
+        "job_id": "JOB-SEED-025",
+        "priority": "medium",
+        "product_id": "P-005",
+        "status": "planned"
+      },
+      {
+        "deadline": "2026-05-24T00:00:00Z",
+        "job_id": "JOB-SEED-019",
+        "priority": "high",
+        "product_id": "P-001",
+        "status": "planned"
+      }
+    ]
+  }
+}

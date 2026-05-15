@@ -17,23 +17,23 @@ Status values:
 | Item | Status | Notes |
 |---|---|---|
 | Audit documented | Done | See `GO_BACKEND_AUDIT.md`. |
-| Existing service tests checked | Done | `go test ./internal/service -count=1` passed during audit. |
-| Existing e2e tests checked | Done | `go test ./internal/e2e -count=1` passed during audit. |
-| Full handler package checked | Blocked | `go test ./internal/handler -count=1` timed out during audit. Needs bisection. |
-| Swagger snapshot recorded | Not Started | Snapshot current `docs/swagger.json` and `docs/swagger.yaml` before edits. |
-| Docker Compose startup verified | Not Started | Verify before runtime behavior changes. |
+| Existing service tests checked | Done | `go test ./internal/service -count=1` passed during audit and again on `audit/go-backend-phase-0` on 2026-05-15. |
+| Existing e2e tests checked | Done | `go test ./internal/e2e -count=1` passed during audit and again on `audit/go-backend-phase-0` on 2026-05-15. |
+| Full handler package checked | Blocked | `go test ./internal/handler -count=1 -timeout 180s -v` timed out. Bisection identified `TestAISchedulingHandler_Features` and `TestRealSolverProposalLifecycle` as proposal apply-by-ID timeout blockers on the shared SQLite test DB. |
+| Swagger snapshot recorded | Done | Phase 0 snapshots saved under `docs/audit/phase0/swagger/`. |
+| Docker Compose startup verified | Blocked | Non-invasive Compose checks only: worktree lacks `.env`, `emas/.env`, and `factory-agent/.env`; no Compose containers are running for this worktree. Startup was not attempted to avoid affecting other active chats/worktrees. |
 
 ## Phase 0: Safety Preparation
 
 | Task | Status | Owner | Evidence / Notes |
 |---|---|---|---|
-| Create backend fix branch | Not Started | TBD | Use normal branch naming convention. |
-| Run `go test ./internal/service -count=1` | Done | Codex | Passed during audit. |
-| Run `go test ./internal/e2e -count=1` | Done | Codex | Passed during audit. |
-| Bisect `internal/handler` timeout | Not Started | TBD | Use `go test ./internal/handler -run TestName -count=1`. |
-| Record key API response samples | Not Started | TBD | Jobs, machines, inventory, scheduling, proposals. |
-| Snapshot Swagger files | Not Started | TBD | Copy or commit current generated docs before contract fixes. |
-| Verify Docker Compose health | Not Started | TBD | `mysql`, `go-api`, `factory-agent`, `frontend`, `nginx`. |
+| Create backend fix branch | Done | Codex | Created `audit/go-backend-phase-0` from `audit/go-backend` at `afdb661`. |
+| Run `go test ./internal/service -count=1` | Done | Codex | Passed on 2026-05-15. |
+| Run `go test ./internal/e2e -count=1` | Done | Codex | Passed on 2026-05-15. |
+| Bisect `internal/handler` timeout | Done | Codex | Full package timed out at `TestAISchedulingHandler_Features`; individual sweep also found `TestRealSolverProposalLifecycle` times out. All other individual handler tests passed with 60s timeouts. |
+| Record key API response samples | Done | Codex | Samples saved under `docs/audit/phase0/api_responses/`; generated via `EMAS_CAPTURE_PHASE0_BASELINE=1 go test ./internal/audit -run TestCapturePhase0BaselineResponses -count=1 -v`. |
+| Snapshot Swagger files | Done | Codex | Copied current `docs/swagger.json` and `docs/swagger.yaml` to `docs/audit/phase0/swagger/`. |
+| Verify Docker Compose health | Blocked | Codex | Compose config requires missing worktree env files; startup not attempted to avoid affecting other active chats/worktrees. |
 
 ## Phase 1: Low-Risk Contract Cleanup
 
