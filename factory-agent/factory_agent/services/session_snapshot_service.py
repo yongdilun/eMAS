@@ -112,6 +112,18 @@ def _is_plan_like_completion_text(value: str | None) -> bool:
     )
 
 
+def _is_approval_wait_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "waiting for your approval" in text
+        or "please approve" in text
+        or "will be updated from" in text
+        or "change list is shown" in text
+    )
+
+
 def _is_operator_result_text(value: str | None) -> bool:
     text = (value or "").strip()
     if not text:
@@ -1263,6 +1275,7 @@ class SessionSnapshotService:
             if useful_tool_result_event and (
                 not useful_completion_message
                 or _is_plan_like_completion_text(useful_completion_message.content)
+                or _is_approval_wait_text(useful_completion_message.content)
                 or _looks_like_raw_json_text(useful_completion_message.content)
             ):
                 completion_content = useful_tool_result_event.content

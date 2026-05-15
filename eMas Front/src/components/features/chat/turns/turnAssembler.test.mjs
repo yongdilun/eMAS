@@ -267,3 +267,56 @@ test('completed approval turn ignores invalidated approval bundle plan when plan
 
   assert.equal(computeFactoryAgentTurnSummary(turns[0]), 'Updated 11 jobs from high to low priority.')
 })
+
+test('completed approval turn prefers completed tool result over stale approval wait terminal text', () => {
+  const turns = assembleFactoryAgentTurns([
+    {
+      ...userEvent,
+      content: 'change low priority jobs to high',
+      created_at: '2026-05-14T10:00:00.000Z',
+    },
+    {
+      event_id: 'approval:1',
+      event_type: 'approval_required',
+      content: 'Waiting for your approval: 2 job(s) will be updated from LOW to HIGH priority.',
+      created_at: '2026-05-14T10:00:01.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-1',
+      tool_name: '__langgraph_commit__',
+      status: 'PENDING',
+    },
+    {
+      event_id: 'step:1',
+      event_type: 'tool_result',
+      content: 'Approved seeded change completed: JOB-SEED-005 is now high priority.',
+      created_at: '2026-05-14T10:00:03.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      step_id: 'step-1',
+      tool_name: 'put__jobs_{id}',
+      status: 'DONE',
+      details: {
+        args: { id: 'JOB-SEED-005', priority: 'high' },
+        result: {
+          success: true,
+          data: { job_id: 'JOB-SEED-005', priority: 'high' },
+        },
+      },
+    },
+    {
+      event_id: 'completed:1',
+      event_type: 'session_completed',
+      content: '2 job(s) will be updated from LOW to HIGH priority.\n\nThe change list is shown in the in-app table below.',
+      created_at: '2026-05-14T10:00:04.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+    },
+  ])
+
+  assert.equal(
+    computeFactoryAgentTurnSummary(turns[0]),
+    'Approved seeded change completed: JOB-SEED-005 is now high priority.',
+  )
+})

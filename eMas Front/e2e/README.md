@@ -35,6 +35,26 @@ Manual check replaced by Playwright:
 
 This suite intentionally validates the deterministic mocked frontend path. Real Factory Agent, Go API, live RAG, and real LLM behavior remain outside this default browser suite.
 
+## Seeded Full-Stack L3
+
+Phase 8 adds an opt-in seeded project:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "@l3-foundation"
+```
+
+`chromium-seeded` starts a real seeded Go API from `emas/cmd/e2e_server`, a real local Factory Agent FastAPI service, and Vite on isolated ports. The frontend receives `VITE_FACTORY_AGENT_BASE_URL` pointing at Factory Agent and `VITE_API_BASE_URL` pointing at the seeded Go API. The Factory Agent receives a per-run SQLite database, `GO_API_BASE_URL`, `OPENAPI_URL`, and deterministic Playwright seeded planner/RAG adapters.
+
+This differs from `chromium`:
+
+| Project | Services | Default PR CI | Model/RAG behavior |
+|---|---|---|---|
+| `chromium` | Vite + test-only mock Factory Agent HTTP/SSE server | Yes | Fully mocked browser fixtures. |
+| `chromium-seeded` | Vite + real Factory Agent + real seeded Go API | No, opt-in L3 gate | Deterministic fake planner/provider/RAG adapters; no real LLM calls. |
+
+Seeded failure artifacts include Playwright trace/screenshots/video plus `test-results/seeded-stack/env-fingerprint.json`, `go-api.log`, `factory-agent.log`, `vite.log`, and `seeded-stack.log`.
+
 ## CI Scope
 
 Phase 6 CI runs only the deterministic mocked frontend chatbot E2E suite:

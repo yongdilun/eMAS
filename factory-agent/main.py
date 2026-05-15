@@ -169,7 +169,7 @@ async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
-    tool_registry = ToolRegistry()
+    tool_registry = ToolRegistry(tools_md_path=os.getenv("FACTORY_AGENT_TOOLS_MD_PATH") or None)
     event_bus = EventBus(redis_url=settings.redis_url)
     setattr(event_bus, "_fault_injected", False)
 
@@ -201,6 +201,16 @@ async def lifespan(app: FastAPI):
         pass
 
     async with AsyncSessionLocal() as db:
+        if os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            local_swagger = os.path.abspath(os.path.join(repo_root, "..", "emas", "docs", "swagger.json"))
+            await tool_registry.regenerate_from_openapi(
+                db,
+                openapi_url=os.getenv("OPENAPI_URL", "http://localhost:8080/swagger/doc.json"),
+                local_swagger_json_path=local_swagger,
+                force_local=False,
+                replace_db=True,
+            )
         await tool_registry.load_from_db(db)
 
     async def refresh_operational_gauges(db) -> None:
@@ -764,12 +774,26 @@ async def lifespan(app: FastAPI):
     app.state.session_queue = session_queue
     app.state.worker_tasks = worker_tasks
 
+    planner_adapter = None
+    rag_pipeline_adapter = None
+    if os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}:
+        from factory_agent.testing_seeded_adapters import (
+            SeededPlaywrightPlanner,
+            SeededPlaywrightRAGPipeline,
+        )
+
+        planner_adapter = SeededPlaywrightPlanner(settings)
+        rag_pipeline_adapter = SeededPlaywrightRAGPipeline()
+        log_event("playwright_seeded_mode_enabled")
+
     app.include_router(
         build_router(
             settings=settings,
             tool_registry=tool_registry,
             event_bus=event_bus,
             enqueue_session=enqueue_session,
+            planner_adapter=planner_adapter,
+            rag_pipeline_adapter=rag_pipeline_adapter,
         )
     )
     log_event("agent_server_started", worker_count=settings.worker_count, session_queue_size=settings.session_queue_size)

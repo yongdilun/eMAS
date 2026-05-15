@@ -18,6 +18,7 @@ const SESSION_COUNTER_KEY = 'factory_agent_session_counter'
 const MESSAGE_MODE_KEY = 'factory_agent_message_mode'
 
 const hasStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -688,7 +689,26 @@ export function useFactoryAgentChat() {
             : snapshotApproval.args || {}
         stashBundle(snapshotApproval, mergedArgs)
         await factoryAgentApi.approve(resolvedId, payload)
-        await safelyRefreshSnapshot(session?.session_id)
+        if (session?.session_id) {
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const snapshot = await safelyRefreshSnapshot(session.session_id)
+            const status = snapshot?.session?.status
+            const snapshotTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
+            const hasApprovalDecision = snapshotTimeline.some(
+              (event) => event?.event_type === 'approval_decided' && event?.approval_id === resolvedId,
+            )
+            const hasPostApprovalResult = snapshotTimeline.some((event) => event?.event_type === 'tool_result')
+            if (
+              status &&
+              ![FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(status) &&
+              !snapshot?.pending_approval &&
+              (status !== FACTORY_AGENT_STATUS.COMPLETED || !hasApprovalDecision || hasPostApprovalResult)
+            ) {
+              break
+            }
+            await wait(250)
+          }
+        }
       } else {
         const rejectId = pendingApproval.approval_id
         setPendingApproval(null)

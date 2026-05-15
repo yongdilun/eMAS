@@ -328,6 +328,23 @@ function interruptStyleSummary(summaryText) {
   return s.includes('jobs affected:') || s.includes('current vs requested priority')
 }
 
+function approvalWaitSummary(summaryText) {
+  const s = String(summaryText || '').toLowerCase()
+  return (
+    s.includes('waiting for your approval') ||
+    s.includes('please approve') ||
+    s.includes('will be updated from') ||
+    s.includes('change list is shown')
+  )
+}
+
+function completedVisibleSummary(turn, rawSummary) {
+  if (turn?.terminal?.event_type !== 'session_completed' || !approvalWaitSummary(rawSummary)) {
+    return rawSummary
+  }
+  return buildUserDetailLines(turn).find((line) => !approvalWaitSummary(line)) || rawSummary
+}
+
 /** Snapshot table still all "low" while the bubble text is the approval bundle or claims high - hide. */
 function targetPriorityFromSummary(summaryText) {
   const s = String(summaryText || '').toLowerCase()
@@ -534,7 +551,7 @@ function AssistantTurnBubble({
   session,
   isLatestTurn,
 }) {
-  const rawSummary = turn?.summary || 'Working...'
+  const rawSummary = completedVisibleSummary(turn, turn?.summary || 'Working...')
   const summary = useStagedAssistantSummary(rawSummary)
   const summaryIsProgress = isProgressSummary(summary)
   const answerAllowed = assistantAnswerAllowed({

@@ -48,6 +48,17 @@ function isPlanLikeAnswer(value) {
   )
 }
 
+function isApprovalWaitText(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return false
+  return (
+    normalized.includes('waiting for your approval') ||
+    normalized.includes('please approve') ||
+    normalized.includes('will be updated from') ||
+    normalized.includes('change list is shown')
+  )
+}
+
 function readableToolTarget(toolName) {
   const parts = String(toolName || '')
     .replace(/\{.*?\}/g, '')
@@ -449,7 +460,8 @@ export function computeFactoryAgentTurnSummary(turn) {
     // Prefer the last tool result when completion is a generic status line.
     const isGenericComplete = String(terminal.content || '').toLowerCase().includes('execution completed successfully')
     const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
-    if (isGenericComplete || terminalIsPlanLike) {
+    const terminalIsApprovalWait = isApprovalWaitText(terminal.content)
+    if (isGenericComplete || terminalIsPlanLike || terminalIsApprovalWait) {
       if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
       const deduped = nonGenericToolLines(turn)
       if (deduped.length >= 2) return stripApprovalWaitPhrases(deduped.join('\n'))
