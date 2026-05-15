@@ -14,12 +14,12 @@ Status key:
 
 | Item | Status | Owner | Notes |
 |---|---|---|---|
-| Create frontend fix branch | Not Started | TBD | Use `codex/` prefix unless directed otherwise. |
-| Run current frontend utility tests | Done | Codex | 35 tests passed on 2026-05-15 using direct `node --test` command. |
+| Create frontend fix branch | Done | Codex | Created `audit/frontend-phase-0` from `audit/frontend` in `../emas-audit-frontend`. |
+| Run current frontend utility tests | Done | Codex | 35 tests passed on 2026-05-15 using direct `node --test` command; rerun on Phase 0 branch also passed. |
 | Run current lint | Done | Codex | `npm.cmd run lint` failed with 1085 errors and 26 warnings; generated `playwright-report` is currently included. |
-| Run production build | Done | Codex | `npx.cmd vite build --outDir C:\tmp\emas-front-build-audit-20260515` passed; main JS chunk warning at 617.77 kB. |
-| Record current Factory Agent UI behavior | Not Started | TBD | Need screenshots or notes for send, approval, reject, approve, final answer, error state. |
-| Snapshot Factory Agent API examples | Not Started | TBD | Need sample session, snapshot, approval, SSE/event payloads from a safe local flow. |
+| Run production build | Done | Codex | `npx.cmd vite build --outDir C:\tmp\emas-front-build-phase0-20260515` passed; main JS chunk warning at 618.15 kB. |
+| Record current Factory Agent UI behavior | Done | Codex | Browser notes recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`; local screenshots captured under `captures/frontend-phase0/`. Fresh planning currently fails with a 503 connection error, so approve/reject was observed on an existing pending session rather than executing an old approval. |
+| Snapshot Factory Agent API examples | Done | Codex | Existing completed/pending snapshots and failed fresh `POST /plans` response recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`; full local JSON capture at `captures/frontend-phase0/factory-agent-api-examples.json`. |
 
 ## Issue Tracker
 
@@ -40,17 +40,18 @@ Status key:
 
 ### Phase 0: Safety Preparation
 
-- Status: In Progress
+- Status: Done
 - Goal: Freeze current behavior and make rollback easy.
 - Completed:
   - Documented frontend architecture audit.
   - Ran current utility tests.
   - Ran lint and recorded failure.
   - Ran production build into `C:\tmp`.
+  - Created `audit/frontend-phase-0` from `audit/frontend`.
+  - Recorded browser behavior for completed, pending approval, and planner error states.
+  - Captured Factory Agent snapshot, pending approval, failed planning, and SSE timeout examples.
 - Remaining:
-  - Create branch before code changes.
-  - Record browser behavior for Factory Agent chat flow.
-  - Capture safe snapshot/SSE/approval payload examples.
+  - None for Phase 0.
 
 ### Phase 1: Low-Risk Cleanup
 
@@ -126,16 +127,18 @@ Status key:
 | 2026-05-15 | Do not start with a rewrite | Current UI has working behavior and focused utility tests | Prefer phased, rollback-safe changes |
 | 2026-05-15 | Prioritize misleading UI and stale state first | These are highest user-facing reliability risks | Start with FE-001, FE-002, FE-008 |
 | 2026-05-15 | Document before code changes | User requested documentation first | Keep this tracker updated after each fix |
+| 2026-05-15 | Fresh Factory Agent planning is unavailable in the local baseline | `POST /sessions/{id}/plans` returned `503 {"detail":{"errors":["Connection error."]}}` during Phase 0 capture | Treat polished planner error UI as a later frontend reliability concern; do not mask backend unavailability with fake success |
 
 ## Current Next Step
 
-Before changing frontend code:
+Phase 0 is complete. Start Phase 1 in a new phase window only.
 
-1. Create a branch.
+Phase 1 should:
+
+1. Branch `audit/frontend-phase-1` from committed `audit/frontend-phase-0`.
 2. Add `npm test` and lint ignores as Phase 1 safety work.
 3. Run tests, lint, and build.
-4. Record current browser behavior for Factory Agent chat.
-5. Start Phase 2 with FE-001 or FE-002.
+4. Continue to keep UI behavior unchanged.
 
 ## Update Rules For This Tracker
 

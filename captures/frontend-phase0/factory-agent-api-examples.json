@@ -1,0 +1,504 @@
+{
+  "captured_at": "2026-05-15T11:39:29.002Z",
+  "backend_health": {
+    "ok": true,
+    "status": 200,
+    "data": {
+      "status": "ok"
+    }
+  },
+  "completed_session_snapshot": {
+    "session": {
+      "session_id": "de25fdec-ed66-44c4-b55d-a61006f1a52d",
+      "user_id": "frontend-operator",
+      "name": "Chat 448",
+      "status": "COMPLETED",
+      "current_intent": "Find all low priority jobs",
+      "plan_id": "02880740-00c4-4ef4-84c7-f1344cf36222",
+      "operation_id": "02880740-00c4-4ef4-84c7-f1344cf36222",
+      "plan_version": 1,
+      "plan_hash": "3afa1d8341cb9fa0a1d39def833efaaa8b9250d334b373ec473115829dff0f43",
+      "current_step_index": 0,
+      "step_count": 0,
+      "replan_count": 0,
+      "llm_call_count": 1,
+      "session_started_at": "2026-05-14T18:28:02",
+      "replan_context": {
+        "intent_contract": {
+          "steps": [
+            {
+              "args": {
+                "sort_by": "priority",
+                "priority": "low",
+                "sort_dir": "asc"
+              },
+              "bindings": [],
+              "evidence": {},
+              "tool_name": "get__jobs",
+              "confidence": 0.85,
+              "step_index": 0,
+              "arg_provenance": {
+                "sort_by": {
+                  "value": "priority",
+                  "source": "user",
+                  "confidence": 1
+                },
+                "priority": {
+                  "value": "low",
+                  "source": "user",
+                  "confidence": 1
+                },
+                "sort_dir": {
+                  "value": "asc",
+                  "source": "llm"
+                }
+              },
+              "execution_mode": "single",
+              "missing_required": [],
+              "provenance_dropped": []
+            }
+          ],
+          "intent": "Find all low priority jobs",
+          "backend": "langgraph"
+        }
+      },
+      "pending_user_message": null,
+      "created_at": "2026-05-14T18:28:02",
+      "updated_at": "2026-05-14T18:28:10",
+      "completed_at": "2026-05-14T18:28:10",
+      "error": null
+    },
+    "plan": {
+      "plan_id": "02880740-00c4-4ef4-84c7-f1344cf36222",
+      "status": "COMPLETED",
+      "version": 1
+    },
+    "steps_count": 1,
+    "timeline_count": 4,
+    "timeline_types": [
+      "user_message",
+      "plan_created",
+      "tool_result",
+      "session_completed"
+    ],
+    "pending_approval": null,
+    "activity_steps_count": 3
+  },
+  "pending_approval_snapshot": {
+    "session": {
+      "session_id": "307e8018-677a-42bf-a422-d63058d5568b",
+      "user_id": "frontend-operator",
+      "name": "Chat 355",
+      "status": "WAITING_APPROVAL",
+      "current_intent": "change all low priority job to high",
+      "plan_id": "af2cbec8-2f76-436d-ab74-74c80d387f76",
+      "operation_id": "af2cbec8-2f76-436d-ab74-74c80d387f76",
+      "plan_version": 1,
+      "plan_hash": "1170cb6a93ffedcc2521673d8a595fdbc34360b6283f397bcf86f8079cc53bd2",
+      "current_step_index": 0,
+      "step_count": 0,
+      "replan_count": 0,
+      "llm_call_count": 0,
+      "session_started_at": "2026-05-14T11:05:29",
+      "replan_context": {
+        "langgraph_pending_approval": {
+          "source": "langgraph_interrupt",
+          "thread_id": "307e8018-677a-42bf-a422-d63058d5568b",
+          "approval_id": "12e35394-f04a-40d5-9126-3c42dfde0743"
+        }
+      },
+      "pending_user_message": null,
+      "created_at": "2026-05-14T11:05:29",
+      "updated_at": "2026-05-14T11:05:32",
+      "completed_at": "2026-05-14T11:05:32",
+      "error": "1 job will be updated from low to high priority.\n\nThe change list is shown in the in-app table next to this message.\n\nPlease approve to continue."
+    },
+    "plan": null,
+    "steps_count": 0,
+    "timeline_count": 3,
+    "timeline_types": [
+      "user_message",
+      "approval_required",
+      "session_completed"
+    ],
+    "pending_approval": {
+      "approval_id": "12e35394-f04a-40d5-9126-3c42dfde0743",
+      "tool_name": "__langgraph_commit__",
+      "side_effect_level": "HIGH",
+      "status": "PENDING",
+      "risk_summary": "1 job will be updated from low to high priority.\n\nThe change list is shown in the in-app table next to this message.\n\nPlease approve to continue.",
+      "args": {
+        "kind": "approval_required",
+        "count": 1,
+        "preview": [
+          {
+            "args": {
+              "id": "JOB-SEED-001",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__0"
+          }
+        ],
+        "summary": "Approve 1 backend write: put__jobs_{id}. Jobs affected: JOB-SEED-001; priority set to high",
+        "bundle_ui": {
+          "kind": "job_priority_bundle",
+          "rows": [
+            {
+              "job_id": "JOB-SEED-001",
+              "new_priority": "high",
+              "previous_priority": "low"
+            }
+          ],
+          "headline": "1 job will be updated from low to high priority.",
+          "new_priority": "high",
+          "previous_priority": "low"
+        },
+        "narrative_markdown": "1 job will be updated from low to high priority.\n\nThe change list is shown in the in-app table next to this message.\n\nPlease approve to continue."
+      }
+    },
+    "activity_steps_count": 1
+  },
+  "failed_plan_session_snapshot": {
+    "session": {
+      "session_id": "a2fd8471-90c5-4901-97e9-de373667b8db",
+      "user_id": "frontend-operator",
+      "name": "Chat 1",
+      "status": "IDLE",
+      "current_intent": "Phase 0 baseline error check: show status for machine M-CNC-01",
+      "plan_id": null,
+      "operation_id": null,
+      "plan_version": 0,
+      "plan_hash": null,
+      "current_step_index": 0,
+      "step_count": 0,
+      "replan_count": 0,
+      "llm_call_count": 0,
+      "session_started_at": "2026-05-15T11:38:09",
+      "replan_context": null,
+      "pending_user_message": null,
+      "created_at": "2026-05-15T11:38:09",
+      "updated_at": "2026-05-15T11:38:10",
+      "completed_at": null,
+      "error": null
+    },
+    "plan": null,
+    "steps_count": 0,
+    "timeline_count": 1,
+    "timeline_types": [
+      "user_message"
+    ],
+    "pending_approval": null,
+    "activity_steps_count": 0
+  },
+  "failed_plan_response": {
+    "ok": false,
+    "status": 503,
+    "data": {
+      "detail": {
+        "errors": [
+          "Connection error."
+        ]
+      }
+    }
+  },
+  "pending_approvals_sample": [
+    {
+      "approval_id": "2ba97aef-d4f8-4730-b3bb-4748b352bb1f",
+      "session_id": "0f11121b-d35b-43e6-b9d0-a7c8a4f18586",
+      "subject_type": "graph",
+      "plan_id": null,
+      "step_id": null,
+      "tool_name": "__langgraph_commit__",
+      "args": {
+        "kind": "approval_required",
+        "count": 5,
+        "preview": [
+          {
+            "args": {
+              "id": "JOB-SEED-005",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__0"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-009",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__1"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-012",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__2"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-017",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__3"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-024",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__4"
+          }
+        ],
+        "summary": "High-risk write bundle requires approval before commit."
+      },
+      "risk_summary": "High-risk write bundle requires approval before commit.",
+      "side_effect_level": "HIGH",
+      "status": "PENDING",
+      "expires_at": "2026-05-14T18:11:39",
+      "decided_by": null,
+      "decided_at": null,
+      "rejection_reason": null,
+      "created_at": "2026-05-13T18:11:39"
+    },
+    {
+      "approval_id": "17b5602f-f0ad-4322-9232-59f262d17ccb",
+      "session_id": "354d8132-51d0-4e52-bb40-6a3cefd9a6f2",
+      "subject_type": "graph",
+      "plan_id": null,
+      "step_id": null,
+      "tool_name": "__langgraph_commit__",
+      "args": {
+        "kind": "approval_required",
+        "count": 5,
+        "preview": [
+          {
+            "args": {
+              "id": "JOB-SEED-005",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__0"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-009",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__1"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-012",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__2"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-017",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__3"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-024",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__4"
+          }
+        ],
+        "summary": "Approve 5 backend writes: put__jobs_{id} ×5. Jobs affected: JOB-SEED-005, JOB-SEED-009, JOB-SEED-012, JOB-SEED-017, JOB-SEED-024; priority set to high"
+      },
+      "risk_summary": "Approve 5 backend writes: put__jobs_{id} ×5. Jobs affected: JOB-SEED-005, JOB-SEED-009, JOB-SEED-012, JOB-SEED-017, JOB-SEED-024; priority set to high",
+      "side_effect_level": "HIGH",
+      "status": "PENDING",
+      "expires_at": "2026-05-14T18:32:43",
+      "decided_by": null,
+      "decided_at": null,
+      "rejection_reason": null,
+      "created_at": "2026-05-13T18:32:43"
+    },
+    {
+      "approval_id": "dc3548bf-bbc7-47b1-8b38-c8fd580b5f22",
+      "session_id": "a0950bfe-76d6-4aa5-8b68-88ac4fa7768e",
+      "subject_type": "graph",
+      "plan_id": null,
+      "step_id": null,
+      "tool_name": "__langgraph_commit__",
+      "args": {
+        "kind": "approval_required",
+        "count": 10,
+        "preview": [
+          {
+            "args": {
+              "id": "JOB-SEED-002",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__0"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-004",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__1"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-007",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__2"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-010",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__3"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-014",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__4"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-016",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__5"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-018",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__6"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-020",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__7"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-022",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__8"
+          },
+          {
+            "args": {
+              "id": "JOB-SEED-025",
+              "priority": "high"
+            },
+            "tool_name": "put__jobs_{id}",
+            "output_ref": "$ref:put__jobs__id__9"
+          }
+        ],
+        "summary": "Approve 10 backend writes: put__jobs_{id} ×10. Jobs affected: JOB-SEED-002, JOB-SEED-004, JOB-SEED-007, JOB-SEED-010, JOB-SEED-014, JOB-SEED-016, JOB-SEED-018, JOB-SEED-020, JOB-SEED-022, JOB-SEED-025; priority set to high",
+        "bundle_ui": {
+          "kind": "job_priority_bundle",
+          "rows": [
+            {
+              "job_id": "JOB-SEED-002",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-004",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-007",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-010",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-014",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-016",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-018",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-020",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-022",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            },
+            {
+              "job_id": "JOB-SEED-025",
+              "new_priority": "high",
+              "previous_priority": "medium"
+            }
+          ],
+          "headline": "10 jobs will be updated from medium to high priority.",
+          "new_priority": "high",
+          "previous_priority": "medium"
+        },
+        "narrative_markdown": "10 jobs will be updated from medium to high priority.\n\nThe change list is shown in the in-app table next to this message.\n\nPlease approve to continue."
+      },
+      "risk_summary": "10 jobs will be updated from medium to high priority.\n\nThe change list is shown in the in-app table next to this message.\n\nPlease approve to continue.",
+      "side_effect_level": "HIGH",
+      "status": "PENDING",
+      "expires_at": "2026-05-15T07:17:01",
+      "decided_by": null,
+      "decided_at": null,
+      "rejection_reason": null,
+      "created_at": "2026-05-14T07:17:01"
+    }
+  ],
+  "completed_session_events_sample": {
+    "error": "AbortError"
+  },
+  "pending_session_events_sample": {
+    "error": "AbortError"
+  },
+  "pending_session_activity_events_sample": {
+    "error": "AbortError"
+  }
+}
