@@ -29,7 +29,7 @@ Status key:
 | FA-002 | Fail unsafe production auth/admin defaults | High | 2 | Done | Production config tests passed; full `pytest` passed | Strict-mode flag rollback |
 | FA-003 | Make plan persistence atomic | High | 2 | Done | Injected failure rollback test and approval resume regression passed; full `pytest` passed | Restore old helper behind flag |
 | FA-004 | Move startup schema mutation to migrations | High | 5 | Not Started | Migration smoke tests | Keep startup compat under explicit flag |
-| FA-005 | Split mixed-responsibility API router | High | 4 | In Progress | OpenAPI diff plus endpoint tests | Revert one extracted router/module |
+| FA-005 | Split mixed-responsibility API router | High | 4 | Done | OpenAPI contract guard, endpoint/admin/DLQ/approval/session tests, and full `pytest -q` passed | Revert one extracted router/module |
 | FA-006 | Reduce SSE database polling risk | Medium | 5 | Not Started | Disconnect and concurrent stream tests | Keep old implementation path |
 | FA-007 | Strengthen relational constraints/session cleanup | Medium | 4 | Done | Session deletion contract covers session-owned rows; full `pytest -q` passed | Revert session cleanup service extraction |
 | FA-008 | Document legacy vs graph-native API contracts | Medium | 3 | Done | `tests/test_phase3_contract_coverage.py`; full `pytest -q` passed | Keep retired endpoints returning 410 |
@@ -104,18 +104,27 @@ Status key:
 
 ### Phase 4: Architecture Refactoring
 
-- Status: In Progress
+- Status: Done
 - Goal: Improve locality by separating route, service, and projection responsibilities.
 - Started:
   - Began FA-005 on 2026-05-15 with a small router/service extraction slice guarded by Phase 3 OpenAPI and compatibility tests.
   - Began FA-007 on 2026-05-15 by centralizing session-owned row cleanup behind a service and expanding session deletion contract coverage.
   - Continued FA-005 on 2026-05-15 with the next safe domain split for session message routes.
+  - Completed FA-005 safe route-split scope on 2026-05-15 by extracting operational, stream, approval, and session-control route groups while keeping graph-native plan/execution orchestration in place.
 - Completed:
   - Centralized JWT and admin dependency factories in `factory_agent/api/dependencies.py`.
   - Split session lifecycle routes (`POST/GET/PATCH/DELETE /sessions`) into `factory_agent/api/routers/sessions.py`.
   - Split session message routes (`POST/GET /sessions/{session_id}/messages`) into `factory_agent/api/routers/messages.py`.
+  - Split session-control routes (`POST /sessions/{session_id}/confirm`, `GET /sessions/{session_id}/steps`, `POST /sessions/{session_id}/cancel`) into `factory_agent/api/routers/session_controls.py`.
+  - Split snapshot route wrapper (`GET /sessions/{session_id}/snapshot`) into `factory_agent/api/routers/snapshots.py` without moving checkpoint/timeline projection logic.
+  - Split SSE route wrappers (`GET /sessions/{session_id}/events`, `/events/activity`, `/events/semantic`) into `factory_agent/api/routers/events.py` without changing polling, heartbeat, or payload semantics.
+  - Split approval routes (`GET /approvals/pending`, `GET/POST /approvals/{approval_id}...`) into `factory_agent/api/routers/approvals.py` while keeping approval resume task handling injected from the existing orchestration code.
+  - Split DLQ routes (`GET /dlq`, retired DLQ write/replay contracts, and `POST /dlq/{dlq_id}/dismiss`) into `factory_agent/api/routers/dlq.py`.
+  - Split admin and metrics routes into `factory_agent/api/routers/admin.py`.
+  - Split tool listing route (`GET /tools`) into `factory_agent/api/routers/tools.py`.
   - Moved session response mapping into `factory_agent/api/response_mappers.py` so extracted routers do not import the mixed route module.
   - Moved message response mapping into `factory_agent/api/response_mappers.py` for the extracted message router.
+  - Moved approval and dead-letter response mapping into `factory_agent/api/response_mappers.py` for extracted routers.
   - Moved session deletion cleanup into `factory_agent/services/session_cleanup.py`.
   - Expanded the session deletion contract test to cover messages, plans, steps, approvals, dead letters, execution snapshots, workflow checkpoints, and session-scoped vector memories.
 - Verification:
@@ -130,17 +139,23 @@ Status key:
   - `pytest tests/test_api_endpoints.py tests/test_approval_atomicity.py tests/test_session_manager.py -q`: 57 passed, 20 xfailed.
   - Required contract guard after message router split: `pytest tests/test_phase3_contract_coverage.py -q`: 10 passed.
   - Full suite after message router split: `pytest -q`: 482 passed, 4 skipped, 20 xfailed.
+  - Final Phase 4 baseline before this completion slice: `pytest tests/test_phase3_contract_coverage.py -q`: 10 passed.
+  - Operational/admin/DLQ/tools split guard: `pytest tests/test_phase3_contract_coverage.py tests/test_api_endpoints.py::test_stream_dlq_and_metrics_reads_require_auth tests/test_api_endpoints.py::test_metrics_endpoint_exposes_prometheus_format tests/test_api_endpoints.py::test_admin_dashboard_requires_x_admin_key tests/test_api_endpoints.py::test_admin_dashboard_html_renders tests/test_api_endpoints.py::test_dlq_dismiss_and_replay_endpoints tests/test_api_endpoints.py::test_get_tools_lists_and_scopes -q`: 15 passed, 1 xfailed.
+  - Snapshot/events split guard: `pytest tests/test_phase3_contract_coverage.py tests/test_api_endpoints.py::test_stream_dlq_and_metrics_reads_require_auth tests/test_api_endpoints.py::test_session_snapshot_returns_plan_steps_pending_approval_and_timeline tests/test_api_endpoints.py::test_graph_approval_returns_before_resume_and_keeps_one_activity_operation tests/test_planner_service_phase6.py::test_graph_native_snapshot_uses_checkpoint_projection_not_legacy_steps tests/test_planner_service_phase6.py::test_legacy_step_reject_cannot_mutate_graph_native_session -q`: 15 passed.
+  - Approval split guard: `pytest tests/test_phase3_contract_coverage.py tests/test_api_endpoints.py::test_pending_approval_read_endpoints_require_jwt_and_support_session_filter tests/test_api_endpoints.py::test_reject_approval_sets_session_idle_and_step_skipped tests/test_api_endpoints.py::test_graph_approval_returns_before_resume_and_keeps_one_activity_operation tests/test_api_endpoints.py::test_approve_endpoint_allows_overriding_args_before_execution tests/test_approval_atomicity.py -q`: 20 passed, 2 xfailed.
+  - Session-control split guard: `pytest tests/test_phase3_contract_coverage.py tests/test_api_endpoints.py::test_predicate_confirmation_round_trip_resumes_with_selected_filter tests/test_api_endpoints.py::test_cancel_marks_remaining_steps_skipped tests/test_api_endpoints.py::test_session_snapshot_returns_plan_steps_pending_approval_and_timeline tests/test_api_endpoints.py::test_create_session_and_message_updates_intent -q`: 13 passed, 1 xfailed.
+  - Broad endpoint/session/approval guard: `pytest tests/test_api_endpoints.py tests/test_approval_atomicity.py tests/test_session_manager.py -q`: 57 passed, 20 xfailed.
+  - Required contract guard after final Phase 4 slice: `pytest tests/test_phase3_contract_coverage.py -q`: 10 passed.
+  - Full suite after final Phase 4 slice: `pytest -q`: 482 passed, 4 skipped, 20 xfailed.
 - Remaining:
-  - FA-005 remains In Progress. Sessions and messages route slices are split; plans, approvals, events, snapshots, admin, and DLQ remain in the mixed router.
-  - Snapshot/timeline projection, approval resume task handling, and plan persistence were not moved in this slice because they are tightly coupled to graph/checkpoint behavior and should be extracted one at a time with the same contract guard.
+  - None for Phase 4 safe route-split scope.
 - Deferred:
   - DB-level foreign key/cascade changes are deferred to migration-backed work so Phase 4 does not introduce implicit schema mutation outside the Phase 5 migration plan.
+  - Graph-native plan creation and execution handlers remain in `factory_agent/api/routes.py` as the core orchestration bundle. Moving them would also move plan persistence and graph execution semantics, so this is deferred until a dedicated service extraction is clearly safe and separately covered.
+  - Snapshot/timeline projection internals were not moved; only route wrappers were split. Projection service extraction remains deferred because it is checkpoint-sensitive.
+  - Approval resume task handling was not moved; the extracted approval router injects existing callbacks so resume behavior stays unchanged.
 - Candidate changes:
-  - Split routers by domain.
-  - Move snapshot/timeline projection to a service.
-  - Move approval resume task handling to a service.
-  - Move plan persistence to a transaction-focused service.
-  - Centralize auth/admin dependencies.
+  - Completed for this phase. Deferred service extractions above may be revisited only with dedicated graph/checkpoint regression coverage.
 
 ### Phase 5: Long-Term Improvements
 
@@ -162,8 +177,8 @@ Status key:
 
 ## Current Next Step
 
-Phase 4 is in progress after a completed safe extraction slice:
+Phase 4 is complete for the safe refactor scope. Next step:
 
-1. Continue FA-005 by extracting the next safest domain router while preserving the Phase 3 OpenAPI contract snapshot.
-2. Prefer DLQ/admin reads before snapshot, approval resume, or plan persistence extraction.
-3. Keep DB-level cascade constraints deferred until explicit migration work.
+1. Start Phase 5 only after confirming this tracker state.
+2. Begin with FA-004 migration-backed startup schema work.
+3. Keep DB-level cascade constraints and graph-native plan/execution service extraction deferred until explicitly covered.

@@ -9,16 +9,23 @@ import os
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from .dependencies import build_require_admin, build_require_jwt
+from .response_mappers import approval_to_response as _approval_to_response
 from .response_mappers import session_to_response as _session_to_response
+from .routers.admin import build_admin_router
+from .routers.approvals import build_approvals_router
+from .routers.dlq import build_dlq_router
+from .routers.events import build_events_router
 from .routers.messages import build_messages_router
+from .routers.session_controls import build_session_controls_router
 from .routers.sessions import build_sessions_router
+from .routers.snapshots import build_snapshots_router
+from .routers.tools import build_tools_router
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import DeadLetter as DeadLetterRow
@@ -47,13 +54,6 @@ from ..planning.plan_validator import validate_plan
 from ..planning.tool_output_alignment import align_tool_outputs_to_steps, summarize_tool_result
 from ..schemas import (
     ActivityStepResponse,
-    ApprovalDecisionRequest,
-    ApprovalResponse,
-    ConfirmationDecisionRequest,
-    DeadLetterDismissRequest,
-    DeadLetterPushRequest,
-    DeadLetterReplayRequest,
-    DeadLetterResponse,
     PlanStepResponse,
     PlanCreateRequest,
     PlanResponse,
@@ -92,26 +92,6 @@ def _plan_to_response(plan: PlanRow) -> PlanResponse:
         safety_content=plan.safety_content,
         created_at=plan.created_at,
         created_by=plan.created_by,
-    )
-
-
-def _approval_to_response(a: ApprovalRow) -> ApprovalResponse:
-    return ApprovalResponse(
-        approval_id=a.approval_id,
-        session_id=a.session_id,
-        subject_type=(getattr(a, "subject_type", None) or "step"),
-        plan_id=getattr(a, "plan_id", None),
-        step_id=(a.step_id or None),
-        tool_name=a.tool_name,
-        args=a.args,
-        risk_summary=a.risk_summary,
-        side_effect_level=a.side_effect_level,
-        status=a.status,
-        expires_at=a.expires_at,
-        decided_by=a.decided_by,
-        decided_at=a.decided_at,
-        rejection_reason=a.rejection_reason,
-        created_at=a.created_at,
     )
 
 
@@ -661,12 +641,21 @@ def build_router(
     active_approval_resume_tasks: set[str] = set()
     require_admin = build_require_admin(settings)
     require_jwt = build_require_jwt(settings)
+    router.include_router(build_admin_router(tool_registry=tool_registry, event_bus=event_bus, require_admin=require_admin))
+    router.include_router(build_dlq_router(require_jwt=require_jwt))
     router.include_router(build_sessions_router(session_mgr=session_mgr, require_jwt=require_jwt))
     router.include_router(
         build_messages_router(
             session_mgr=session_mgr,
             memory_manager=memory_manager,
             event_bus=event_bus,
+            require_jwt=require_jwt,
+        )
+    )
+    router.include_router(
+        build_tools_router(
+            tool_registry=tool_registry,
+            tool_selector=tool_selector,
             require_jwt=require_jwt,
         )
     )
@@ -2168,441 +2157,26 @@ def build_router(
             activity_steps=_activity_steps,
         )
 
-    @router.get("/sessions/{session_id}/snapshot", response_model=SessionSnapshotResponse)
-    async def get_session_snapshot(
-        session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        snapshot = await load_session_snapshot(db=db, session_id=session_id)
-        if not snapshot:
-            raise HTTPException(status_code=404, detail="session not found")
-        return snapshot
-
-    @router.get("/sessions/{session_id}/events/semantic")
-    async def stream_semantic_events(
-        session_id: str,
-        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        """
-        Phase 7 semantic SSE adapter:
-        - frontend hydrates from snapshot first
-        - this stream emits semantic events derived from snapshot timeline diffs
-        - EventSource reconnects can resume after Last-Event-ID
-        """
-
-        async def _event_gen():
-            heartbeat_s = 12
-            poll_s = 1.0
-            seen_event_ids: set[str] = set()
-            emitted_resume_markers: set[str] = set()
-            idle_heartbeats = 0
-
-            async def _fresh_snapshot() -> SessionSnapshotResponse | None:
-                await db.rollback()
-                db.expire_all()
-                return await load_session_snapshot(db=db, session_id=session_id)
-
-            if last_event_id:
-                initial_snapshot = await _fresh_snapshot()
-                if initial_snapshot is not None:
-                    for ev in initial_snapshot.timeline:
-                        seen_event_ids.add(ev.event_id)
-                        if ev.event_id == last_event_id:
-                            break
-            # Initial ready frame so client confirms stream attachment.
-            init_payload = {"type": "STREAM_READY", "session_id": session_id}
-            yield f"event: semantic\ndata: {json.dumps(init_payload, ensure_ascii=False)}\n\n"
-            while True:
-                snapshot = await _fresh_snapshot()
-                if snapshot is None:
-                    gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
-                    yield f"event: semantic\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
-                    return
-                emitted = False
-                for ev in snapshot.timeline:
-                    if ev.event_id in seen_event_ids:
-                        continue
-                    seen_event_ids.add(ev.event_id)
-                    if _should_skip_semantic_timeline_event(ev):
-                        continue
-                    payload = _semantic_payload_for_timeline_event(ev, session_id=session_id)
-                    emitted = True
-                    yield f"id: {ev.event_id}\nevent: semantic\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-                resume_ctx = None
-                sess_payload = snapshot.session
-                rc = getattr(sess_payload, "replan_context", None) if sess_payload is not None else None
-                if isinstance(rc, dict):
-                    resume_ctx = rc.get("langgraph_approval_resume")
-                sess_status = str(getattr(sess_payload, "status", "") or "").upper()
-                if (
-                    isinstance(resume_ctx, dict)
-                    and str(resume_ctx.get("status") or "").lower() == "approved"
-                    and sess_status == "EXECUTING"
-                ):
-                    aid = str(resume_ctx.get("approval_id") or "").strip()
-                    decided_at = str(resume_ctx.get("decided_at") or "").strip()
-                    marker = f"{aid}:{decided_at}" if aid else ""
-                    if marker and marker not in emitted_resume_markers:
-                        emitted_resume_markers.add(marker)
-                        resume_payload = {
-                            "type": "SESSION_WILL_RESUME",
-                            "session_id": session_id,
-                            "approval_id": aid,
-                            "decided_at": decided_at or None,
-                        }
-                        emitted = True
-                        yield (
-                            "event: semantic\ndata: "
-                            + json.dumps(resume_payload, ensure_ascii=False)
-                            + "\n\n"
-                        )
-
-                if emitted:
-                    idle_heartbeats = 0
-                else:
-                    idle_heartbeats += 1
-                    if idle_heartbeats * poll_s >= heartbeat_s:
-                        pending_id = (
-                            snapshot.pending_approval.approval_id
-                            if snapshot.pending_approval is not None
-                            else None
-                        )
-                        hb = {
-                            "type": "HEARTBEAT",
-                            "session_id": session_id,
-                            "pending_approval_id": pending_id,
-                            "ts": datetime.utcnow().isoformat() + "Z",
-                        }
-                        yield f"event: semantic\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
-                        idle_heartbeats = 0
-                await asyncio.sleep(poll_s)
-
-        return StreamingResponse(
-            _event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+    router.include_router(build_snapshots_router(load_session_snapshot=load_session_snapshot, require_jwt=require_jwt))
+    router.include_router(
+        build_events_router(
+            load_session_snapshot=load_session_snapshot,
+            activity_steps_for_snapshot=_activity_steps_for_snapshot,
+            semantic_payload_for_timeline_event=_semantic_payload_for_timeline_event,
+            should_skip_semantic_timeline_event=_should_skip_semantic_timeline_event,
+            require_jwt=require_jwt,
         )
+    )
 
-    @router.get("/sessions/{session_id}/events/activity")
-    async def stream_activity_events(
-        session_id: str,
-        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        """
-        User-facing activity SSE adapter.
-
-        This stream is intentionally narrower than the semantic/debug timeline:
-        it exposes only stable, sanitized activity steps suitable for the chat UI.
-
-        When several steps change in one DB poll, they are emitted back-to-back in one
-        flush, then the server waits `activity_emit_min_s` before the next poll so
-        clients still get pacing between poll cycles (without losing intra-poll steps
-        when the HTTP client disconnects early).
-        """
-
-        async def _event_gen():
-            heartbeat_s = 12
-            poll_s = 1.0
-            activity_emit_min_s = 1.0
-            seen_steps: dict[str, str] = {}
-            idle_heartbeats = 0
-
-            async def _fresh_snapshot() -> SessionSnapshotResponse | None:
-                await db.rollback()
-                db.expire_all()
-                return await load_session_snapshot(db=db, session_id=session_id)
-
-            if last_event_id:
-                initial_snapshot = await _fresh_snapshot()
-                if initial_snapshot is not None:
-                    for step in _activity_steps_for_snapshot(initial_snapshot):
-                        seen_steps[step.id] = json.dumps(step.model_dump(exclude_none=True), sort_keys=True, default=str)
-                        if step.id == last_event_id:
-                            break
-
-            ready = {"type": "STREAM_READY", "session_id": session_id}
-            yield f"event: control\ndata: {json.dumps(ready, ensure_ascii=False)}\n\n"
-            while True:
-                snapshot = await _fresh_snapshot()
-                if snapshot is None:
-                    gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
-                    yield f"event: control\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
-                    return
-
-                emitted = False
-                pending_frames: list[tuple[str, dict[str, Any]]] = []
-                for step in _activity_steps_for_snapshot(snapshot):
-                    payload = step.model_dump(exclude_none=True)
-                    payload_signature = json.dumps(payload, sort_keys=True, default=str)
-                    if seen_steps.get(step.id) == payload_signature:
-                        continue
-                    seen_steps[step.id] = payload_signature
-                    emitted = True
-                    pending_frames.append((step.id, payload))
-                for step_id, payload in pending_frames:
-                    yield f"id: {step_id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                if emitted:
-                    idle_heartbeats = 0
-                    await asyncio.sleep(activity_emit_min_s)
-                else:
-                    idle_heartbeats += 1
-                    if idle_heartbeats * poll_s >= heartbeat_s:
-                        hb = {"type": "HEARTBEAT", "session_id": session_id, "ts": datetime.utcnow().isoformat() + "Z"}
-                        yield f"event: control\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
-                        idle_heartbeats = 0
-                await asyncio.sleep(poll_s)
-
-        return StreamingResponse(
-            _event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+    router.include_router(
+        build_session_controls_router(
+            session_mgr=session_mgr,
+            event_bus=event_bus,
+            require_jwt=require_jwt,
+            log_step_status=_log_step_status,
+            step_to_response=_step_to_response,
         )
-
-    @router.get("/sessions/{session_id}/events")
-    async def stream_session_events(
-        session_id: str,
-        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        """
-        Notification-only SSE stream (Option C architecture).
-
-        Emits lightweight frames:
-          hello              – sent once on connect; carries current cursor & phase
-          snapshot_invalidated – cursor advanced; client must re-fetch /snapshot
-          phase_changed      – cheap UX hint when session phase transitions
-          heartbeat          – keepalive every 15 s
-
-        The frontend re-fetches GET /sessions/{id}/snapshot on every
-        snapshot_invalidated. SSE is a latency optimisation only — the system
-        is fully correct with SSE down (fallback poll covers it).
-
-        Legacy streams /events/semantic and /events/activity remain operational
-        but are deprecated. Prefer this endpoint for new integrations.
-        """
-
-        async def _event_gen():
-            heartbeat_s = 15
-            poll_s = 0.5
-            idle_ticks = 0
-
-            # The cursor the client last saw (from Last-Event-ID header).
-            # We skip re-emitting invalidations the client already processed.
-            try:
-                client_cursor = int(last_event_id or 0)
-            except (ValueError, TypeError):
-                client_cursor = 0
-
-            last_seen_cursor: int | None = None
-            last_seen_phase: str | None = None
-
-            async def _fresh_snapshot() -> SessionSnapshotResponse | None:
-                await db.rollback()
-                db.expire_all()
-                return await load_session_snapshot(db=db, session_id=session_id)
-
-            # Initial snapshot for hello frame.
-            initial = await _fresh_snapshot()
-            if initial is None:
-                gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
-                yield f"event: notification\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
-                return
-
-            last_seen_cursor = initial.cursor
-            last_seen_phase = initial.phase
-            hello = {
-                "type": "hello",
-                "session_id": session_id,
-                "cursor": initial.cursor,
-                "phase": initial.phase,
-            }
-            yield f"id: {initial.cursor}\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
-
-            # If the client reconnects with a Last-Event-ID behind the current
-            # cursor, emit one snapshot_invalidated immediately so they re-fetch.
-            if client_cursor < initial.cursor:
-                inv = {
-                    "type": "snapshot_invalidated",
-                    "cursor": initial.cursor,
-                    "reason": "reconnect",
-                }
-                yield f"id: {initial.cursor}\nevent: notification\ndata: {json.dumps(inv, ensure_ascii=False)}\n\n"
-
-            while True:
-                await asyncio.sleep(poll_s)
-                snapshot = await _fresh_snapshot()
-                if snapshot is None:
-                    gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
-                    yield f"event: notification\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
-                    return
-
-                emitted = False
-
-                # Cursor advanced → snapshot has new state; tell client to re-fetch.
-                if snapshot.cursor != last_seen_cursor:
-                    reason = "phase_change" if snapshot.phase != last_seen_phase else "update"
-                    inv = {
-                        "type": "snapshot_invalidated",
-                        "cursor": snapshot.cursor,
-                        "reason": reason,
-                    }
-                    yield f"id: {snapshot.cursor}\nevent: notification\ndata: {json.dumps(inv, ensure_ascii=False)}\n\n"
-                    emitted = True
-                    last_seen_cursor = snapshot.cursor
-
-                # Phase changed even without cursor bump (e.g. derived status flip).
-                if snapshot.phase != last_seen_phase:
-                    pc = {
-                        "type": "phase_changed",
-                        "cursor": snapshot.cursor,
-                        "phase": snapshot.phase,
-                    }
-                    yield f"id: {snapshot.cursor}\nevent: notification\ndata: {json.dumps(pc, ensure_ascii=False)}\n\n"
-                    emitted = True
-                    last_seen_phase = snapshot.phase
-
-                if emitted:
-                    idle_ticks = 0
-                else:
-                    idle_ticks += 1
-                    if idle_ticks * poll_s >= heartbeat_s:
-                        hb = {
-                            "type": "heartbeat",
-                            "cursor": snapshot.cursor,
-                            "ts": datetime.utcnow().isoformat() + "Z",
-                        }
-                        yield f"event: notification\ndata: {json.dumps(hb, ensure_ascii=False)}\n\n"
-                        idle_ticks = 0
-
-        return StreamingResponse(
-            _event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @router.get("/tools", response_model=list[ToolInfo])
-    async def list_tools(
-        intent: str | None = Query(None, description="Optional user intent to scope tools."),
-        max_tools: int = Query(30, ge=1, le=200, description="Maximum tools returned."),
-        user: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        tools_by_name = await tool_registry.get_tools_by_name(db)
-        tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
-        if intent:
-            selection = await tool_selector.select_tools(intent=intent, tools_by_name=tools_by_name, max_tools=max_tools)
-            return [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
-        names = sorted(tools_by_name.keys())[:max_tools]
-        return [tools_by_name[name] for name in names]
-
-    @router.post("/sessions/{session_id}/confirm", response_model=SessionResponse)
-    async def confirm_predicate(
-        session_id: str,
-        req: ConfirmationDecisionRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        sess = await session_mgr.get_session(db, session_id=session_id)
-        if not sess:
-            raise HTTPException(status_code=404, detail="session not found")
-        context = dict(sess.replan_context or {})
-        confirmation = context.get("confirmation_request")
-        if sess.status != "WAITING_CONFIRMATION" or not isinstance(confirmation, dict):
-            raise HTTPException(status_code=409, detail="session is not waiting for confirmation")
-        options: list[dict[str, Any]] = []
-        for key in ("options", "all_options", "other_possible_fields"):
-            raw_options = confirmation.get(key)
-            if not isinstance(raw_options, list):
-                continue
-            for opt in raw_options:
-                if not isinstance(opt, dict):
-                    continue
-                if any(existing.get("field") == opt.get("field") for existing in options):
-                    continue
-                options.append(opt)
-        selected = next((opt for opt in options if isinstance(opt, dict) and opt.get("field") == req.field), None)
-        if not selected:
-            raise HTTPException(status_code=400, detail="confirmation option is not valid for this session")
-
-        raw_term = str(confirmation.get("raw_term") or selected.get("value") or req.value or "").strip()
-        value = str(req.value or selected.get("value") or raw_term).strip()
-        entity = str(confirmation.get("entity") or "record")
-        memory = context.get("intent_memory") if isinstance(context.get("intent_memory"), dict) else {}
-        positives = memory.get("positive_bindings") if isinstance(memory.get("positive_bindings"), list) else []
-        positives.append(
-            {
-                "entity": entity,
-                "term": raw_term,
-                "normalized_term": raw_term.lower().replace("_", " ").replace("-", " "),
-                "field": req.field,
-                "value": value,
-                "source": "operator_confirmation",
-                "confirmed_at": datetime.utcnow().isoformat() + "Z",
-            }
-        )
-        memory["positive_bindings"] = positives
-        context["intent_memory"] = memory
-        context.pop("confirmation_request", None)
-        sess.replan_context = context
-        sess.status = "IDLE"
-        sess.error = None
-        sess.version += 1
-        db.add(
-            MessageRow(
-                message_id=generate_uuid(),
-                session_id=session_id,
-                role="assistant",
-                content=f'Confirmed: use {req.field}="{value}".',
-                mode="normal",
-                tool_name="__confirmation_decision__",
-            )
-        )
-        await db.commit()
-        log_event(
-            "predicate_confirmation_decided",
-            session_id=session_id,
-            field=req.field,
-            value=value,
-            raw_term=raw_term,
-        )
-        return _session_to_response(sess)
-
-    @router.get("/sessions/{session_id}/steps", response_model=list[PlanStepResponse])
-    async def list_steps(
-        session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        sess = await session_mgr.get_session(db, session_id=session_id)
-        if not sess:
-            raise HTTPException(status_code=404, detail="session not found")
-        rows = (
-            await db.execute(
-                select(PlanStepRow)
-                .where(PlanStepRow.session_id == session_id)
-                .order_by(PlanStepRow.step_index.asc())
-            )
-        ).scalars().all()
-        return [_step_to_response(r) for r in rows]
+    )
 
     @router.post(
         "/sessions/{session_id}/plans",
@@ -3191,476 +2765,17 @@ def build_router(
         sess = await _run_langgraph_session(db=db, sess=sess, user=user)
         return _session_to_response(sess)
 
-    @router.post("/sessions/{session_id}/cancel", response_model=SessionResponse)
-    async def cancel_session(
-        session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        sess = await session_mgr.get_session(db, session_id=session_id)
-        if not sess:
-            raise HTTPException(status_code=404, detail="session not found")
-        current_plan = await _load_current_plan(db=db, session_id=session_id)
-        if await _is_graph_native_session(db, sess, current_plan):
-            pending_graph_approvals = (
-                await db.execute(
-                    select(ApprovalRow)
-                    .where(ApprovalRow.session_id == session_id)
-                    .where(ApprovalRow.status == "PENDING")
-                )
-            ).scalars().all()
-            for ap in pending_graph_approvals:
-                ap.status = "REJECTED"
-                ap.decided_by = "system"
-                ap.decided_at = datetime.utcnow()
-                ap.rejection_reason = "Cancelled"
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-        else:
-            step_rows = (
-                await db.execute(
-                    select(PlanStepRow)
-                    .where(PlanStepRow.session_id == session_id)
-                    .order_by(PlanStepRow.step_index.asc())
-                )
-            ).scalars().all()
-            for step in step_rows:
-                if step.status == "DONE":
-                    continue
-                if step.status not in ("SKIPPED", "FAILED", "AMBIGUOUS"):
-                    step.status = "SKIPPED"
-                    step.completed_at = step.completed_at or datetime.utcnow()
-                    step.last_error = step.last_error or "Cancelled"
-                    _log_step_status(sess, step, step.status)
-        sess.status = "IDLE"
-        sess.error = "Cancelled"
-        sess.updated_at = datetime.utcnow()
-        await db.commit()
-        await event_bus.publish(
-            AgentEvent(
-                event_type="session_cancel",
-                session_id=session_id,
-                payload={},
-                published_at=datetime.utcnow(),
-            )
+    router.include_router(
+        build_approvals_router(
+            session_mgr=session_mgr,
+            planner=planner,
+            require_jwt=require_jwt,
+            publish_agent_event=_publish_agent_event,
+            start_graph_approval_resume_task=_start_graph_approval_resume_task,
+            should_resume_graph_approval_inline=_should_resume_graph_approval_inline,
+            resume_approved_graph_approval=_resume_approved_graph_approval,
         )
-        sess = await session_mgr.get_session(db, session_id=session_id)
-        return _session_to_response(sess)
-
-    @router.get("/approvals/pending", response_model=list[ApprovalResponse])
-    async def list_pending_approvals(
-        session_id: str | None = Query(None),
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        stmt = select(ApprovalRow).where(ApprovalRow.status == "PENDING")
-        if session_id:
-            stmt = stmt.where(ApprovalRow.session_id == session_id)
-        rows = (
-            await db.execute(stmt.order_by(ApprovalRow.created_at.asc()))
-        ).scalars().all()
-        return [_approval_to_response(r) for r in rows]
-
-    @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
-    async def get_approval(
-        approval_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
-        if not row:
-            raise HTTPException(status_code=404, detail="approval not found")
-        return _approval_to_response(row)
-
-    @router.post("/approvals/{approval_id}/approve", response_model=ApprovalResponse)
-    async def approve_approval(
-        approval_id: str,
-        req: ApprovalDecisionRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
-        if not row:
-            raise HTTPException(status_code=404, detail="approval not found")
-        if (getattr(row, "subject_type", "step") or "step") == "graph":
-            if row.status == "APPROVED":
-                sess = await session_mgr.get_session(db, session_id=row.session_id)
-                context = sess.replan_context if sess and isinstance(sess.replan_context, dict) else {}
-                if isinstance(context.get("langgraph_approval_resume"), dict):
-                    _start_graph_approval_resume_task(db, row.approval_id)
-                return _approval_to_response(row)
-            if row.status != "PENDING":
-                raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
-            row.status = "APPROVED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
-            sess = await session_mgr.get_session(db, session_id=row.session_id)
-            if not sess:
-                raise HTTPException(status_code=404, detail="session not found")
-            context = dict(sess.replan_context or {})
-            context["langgraph_approval_resume"] = {
-                "approval_id": row.approval_id,
-                "thread_id": sess.session_id,
-                "status": "approved",
-                "decided_at": row.decided_at.isoformat() if row.decided_at else None,
-            }
-            # Atomically clear the pending approval context so snapshot never
-            # exposes a decided approval as still-pending on the next read.
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "EXECUTING"
-            sess.completed_at = None
-            sess.error = "Approval received. Continuing with approved changes."
-            sess.version += 1
-            # Bump monotonic event_seq so the notification stream and frontend
-            # cursor detect this change without waiting for the next poll.
-            sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
-            sess.updated_at = datetime.utcnow()
-            await db.commit()
-            await _publish_agent_event(
-                "approval_decided",
-                row.session_id,
-                {"approval_id": row.approval_id, "status": "APPROVED", "subject_type": "graph"},
-            )
-            if _should_resume_graph_approval_inline():
-                await _resume_approved_graph_approval(db=db, approval_id=row.approval_id)
-            else:
-                _start_graph_approval_resume_task(db, row.approval_id)
-            return _approval_to_response(row)
-
-        if (getattr(row, "subject_type", "step") or "step") == "plan":
-            raise HTTPException(
-                status_code=410,
-                detail="legacy plan approvals are retired; graph-native approvals use subject_type=graph",
-            )
-
-        raise HTTPException(
-            status_code=410,
-            detail="legacy step approvals are retired; graph-native approvals use subject_type=graph",
-        )
-
-    @router.post("/approvals/{approval_id}/reject", response_model=ApprovalResponse)
-    async def reject_approval(
-        approval_id: str,
-        req: ApprovalDecisionRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
-        if not row:
-            raise HTTPException(status_code=404, detail="approval not found")
-        if (getattr(row, "subject_type", "step") or "step") == "graph":
-            sess = await session_mgr.get_session(db, session_id=row.session_id)
-            if not sess:
-                raise HTTPException(status_code=404, detail="session not found")
-            try:
-                await planner.resume_after_approval(session_id=sess.session_id, approved=False)
-            except PlannerPlanRejected as e:
-                sess.status = "BLOCKED"
-                sess.error = str(e)
-                sess.version += 1
-                await db.commit()
-                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
-            except PlannerBackendError as e:
-                sess.status = "FAILED"
-                sess.error = str(e)
-                sess.version += 1
-                await db.commit()
-                raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
-            row.status = "REJECTED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
-            row.rejection_reason = req.rejection_reason
-            context = dict(sess.replan_context or {})
-            # Atomically clear pending approval context on reject too.
-            context.pop("langgraph_pending_approval", None)
-            context.pop("langgraph_approval_resume", None)
-            sess.replan_context = context
-            sess.status = "IDLE"
-            sess.error = req.rejection_reason or f"Approval {row.approval_id} rejected"
-            sess.updated_at = datetime.utcnow()
-            sess.version += 1
-            # Bump event_seq atomically with status change.
-            sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
-            await db.commit()
-            await event_bus.publish(
-                AgentEvent(
-                    event_type="approval_decided",
-                    session_id=row.session_id,
-                    payload={"approval_id": row.approval_id, "status": "REJECTED", "subject_type": "graph"},
-                    published_at=datetime.utcnow(),
-                )
-            )
-            return _approval_to_response(row)
-        if (getattr(row, "subject_type", "step") or "step") == "plan":
-            raise HTTPException(
-                status_code=410,
-                detail="legacy plan approvals are retired; graph-native approvals use subject_type=graph",
-            )
-
-        raise HTTPException(
-            status_code=410,
-            detail="legacy step approvals are retired; graph-native approvals use subject_type=graph",
-        )
-
-    @router.get("/dlq", response_model=list[DeadLetterResponse])
-    async def list_dlq(
-        status: str | None = Query(None),
-        session_id: str | None = Query(None),
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        stmt = select(DeadLetterRow)
-        if status:
-            stmt = stmt.where(DeadLetterRow.status == status)
-        if session_id:
-            stmt = stmt.where(DeadLetterRow.session_id == session_id)
-        rows = (
-            await db.execute(stmt.order_by(DeadLetterRow.created_at.desc()))
-        ).scalars().all()
-        return [
-            DeadLetterResponse(
-                dlq_id=r.dlq_id,
-                session_id=r.session_id,
-                step_id=r.step_id,
-                failure_type=r.failure_type,
-                reason=r.reason,
-                payload=r.payload,
-                status=r.status,
-                replayed_at=r.replayed_at,
-                replayed_by=r.replayed_by,
-                dismissed_at=r.dismissed_at,
-                dismissed_reason=r.dismissed_reason,
-                created_at=r.created_at,
-            )
-            for r in rows
-        ]
-
-    @router.post("/dlq/push", response_model=DeadLetterResponse)
-    async def push_dlq(
-        req: DeadLetterPushRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        raise HTTPException(
-            status_code=410,
-            detail="legacy step-based DLQ push is retired; graph-native failures are recorded in graph state",
-        )
-
-    @router.post("/dlq/{dlq_id}/replay")
-    async def replay_dlq(
-        dlq_id: str,
-        req: DeadLetterReplayRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        raise HTTPException(
-            status_code=410,
-            detail="legacy step-based DLQ replay is retired; rerun graph-native sessions with /sessions/{session_id}/execute",
-        )
-
-    @router.post("/dlq/{dlq_id}/replay-request")
-    async def request_dlq_replay(
-        dlq_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        raise HTTPException(
-            status_code=410,
-            detail="legacy step-based DLQ replay is retired; rerun graph-native sessions with /sessions/{session_id}/execute",
-        )
-
-    @router.post("/dlq/{dlq_id}/dismiss")
-    async def dismiss_dlq(
-        dlq_id: str,
-        req: DeadLetterDismissRequest,
-        _: dict[str, Any] = Depends(require_jwt),
-        db: AsyncSession = Depends(get_db),
-    ):
-        row = (await db.execute(select(DeadLetterRow).where(DeadLetterRow.dlq_id == dlq_id))).scalars().first()
-        if not row:
-            raise HTTPException(status_code=404, detail="dlq entry not found")
-        row.status = "DISMISSED"
-        row.dismissed_at = datetime.utcnow()
-        who = req.dismissed_by or "ops"
-        row.dismissed_reason = f"{who}: {req.dismissed_reason}"
-        await db.commit()
-        return {"ok": True}
-
-    @router.post("/admin/regenerate-tools")
-    async def regenerate_tools(
-        _: None = Depends(require_admin),
-        db: AsyncSession = Depends(get_db),
-    ):
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        local_swagger = os.path.join(repo_root, "emas", "docs", "swagger.json")
-        openapi_url = os.environ.get("OPENAPI_URL", "http://localhost:8080/swagger/doc.json")
-        force_local = os.environ.get("OPENAPI_LOCAL", "").strip() == "1" or os.path.exists(local_swagger)
-
-        result = await tool_registry.regenerate_from_openapi(
-            db,
-            openapi_url=openapi_url,
-            local_swagger_json_path=local_swagger,
-            force_local=force_local,
-            replace_db=True,
-        )
-        await event_bus.publish(
-            AgentEvent(
-                event_type="tool_registry_updated",
-                session_id="",
-                payload={"tool_count": result.tool_count, "tools_md_hash": result.tools_md_hash},
-                published_at=datetime.utcnow(),
-            )
-        )
-        log_event("tool_registry_regenerated", tool_count=result.tool_count, tools_md_hash=result.tools_md_hash)
-        return {"ok": True, "tool_count": result.tool_count, "tools_md_hash": result.tools_md_hash}
-
-    @router.get("/metrics", response_class=PlainTextResponse)
-    async def get_metrics(_: None = Depends(require_admin)):
-        return PlainTextResponse(metrics.render_prometheus(), media_type="text/plain; version=0.0.4")
-
-    @router.get("/admin/sessions", dependencies=[Depends(require_admin)])
-    async def admin_list_sessions(
-        status: str | None = Query(None),
-        limit: int = Query(100, ge=1, le=500),
-        db: AsyncSession = Depends(get_db),
-    ):
-        stmt = select(SessionRow).order_by(SessionRow.updated_at.desc()).limit(limit)
-        if status:
-            stmt = stmt.where(SessionRow.status == status)
-        rows = (await db.execute(stmt)).scalars().all()
-        return [_session_to_response(s) for s in rows]
-
-    @router.get("/admin/approvals/pending", dependencies=[Depends(require_admin)], response_model=list[ApprovalResponse])
-    async def admin_pending_approvals(db: AsyncSession = Depends(get_db)):
-        rows = (
-            await db.execute(select(ApprovalRow).where(ApprovalRow.status == "PENDING").order_by(ApprovalRow.created_at.asc()))
-        ).scalars().all()
-        return [_approval_to_response(r) for r in rows]
-
-    @router.get("/admin/dlq", dependencies=[Depends(require_admin)], response_model=list[DeadLetterResponse])
-    async def admin_list_dlq(
-        status: str | None = Query(None),
-        session_id: str | None = Query(None),
-        db: AsyncSession = Depends(get_db),
-    ):
-        stmt = select(DeadLetterRow)
-        if status:
-            stmt = stmt.where(DeadLetterRow.status == status)
-        if session_id:
-            stmt = stmt.where(DeadLetterRow.session_id == session_id)
-        rows = (
-            await db.execute(stmt.order_by(DeadLetterRow.created_at.desc()))
-        ).scalars().all()
-        return [
-            DeadLetterResponse(
-                dlq_id=r.dlq_id,
-                session_id=r.session_id,
-                step_id=r.step_id,
-                failure_type=r.failure_type,
-                reason=r.reason,
-                payload=r.payload,
-                status=r.status,
-                replayed_at=r.replayed_at,
-                replayed_by=r.replayed_by,
-                dismissed_at=r.dismissed_at,
-                dismissed_reason=r.dismissed_reason,
-                created_at=r.created_at,
-            )
-            for r in rows
-        ]
-
-    @router.get("/admin/tools", dependencies=[Depends(require_admin)])
-    async def admin_list_tools(db: AsyncSession = Depends(get_db)):
-        tools_by_name = await tool_registry.get_tools_by_name(db)
-        return [tools_by_name[name] for name in sorted(tools_by_name.keys())]
-
-    @router.post("/admin/faults/redis/down", dependencies=[Depends(require_admin)])
-    async def admin_fault_redis_down():
-        # Fault injection hook for chaos testing (E4.3).
-        setattr(event_bus, "_fault_injected", True)
-        setattr(event_bus, "_healthy", False)
-        return {"ok": True, "redis_fault": "down"}
-
-    @router.post("/admin/faults/redis/up", dependencies=[Depends(require_admin)])
-    async def admin_fault_redis_up():
-        setattr(event_bus, "_fault_injected", False)
-        with contextlib.suppress(Exception):
-            await event_bus.reconnect()
-        return {"ok": True, "redis_fault": "up"}
-
-    @router.get("/admin/dashboard", dependencies=[Depends(require_admin)], response_class=HTMLResponse)
-    async def admin_dashboard(db: AsyncSession = Depends(get_db)):
-        sessions = (
-            await db.execute(select(SessionRow).order_by(SessionRow.updated_at.desc()).limit(200))
-        ).scalars().all()
-        approvals = (
-            await db.execute(select(ApprovalRow).where(ApprovalRow.status == "PENDING").order_by(ApprovalRow.created_at.asc()))
-        ).scalars().all()
-        dlq_rows = (
-            await db.execute(select(DeadLetterRow).where(DeadLetterRow.status == "PENDING").order_by(DeadLetterRow.created_at.desc()))
-        ).scalars().all()
-        tools_by_name = await tool_registry.get_tools_by_name(db)
-
-        session_rows = "".join(
-            f"<tr><td>{s.session_id}</td><td>{s.user_id}</td><td>{s.status}</td><td>{s.current_step_index}</td><td>{s.error or ''}</td></tr>"
-            for s in sessions
-        )
-        approval_rows = "".join(
-            f"<tr><td>{a.approval_id}</td><td>{a.session_id}</td><td>{a.tool_name}</td><td>{a.status}</td></tr>"
-            for a in approvals
-        )
-        dlq_html_rows = "".join(
-            f"<tr><td>{d.dlq_id}</td><td>{d.session_id}</td><td>{d.failure_type}</td><td>{d.reason}</td></tr>"
-            for d in dlq_rows
-        )
-        tool_rows = "".join(
-            f"<tr><td>{t.name}</td><td>{t.method}</td><td>{t.endpoint}</td><td>{'yes' if t.requires_approval else 'no'}</td></tr>"
-            for t in sorted(tools_by_name.values(), key=lambda x: x.name)
-        )
-
-        html = f"""
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Factory Agent Admin Dashboard</title>
-  <style>
-    body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 24px; background: #f2f7fb; color: #112; }}
-    h1 {{ margin: 0 0 8px 0; }}
-    .grid {{ display: grid; grid-template-columns: 1fr; gap: 16px; }}
-    section {{ background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-    th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid #e7edf4; }}
-    th {{ background: #eef5ff; }}
-  </style>
-</head>
-<body>
-  <h1>Factory Agent Dashboard</h1>
-  <p>Sessions: {len(sessions)} | Pending approvals: {len(approvals)} | Pending DLQ: {len(dlq_rows)} | Tools: {len(tools_by_name)}</p>
-  <div class="grid">
-    <section>
-      <h2>Sessions</h2>
-      <table><thead><tr><th>Session</th><th>User</th><th>Status</th><th>Step</th><th>Error</th></tr></thead><tbody>{session_rows}</tbody></table>
-    </section>
-    <section>
-      <h2>Approval Queue</h2>
-      <table><thead><tr><th>Approval</th><th>Session</th><th>Tool</th><th>Status</th></tr></thead><tbody>{approval_rows}</tbody></table>
-    </section>
-    <section>
-      <h2>DLQ Viewer</h2>
-      <table><thead><tr><th>DLQ</th><th>Session</th><th>Failure Type</th><th>Reason</th></tr></thead><tbody>{dlq_html_rows}</tbody></table>
-    </section>
-    <section>
-      <h2>Tool Registry</h2>
-      <table><thead><tr><th>Name</th><th>Method</th><th>Endpoint</th><th>Approval</th></tr></thead><tbody>{tool_rows}</tbody></table>
-    </section>
-  </div>
-</body>
-</html>
-"""
-        return HTMLResponse(content=html)
+    )
 
     return router
 
