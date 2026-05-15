@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import main
+import pytest
 
 
 class _FakeDialect:
@@ -44,3 +45,13 @@ def test_schema_compatibility_relaxes_approval_step_id_for_graph_approvals(monke
     main._ensure_schema_compatibility(conn)
 
     assert "ALTER TABLE approvals MODIFY step_id VARCHAR(36) NULL" in conn.sql
+
+
+def test_schema_compatibility_read_only_mode_reports_pending_ddl_without_mutation(monkeypatch):
+    conn = _FakeConnection()
+    monkeypatch.setattr(main, "inspect", lambda sync_conn: _FakeInspector())
+
+    with pytest.raises(RuntimeError, match="ENABLE_STARTUP_SCHEMA_COMPAT=0"):
+        main._ensure_schema_compatibility(conn, allow_mutation=False)
+
+    assert conn.sql == []

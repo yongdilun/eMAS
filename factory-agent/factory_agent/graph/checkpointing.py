@@ -4,6 +4,7 @@ import base64
 import asyncio
 from datetime import datetime, timedelta
 import json
+import time
 from typing import Any
 
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ..config import Settings
+from ..observability.metrics import metrics
 from ..persistence.models import WorkflowCheckpoint as WorkflowCheckpointRow
 
 try:
@@ -137,6 +139,8 @@ class SqlAlchemyLangGraphCheckpointSaver(InMemorySaver):  # type: ignore[misc]
     async def _load_thread(self, thread_id: str) -> None:
         if not thread_id or thread_id in self._loaded_threads:
             return
+        started = time.perf_counter()
+        metrics.inc("checkpoint_load_total")
         await self._ensure_schema()
         async with self._sessionmaker() as session:
             row = (
@@ -145,65 +149,68 @@ class SqlAlchemyLangGraphCheckpointSaver(InMemorySaver):  # type: ignore[misc]
                 )
             ).scalars().first()
         self._loaded_threads.add(thread_id)
-        if not row:
-            return
-        row_state = row.state
-        if isinstance(row_state, str):
-            try:
-                row_state = json.loads(row_state)
-            except Exception:
-                row_state = {}
-        if not isinstance(row_state, dict):
-            return
-        payload = row_state.get("langgraph_checkpoint")
-        if not isinstance(payload, dict):
-            return
+        try:
+            if not row:
+                return
+            row_state = row.state
+            if isinstance(row_state, str):
+                try:
+                    row_state = json.loads(row_state)
+                except Exception:
+                    row_state = {}
+            if not isinstance(row_state, dict):
+                return
+            payload = row_state.get("langgraph_checkpoint")
+            if not isinstance(payload, dict):
+                return
 
-        self.storage[thread_id].clear()
-        for ns, checkpoints in (payload.get("storage") or {}).items():
-            ns_key = str(ns)
-            for checkpoint_id, saved in (checkpoints or {}).items():
+            self.storage[thread_id].clear()
+            for ns, checkpoints in (payload.get("storage") or {}).items():
+                ns_key = str(ns)
+                for checkpoint_id, saved in (checkpoints or {}).items():
+                    if not isinstance(saved, dict):
+                        continue
+                    self.storage[thread_id][ns_key][str(checkpoint_id)] = (
+                        _typed_from_json(saved.get("checkpoint")),
+                        _typed_from_json(saved.get("metadata")),
+                        saved.get("parent"),
+                    )
+
+            for key in list(self.writes.keys()):
+                if key[0] == thread_id:
+                    del self.writes[key]
+            for saved in payload.get("writes") or []:
                 if not isinstance(saved, dict):
                     continue
-                self.storage[thread_id][ns_key][str(checkpoint_id)] = (
-                    _typed_from_json(saved.get("checkpoint")),
-                    _typed_from_json(saved.get("metadata")),
-                    saved.get("parent"),
-                )
-
-        for key in list(self.writes.keys()):
-            if key[0] == thread_id:
-                del self.writes[key]
-        for saved in payload.get("writes") or []:
-            if not isinstance(saved, dict):
-                continue
-            outer_key = (
-                thread_id,
-                str(saved.get("checkpoint_ns") or ""),
-                str(saved.get("checkpoint_id") or ""),
-            )
-            inner_key = (str(saved.get("task_id") or ""), int(saved.get("idx") or 0))
-            self.writes[outer_key][inner_key] = (
-                inner_key[0],
-                str(saved.get("channel") or ""),
-                _typed_from_json(saved.get("value")),
-                str(saved.get("task_path") or ""),
-            )
-
-        for key in list(self.blobs.keys()):
-            if key[0] == thread_id:
-                del self.blobs[key]
-        for saved in payload.get("blobs") or []:
-            if not isinstance(saved, dict):
-                continue
-            self.blobs[
-                (
+                outer_key = (
                     thread_id,
                     str(saved.get("checkpoint_ns") or ""),
-                    str(saved.get("channel") or ""),
-                    _version_from_json(saved.get("version")),
+                    str(saved.get("checkpoint_id") or ""),
                 )
-            ] = _typed_from_json(saved.get("value"))
+                inner_key = (str(saved.get("task_id") or ""), int(saved.get("idx") or 0))
+                self.writes[outer_key][inner_key] = (
+                    inner_key[0],
+                    str(saved.get("channel") or ""),
+                    _typed_from_json(saved.get("value")),
+                    str(saved.get("task_path") or ""),
+                )
+
+            for key in list(self.blobs.keys()):
+                if key[0] == thread_id:
+                    del self.blobs[key]
+            for saved in payload.get("blobs") or []:
+                if not isinstance(saved, dict):
+                    continue
+                self.blobs[
+                    (
+                        thread_id,
+                        str(saved.get("checkpoint_ns") or ""),
+                        str(saved.get("channel") or ""),
+                        _version_from_json(saved.get("version")),
+                    )
+                ] = _typed_from_json(saved.get("value"))
+        finally:
+            metrics.observe("checkpoint_load_latency_ms", (time.perf_counter() - started) * 1000.0)
 
     def _serialize_thread(self, thread_id: str) -> dict[str, Any]:
         storage: dict[str, dict[str, Any]] = {}
@@ -257,33 +264,38 @@ class SqlAlchemyLangGraphCheckpointSaver(InMemorySaver):  # type: ignore[misc]
         return _jsonable(values if isinstance(values, dict) else {})
 
     async def _save_thread(self, session: AsyncSession, thread_id: str) -> None:
+        started = time.perf_counter()
+        metrics.inc("checkpoint_save_total")
         now = datetime.utcnow()
-        payload = {
-            "kind": "langgraph_native_checkpoint",
-            "agent_state": self._latest_agent_state(thread_id),
-            "langgraph_checkpoint": self._serialize_thread(thread_id),
-        }
-        row = (
-            await session.execute(
-                select(WorkflowCheckpointRow).where(WorkflowCheckpointRow.thread_id == thread_id)
-            )
-        ).scalars().first()
-        if row is None:
-            row = WorkflowCheckpointRow(
-                thread_id=thread_id,
-                session_id=thread_id,
-                state=payload,
-                version=1,
-                expires_at=now + timedelta(days=30),
-            )
-            session.add(row)
-        else:
-            row.session_id = row.session_id or thread_id
-            row.state = payload
-            row.version = int(row.version or 0) + 1
-            row.updated_at = now
-            row.expires_at = row.expires_at or (now + timedelta(days=30))
-        await session.commit()
+        try:
+            payload = {
+                "kind": "langgraph_native_checkpoint",
+                "agent_state": self._latest_agent_state(thread_id),
+                "langgraph_checkpoint": self._serialize_thread(thread_id),
+            }
+            row = (
+                await session.execute(
+                    select(WorkflowCheckpointRow).where(WorkflowCheckpointRow.thread_id == thread_id)
+                )
+            ).scalars().first()
+            if row is None:
+                row = WorkflowCheckpointRow(
+                    thread_id=thread_id,
+                    session_id=thread_id,
+                    state=payload,
+                    version=1,
+                    expires_at=now + timedelta(days=30),
+                )
+                session.add(row)
+            else:
+                row.session_id = row.session_id or thread_id
+                row.state = payload
+                row.version = int(row.version or 0) + 1
+                row.updated_at = now
+                row.expires_at = row.expires_at or (now + timedelta(days=30))
+            await session.commit()
+        finally:
+            metrics.observe("checkpoint_save_latency_ms", (time.perf_counter() - started) * 1000.0)
 
     async def aget_tuple(self, config: dict[str, Any]) -> Any | None:
         normalized = self._normalized_config(config)

@@ -308,6 +308,63 @@ async def test_create_plan_persists_plan_and_steps(sessionmaker_override, db_ses
 
 
 @pytest.mark.asyncio
+async def test_create_plan_rolls_back_when_plan_message_persistence_fails(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.api import routes
+    from factory_agent.persistence.models import Message, Plan, PlanStep, Session
+
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = r.json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+
+    ids = iter(["phase2-plan-id", "phase2-step-id"])
+
+    def fail_on_plan_message_id():
+        try:
+            return next(ids)
+        except StopIteration:
+            raise RuntimeError("injected plan message failure")
+
+    monkeypatch.setattr(routes, "generate_uuid", fail_on_plan_message_id)
+    draft = PlanDraft(
+        plan_explanation="fetch machines",
+        risk_summary="read-only",
+        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={"id": 1})],
+    )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        failed = await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
+        assert failed.status_code == 500
+
+    db_session.expire_all()
+    plans = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
+    steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
+    messages = (await db_session.execute(select(Message).where(Message.session_id == session_id))).scalars().all()
+    sess = await db_session.get(Session, session_id)
+
+    assert plans == []
+    assert steps == []
+    assert [msg.role for msg in messages] == ["user"]
+    assert sess.plan_id is None
+    assert sess.plan_version == 0
+
+
+@pytest.mark.asyncio
 async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
     await _seed_tool(
         db_session,
@@ -1090,7 +1147,16 @@ async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, 
 
 @pytest.mark.asyncio
 async def test_delete_session_removes_session_and_related_rows(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Message, Session
+    from factory_agent.persistence.models import Approval
+    from factory_agent.persistence.models import DeadLetter
+    from factory_agent.persistence.models import ExecutionSnapshot
+    from factory_agent.persistence.models import Message
+    from factory_agent.persistence.models import Plan
+    from factory_agent.persistence.models import PlanStep
+    from factory_agent.persistence.models import Session
+    from factory_agent.persistence.models import VectorMemory
+    from factory_agent.persistence.models import WorkflowCheckpoint
+    from factory_agent.persistence.models import generate_uuid
 
     app, _ = await _make_app(
         sessionmaker_override,
@@ -1108,6 +1174,80 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
             headers=headers,
         )
 
+        plan_id = generate_uuid()
+        step_id = generate_uuid()
+        db_session.add_all(
+            [
+                Plan(
+                    plan_id=plan_id,
+                    session_id=session_id,
+                    version=1,
+                    kind="execution",
+                    status="DRAFT",
+                    plan_hash="hash-1",
+                ),
+                PlanStep(
+                    step_id=step_id,
+                    plan_id=plan_id,
+                    session_id=session_id,
+                    step_index=0,
+                    tool_name="get__machines",
+                    args={},
+                    status="NOT_STARTED",
+                    idempotency_key=f"delete-session-{step_id}",
+                ),
+                Approval(
+                    approval_id=generate_uuid(),
+                    session_id=session_id,
+                    subject_type="graph",
+                    tool_name="__langgraph_commit__",
+                    args={},
+                    risk_summary="test approval",
+                    side_effect_level="HIGH",
+                    status="PENDING",
+                    expires_at=datetime.utcnow() + timedelta(hours=1),
+                ),
+                DeadLetter(
+                    dlq_id=generate_uuid(),
+                    session_id=session_id,
+                    step_id=step_id,
+                    failure_type="test",
+                    reason="test failure",
+                    payload={},
+                    status="PENDING",
+                ),
+                ExecutionSnapshot(
+                    snapshot_id=generate_uuid(),
+                    step_id=step_id,
+                    session_id=session_id,
+                    tool_name="get__machines",
+                    tool_version=1,
+                    schema_version=1,
+                    input_args={},
+                    plan_hash="hash-1",
+                    plan_version=1,
+                    idempotency_key=f"snapshot-{step_id}",
+                ),
+                WorkflowCheckpoint(
+                    checkpoint_id=generate_uuid(),
+                    thread_id=session_id,
+                    session_id=session_id,
+                    user_id="u1",
+                    state={"kind": "test"},
+                ),
+                VectorMemory(
+                    memory_id=generate_uuid(),
+                    session_id=session_id,
+                    user_id="u1",
+                    memory_type="message",
+                    content="hello",
+                    source_message_id=generate_uuid(),
+                    reusable_scope="session",
+                ),
+            ]
+        )
+        await db_session.commit()
+
         deleted = await client.delete(f"/sessions/{session_id}", headers=headers)
         assert deleted.status_code == 200
         assert deleted.json()["ok"] is True
@@ -1117,8 +1257,9 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
 
     session_row = await db_session.get(Session, session_id)
     assert session_row is None
-    msg_rows = (await db_session.execute(select(Message).where(Message.session_id == session_id))).scalars().all()
-    assert msg_rows == []
+    for model in (Message, Plan, PlanStep, Approval, DeadLetter, ExecutionSnapshot, WorkflowCheckpoint, VectorMemory):
+        rows = (await db_session.execute(select(model).where(model.session_id == session_id))).scalars().all()
+        assert rows == []
 
 
 @pytest.mark.asyncio
@@ -2532,6 +2673,8 @@ async def test_replan_validation_failure_three_times_blocks_and_pushes_dlq(sessi
 async def test_admin_dashboard_requires_x_admin_key(sessionmaker_override):
     app, _ = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.get("/admin/sessions")
+        assert missing.status_code == 403
         forbidden = await client.get("/admin/sessions", headers={"X-Admin-Key": "wrong-key"})
         assert forbidden.status_code == 403
         allowed = await client.get("/admin/sessions", headers={"X-Admin-Key": "test-admin-key"})
@@ -2543,12 +2686,47 @@ async def test_admin_dashboard_requires_x_admin_key(sessionmaker_override):
 async def test_metrics_endpoint_exposes_prometheus_format(sessionmaker_override):
     app, _ = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get("/metrics")
+        missing = await client.get("/metrics")
+        assert missing.status_code == 403
+
+        res = await client.get("/metrics", headers={"X-Admin-Key": "test-admin-key"})
         assert res.status_code == 200
         assert "text/plain" in res.headers.get("content-type", "")
         assert "# HELP" in res.text
         assert "plan_validation_failure_rate" in res.text
         assert "db_connection_pool_usage" in res.text
+
+
+@pytest.mark.asyncio
+async def test_stream_dlq_and_metrics_reads_require_auth(sessionmaker_override):
+    secret = "phase2-secret"
+    app, _ = await _make_app(sessionmaker_override, jwt_required=True, jwt_secret=secret)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        for path in (
+            "/sessions/missing/events/semantic",
+            "/sessions/missing/events/activity",
+            "/sessions/missing/events",
+            "/dlq",
+        ):
+            unauthorized = await client.get(path)
+            assert unauthorized.status_code == 401
+
+        for path in (
+            "/sessions/missing/events/semantic",
+            "/sessions/missing/events/activity",
+            "/sessions/missing/events",
+        ):
+            async with client.stream("GET", path, headers=_auth_headers(secret)) as authorized:
+                assert authorized.status_code == 200
+
+        dlq = await client.get("/dlq", headers=_auth_headers(secret))
+        assert dlq.status_code == 200
+        assert dlq.json() == []
+
+        metrics_missing = await client.get("/metrics")
+        assert metrics_missing.status_code == 403
+        metrics_ok = await client.get("/metrics", headers={"X-Admin-Key": "test-admin-key"})
+        assert metrics_ok.status_code == 200
 
 
 @pytest.mark.asyncio

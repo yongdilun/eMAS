@@ -5,6 +5,15 @@ __pycache__
 .env
 .env.*
 .pytest_cache
+.pytest-*
 tests
 *.md
 .DS_Store
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pkl
+scratch
+factory_agent/rag/vector_db
+factory_agent/brain/*/scratch

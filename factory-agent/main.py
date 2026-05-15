@@ -1,11 +1,13 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, select, text
 
@@ -27,18 +29,36 @@ from factory_agent.observability.telemetry import log_event, log_step_status_cha
 from factory_agent.registry.tool_registry import ToolRegistry
 
 
-def _ensure_schema_compatibility(sync_conn) -> None:
+@dataclass(frozen=True)
+class _SchemaCompatibilityAction:
+    table: str
+    column: str
+    statement: str
+    reason: str
+    best_effort: bool = False
+
+
+def _schema_compatibility_actions(sync_conn) -> list[_SchemaCompatibilityAction]:
     inspector = inspect(sync_conn)
     tables = set(inspector.get_table_names())
     if "sessions" not in tables:
-        return
+        return []
+
+    actions: list[_SchemaCompatibilityAction] = []
 
     def ensure_column(table: str, column_name: str, ddl: str) -> None:
         if table not in tables:
             return
         columns = {column["name"] for column in inspector.get_columns(table)}
         if column_name not in columns:
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}")
+            actions.append(
+                _SchemaCompatibilityAction(
+                    table=table,
+                    column=column_name,
+                    statement=f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}",
+                    reason="missing compatibility column",
+                )
+            )
 
     def ensure_nullable_column(table: str, column_name: str, mysql_ddl: str) -> None:
         if table not in tables:
@@ -49,9 +69,19 @@ def _ensure_schema_compatibility(sync_conn) -> None:
             return
         dialect = getattr(sync_conn.dialect, "name", "")
         if dialect == "mysql":
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} MODIFY {column_name} {mysql_ddl} NULL")
+            statement = f"ALTER TABLE {table} MODIFY {column_name} {mysql_ddl} NULL"
         elif dialect == "postgresql":
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN {column_name} DROP NOT NULL")
+            statement = f"ALTER TABLE {table} ALTER COLUMN {column_name} DROP NOT NULL"
+        else:
+            return
+        actions.append(
+            _SchemaCompatibilityAction(
+                table=table,
+                column=column_name,
+                statement=statement,
+                reason="legacy compatibility column must be nullable",
+            )
+        )
 
     ensure_column("sessions", "name", "VARCHAR(255)")
     ensure_column("messages", "mode", "VARCHAR(20) NOT NULL DEFAULT 'normal'")
@@ -71,8 +101,64 @@ def _ensure_schema_compatibility(sync_conn) -> None:
 
     # MySQL: older schemas used VARCHAR(1000) for capability_tags; toolgen can emit longer JSON.
     if "tools" in tables and getattr(sync_conn.dialect, "name", "") == "mysql":
-        with contextlib.suppress(Exception):
-            sync_conn.execute(text("ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL"))
+        columns = {column["name"]: column for column in inspector.get_columns("tools")}
+        capability_tags = columns.get("capability_tags")
+        capability_type = str(capability_tags.get("type", "")) if capability_tags else ""
+        if capability_tags and "TEXT" not in capability_type.upper():
+            actions.append(
+                _SchemaCompatibilityAction(
+                    table="tools",
+                    column="capability_tags",
+                    statement="ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL",
+                    reason="legacy MySQL capability_tags column must support long JSON",
+                    best_effort=True,
+                )
+            )
+
+    return actions
+
+
+def _ensure_schema_compatibility(sync_conn, *, allow_mutation: bool = True) -> None:
+    actions = _schema_compatibility_actions(sync_conn)
+    log_event(
+        "startup_schema_compatibility_check",
+        allow_mutation=allow_mutation,
+        pending_action_count=len(actions),
+        pending_actions=[
+            {"table": action.table, "column": action.column, "reason": action.reason}
+            for action in actions
+        ],
+    )
+    if not actions:
+        return
+    if not allow_mutation:
+        pending = ", ".join(f"{action.table}.{action.column}" for action in actions)
+        raise RuntimeError(
+            "Startup schema compatibility found pending DDL while "
+            "ENABLE_STARTUP_SCHEMA_COMPAT=0. Run explicit migrations before startup. "
+            f"Pending compatibility changes: {pending}"
+        )
+
+    for action in actions:
+        log_event(
+            "startup_schema_compatibility_mutation",
+            table=action.table,
+            column=action.column,
+            reason=action.reason,
+            best_effort=action.best_effort,
+        )
+        try:
+            sync_conn.exec_driver_sql(action.statement)
+        except Exception:
+            if not action.best_effort:
+                raise
+            log_event(
+                "startup_schema_compatibility_mutation_failed",
+                level="WARNING",
+                table=action.table,
+                column=action.column,
+                reason=action.reason,
+            )
 
 
 async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
@@ -97,8 +183,16 @@ async def lifespan(app: FastAPI):
 
     # Create DB tables
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_ensure_schema_compatibility)
+        if settings.enable_startup_create_all:
+            await conn.run_sync(Base.metadata.create_all)
+        else:
+            log_event("startup_create_all_skipped", reason="ENABLE_STARTUP_CREATE_ALL=0")
+        await conn.run_sync(
+            lambda sync_conn: _ensure_schema_compatibility(
+                sync_conn,
+                allow_mutation=settings.enable_startup_schema_compat,
+            )
+        )
 
     # Connect Redis (best-effort)
     try:
@@ -723,6 +817,57 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+async def _readiness_payload(app: FastAPI) -> tuple[int, dict[str, object]]:
+    checks: dict[str, dict[str, object]] = {}
+    ready = True
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = {"ok": True}
+    except Exception as exc:
+        ready = False
+        checks["database"] = {"ok": False, "error": str(exc)}
+
+    settings = getattr(app.state, "settings", None)
+    event_bus = getattr(app.state, "event_bus", None)
+    if settings is None:
+        ready = False
+        checks["settings"] = {"ok": False, "error": "settings not initialized"}
+    else:
+        checks["settings"] = {"ok": True}
+
+        if settings.redis_url:
+            redis_ok = bool(getattr(event_bus, "healthy", False))
+            ready = ready and redis_ok
+            checks["redis"] = {"ok": redis_ok}
+        else:
+            checks["redis"] = {"ok": True, "skipped": True}
+
+        tool_registry = getattr(app.state, "tool_registry", None)
+        snapshot = getattr(tool_registry, "_snapshot", None)
+        tool_count = len(getattr(snapshot, "tools_by_name", {}) or {}) if snapshot is not None else 0
+        if settings.enforce_tool_registry_health:
+            registry_ok = snapshot is not None and tool_count >= settings.min_healthy_tool_count
+            ready = ready and registry_ok
+            checks["tool_registry"] = {
+                "ok": registry_ok,
+                "tool_count": tool_count,
+                "min_tool_count": settings.min_healthy_tool_count,
+            }
+        else:
+            checks["tool_registry"] = {"ok": True, "tool_count": tool_count, "skipped": True}
+
+    status_code = 200 if ready else 503
+    return status_code, {"status": "ready" if ready else "not_ready", "checks": checks}
+
+
+@app.get("/ready")
+async def ready(request: Request):
+    status_code, payload = await _readiness_payload(request.app)
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 @app.get("/_mock/slow")

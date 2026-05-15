@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 import factory_agent.persistence.models as models  # noqa: F401
 from factory_agent.persistence.database import Base
+from main import _ensure_schema_compatibility
 
 
 def _quote(name: str) -> str:
@@ -22,6 +23,10 @@ def _quote(name: str) -> str:
 
 def _to_sync_url(url: str) -> str:
     return url.replace("+aiomysql", "+pymysql")
+
+
+def apply_compatibility_migrations(conn) -> None:
+    _ensure_schema_compatibility(conn, allow_mutation=True)
 
 
 def migrate(database_url: str) -> None:
@@ -52,6 +57,8 @@ def migrate(database_url: str) -> None:
                     continue
                 print(f"[ADD INDEX] {idx.name} on {table_name}")
                 idx.create(bind=conn, checkfirst=True)
+
+        apply_compatibility_migrations(conn)
 
     engine.dispose()
 

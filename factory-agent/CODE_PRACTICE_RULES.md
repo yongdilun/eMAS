@@ -1,6 +1,6 @@
 # Factory Agent Code Practice Rules
 
-Purpose: Rules for this cleanup and future FastAPI/backend work. These rules are meant to preserve behavior while improving maintainability, safety, and testability.
+Purpose: Rules for this cleanup and future Factory Agent, FastAPI/backend, and React frontend work. These rules are meant to preserve behavior while improving maintainability, safety, and testability.
 
 ## 1. Change Safety
 

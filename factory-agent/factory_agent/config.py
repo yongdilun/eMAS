@@ -114,6 +114,12 @@ class Settings:
     graph_checkpoint_backend: str = "auto"  # auto|memory|postgres|off
     graph_checkpoint_postgres_dsn: str | None = None
     max_repair_attempts: int = 3
+    # Production deploys should create schema through migrations. Local
+    # development keeps create_all enabled unless explicitly disabled.
+    enable_startup_create_all: bool = True
+    # Phase 5 / FA-004 rollback flag. Prefer explicit migrations; enable only
+    # as a temporary compatibility bridge.
+    enable_startup_schema_compat: bool = False
 
 
 def _normalize_summary_backend(value: str) -> str:
@@ -133,6 +139,30 @@ def _normalize_graph_checkpoint_backend(raw: str | None) -> str:
     v = (raw or "auto").strip().lower() or "auto"
     allowed = {"auto", "memory", "postgres", "off", "db", "database", "sqlalchemy"}
     return v if v in allowed else "auto"
+
+
+def _env_truthy(key: str, default: str = "0") -> bool:
+    return os.getenv(key, default).strip().lower() in {"1", "true", "yes"}
+
+
+def _validate_production_security(
+    *,
+    app_mode: str,
+    jwt_required: bool,
+    jwt_secret: str | None,
+    admin_api_key: str,
+) -> None:
+    if app_mode != "production" or _env_truthy("ALLOW_UNSAFE_PRODUCTION_CONFIG"):
+        return
+    errors: list[str] = []
+    if not jwt_required:
+        errors.append("JWT_REQUIRED must be enabled in production")
+    if not jwt_secret:
+        errors.append("JWT_SECRET must be set in production")
+    if not admin_api_key or admin_api_key == "changeme-admin-key":
+        errors.append("ADMIN_API_KEY must be changed from the development default in production")
+    if errors:
+        raise ValueError("Unsafe production configuration: " + "; ".join(errors))
 
 
 def _env_for_mode(app_mode: str, key: str, default: str | None = None) -> str | None:
@@ -169,6 +199,14 @@ def get_settings() -> Settings:
     redis_url = os.getenv("REDIS_URL") or None
     go_api_base_url = os.getenv("GO_API_BASE_URL", "http://localhost:8080").rstrip("/")
     admin_api_key = os.getenv("ADMIN_API_KEY", "changeme-admin-key")
+    jwt_required = _env_truthy("JWT_REQUIRED")
+    jwt_secret = os.getenv("JWT_SECRET") or None
+    _validate_production_security(
+        app_mode=app_mode,
+        jwt_required=jwt_required,
+        jwt_secret=jwt_secret,
+        admin_api_key=admin_api_key,
+    )
     max_concurrent = int(os.getenv("MAX_CONCURRENT", os.getenv("AGENT_WORKERS", "100")))
     max_queue = int(os.getenv("MAX_QUEUE", os.getenv("SESSION_QUEUE_SIZE", "500")))
 
@@ -194,8 +232,8 @@ def get_settings() -> Settings:
         max_foreach_items=int(os.getenv("MAX_FOREACH_ITEMS", "50")),
         max_auto_pages=int(os.getenv("MAX_AUTO_PAGES", "5")),
         foreach_page_size=int(os.getenv("FOREACH_PAGE_SIZE", "50")),
-        jwt_required=os.getenv("JWT_REQUIRED", "0").strip().lower() in {"1", "true", "yes"},
-        jwt_secret=os.getenv("JWT_SECRET") or None,
+        jwt_required=jwt_required,
+        jwt_secret=jwt_secret,
         jwt_issuer=os.getenv("JWT_ISSUER") or None,
         jwt_audience=os.getenv("JWT_AUDIENCE") or None,
         jwt_clock_skew_s=int(os.getenv("JWT_CLOCK_SKEW_S", "30")),
@@ -331,5 +369,10 @@ def get_settings() -> Settings:
         ),
         graph_checkpoint_postgres_dsn=os.getenv("GRAPH_CHECKPOINT_POSTGRES_DSN") or None,
         max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "3")),
+        enable_startup_create_all=_env_truthy(
+            "ENABLE_STARTUP_CREATE_ALL",
+            "0" if app_mode == "production" else "1",
+        ),
+        enable_startup_schema_compat=_env_truthy("ENABLE_STARTUP_SCHEMA_COMPAT", "0"),
         bge_reranker_model=os.getenv("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip(),
     )

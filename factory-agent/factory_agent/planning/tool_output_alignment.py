@@ -48,7 +48,8 @@ def align_tool_outputs_to_steps(
         res = row.get("result")
         res_dict = res if isinstance(res, dict) else None
         args = row.get("args") if isinstance(row.get("args"), dict) else {}
-        out.append((res_dict, summarize_tool_result(tool_name=target, result=res_dict, args=args)))
+        provided_summary = str(row.get("summary") or row.get("result_summary") or "").strip()
+        out.append((res_dict, provided_summary or summarize_tool_result(tool_name=target, result=res_dict, args=args)))
     return out
 
 

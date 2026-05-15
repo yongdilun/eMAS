@@ -58,6 +58,12 @@ METRIC_DEFS: dict[str, MetricDef] = {
     "checkpoint_save_total": MetricDef("counter", "Checkpoint save attempts."),
     "checkpoint_load_total": MetricDef("counter", "Checkpoint load attempts."),
     "checkpoint_error_total": MetricDef("counter", "Checkpoint save/load errors."),
+    "checkpoint_load_latency_ms": MetricDef("histogram", "Latency of durable checkpoint load operations."),
+    "checkpoint_save_latency_ms": MetricDef("histogram", "Latency of durable checkpoint save operations."),
+    "graph_compile_latency_ms": MetricDef("histogram", "Latency of LangGraph planner graph compilation."),
+    "graph_checkpointer_selected_total": MetricDef("counter", "Selected LangGraph checkpointer backend count."),
+    "stream_snapshot_poll_total": MetricDef("counter", "SSE snapshot poll attempts by stream type."),
+    "stream_disconnect_total": MetricDef("counter", "SSE client disconnects detected by stream type."),
 }
 
 DEFAULT_HIST_BUCKETS = (

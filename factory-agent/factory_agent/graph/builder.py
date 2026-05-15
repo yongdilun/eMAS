@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
+
 from langgraph.graph import END, StateGraph
 
 from ..config import Settings
+from ..observability.metrics import metrics
 from .errors import LangGraphPlannerError
 from .nodes import (
     clarify_end_node,
@@ -30,6 +33,7 @@ from .state import AgentState
 
 
 def compile_planner_graph(settings: Settings):
+    started = time.perf_counter()
     try:
         import langgraph.graph  # noqa: F401 — verify dependency at compile time
     except Exception as exc:
@@ -127,12 +131,20 @@ def compile_planner_graph(settings: Settings):
     if checkpointer is None:
         backend = (settings.graph_checkpoint_backend or "auto").strip().lower() or "auto"
         if backend == "off":
-            return graph.compile()
+            compiled = graph.compile()
+            metrics.inc("graph_checkpointer_selected_total", labels={"backend": "off"})
+            metrics.observe("graph_compile_latency_ms", (time.perf_counter() - started) * 1000.0)
+            return compiled
         try:
             checkpointer = get_process_memory_checkpointer()
+            metrics.inc("graph_checkpointer_selected_total", labels={"backend": "memory_fallback"})
         except Exception as exc:
             raise LangGraphPlannerError(
                 "LangGraph checkpointer is required for planner approvals (interrupt/resume). "
                 "Set GRAPH_CHECKPOINT_BACKEND=memory|auto|db, or ensure langgraph.checkpoint.memory is available."
             ) from exc
-    return graph.compile(checkpointer=checkpointer)
+    else:
+        metrics.inc("graph_checkpointer_selected_total", labels={"backend": type(checkpointer).__name__})
+    compiled = graph.compile(checkpointer=checkpointer)
+    metrics.observe("graph_compile_latency_ms", (time.perf_counter() - started) * 1000.0)
+    return compiled

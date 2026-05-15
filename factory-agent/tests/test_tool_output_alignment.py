@@ -64,3 +64,19 @@ def test_align_builds_operator_summary_from_list_result():
         "Found 2 low-priority jobs: JOB-SEED-005, JOB-SEED-009. "
         "Details are shown in the table below."
     )
+
+
+def test_align_prefers_provided_operator_summary():
+    rows = [
+        {
+            "tool_name": "post__jobs",
+            "http_status": 200,
+            "args": {"product_id": "P-005", "quantity_total": 4},
+            "result": {"success": True, "data": {"job_id": "JOB-NEW-004"}},
+            "summary": "Created job JOB-NEW-004 for quantity 4.",
+        }
+    ]
+
+    aligned = align_tool_outputs_to_steps(step_tool_names=["post__jobs"], tool_outputs=rows)
+
+    assert aligned[0][1] == "Created job JOB-NEW-004 for quantity 4."
