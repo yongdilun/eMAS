@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import { getReadableAction } from './turnAssembler'
 import { useEffect, useState } from 'react'
 

@@ -168,7 +168,7 @@ export function useFactoryAgentChat() {
     }
   }, [clearClientProgressTimers])
 
-  const startClientProgress = useCallback((sessionId, _text) => {
+  const startClientProgress = useCallback((sessionId, text) => {
     if (!sessionId) return
     clearClientProgressTimers()
     if (ACTIVITY_TIMELINE_ENABLED) {

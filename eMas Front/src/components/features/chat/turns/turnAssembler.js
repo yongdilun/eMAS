@@ -374,7 +374,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
   }
 
   const turns = Array.from(turnsById.values()).map(turn => {
-    // Inject legacy-compatible structure for AiChatPanel / mergeLegacyAssistantTurnContent
+    // Inject legacy-compatible structure for older assistant turn renderers.
     const lastThinking = turn.thinking?.[turn.thinking.length - 1]
     const content = turn.terminal?.content || lastThinking?.content || ""
     

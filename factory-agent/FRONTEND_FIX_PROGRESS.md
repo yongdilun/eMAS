@@ -32,8 +32,8 @@ Status key:
 | FE-005 | Pending approval follow-up can create a new plan before decision | Medium | 2 | Not Started | Pending approval plus follow-up regression | Disable free-text input while approval pending |
 | FE-006 | Approval card dynamic lookup and validation are too broad | Medium | 2-3 | Not Started | Field validation and lookup failure tests | Disable dynamic options only |
 | FE-007 | Nested interactive controls in session list | Medium | 5 | Not Started | Keyboard navigation test | Revert session row component |
-| FE-008 | Lint/test configuration is not a reliable safety gate | High | 1 | Not Started | `npm test`, lint, build pass or fail meaningfully | Revert config-only changes |
-| FE-009 | Dead or stale frontend modules create maintenance risk | Low/Medium | 1 | Not Started | Import check and build | Restore files from git |
+| FE-008 | Lint/test configuration is not a reliable safety gate | High | 1 | Done | `npm test` passed 35 tests; `npm.cmd run lint` now ignores generated artifacts and fails on source-only lint issues; `npx.cmd vite build` passed | Revert `.eslintrc.cjs`, `package.json`, and the tiny `useFactoryAgentChat.js` lint fix |
+| FE-009 | Dead or stale frontend modules create maintenance risk | Low/Medium | 1 | Done | Import check for stale names returned no matches after removal; build passed | Restore removed files from git |
 | FE-010 | Main bundle is eager and large | Medium | 5 | Not Started | Build chunk-size comparison and route smoke | Revert lazy imports |
 
 ## Phase Progress
@@ -55,7 +55,7 @@ Status key:
 
 ### Phase 1: Low-Risk Cleanup
 
-- Status: Not Started
+- Status: Done
 - Goal: Make safety checks useful without changing behavior.
 - Candidate changes:
   - Add `npm test` for existing Node tests.
@@ -66,6 +66,29 @@ Status key:
   - UI behavior.
   - API payloads.
   - Factory Agent flow.
+- Completed:
+  - Created `audit/frontend-phase-1` from committed `audit/frontend-phase-0`.
+  - Added `npm test` for the existing Node test files.
+  - Updated lint config to ignore generated artifacts: `playwright-report`, `test-results`, `coverage`, and `dist`.
+  - Disabled `react/prop-types` for this non-PropTypes React codebase while keeping hook and no-undef checks active.
+  - Added Node lint environment for `scripts/**/*.js` and `vite.config.js`.
+  - Removed stale, unimported frontend modules after import checks:
+    - `src/pages/AIAssistantChat.jsx`
+    - `src/components/features/chat/AiChatPanel.jsx`
+    - `src/components/features/chat/AiChatBlocks.jsx`
+    - `src/components/features/chat/useAiChat.js`
+    - `src/services/machineService.js`
+    - `src/services/jobService.js`
+    - `src/services/inventoryService.js`
+  - Fixed the active Factory Agent chat lint issue where `startClientProgress` referenced `text` after naming the parameter `_text`.
+- Verification:
+  - `rg -n "AIAssistantChat|AiChatPanel|AiChatBlocks|useAiChat|machineService|jobService|inventoryService" src package.json vite.config.js` from `eMas Front`: no matches after removal.
+  - `npm test` from `eMas Front`: passed, 35 tests.
+  - `npm.cmd run lint` from `eMas Front`: failed meaningfully on source-only issues, reduced from the Phase 0 generated-artifact-heavy `1085 errors, 26 warnings` to `35 errors, 23 warnings`. Remaining items are existing unused variables and hook dependency warnings in source files.
+  - `npx.cmd vite build` from `eMas Front`: passed; retained existing large chunk warning at `618.15 kB`.
+- Rollback:
+  - Revert the Phase 1 commit to restore the removed stale files and previous config.
+  - For partial rollback, restore `eMas Front/.eslintrc.cjs`, `eMas Front/package.json`, and the deleted files listed above from `audit/frontend-phase-0`.
 
 ### Phase 2: UI Bug And Contract Fixes
 
@@ -131,14 +154,9 @@ Status key:
 
 ## Current Next Step
 
-Phase 0 is complete. Start Phase 1 in a new phase window only.
+Phase 1 is complete. Stop here and do not start Phase 2 in this window.
 
-Phase 1 should:
-
-1. Branch `audit/frontend-phase-1` from committed `audit/frontend-phase-0`.
-2. Add `npm test` and lint ignores as Phase 1 safety work.
-3. Run tests, lint, and build.
-4. Continue to keep UI behavior unchanged.
+The next phase window should branch `audit/frontend-phase-2` from committed `audit/frontend-phase-1`.
 
 ## Update Rules For This Tracker
 

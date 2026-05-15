@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ChatMessage from '../ChatMessage'
 import ApprovalCard from './ApprovalCard'

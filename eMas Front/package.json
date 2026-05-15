@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test \"src/components/features/chat/factory-agent/activityTimeline.test.mjs\" \"src/components/features/chat/factory-agent/approvalInterruptDisplay.test.mjs\" \"src/components/features/chat/turns/turnAssembler.test.mjs\"",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "verify-overlaps": "node scripts/verify-overlaps.js",
