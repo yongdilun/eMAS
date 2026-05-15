@@ -1,0 +1,91 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>03. Intent Orchestration</h1>
+        <p class="chapter-subtitle">Recursive Decomposition & Task Dependency Management</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The Factory Agent handles complex, multi-part manufacturing requests by breaking them down into atomic work units called <strong>Intents</strong>. This "Divide and Conquer" approach ensures that even if one part of a request fails, the entire session remains consistent and manageable.</p>
+        </section>
+
+        <section id="decomposition">
+            <h2>Intent Decomposition (Phase 3)</h2>
+            <div class="feature-highlight">
+                <p><strong>The Feature</strong>: A recursive <code>intent_splitter</code> that breaks compound queries into a dependency-aware stack.</p>
+                <p><strong>The Value</strong>: Prevents agent failure on complex requests like <em>"Find all high-priority jobs, delete them, then alert the supervisor."</em> It ensures each step is planned and validated in the context of previous results.</p>
+            </div>
+        </section>
+
+        <section id="logic">
+            <h2>Deconstruction Process</h2>
+            <p>When a request enters the graph, the <code>intent_splitter_node</code> uses a specialized prompt to analyze the query's "topography".</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Action</th>
+                        <th>Outcome</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1. Extraction</td>
+                        <td>Identify verbs and objects.</td>
+                        <td>Raw list of potential actions.</td>
+                    </tr>
+                    <tr>
+                        <td>2. Dependency Search</td>
+                        <td>Look for pronouns or logic links (e.g. "them", "then").</td>
+                        <td>A directed dependency graph of intents.</td>
+                    </tr>
+                    <tr>
+                        <td>3. Constraint Injection</td>
+                        <td>Bind global rules to specific intents.</td>
+                        <td>Final <code>Intent</code> objects with local guardrails.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="dependencies">
+            <h2>Dependency Mapping</h2>
+            <div class="mermaid">
+            graph LR
+                Q[Query] --> S[Splitter]
+                S --> I1[Intent 1: GET Machines]
+                S --> I2[Intent 2: POST Jobs]
+                I1 -.->|depends on| I2
+                I2 --> C[Cascade Controller]
+            </div>
+        </section>
+
+        <section id="failure-handling">
+            <h2>Failure Cascading</h2>
+            <p>To ensure industrial safety, the system implements a <strong>Cascade Cancellation</strong> mechanism. If an intent that provides critical data fails, all downstream intents that depend on that data are automatically aborted with a <code>dependency_failure</code> status.</p>
+            <ul>
+                <li><strong>Safe State</strong>: Prevents the agent from attempting to "delete all jobs" when the "get jobs" call failed to return a list.</li>
+                <li><strong>Clear Context</strong>: The operator sees exactly why Step 2 didn't run, linked to the failure of Step 1.</li>
+            </ul>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Splitter Logic</h4>
+                    <code>factory_agent/graph/nodes/planner_loop.py</code>
+                    <p>The <code>intent_splitter_node</code> function and its associated LLM prompt templates.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Intent Schema</h4>
+                    <code>factory_agent/graph/state.py</code>
+                    <p>The <code>Intent</code> TypedDict defining the fields for dependencies and constraints.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

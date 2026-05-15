@@ -1,0 +1,95 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>04. The Reasoning Loop</h1>
+        <p class="chapter-subtitle">Recursive Planning & Deterministic Recovery</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The **Reasoning Loop** is the cognitive center of the Factory Agent. It iterates through perception, planning, and validation until the current intent is achieved. While the LLM provides flexibility, the loop is governed by rigid limits and fallback mechanisms to ensure industrial stability.</p>
+        </section>
+
+        <section id="planner-node">
+            <h2>The Planner Node</h2>
+            <p>The <code>planner_node</code> is responsible for evaluating the <code>AgentState</code> and the current <code>working_intent</code> to determine the next action. It operates in a stateless manner relative to the LLM, relying entirely on the provided history and context.</p>
+            <ul>
+                <li><strong>Dynamic Context</strong>: The prompt includes only the relevant tool schema and the recent <code>tool_outputs</code> to save tokens and focus reasoning.</li>
+                <li><strong>Recursion Control</strong>: The graph enforces a <code>recursion_limit</code> to prevent infinite planning loops in ambiguous scenarios.</li>
+            </ul>
+        </section>
+
+        <section id="decision-object">
+            <h2>The Decision Object</h2>
+            <p>Every reasoning step results in a structured <code>PlannerDecision</code>. This ensures that the agent's output is always machine-parseable and verifiable.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>kind</code></td>
+                        <td>The action type: <code>domain_tool</code>, <code>request_approval</code>, or <code>intent_completed</code>.</td>
+                    </tr>
+                    <tr>
+                        <td><code>tool_calls</code></td>
+                        <td>A list of specific API calls with their resolved arguments.</td>
+                    </tr>
+                    <tr>
+                        <td><code>risk_level</code></td>
+                        <td>Safety classification used by the <code>decision_guard</code> to trigger interrupts.</td>
+                    </tr>
+                    <tr>
+                        <td><code>decision_summary</code></td>
+                        <td>Natural language rationale for the chosen path (used in SSE streaming).</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="repair-mechanism">
+            <h2>Deterministic Plan Repair</h2>
+            <p>To survive LLM hallucinations or JSON parsing failures, the system implements a <strong>Deterministic Repair</strong> mechanism.</p>
+            <div class="feature-highlight">
+                <p>If the Planner fails to generate a valid decision or hits the iteration cap, the system invokes <code>_deterministic_plan_repair</code>.</p>
+                <p>This "Plan B" uses hard-coded logic to attempt a safe completion of the intent (e.g., stopping a machine if the intent was "stop") without relying on further LLM inference.</p>
+            </div>
+        </section>
+
+        <section id="loop-diagram">
+            <h2>Reasoning Loop Diagram</h2>
+            <div class="mermaid">
+            graph TD
+                S[Start Loop] --> P{Planner Node}
+                P -->|Valid Decision| G[Decision Guard]
+                P -->|Parse Error| R[Deterministic Repair]
+                G -->|Approved| E[Tool Execution]
+                G -->|Blocked| P
+                E -->|New Data| P
+                E -->|Completed| X[Next Intent]
+                R --> X
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Main Planner</h4>
+                    <code>factory_agent/graph/nodes/planner_loop.py</code>
+                    <p>Contains the <code>planner_node</code> implementation and the logic for handling iteration counts.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Repair Logic</h4>
+                    <code>factory_agent/graph/nodes/planner_loop.py</code>
+                    <p>Implementation of <code>_deterministic_plan_repair</code> and fallback state transitions.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

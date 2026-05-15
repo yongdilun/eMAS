@@ -1,0 +1,120 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>Zero-to-Hero Learning Path</h1>
+        <p class="chapter-subtitle">Onboarding Curriculum for New Factory Agent Developers</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>Welcome to the Factory Agent team! This path is designed to take you from a newcomer to a confident contributor. Whether you are an AI expert or a backend specialist, this curriculum will bridge the gap between your existing skills and our specialized industrial agent architecture.</p>
+        </section>
+
+        <section id="foundations">
+            <h2>Part I: Technology Foundations</h2>
+            <p>Before diving into the codebase, ensure you are comfortable with these core technologies:</p>
+            <div class="advantage-card">
+                <h3>Python (Asyncio)</h3>
+                <p>The entire runtime is asynchronous. Understanding <code>await</code>, <code>asyncio.gather</code>, and the event loop is critical.</p>
+            </div>
+            <div class="advantage-card">
+                <h3>LangGraph</h3>
+                <p>Our orchestration engine. Learn how <strong>Nodes</strong> and <strong>Edges</strong> interact to form a stateful graph.</p>
+            </div>
+            <div class="advantage-card">
+                <h3>OpenAPI & REST</h3>
+                <p>We communicate with the Go Backend via dynamically generated tools. Familiarize yourself with RESTful standards.</p>
+            </div>
+        </section>
+
+        <section id="architecture">
+            <h2>Part II: Codebase Architecture</h2>
+            <p>The Factory Agent resides in the <code>/factory-agent</code> directory. Here is the layer-by-layer breakdown:</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Layer</th>
+                        <th>Directory</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>API</strong></td>
+                        <td><code>/api</code></td>
+                        <td>FastAPI routes and SSE event streaming logic.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Graph</strong></td>
+                        <td><code>/graph</code></td>
+                        <td>The StateGraph definition, node functions, and state schema.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Nodes</strong></td>
+                        <td><code>/graph/nodes</code></td>
+                        <td>Individual "worker" nodes: Planner, Guard, Pipeline.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Persistence</strong></td>
+                        <td><code>/persistence</code></td>
+                        <td>MySQL and Redis checkpointer implementations.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="setup">
+            <h2>Part III: Developer Setup</h2>
+            <ol class="setup-list">
+                <li>
+                    <strong>Environment Config</strong>: Copy <code>.env.example</code> to <code>.env</code> and configure your LLM provider and DB credentials.
+                </li>
+                <li>
+                    <strong>Install Dependencies</strong>: Run <code>pip install -r requirements.txt</code> in a virtual environment.
+                </li>
+                <li>
+                    <strong>Launch Infrastructure</strong>: Ensure MySQL and Redis are running (use <code>docker-compose</code> if available).
+                </li>
+                <li>
+                    <strong>Start the Agent</strong>: Run <code>python main.py</code> to launch the FastAPI server and background workers.
+                </li>
+            </ol>
+        </section>
+
+        <section id="glossary">
+            <h2>Glossary of Terms</h2>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Term</th>
+                        <th>Definition</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>AgentState</strong></td>
+                        <td>The single source of truth for an active session.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>2PC</strong></td>
+                        <td>Two-Phase Commit protocol (Stage -> Validate -> Commit).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Intent</strong></td>
+                        <td>A decomposed unit of work extracted from a user query.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Decision Guard</strong></td>
+                        <td>Non-LLM node that enforces hard safety constraints.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Reference ($ref)</strong></td>
+                        <td>A symbolic link used to pass data between tools in a bundle.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </div>
+</div>

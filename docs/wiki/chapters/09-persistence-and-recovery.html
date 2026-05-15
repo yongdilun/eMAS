@@ -1,0 +1,88 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>09. Persistence & Recovery</h1>
+        <p class="chapter-subtitle">Industrial State Survivability & Self-Healing Loops</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>Industrial AI requires 100% state survivability. If a server room loses power or a worker thread crashes, the Factory Agent must be able to resume its task exactly where it left off, without duplicate execution or data loss. This is achieved through a combination of atomic checkpointing and active session reconciliation.</p>
+        </section>
+
+        <section id="checkpointer">
+            <h2>Multi-Layered Persistence</h2>
+            <p>Every node transition in the graph triggers a state snapshot. We use a hybrid storage model to balance performance and reliability.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Storage Layer</th>
+                        <th>Type</th>
+                        <th>Responsibility</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>MySQL</strong></td>
+                        <td>Primary</td>
+                        <td>Permanent storage of the <code>AgentState</code> snapshots (pickled binary blobs).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Redis</strong></td>
+                        <td>Cache</td>
+                        <td>Fast event bus for real-time SSE streaming and transient session metadata.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="recovery-sweep">
+            <h2>Self-Healing Recovery Sweep</h2>
+            <p>The system is proactive about its own health. A dedicated background process handles sessions that have gone "stale" due to unexpected failures.</p>
+            <div class="feature-highlight">
+                <p><strong>The Feature</strong>: A cold-start reconciliation logic that runs on server startup.</p>
+                <p><strong>The Value</strong>: If the server crashes mid-execution, this logic automatically detects "Stuck" sessions and either attempts to resume them or moves them to a manual reconciliation queue, preventing industrial state leakage.</p>
+            </div>
+        </section>
+
+        <section id="state-consistency">
+            <h2>Ensuring Consistency</h2>
+            <p>During recovery, the system doesn't just "blindly" restart. It performs a **Reconciliation Check**:</p>
+            <ul>
+                <li><strong>Backend Sync</strong>: Consults the Go Backend to see if any staged 2PC bundles were partially applied.</li>
+                <li><strong>Idempotency Check</strong>: Re-calculates idempotency keys for the next pending step to ensure no duplicate API calls are made.</li>
+                <li><strong>Truncation</strong>: If the state is corrupted, it can truncate to the last "Known-Good" checkpoint before the failure occurred.</li>
+            </ul>
+        </section>
+
+        <section id="#recovery-diagram">
+            <h2>Recovery Flow Diagram</h2>
+            <div class="mermaid">
+            graph TD
+                S[Server Start] --> Sweep[Recovery Sweep]
+                Sweep -->|Found Stale Session| Sync[Sync with Go Backend]
+                Sync -->|No Side Effects| Resume[Resume Execution]
+                Sync -->|Partial Success| Manual[Mark for Manual Review]
+                Resume --> End[Graph Completed]
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Recovery Engine</h4>
+                    <code>main.py</code>
+                    <p>Contains the <code>cold_start_recovery_sweep</code> logic and system initialization hooks.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Checkpointer</h4>
+                    <code>factory_agent/persistence/checkpointer.py</code>
+                    <p>Implements the <code>MySQLCheckpointer</code> class and serialization logic.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

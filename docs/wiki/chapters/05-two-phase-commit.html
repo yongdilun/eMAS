@@ -1,0 +1,135 @@
+<div class="chapter-wrapper">
+    <!-- Chapter Header -->
+    <header class="chapter-header">
+        <h1>05. Two-Phase Commit (2PC)</h1>
+        <p class="chapter-subtitle">Deterministic Transaction Management for Industrial Safety</p>
+    </header>
+
+    <!-- Sidebar TOC (Internal) -->
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The Two-Phase Commit (2PC) protocol is the primary safety mechanism of the Factory Agent. It ensures that no manufacturing side-effects occur without a validated dry-run and explicit commitment. This architecture exists to prevent <strong>partial failures</strong> where an agent might start a machine but fail to assign a job, leaving the hardware in an inconsistent state.</p>
+        </section>
+
+        <section id="execution-lifecycle">
+            <h2>Execution Lifecycle</h2>
+            <details open>
+                <summary>Phase 1: Staging (The Proposal)</summary>
+                <div class="details-content">
+                    <p>When the <code>planner_node</code> proposes a write operation, the <code>tool_pipeline</code> does not execute it. Instead, it serializes the call and stashes it into the state.</p>
+                    <ul>
+                        <li><strong>Responsibility</strong>: Capture intent without side-effects.</li>
+                        <li><strong>Node</strong>: <code>make_tool_execution_node</code> in <code>tool_pipeline.py</code>.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <details>
+                <summary>Phase 2: Validation (The Dry-Run)</summary>
+                <div class="details-content">
+                    <p>The entire <code>staged_writes</code> bundle is sent to the Go backend's dry-run endpoint. This simulates the transaction to catch logic errors or conflicts.</p>
+                    <ul>
+                        <li><strong>Responsibility</strong>: Ensure the backend is ready to accept the change.</li>
+                        <li><strong>Node</strong>: <code>bundle_dry_run_node</code> in <code>planner_loop.py</code>.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <details>
+                <summary>Phase 3: Commitment (The Execution)</summary>
+                <div class="details-content">
+                    <p>Only after the dry-run succeeds (and optional human approval is granted), the <code>commit_node</code> sends the final execution signal.</p>
+                    <ul>
+                        <li><strong>Responsibility</strong>: Atomic application of the staged bundle.</li>
+                        <li><strong>Node</strong>: <code>make_commit_node</code> in <code>tool_pipeline.py</code>.</li>
+                    </ul>
+                </div>
+            </details>
+        </section>
+
+        <section id="state-evolution">
+            <h2>State Evolution</h2>
+            <p>The <code>AgentState</code> acts as the persistent ledger for the transaction.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>State at Staging</th>
+                        <th>State at Commitment</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>staged_writes</code></td>
+                        <td>Populated with <code>PendingToolCall</code></td>
+                        <td>Cleared after success</td>
+                    </tr>
+                    <tr>
+                        <td><code>tool_outputs</code></td>
+                        <td>Empty for write tools</td>
+                        <td>Appended with final result</td>
+                    </tr>
+                    <tr>
+                        <td><code>status</code></td>
+                        <td><code>awaiting_dry_run</code></td>
+                        <td><code>completed</code> or <code>idle</code></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="transaction-flow">
+            <h2>Transaction Flow Diagram</h2>
+            <div class="mermaid">
+            sequenceDiagram
+                participant P as Planner Node
+                participant T as Tool Pipeline
+                participant B as Go Backend
+                participant G as State Graph
+                
+                P->>T: Propose Write Actions
+                T->>G: Update staged_writes
+                G->>P: Route to bundle_dry_run
+                P->>B: POST /v1/bundle/dry-run
+                B-->>P: 200 OK (Validated)
+                P->>T: Route to Commit
+                T->>B: POST /v1/bundle/commit
+                B-->>T: 201 Created
+                T->>G: Clear staged_writes & Log Output
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Orchestration Logic</h4>
+                    <code>factory_agent/graph/builder.py</code>
+                    <p>Defines the edges routing from <code>planner</code> to <code>dry_run</code> to <code>commit</code>.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Staging Engine</h4>
+                    <code>factory_agent/graph/nodes/tool_pipeline.py</code>
+                    <p>Implements the <code>intercept_writes</code> decorator that redirects calls to state.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>State Definition</h4>
+                    <code>factory_agent/graph/state.py</code>
+                    <p>The <code>AgentState</code> class holding the <code>staged_writes</code> buffer.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="tradeoffs">
+            <h2>Design Tradeoffs</h2>
+            <ul>
+                <li><strong>Pro: Atomicity</strong>. Prevents the "partial success" nightmare common in LLM agents.</li>
+                <li><strong>Pro: Idempotency</strong>. The 2PC bundle carries a unique session-based key.</li>
+                <li><strong>Con: Latency</strong>. Requires an extra round-trip to the backend before commitment.</li>
+            </ul>
+        </section>
+    </div>
+</div>

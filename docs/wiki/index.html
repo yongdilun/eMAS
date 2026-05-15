@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factory Agent Wiki | Internal Documentation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon"></div>
+                    <span>Factory Agent</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-group">
+                    <div class="nav-group-title">Onboarding</div>
+                    <a href="#welcome" class="nav-link active" data-chapter="welcome">Welcome</a>
+                    <a href="#technical-advantages" class="nav-link" data-chapter="technical-advantages">Key Advantages</a>
+                    <a href="#principal-guide" class="nav-link" data-chapter="principal-guide">Principal-Level Guide</a>
+                    <a href="#zero-to-hero" class="nav-link" data-chapter="zero-to-hero">Zero-to-Hero Path</a>
+                </div>
+
+                <div class="nav-group">
+                    <div class="nav-group-title">Deep Dive</div>
+                    <a href="#01-high-level-architecture" class="nav-link" data-chapter="01-high-level-architecture">01. System Architecture</a>
+                    <a href="#02-state-and-data-flow" class="nav-link" data-chapter="02-state-and-data-flow">02. State & Data Flow</a>
+                    <a href="#03-intent-orchestration" class="nav-link" data-chapter="03-intent-orchestration">03. Intent Orchestration</a>
+                    <a href="#04-the-reasoning-loop" class="nav-link" data-chapter="04-the-reasoning-loop">04. Reasoning Loop</a>
+                    <a href="#05-two-phase-commit" class="nav-link" data-chapter="05-two-phase-commit">05. Two-Phase Commit</a>
+                    <a href="#06-guardrails-and-safety" class="nav-link" data-chapter="06-guardrails-and-safety">06. Guardrails & Safety</a>
+                    <a href="#07-tool-execution-pipeline" class="nav-link" data-chapter="07-tool-execution-pipeline">07. Tool Pipeline</a>
+                </div>
+
+                <div class="nav-group">
+                    <div class="nav-group-title">Operations</div>
+                    <a href="#08-human-in-the-loop" class="nav-link" data-chapter="08-human-in-the-loop">08. Human-in-the-Loop</a>
+                    <a href="#09-persistence-and-recovery" class="nav-link" data-chapter="09-persistence-and-recovery">09. Persistence & Recovery</a>
+                    <a href="#10-observability-and-sse" class="nav-link" data-chapter="10-observability-and-sse">10. Observability & SSE</a>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span>System Version: v2.4.0 (LangGraph)</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="content-area">
+            <header class="content-header">
+                <div class="breadcrumb">
+                    <span id="bc-parent">Documentation</span>
+                    <span class="separator">/</span>
+                    <span id="bc-current" class="active">Welcome</span>
+                </div>
+                <div class="header-actions">
+                    <button id="theme-toggle" class="icon-btn" title="Toggle Theme">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42m12.72-12.72l1.42-1.42"/></svg>
+                    </button>
+                    <a href="https://github.com/yongdilun/eMAS-API" class="icon-btn" target="_blank">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                    </a>
+                </div>
+            </header>
+
+            <div id="content-body" class="content-body fade-in">
+                <!-- Content will be loaded here via JS -->
+                <div class="hero-section">
+                    <h1>The Factory Agent Wiki</h1>
+                    <p class="lead">Industrial-grade orchestration for autonomous manufacturing operations.</p>
+                    <div class="feature-grid">
+                        <div class="feature-card">
+                            <div class="feature-icon">🛡️</div>
+                            <h3>Deterministic Safety</h3>
+                            <p>Stateful graph execution with rigid two-phase commit protocols.</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🧠</div>
+                            <h3>Complex Reasoning</h3>
+                            <p>Multi-intent decomposition and hierarchical planning logic.</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">👁️</div>
+                            <h3>Observability</h3>
+                            <p>Real-time SSE event streaming and full execution telemetry.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <footer class="content-footer">
+                <p>&copy; 2026 Factory Agent Documentation | Confidentially maintained for eMAS API.</p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

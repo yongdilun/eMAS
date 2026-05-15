@@ -1,0 +1,100 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>Key Technical Advantages</h1>
+        <p class="chapter-subtitle">Elite Tooling & Industrial-Grade Safety Framework</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The Factory Agent is not just another wrapper around an LLM. It is a comprehensive safety-first framework designed for high-stakes manufacturing environments. By combining state-of-the-art AI tooling with rigid software engineering patterns, we deliver a system that is both intelligent and industrial-grade.</p>
+        </section>
+
+        <section id="ai-tooling">
+            <h2>🛠️ Advanced AI Tooling</h2>
+            <div class="advantage-card">
+                <h3>Promptfoo: Matrix-Based Testing</h3>
+                <p>We use <strong>Promptfoo</strong> to run matrix tests across hundreds of test cases. This ensures that changes to our reasoning prompts don't introduce logic regressions or safety violations.</p>
+            </div>
+            <div class="advantage-card">
+                <h3>LangSmith: Production Observability</h3>
+                <p>Native integration with <strong>LangSmith</strong> allows us to trace multi-step agent loops, analyze token costs, and debug latency in real-time. This provides the transparency required for industrial audit trails.</p>
+            </div>
+            <div class="advantage-card">
+                <h3>RAG Retrieval: Grounded Safety</h3>
+                <p>Uses <strong>ChromaDB</strong> and hybrid search to retrieve safety documents and SOPs. The agent grounded in actual factory rules, not just general LLM knowledge.</p>
+            </div>
+        </section>
+
+        <section id="safety-features">
+            <h2>🛡️ Industrial Safety Features</h2>
+            <details open>
+                <summary>1. Transactional Idempotency</summary>
+                <div class="details-content">
+                    <p><strong>The Feature</strong>: The agent calculates unique <strong>Idempotency Keys</strong> for every action.</p>
+                    <p><strong>The Value</strong>: Prevents "double-start" or "double-stop" errors on heavy machinery during network retries. Ensures exactly-once execution.</p>
+                </div>
+            </details>
+            <details open>
+                <summary>2. Cross-Step Reference Resolving ($ref)</summary>
+                <div class="details-content">
+                    <p><strong>The Feature</strong>: Support for symbolic references between tools in a single execution bundle.</p>
+                    <p><strong>The Value</strong>: Enables atomic planning of complex sequences (e.g., creating a job and assigning it to a machine) before any action is physically executed.</p>
+                </div>
+            </details>
+            <details open>
+                <summary>3. Human-in-the-Loop (HITL) Interrupts</summary>
+                <div class="details-content">
+                    <p><strong>The Feature</strong>: Native LangGraph breakpoints for high-risk write operations.</p>
+                    <p><strong>The Value</strong>: Acts as a "Safety Brake," forcing human verification before the agent commits to any physical side-effect.</p>
+                </div>
+            </details>
+            <details open>
+                <summary>4. Self-Healing Recovery Sweep</summary>
+                <div class="details-content">
+                    <p><strong>The Feature</strong>: Cold-start reconciliation logic that handles session inconsistencies after server restarts.</p>
+                    <p><strong>The Value</strong>: Detects and heals "stuck" sessions, preventing industrial state leakage and ensuring task continuity.</p>
+                </div>
+            </details>
+            <details open>
+                <summary>5. Intent Decomposition (Phase 3)</summary>
+                <div class="details-content">
+                    <p><strong>The Feature</strong>: A recursive splitter that breaks compound queries into dependency-aware tasks.</p>
+                    <p><strong>The Value</strong>: Handles complex orchestration logic (e.g., cascades) that typically causes simpler agent architectures to fail.</p>
+                </div>
+            </details>
+        </section>
+
+        <section id="tool-stack">
+            <h2>Technical Stack</h2>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Technology</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Orchestration</strong></td>
+                        <td>LangGraph, Python (Asyncio)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Persistence</strong></td>
+                        <td>MySQL, Redis, SQLAlchemy</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tooling</strong></td>
+                        <td>Promptfoo, LangSmith, ChromaDB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>API</strong></td>
+                        <td>FastAPI (Python), Gin/GORM (Go Backend)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </div>
+</div>

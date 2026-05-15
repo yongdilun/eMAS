@@ -1,0 +1,74 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>Principal-Level Guide</h1>
+        <p class="chapter-subtitle">Architectural Mechanics & Strategic Tradeoffs for Senior Engineers</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>Welcome to the deep-dive architectural guide for the Factory Agent. This chapter is designed for senior and principal engineers who need to understand the underlying mechanics, design philosophy, and strategic direction of the system. We move past "how it works" to <strong>"why it was built this way."</strong></p>
+        </section>
+
+        <section id="core-insight">
+            <h2>The Core Insight</h2>
+            <p>The Factory Agent is not a chatbot; it is a <strong>Deterministic Stateful Graph</strong>.</p>
+            <div class="feature-highlight">
+                <p>The fundamental architectural insight is that every agent action must be a pure, traceable transformation of state. We treat the LLM as a "noisy CPU" and wrap it in a rigorous control flow that prevents side effects from occurring outside the Two-Phase Commit (2PC) protocol.</p>
+            </div>
+        </section>
+
+        <section id="logic-comparison">
+            <h2>Logic Comparison (C# / Java vs. Python)</h2>
+            <p>If you are coming from an Enterprise background, think of this as an <strong>Event-Sourced Saga Pattern</strong> with an LLM-based coordinator. Instead of hard-coded state transitions, we use probabilistic reasoning constrained by deterministic guardrails.</p>
+            <div class="code-ref-card">
+                <h4>Conceptual Orchestration</h4>
+                <pre><code class="language-python"># The essence of the graph loop
+def agent_step(state: AgentState) -> dict:
+    # 1. Perception: Read current state and external context
+    # 2. Decision: LLM proposes actions (ToolCalls)
+    # 3. Guard: Programmatic validation of constraints
+    # 4. Stage: If write, buffer in 'staged_writes'
+    # 5. Commit: Only after dry-run and/or approval
+    return state.evolve()</code></pre>
+            </div>
+        </section>
+
+        <section id="tradeoffs">
+            <h2>Architectural Tradeoffs</h2>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Choice</th>
+                        <th>Tradeoff</th>
+                        <th>Rationale</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Graph over Chain</strong></td>
+                        <td>Complexity vs. Reliability</td>
+                        <td>Linear chains fail on edge cases; graphs allow for repair loops and complex state transitions.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>2PC over Immediate</strong></td>
+                        <td>Latency vs. Safety</td>
+                        <td>Manufacturing side-effects are too expensive to "fix later." Staging is non-negotiable.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Relational Checkpointing</strong></td>
+                        <td>Throughput vs. Durability</td>
+                        <td>MySQL ensures that even if a worker crashes mid-thought, the "ledger" of the session is never lost.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="strategic-direction">
+            <h2>Strategic Direction</h2>
+            <p>The ultimate goal is to transition from <strong>Human-in-the-Loop</strong> to <strong>Human-on-the-Loop</strong>. The architecture is designed to support 100% autonomous operations for routine tasks, while maintaining a "Manual Override" for anomalies detected by the Decision Guard.</p>
+        </section>
+    </div>
+</div>

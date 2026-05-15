@@ -1,0 +1,173 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>01. System Architecture</h1>
+        <p class="chapter-subtitle">Graph-Native Orchestration & Industrial Control Flow</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="philosophy">
+            <h2>Core Philosophy</h2>
+            <p>The Factory Agent is not a linear chain of prompts. It is a <strong>state-driven orchestration engine</strong> built on <strong>LangGraph</strong>. The architecture follows a "Plan-First, Verify-Always" approach, ensuring that every industrial action is semantically validated and approved before execution.</p>
+            <div class="info-card">
+                <h4>Key Tenet: Separation of Concerns</h4>
+                <p>The system separates <strong>Planning</strong> (reasoning about tools), <strong>Execution</strong> (making HTTP calls), and <strong>Validation</strong> (checking if results match requirements) into distinct, isolated graph nodes.</p>
+            </div>
+        </section>
+
+        <section id="graph-topology">
+            <h2>Graph Topology</h2>
+            <p>The execution flow is managed by a Directed Acyclic Graph (with controlled cycles for repair). Below is the high-level node structure defined in <code>builder.py</code>:</p>
+            
+            <div class="mermaid-container">
+<pre class="mermaid">
+graph TD
+    Input[input_layer] --> Split[intent_splitter]
+    Split --> Prep[prepare]
+    Prep --> Planner[planner]
+    
+    Planner -->|Clarification| ClarifyEnd[clarify_end]
+    Planner -->|Staged Action| Guard[decision_guard]
+    Planner -->|Final Result| Synth[synthesize_plan]
+    Planner -->|Retry| Planner
+    
+    Guard -->|Wait/Refine| Planner
+    Guard -->|Execute| ToolExec[tool_execution]
+    
+    ToolExec -->|Fatal Error| FatalEnd[fatal_end]
+    ToolExec -->|Success| RelFilter[relevance_filter]
+    
+    RelFilter -->|Retry Planning| Planner
+    RelFilter -->|Move to Plan| Synth
+    
+    Synth --> FinalVal[final_validator]
+    
+    FinalVal -->|Refine| Planner
+    FinalVal -->|Dry Run| DryRun[bundle_dry_run]
+    FinalVal -->|Commit| Commit[commit]
+    FinalVal -->|Finish| END
+    
+    DryRun --> FinalVal
+    Commit --> END
+    FatalEnd --> END
+    ClarifyEnd --> END
+</pre>
+            </div>
+        </section>
+
+        <section id="node-responsibilities">
+            <h2>Node Responsibilities</h2>
+            <div class="grid-layout">
+                <div class="feature-card">
+                    <h3>Intent Splitter</h3>
+                    <p>Decomposes complex user queries into atomic <code>working_intents</code>. If a user asks to "fix machine A and update schedule B", this node ensures they are handled as distinct sub-problems.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Decision Guard</h3>
+                    <p>A safety layer that inspects planned <code>ToolCalls</code>. It enforces constraints (e.g., "cannot delete production records on weekends") before allowing the <code>tool_execution</code> node to fire.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Relevance Filter</h3>
+                    <p>Post-execution audit. It checks if the tool output actually helped solve the current intent. It prevents the planner from getting stuck in "hallucination loops" with irrelevant data.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Final Validator</h3>
+                    <p>The gatekeeper of the <code>PlanDraft</code>. It ensures the proposed answer is supported by "evidence" collected during tool execution.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="state-management">
+            <h2>State Management (AgentState)</h2>
+            <p>The "brain" of the agent is the <code>AgentState</code> TypedDict. Unlike typical LLM memory, this state is structured and uses <strong>Reducers</strong> to manage how data accumulates.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>Type</th>
+                        <th>Update Logic</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>messages</code></td>
+                        <td><code>list[AnyMessage]</code></td>
+                        <td><code>add_messages</code> (LangGraph native delta accumulation)</td>
+                    </tr>
+                    <tr>
+                        <td><code>staged_writes</code></td>
+                        <td><code>list[dict]</code></td>
+                        <td><code>replaceable_list_reducer</code> (Allows clearing stale writes during repair)</td>
+                    </tr>
+                    <tr>
+                        <td><code>intents</code></td>
+                        <td><code>list[dict]</code></td>
+                        <td><code>operator.add</code> (Append-only trace of all split intents)</td>
+                    </tr>
+                    <tr>
+                        <td><code>tool_outputs</code></td>
+                        <td><code>list[dict]</code></td>
+                        <td><code>operator.add</code> (Full history of every HTTP interaction)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="two-phase-commit">
+            <h2>Two-Phase Commit Lifecycle</h2>
+            <p>To prevent accidental industrial damage, the system implements a strict two-phase commit protocol for any "Write" actions (POST/PUT/PATCH/DELETE):</p>
+            <ol class="step-list">
+                <li><strong>Phase 1: Dry Run</strong> - Tools are executed with a <code>dry_run=true</code> flag (if supported) or staged in <code>staged_writes</code> while the system simulates the outcome.</li>
+                <li><strong>Phase 2: HITL Approval</strong> - The graph hits an <strong>Interrupt</strong>. The frontend receives an <code>approval_required</code> event via SSE.</li>
+                <li><strong>Phase 3: Commitment</strong> - Upon human approval, the graph resumes at the <code>commit</code> node, which executes the real API calls using <strong>Idempotency Keys</strong> to prevent double-execution.</li>
+            </ol>
+        </section>
+
+        <section id="supporting-subsystems">
+            <h2>Supporting Subsystems</h2>
+            <div class="grid-layout">
+                <div class="feature-card">
+                    <h3>Dynamic RAG Pipeline</h3>
+                    <p>The system uses a <strong>Hybrid Retrieval</strong> (BM25 + Vector) strategy to inject real-time machine manuals and maintenance logs into the LLM context. It includes a <strong>Cross-Encoder Reranker</strong> to ensure only the top 3 most relevant documents are passed to the planner.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Tool Registry</h3>
+                    <p>A centralized hub that manages over 100+ industrial tools. It handles automatic Pydantic schema generation from OpenAPI specs, enabling the agent to "know" how to call the Go backend without hardcoded logic.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="technical-stack">
+            <h2>Technical Stack</h2>
+            <p>The architecture bridges high-level Python reasoning with low-level Go execution:</p>
+            <ul>
+                <li><strong>Reasoning:</strong> Python 3.11+, LangGraph, LangChain, Pydantic V2.</li>
+                <li><strong>Interface:</strong> FastAPI (Uvicorn) with Server-Sent Events (SSE).</li>
+                <li><strong>Backend:</strong> Industrial Go API (eMAS Core).</li>
+                <li><strong>Persistence:</strong> SQLite (Local) / PostgreSQL (Prod) for graph checkpointing.</li>
+            </ul>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Graph Definition</h4>
+                    <code>factory_agent/graph/builder.py</code>
+                    <p>The source of truth for the StateGraph topology and node relationships.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>API Layer</h4>
+                    <code>factory_agent/api/routes.py</code>
+                    <p>Handles the conversion of HTTP requests into graph inputs and SSE events.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>State Schema</h4>
+                    <code>factory_agent/graph/state.py</code>
+                    <p>Defines the <code>AgentState</code> and the custom reducers for list fields.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

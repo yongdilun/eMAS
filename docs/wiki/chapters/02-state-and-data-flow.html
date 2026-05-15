@@ -1,0 +1,105 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>02. State & Data Flow</h1>
+        <p class="chapter-subtitle">The Source of Truth for Autonomous Operations</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>In a graph-native architecture, state is the only way nodes communicate. The <code>AgentState</code> acts as a "Shared Memory" that persists across machine reboots, ensuring that the agent never loses its place in a multi-step manufacturing sequence.</p>
+        </section>
+
+        <section id="agent-state">
+            <h2>The AgentState Object</h2>
+            <p>Defined as a TypedDict, the state tracks every aspect of the agent's perception and memory.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>Type</th>
+                        <th>Responsibility</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>working_intents</code></td>
+                        <td><code>List[Intent]</code></td>
+                        <td>The stack of tasks to be completed.</td>
+                    </tr>
+                    <tr>
+                        <td><code>tool_outputs</code></td>
+                        <td><code>Annotated[list, add]</code></td>
+                        <td>An append-only trace of all API results.</td>
+                    </tr>
+                    <tr>
+                        <td><code>staged_writes</code></td>
+                        <td><code>replaceable_list</code></td>
+                        <td>Buffer for 2PC pending mutations.</td>
+                    </tr>
+                    <tr>
+                        <td><code>decisions</code></td>
+                        <td><code>List[PlannerDecision]</code></td>
+                        <td>The planner's reasoning history.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="reducers">
+            <h2>Custom Reducer Patterns</h2>
+            <p>We use LangGraph reducers to control how node outputs merge into the global state. This is critical for preventing "Ghost Data" from previous failed loops.</p>
+            
+            <details open>
+                <summary>Replaceable List Reducer</summary>
+                <div class="details-content">
+                    <p>Unlike the default append reducer, this allows the system to clear or replace a list. We use this for <code>staged_writes</code> so that if a dry-run fails, the planner can replace the entire bundle with a new, corrected one.</p>
+                    <pre><code class="language-python">def replaceable_list_reducer(old: list, new: list) -> list:
+    return new if new is not None else old</code></pre>
+                </div>
+            </details>
+        </section>
+
+        <section id="data-flow">
+            <h2>Data Transition Diagram</h2>
+            <div class="mermaid">
+            stateDiagram-v2
+                [*] --> Decomposed: User Input
+                Decomposed --> Planning: Intent Stack
+                Planning --> Staged: Tool Proposals
+                Staged --> Validated: Dry-Run Result
+                Validated --> Committed: Commit Success
+                Committed --> Planning: Next Intent
+                Planning --> [*]: Synthesis
+            </div>
+        </section>
+
+        <section id="persistence">
+            <h2>Checkpoint Persistence</h2>
+            <p>Every node transition triggers a <strong>State Snapshot</strong>. The snapshot is serialized using <code>pickle</code> or <code>json</code> and stored in the MySQL <code>checkpoints</code> table. This architecture ensures:</p>
+            <ul>
+                <li><strong>Survivability</strong>: Sessions can be resumed on different physical servers.</li>
+                <li><strong>Auditability</strong>: Every "thought" and "action" is permanently recorded.</li>
+                <li><strong>Replayability</strong>: We can re-run a specific session for debugging by hydrating from a specific checkpoint ID.</li>
+            </ul>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>State Schema</h4>
+                    <code>factory_agent/graph/state.py</code>
+                    <p>Contains the <code>AgentState</code> definition and the custom reducer functions.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Serialization</h4>
+                    <code>factory_agent/persistence/checkpointer.py</code>
+                    <p>Handles the DB interaction and binary serialization of state snapshots.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

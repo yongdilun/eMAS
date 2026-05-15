@@ -6,6 +6,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, select, text
 
 import factory_agent.persistence.models as models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
@@ -728,3 +729,9 @@ async def health():
 async def mock_slow(ms: int = 1000):
     await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
     return {"ok": True, "slept_ms": ms}
+
+
+# Serve the Factory Agent Wiki
+wiki_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs", "wiki")
+if os.path.exists(wiki_path):
+    app.mount("/wiki", StaticFiles(directory=wiki_path, html=True), name="wiki")

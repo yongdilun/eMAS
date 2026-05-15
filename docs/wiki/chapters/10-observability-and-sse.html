@@ -1,0 +1,108 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>10. Observability & SSE</h1>
+        <p class="chapter-subtitle">Real-Time Telemetry & Transparent Agent Reasoning</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The Factory Agent provides real-time visibility into its internal reasoning and external actions. This transparency is achieved through a combination of high-frequency **Server-Sent Events (SSE)** for the frontend and deep tracing for developers. The goal is to ensure that operators are never left "in the dark" while the agent plans complex sequences.</p>
+        </section>
+
+        <section id="sse-streaming">
+            <h2>SSE Event Streaming</h2>
+            <p>The system uses an asynchronous **Event Bus** (backed by Redis) to stream execution progress. This decoupled architecture allows the graph to run at full speed while the UI receives updates as they happen.</p>
+            <ul>
+                <li><strong>Live Reasoning</strong>: Every decision made by the Planner is streamed as a "Thought" event.</li>
+                <li><strong>Progress Tracking</strong>: Each node transition sends a "Status" event, allowing for a live activity timeline.</li>
+            </ul>
+        </section>
+
+        <section id="event-types">
+            <h2>Core Event Types</h2>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Payload</th>
+                        <th>UI Impact</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>step_status_changed</code></td>
+                        <td><code>node_name, status</code></td>
+                        <td>Updates the color and icon of the active step in the timeline.</td>
+                    </tr>
+                    <tr>
+                        <td><code>agent_thought</code></td>
+                        <td><code>summary, reasoning</code></td>
+                        <td>Displays a "Thinking..." bubble with the agent's current rationale.</td>
+                    </tr>
+                    <tr>
+                        <td><code>plan_generated</code></td>
+                        <td><code>List[Action]</code></td>
+                        <td>Renders a preview of the proposed tools for the user to review.</td>
+                    </tr>
+                    <tr>
+                        <td><code>approval_required</code></td>
+                        <td><code>bundle_id, dry_run_report</code></td>
+                        <td>Triggers the high-risk approval modal.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="observability-tools">
+            <h2>External Observability</h2>
+            <details open>
+                <summary>LangSmith Integration</summary>
+                <div class="details-content">
+                    <p>Every session is automatically traced in <strong>LangSmith</strong>. This provides developers with a full tree-view of the graph execution, including exact token usage, latency per node, and raw LLM prompts/responses.</p>
+                </div>
+            </details>
+            <details>
+                <summary>Audit Database</summary>
+                <div class="details-content">
+                    <p>Unlike transient logs, the Audit DB stores a permanent, tamper-proof record of every <strong>Commit</strong> action, identifying which operator approved it and the exact timestamp of execution.</p>
+                </div>
+            </details>
+        </section>
+
+        <section id="telemetry-diagram">
+            <h2>Event Flow Diagram</h2>
+            <div class="mermaid">
+            graph TD
+                G[State Graph] -->|Node Transition| EB[Event Bus]
+                G -->|Decision Summary| EB
+                EB -->|Publish| R[Redis]
+                R -->|Subscribe| API[FastAPI SSE Route]
+                API -->|Stream| FE[React Frontend]
+                
+                subgraph "Observability Layer"
+                FE --> Timeline[Activity Timeline]
+                FE --> Modal[Approval Modal]
+                end
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>SSE Endpoint</h4>
+                    <code>factory_agent/api/routes.py</code>
+                    <p>The <code>/v1/agent/events</code> route that manages the subscription to the Redis event bus.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Telemetry Module</h4>
+                    <code>factory_agent/observability/telemetry.py</code>
+                    <p>Handles the integration with LangSmith and structured logging of agent traces.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

@@ -1,0 +1,106 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>08. Human-in-the-Loop (HITL)</h1>
+        <p class="chapter-subtitle">The Industrial Safety Brake & Approval Workflow</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>In an autonomous factory, some actions are too critical to be left entirely to AI. The Factory Agent implements a **Human-on-the-Loop** philosophy, where the AI can plan and validate complex operations, but must wait for a "Go/No-Go" signal from a human operator for high-risk mutations.</p>
+        </section>
+
+        <section id="interrupts">
+            <h2>Native Interrupt System</h2>
+            <p>We leverage LangGraph's <strong>Breakpoints</strong> to pause graph execution deterministically. When an interrupt is triggered, the entire session state is "frozen" and persisted to the database, allowing the operator to review the plan at their convenience.</p>
+            <div class="feature-highlight">
+                <p><strong>The Feature</strong>: Native LangGraph interrupts for high-risk write operations.</p>
+                <p><strong>The Value</strong>: This is your "Safety Brake." The agent autonomously reaches a point of "Ready to Commit," generates a complete dry-run report, and then force-pauses until an approval is received.</p>
+            </div>
+        </section>
+
+        <section id="scenarios">
+            <h2>When is Approval Required?</h2>
+            <p>The system dynamically determines the risk level of a plan. Interrupts are triggered in the following scenarios:</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Scenario</th>
+                        <th>Trigger</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Write Operation</strong></td>
+                        <td>Any <code>POST/PUT/DELETE</code> in the bundle.</td>
+                        <td>Mandatory Interrupt</td>
+                    </tr>
+                    <tr>
+                        <td><strong>High-Risk Tool</strong></td>
+                        <td>Tool metadata contains <code>is_critical: true</code>.</td>
+                        <td>Mandatory Interrupt</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Uncertainty</strong></td>
+                        <td>Planner confidence score < 80%.</td>
+                        <td>Conditional Interrupt</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="lifecycle">
+            <h2>The Approval Lifecycle</h2>
+            <details open>
+                <summary>1. Interruption</summary>
+                <div class="details-content">
+                    <p>The graph hits the breakpoint before the <code>commit_node</code>. The session status changes to <code>awaiting_approval</code>.</p>
+                </div>
+            </details>
+            <details>
+                <summary>2. Notification</summary>
+                <div class="details-content">
+                    <p>An SSE event (<code>approval_required</code>) is streamed to the frontend, displaying the proposed "Bundle" and the Planner's reasoning.</p>
+                </div>
+            </details>
+            <details>
+                <summary>3. Decision</summary>
+                <div class="details-content">
+                    <p>The operator reviews the dry-run results and clicks <strong>Approve</strong> or <strong>Reject</strong>. Approval tokens are injected into the graph's <code>resume</code> payload.</p>
+                </div>
+            </details>
+        </section>
+
+        <section id="approval-flow">
+            <h2>HITL Flow Diagram</h2>
+            <div class="mermaid">
+            graph TD
+                P[Planner] --> G[Guard]
+                G -->|Write Detected| B[Breakpoint Triggered]
+                B -->|Status: awaiting_approval| U[User UI]
+                U -->|Approved| C[Commit Node]
+                U -->|Rejected| R[Re-Planning]
+                C --> End[Intent Completed]
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Breakpoint Logic</h4>
+                    <code>factory_agent/graph/builder.py</code>
+                    <p>Configuration of <code>interrupt_before=["commit_node"]</code> in the StateGraph compiler.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Resume Handler</h4>
+                    <code>factory_agent/api/routes.py</code>
+                    <p>The <code>/v1/agent/resume</code> endpoint that injects operator decisions back into the graph.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

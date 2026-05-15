@@ -1,0 +1,93 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>07. Tool Execution Pipeline</h1>
+        <p class="chapter-subtitle">High-Throughput API Interaction & relevance Filtering</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The **Tool Execution Pipeline** is the system's "Hands." It manages the complexity of interacting with distributed backend APIs while maintaining strict safety invariants. It is designed to handle high-volume read requests in parallel while ensuring that state-modifying write requests are staged for validation.</p>
+        </section>
+
+        <section id="execution-engine">
+            <h2>The Execution Engine</h2>
+            <p>The pipeline uses an asynchronous HTTP client to communicate with the Go Backend. It is "Tool-Agnostic," meaning it derives its behavior from the OpenAPI schema metadata rather than hard-coded functions.</p>
+            <ul>
+                <li><strong>Async Core</strong>: Leveraging Python's <code>asyncio</code> to handle I/O-bound operations without blocking the graph.</li>
+                <li><strong>Error Mapping</strong>: Converts HTTP statuses into semantic "Agent Events" (e.g., 404 becomes a "Resource Not Found" observation for the Planner).</li>
+            </ul>
+        </section>
+
+        <section id="parallel-reads">
+            <h2>Parallel vs. Sequential Execution</h2>
+            <p>To optimize performance, the pipeline dynamically splits a tool bundle based on the HTTP method.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Tool Type</th>
+                        <th>Execution Mode</th>
+                        <th>Reasoning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Read (GET)</strong></td>
+                        <td>Parallel (gather)</td>
+                        <td>Read operations are side-effect free and can be retrieved simultaneously to minimize latency.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Write (POST/PUT)</strong></td>
+                        <td>Sequential (staged)</td>
+                        <td>Ensures that data flow dependencies (references) are resolved in the correct order.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="relevance-filtering">
+            <h2>Relevance Filtering</h2>
+            <p>Industrial API responses can be massive. To prevent "Context Window Bloat," the pipeline applies a <strong>Relevance Filter</strong> before passing results back to the Planner.</p>
+            <div class="feature-highlight">
+                <p><strong>Deterministic Filtering</strong>: Automatically strips known metadata fields like <code>created_at</code>, <code>updated_at</code>, or large binary blobs unless explicitly requested.</p>
+                <p><strong>Semantic Compression</strong>: If an output is still too large, it is summarized into key-value pairs that the LLM can easily digest, preserving token count for reasoning.</p>
+            </div>
+        </section>
+
+        <section id="idempotency">
+            <h2>Idempotency Management</h2>
+            <p>Every tool call is wrapped with a unique <code>idempotency_key</code>. This key is generated based on the session ID, the intent ID, and the tool arguments. This ensures that even if a network retry occurs, the factory backend will never execute the same command twice.</p>
+        </section>
+
+        <section id="execution-flow">
+            <h2>Pipeline Flow Diagram</h2>
+            <div class="mermaid">
+            graph TD
+                D[Decision from Guard] --> Split{Method?}
+                Split -->|GET| PR[Parallel Async Gather]
+                Split -->|POST/PUT| SW[Sequential Staged Write]
+                PR --> Filter[Relevance Filter]
+                SW --> Filter
+                Filter --> S[Update AgentState]
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Execution Core</h4>
+                    <code>factory_agent/graph/nodes/tool_pipeline.py</code>
+                    <p>Contains <code>make_tool_execution_node</code> and the logic for parallel/sequential dispatching.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>HTTP Client</h4>
+                    <code>factory_agent/tools/http_tool_client.py</code>
+                    <p>The low-level async client that handles authentication and idempotency headers.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>

@@ -1,0 +1,94 @@
+<div class="chapter-wrapper">
+    <header class="chapter-header">
+        <h1>06. Guardrails & Safety</h1>
+        <p class="chapter-subtitle">Zero-Trust Programmatic Validation</p>
+    </header>
+
+    <nav class="chapter-toc"><h3>On this page</h3><div id="toc-content"></div></nav>
+
+    <div class="chapter-content">
+        <section id="overview">
+            <h2>Overview</h2>
+            <p>The Factory Agent implements a <strong>Zero-Trust</strong> policy between AI reasoning and physical execution. Every action proposed by the Planner must pass through a non-LLM, programmatic validator called the <strong>Decision Guard</strong>. This ensures that even if an LLM hallucinates, the system remains bound by hard-coded safety rules.</p>
+        </section>
+
+        <section id="decision-guard">
+            <h2>The Decision Guard Node</h2>
+            <p>The <code>decision_guard_node</code> acts as a gatekeeper. It inspects the <code>PlannerDecision</code> and compares it against active user constraints and system-wide safety policies.</p>
+            <div class="mermaid">
+            graph LR
+                P[Planner Decision] --> G{Decision Guard}
+                G -->|Pass| E[Execution Pipeline]
+                G -->|Violation| R[Repair Loop]
+                
+                subgraph "Validation Engines"
+                C[Constraint Engine]
+                V[Ref Validator]
+                S[Schema Checker]
+                end
+                
+                C & V & S --> G
+            </div>
+        </section>
+
+        <section id="constraints">
+            <h2>Programmatic Constraints</h2>
+            <p>Constraints are explicit rules provided by the user or defined in the session context (e.g., <em>"Do not modify machines in Section B"</em>).</p>
+            <ul>
+                <li><strong>Hard Filtering</strong>: The Guard checks every tool argument against the constraint list. If a match is found (e.g., machine ID is in Section B), the action is blocked.</li>
+                <li><strong>Feedback Loop</strong>: When a constraint is violated, the Guard returns a specific error message to the Planner, explaining <em>why</em> the action was blocked so the Planner can find an alternative path.</li>
+            </ul>
+        </section>
+
+        <section id="reference-validation">
+            <h2>Reference Validation</h2>
+            <p>When the Planner uses symbolic references (<code>$ref</code>), the Guard ensures they are logically sound before they reach the execution pipeline.</p>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Validation</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Existence</strong></td>
+                        <td>Ensures the referenced output actually exists in the history or the current bundle.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Circular Dependency</strong></td>
+                        <td>Prevents Tool A from depending on the output of Tool A.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Type Consistency</strong></td>
+                        <td>Verifies that the referenced output value matches the expected type for the current argument.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="risk-levels">
+            <h2>Risk Level Enforcement</h2>
+            <p>The Guard evaluates the <code>risk_level</code> provided by the Planner but also performs its own independent assessment.</p>
+            <div class="feature-highlight">
+                <p><strong>Escalation</strong>: If the Guard detects a write operation that the Planner labeled as "Low Risk," it automatically escalates it to <code>write_commit</code>, which may trigger a Human-in-the-Loop interrupt.</p>
+            </div>
+        </section>
+
+        <section id="code-references">
+            <h2>Code References</h2>
+            <div class="code-ref-grid">
+                <div class="code-ref-card">
+                    <h4>Guard Engine</h4>
+                    <code>factory_agent/graph/nodes/planner_loop.py</code>
+                    <p>Implementation of the <code>decision_guard_node</code> and the logic for constraint matching.</p>
+                </div>
+                <div class="code-ref-card">
+                    <h4>Permission Logic</h4>
+                    <code>factory_agent/security/permissions.py</code>
+                    <p>Handles the filtering of tools based on user JWT claims and role-based access.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
