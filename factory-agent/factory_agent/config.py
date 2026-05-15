@@ -114,6 +114,9 @@ class Settings:
     graph_checkpoint_backend: str = "auto"  # auto|memory|postgres|off
     graph_checkpoint_postgres_dsn: str | None = None
     max_repair_attempts: int = 3
+    # Phase 5 / FA-004 transition flag. Keep enabled until explicit migrations
+    # cover legacy schema compatibility changes in production deploys.
+    enable_startup_schema_compat: bool = True
 
 
 def _normalize_summary_backend(value: str) -> str:
@@ -363,5 +366,6 @@ def get_settings() -> Settings:
         ),
         graph_checkpoint_postgres_dsn=os.getenv("GRAPH_CHECKPOINT_POSTGRES_DSN") or None,
         max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "3")),
+        enable_startup_schema_compat=_env_truthy("ENABLE_STARTUP_SCHEMA_COMPAT", "1"),
         bge_reranker_model=os.getenv("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip(),
     )

@@ -55,6 +55,24 @@ def test_development_mode_prefers_development_scoped_override(monkeypatch):
     assert settings.planner_model == "dev-scoped-planner"
 
 
+def test_startup_schema_compatibility_flag_defaults_enabled(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "development")
+    monkeypatch.delenv("ENABLE_STARTUP_SCHEMA_COMPAT", raising=False)
+
+    settings = get_settings()
+
+    assert settings.enable_startup_schema_compat is True
+
+
+def test_startup_schema_compatibility_flag_can_disable_mutation(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "development")
+    monkeypatch.setenv("ENABLE_STARTUP_SCHEMA_COMPAT", "0")
+
+    settings = get_settings()
+
+    assert settings.enable_startup_schema_compat is False
+
+
 def test_production_mode_rejects_disabled_jwt(monkeypatch):
     monkeypatch.setenv("APP_MODE", "production")
     monkeypatch.setenv("JWT_REQUIRED", "0")

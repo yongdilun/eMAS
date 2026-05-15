@@ -28,7 +28,7 @@ Status key:
 | FA-001 | Protect unauthenticated SSE, DLQ, and metrics reads | High | 2 | Done | Auth contract tests for SSE, DLQ, and metrics passed; full `pytest` passed | Temporary local-only compatibility flag |
 | FA-002 | Fail unsafe production auth/admin defaults | High | 2 | Done | Production config tests passed; full `pytest` passed | Strict-mode flag rollback |
 | FA-003 | Make plan persistence atomic | High | 2 | Done | Injected failure rollback test and approval resume regression passed; full `pytest` passed | Restore old helper behind flag |
-| FA-004 | Move startup schema mutation to migrations | High | 5 | Not Started | Migration smoke tests | Keep startup compat under explicit flag |
+| FA-004 | Move startup schema mutation to migrations | High | 5 | In Progress | Startup compatibility flag/read-only drift tests and full `pytest -q` passed | Keep startup compat under explicit flag |
 | FA-005 | Split mixed-responsibility API router | High | 4 | Done | OpenAPI contract guard, endpoint/admin/DLQ/approval/session tests, and full `pytest -q` passed | Revert one extracted router/module |
 | FA-006 | Reduce SSE database polling risk | Medium | 5 | Not Started | Disconnect and concurrent stream tests | Keep old implementation path |
 | FA-007 | Strengthen relational constraints/session cleanup | Medium | 4 | Done | Session deletion contract covers session-owned rows; full `pytest -q` passed | Revert session cleanup service extraction |
@@ -160,8 +160,30 @@ Status key:
 
 ### Phase 5: Long-Term Improvements
 
-- Status: Not Started
+- Status: In Progress
 - Goal: Improve deployment, observability, and runtime scalability.
+- Started:
+  - Began FA-004 on 2026-05-15 with a narrow startup schema compatibility safety slice.
+- Completed:
+  - Added explicit `ENABLE_STARTUP_SCHEMA_COMPAT` startup compatibility flag, defaulting to enabled for rollback-safe behavior.
+  - Split startup schema compatibility into read-only action detection plus an optional mutation path.
+  - Added structured startup logs for compatibility checks and startup compatibility DDL mutations.
+  - Added read-only drift failure behavior when `ENABLE_STARTUP_SCHEMA_COMPAT=0` and compatibility DDL is still pending.
+  - Avoided repeated best-effort MySQL `tools.capability_tags` DDL when the column already reports a text type.
+  - Documented the transition flag and staging rollout flow in `runbooks/STARTUP_SCHEMA_COMPATIBILITY.md`.
+- Verification:
+  - Pre-change guard: `pytest tests/test_phase3_contract_coverage.py -q`: 10 passed.
+  - Targeted schema/config guard: `pytest tests/test_schema_compatibility.py tests/test_config_app_mode.py tests/test_mysql_schema.py -q`: 11 passed, 1 skipped.
+  - Required contract guard after changes: `pytest tests/test_phase3_contract_coverage.py -q`: 10 passed.
+  - Full suite first attempt with default Windows temp root hit existing `PermissionError` for `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`.
+  - Full suite after setting `TMP`/`TEMP` to project-local `.tmp`: `pytest -q`: 485 passed, 4 skipped, 20 xfailed.
+- Remaining:
+  - FA-004 is still in progress: convert compatibility DDL into explicit migration coverage/smoke tests before disabling startup mutation by default.
+  - Add readiness checks.
+  - FA-006 SSE polling optimization remains Not Started.
+  - Profile graph compilation and checkpointing.
+- Deferred:
+  - Phase 6 / FA-012 graph orchestration service extraction remains Not Started and out of scope for Phase 5.
 - Candidate changes:
   - Replace startup schema mutation with migrations.
   - Add readiness checks.

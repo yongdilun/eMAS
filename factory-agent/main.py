@@ -1,13 +1,14 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, select
 
 import factory_agent.persistence.models as models  # noqa: F401 (ensure models are imported for SQLAlchemy metadata)
 from factory_agent.persistence.database import AsyncSessionLocal, Base, engine
@@ -27,18 +28,36 @@ from factory_agent.observability.telemetry import log_event, log_step_status_cha
 from factory_agent.registry.tool_registry import ToolRegistry
 
 
-def _ensure_schema_compatibility(sync_conn) -> None:
+@dataclass(frozen=True)
+class _SchemaCompatibilityAction:
+    table: str
+    column: str
+    statement: str
+    reason: str
+    best_effort: bool = False
+
+
+def _schema_compatibility_actions(sync_conn) -> list[_SchemaCompatibilityAction]:
     inspector = inspect(sync_conn)
     tables = set(inspector.get_table_names())
     if "sessions" not in tables:
-        return
+        return []
+
+    actions: list[_SchemaCompatibilityAction] = []
 
     def ensure_column(table: str, column_name: str, ddl: str) -> None:
         if table not in tables:
             return
         columns = {column["name"] for column in inspector.get_columns(table)}
         if column_name not in columns:
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}")
+            actions.append(
+                _SchemaCompatibilityAction(
+                    table=table,
+                    column=column_name,
+                    statement=f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}",
+                    reason="missing compatibility column",
+                )
+            )
 
     def ensure_nullable_column(table: str, column_name: str, mysql_ddl: str) -> None:
         if table not in tables:
@@ -49,9 +68,19 @@ def _ensure_schema_compatibility(sync_conn) -> None:
             return
         dialect = getattr(sync_conn.dialect, "name", "")
         if dialect == "mysql":
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} MODIFY {column_name} {mysql_ddl} NULL")
+            statement = f"ALTER TABLE {table} MODIFY {column_name} {mysql_ddl} NULL"
         elif dialect == "postgresql":
-            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN {column_name} DROP NOT NULL")
+            statement = f"ALTER TABLE {table} ALTER COLUMN {column_name} DROP NOT NULL"
+        else:
+            return
+        actions.append(
+            _SchemaCompatibilityAction(
+                table=table,
+                column=column_name,
+                statement=statement,
+                reason="legacy compatibility column must be nullable",
+            )
+        )
 
     ensure_column("sessions", "name", "VARCHAR(255)")
     ensure_column("messages", "mode", "VARCHAR(20) NOT NULL DEFAULT 'normal'")
@@ -71,8 +100,64 @@ def _ensure_schema_compatibility(sync_conn) -> None:
 
     # MySQL: older schemas used VARCHAR(1000) for capability_tags; toolgen can emit longer JSON.
     if "tools" in tables and getattr(sync_conn.dialect, "name", "") == "mysql":
-        with contextlib.suppress(Exception):
-            sync_conn.execute(text("ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL"))
+        columns = {column["name"]: column for column in inspector.get_columns("tools")}
+        capability_tags = columns.get("capability_tags")
+        capability_type = str(capability_tags.get("type", "")) if capability_tags else ""
+        if capability_tags and "TEXT" not in capability_type.upper():
+            actions.append(
+                _SchemaCompatibilityAction(
+                    table="tools",
+                    column="capability_tags",
+                    statement="ALTER TABLE tools MODIFY capability_tags TEXT NOT NULL",
+                    reason="legacy MySQL capability_tags column must support long JSON",
+                    best_effort=True,
+                )
+            )
+
+    return actions
+
+
+def _ensure_schema_compatibility(sync_conn, *, allow_mutation: bool = True) -> None:
+    actions = _schema_compatibility_actions(sync_conn)
+    log_event(
+        "startup_schema_compatibility_check",
+        allow_mutation=allow_mutation,
+        pending_action_count=len(actions),
+        pending_actions=[
+            {"table": action.table, "column": action.column, "reason": action.reason}
+            for action in actions
+        ],
+    )
+    if not actions:
+        return
+    if not allow_mutation:
+        pending = ", ".join(f"{action.table}.{action.column}" for action in actions)
+        raise RuntimeError(
+            "Startup schema compatibility found pending DDL while "
+            "ENABLE_STARTUP_SCHEMA_COMPAT=0. Run explicit migrations before startup. "
+            f"Pending compatibility changes: {pending}"
+        )
+
+    for action in actions:
+        log_event(
+            "startup_schema_compatibility_mutation",
+            table=action.table,
+            column=action.column,
+            reason=action.reason,
+            best_effort=action.best_effort,
+        )
+        try:
+            sync_conn.exec_driver_sql(action.statement)
+        except Exception:
+            if not action.best_effort:
+                raise
+            log_event(
+                "startup_schema_compatibility_mutation_failed",
+                level="WARNING",
+                table=action.table,
+                column=action.column,
+                reason=action.reason,
+            )
 
 
 async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
@@ -98,7 +183,12 @@ async def lifespan(app: FastAPI):
     # Create DB tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_ensure_schema_compatibility)
+        await conn.run_sync(
+            lambda sync_conn: _ensure_schema_compatibility(
+                sync_conn,
+                allow_mutation=settings.enable_startup_schema_compat,
+            )
+        )
 
     # Connect Redis (best-effort)
     try:
