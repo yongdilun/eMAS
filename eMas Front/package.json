@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test \"src/components/features/chat/factory-agent/activityTimeline.test.mjs\" \"src/components/features/chat/factory-agent/approvalInterruptDisplay.test.mjs\" \"src/components/features/chat/factory-agent/approvalFieldUtils.test.mjs\" \"src/components/features/chat/turns/turnAssembler.test.mjs\"",
+    "test": "node --test --test-concurrency=1 \"src/components/features/chat/factory-agent/activityTimeline.test.mjs\" \"src/components/features/chat/factory-agent/approvalInterruptDisplay.test.mjs\" \"src/components/features/chat/factory-agent/approvalFieldUtils.test.mjs\" \"src/components/features/chat/turns/turnAssembler.test.mjs\" \"src/components/features/chat/factory-agent/ApprovalCard.component.test.mjs\" \"src/components/features/chat/factory-agent/ActivityTimeline.component.test.mjs\" \"src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs\" \"src/components/features/reports/noFakeData.component.test.mjs\"",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "verify-overlaps": "node scripts/verify-overlaps.js",
@@ -26,9 +26,9 @@
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "jsdom": "^29.1.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "vite": "^5.0.8"
   }
 }
-

@@ -135,7 +135,7 @@ Status key:
 
 ### Phase 3: Frontend Test Improvement
 
-- Status: Not Started
+- Status: Done
 - Goal: Add tests that make UI and state changes safe.
 - Candidate changes:
   - Add component tests for Factory Agent chat panel.
@@ -145,6 +145,23 @@ Status key:
   - Add no-fake-data tests.
 - Do not change:
   - Avoid broad visual snapshot tests unless they are stable and intentional.
+- Completed:
+  - Created `audit/frontend-phase-3` from committed `audit/frontend-phase-2`.
+  - Added a small Vite SSR + jsdom React component test harness in `src/test/reactComponentTestUtils.mjs`.
+  - Added Factory Agent component tests:
+    - `src/components/features/chat/factory-agent/ApprovalCard.component.test.mjs`
+    - `src/components/features/chat/factory-agent/ActivityTimeline.component.test.mjs`
+    - `src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs`
+  - Added unavailable/no-fake-data regression tests:
+    - `src/components/features/reports/noFakeData.component.test.mjs`
+  - Added `jsdom` as a dev dependency for component tests.
+  - Added a test-only dependency injection prop to `FactoryAgentChatPanel` so tests can provide chat hook state while production keeps using `useFactoryAgentChat` by default.
+- Verification:
+  - `npm test` from `eMas Front`: passed, 46 tests.
+  - `npm.cmd run lint` from `eMas Front`: failed on known source lint backlog with `35 errors, 22 warnings`; remaining failures are unused variables and hook/fast-refresh warnings already tracked from Phase 1/2.
+  - `npx.cmd vite build --outDir C:\tmp\emas-front-build-phase3-20260515` from `eMas Front`: passed; retained existing large chunk warning at `617.49 kB`.
+- Rollback:
+  - Revert the Phase 3 commit to remove the component test harness, component tests, `jsdom` dependency, updated test script, and the optional `FactoryAgentChatPanel` hook injection prop.
 
 ### Phase 4: Frontend Architecture Refactoring
 
@@ -181,12 +198,13 @@ Status key:
 | 2026-05-15 | Document before code changes | User requested documentation first | Keep this tracker updated after each fix |
 | 2026-05-15 | Fresh Factory Agent planning is unavailable in the local baseline | `POST /sessions/{id}/plans` returned `503 {"detail":{"errors":["Connection error."]}}` during Phase 0 capture | Treat polished planner error UI as a later frontend reliability concern; do not mask backend unavailability with fake success |
 | 2026-05-15 | Keep SSE bearer handling frontend-only in Phase 2 | Browser `EventSource` cannot attach the REST `Authorization` header, and backend contract changes are out of scope | Use snapshot polling when `VITE_FACTORY_AGENT_BEARER_TOKEN` is configured; define a backend stream auth contract in a later phase if needed |
+| 2026-05-15 | Use Vite SSR plus jsdom for Phase 3 component tests | Existing tests are Node tests and the app has no React test framework; Vite can load JSX components without changing runtime bundling | Keep tests focused on stable rendered text and interactions, not broad visual snapshots |
 
 ## Current Next Step
 
-Phase 2 is complete. Stop here and do not start Phase 3 in this window.
+Phase 3 is complete. Stop here and do not start Phase 4 in this window.
 
-The next phase window should branch `audit/frontend-phase-3` from committed `audit/frontend-phase-2`.
+The next phase window should branch `audit/frontend-phase-4` from committed `audit/frontend-phase-3`.
 
 ## Update Rules For This Tracker
 

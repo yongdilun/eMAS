@@ -630,7 +630,7 @@ function statusLoadingText(status) {
   return 'Working...'
 }
 
-const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
+const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useFactoryAgentChat }) => {
   const chatRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const {
@@ -664,7 +664,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
     switchSession,
     renameSession,
     deleteSession,
-  } = useFactoryAgentChat()
+  } = useChatState()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [editingName, setEditingName] = useState('')
