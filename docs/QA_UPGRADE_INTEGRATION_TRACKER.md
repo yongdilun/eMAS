@@ -20,7 +20,7 @@ Use one of: `Not started`, `In progress`, `Passed`, `Failed`, `Skipped`, `Could 
 | 3 | Merge Go backend branch | Passed | `audit/go-backend-phase-5` merged cleanly with no conflicts in merge commit `b3161cf`. Initial handler failures were fixed in Phase 3 stabilization; `go test ./...` and `go test ./internal/e2e` now pass. Phase 4 is ready to start. |
 | 4 | Merge Factory Agent branch | Passed | `audit/factory-agent` merged in `9b42d3a` after one documentation conflict was resolved. Initial `python -m pytest factory-agent/tests` exited 1 because pytest could not create/use the default temp root `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`; the same full suite passed when rerun with a repo-local `--basetemp ".pytest-basetemp"`. Targeted checks passed/skipped as noted below. Phase 5 is ready to start. |
 | 5 | Merge frontend branch | Passed | `audit/frontend-phase-5` merged in `d7cc9f1` after one documentation conflict was resolved. Frontend build, overlap check, and `npm test` passed. `npm run lint` failed on the known source lint backlog, and `npm run factory-agent-smoke` failed on local Factory Agent planning `503 {"detail":{"errors":["Connection error."]}}`. Phase 6 is ready to start with known risks. |
-| 6 | Full integration verification | Not started | Run after all three merges are complete. |
+| 6 | Full integration verification | Failed | Required automated suites now pass, including the full seeded runner after a narrow seed manifest auth-header fix. Docker Compose can build and start with documented/local verification env values, but the Compose Factory Agent natural-language smoke failed at `POST /sessions/{id}/plans` with `503 {"detail":{"errors":["Connection error."]}}`, indicating container planner LLM connectivity is not release-ready. Phase 7 is not ready to start. |
 | 7 | Cross-layer contract check | Not started | Run after integration verification. |
 | 8 | Final report | Not started | Stop after report; do not merge to `main`. |
 
@@ -119,22 +119,42 @@ Phase 5 found one merge conflict and it was resolved.
 | Frontend build after fix pass | `npm run build` from `eMas Front` | Passed | Vite build passed in 1.60s. Initial `index` JS chunk was 179.72 kB; `AIAssistantModal` chunk was 115.00 kB; routed pages were emitted as separate chunks. |
 | Frontend npm test after fix pass | `npm test` from `eMas Front` | Passed | 48 tests passed, 0 failed, 0 skipped, duration 5630.1475 ms. |
 | Frontend overlap check after fix pass | `npm run verify-overlaps` from `eMas Front` | Passed | Found 26 jobs and 26 proposal IDs. Local partial-overlap check found no overlaps. API checks returned `valid: true`, `total_slots: 89`, `overlap_count: 0` for proposals and `valid: true`, `total_slots: 0`, `overlap_count: 0` for applied. |
-| Full seeded scenario runner | `.\tests\e2e\run_seed_pipeline.ps1` from repo root | Not started |  |
-| Docker Compose build | `docker compose build` | Not started |  |
-| Docker Compose startup | `docker compose up -d` and `docker compose ps` | Not started |  |
+| Phase 6 pre-check branch/status gate | `git branch --show-current`; `git status --short --branch` from repo root | Passed | Branch was `integration/qa-upgrade-merge`; status output was only `## integration/qa-upgrade-merge`. |
+| Phase 6 Go aggregate tests | `go test ./...` from `emas` | Passed | All packages passed or had no test files; key packages included `emas/internal/e2e`, `emas/internal/handler`, `emas/internal/router`, and `emas/internal/service`. |
+| Phase 6 Go e2e tests | `go test ./internal/e2e` from `emas` | Passed | Output: `ok emas/internal/e2e (cached)`. |
+| Phase 6 Factory Agent suite | `python -m pytest factory-agent/tests --basetemp ".pytest-basetemp"` | Passed | 492 passed, 4 skipped, 20 xfailed, 1588 warnings in 65.95s. |
+| Phase 6 seed manifest check | `python -m pytest factory-agent/tests/test_seed_pipeline_manifest.py --basetemp ".pytest-basetemp-seed"` | Passed | 125 passed, 1 warning in 0.73s before the seeded-runner fix; rerun after the auth-header fix also passed: 125 passed, 1 warning in 0.66s. |
+| Phase 6 frontend lint | `npm run lint` from `eMas Front` | Passed | ESLint completed with 0 errors and 0 warnings under `--max-warnings 0`. |
+| Phase 6 frontend build | `npm run build` from `eMas Front` | Passed | Vite build passed in 1.67s. Initial `index` JS chunk was 179.72 kB; `AIAssistantModal` chunk was 115.00 kB. |
+| Phase 6 frontend overlap check | `npm run verify-overlaps` from `eMas Front` | Passed | Found 26 jobs and 26 proposal IDs. Local partial-overlap check found no overlaps. API checks returned `valid: true`, `total_slots: 89`, `overlap_count: 0` for proposals and `valid: true`, `total_slots: 0`, `overlap_count: 0` for applied. |
+| Phase 6 frontend Factory Agent smoke | `npm run factory-agent-smoke` from `eMas Front` | Passed | Default host-local smoke used `base=http://127.0.0.1:8000`, created a session, added a message, created a plan, executed to `COMPLETED`, verified cancel flow returned `IDLE`, and passed. |
+| Phase 6 frontend npm test script check | `npm pkg get scripts.test` from `eMas Front` | Passed | `scripts.test` exists and runs eight Node test files under `src/components/features/...`. |
+| Phase 6 frontend npm tests | `npm test` from `eMas Front` | Passed | 48 tests passed, 0 failed, 0 skipped, duration 6708.408 ms. |
+| Full seeded scenario runner initial run | `.\tests\e2e\run_seed_pipeline.ps1` from repo root | Failed | The Go fast e2e approval driver passed, Python manifest/reliability checks passed, then the full seeded scenario suite failed. Exact failing step: `Full seeded scenario suite`. Seven scenarios returned `401 {"success":false,"error":"missing authenticated user or role"}` instead of expected 200/403/422/409: `scheduling-batch-proposals`, `approval-role-blocks`, `approval-proposal-draft-required`, `approval-apply-requires-approval`, `approval-stale-proposal-fails`, `approval-idempotent-retry`, and `approval-already-decided`. Classification: API auth contract/test manifest mismatch; Phase 6 blocker until fixed. Log: `test-artifacts/logs/seed-pipeline-20260515T162713Z.log`. |
+| Seeded scenario auth-header fix | Updated `tests/e2e/scenarios/seed_pipeline.json` | Passed | Added `X-User-Id` beside existing `X-User-Role` for protected scheduling/approval seeded scenarios. This matches Go middleware, which requires both user id and role when `AI_AUTH_REQUIRED=true`. |
+| Full seeded scenario runner after fix | `.\tests\e2e\run_seed_pipeline.ps1` from repo root | Passed | Go fast e2e approval driver passed; Python checks passed with 128 passed, 1 warning; full seeded scenario suite passed in 95.333s. Result summary: 124 manifest scenarios, 126 artifact files, 52 HTTP scenarios ran, 2 approval proofs passed, 72 contracts skipped by design, 0 other/needs check. Log: `test-artifacts/logs/seed-pipeline-20260515T163011Z.log`. |
+| Docker Compose build initial run | `docker compose build` | Failed | Compose interpolation failed before build: `MYSQL_PASSWORD` was missing; root `.env` does not exist in this worktree. Environment related. |
+| Docker Compose build with verification env | `MYSQL_PASSWORD=phase6-emas-user; MYSQL_ROOT_PASSWORD=phase6-root; docker compose build` | Passed | Images built for `go-api`, `factory-agent`, and `frontend`. Frontend Docker build again reported the known npm deprecation/vulnerability notices. |
+| Docker Compose startup missing env file | `MYSQL_PASSWORD=phase6-emas-user; MYSQL_ROOT_PASSWORD=phase6-root; docker compose up -d` | Failed | Compose failed because `emas/.env` was missing. A minimal ignored local `emas/.env` was created for verification only and was not staged. |
+| Docker Compose startup production-mode gate | `MYSQL_PASSWORD=phase6-emas-user; MYSQL_ROOT_PASSWORD=phase6-root; docker compose up -d` after adding local `emas/.env` | Failed | MySQL, Redis, Go API, and frontend started; Factory Agent exited because default `APP_MODE=production` rejected unsafe production config: `JWT_REQUIRED must be enabled`, `JWT_SECRET must be set`, and `ADMIN_API_KEY` must be changed. Environment/config related. |
+| Docker Compose startup with development env | `MYSQL_PASSWORD=phase6-emas-user; MYSQL_ROOT_PASSWORD=phase6-root; APP_MODE=development; docker compose up -d` | Passed | All services started. `docker compose ps` showed `mysql` healthy, `redis` healthy, `go-api` healthy, `factory-agent` healthy, `frontend` up, and `nginx` publishing `0.0.0.0:80->80/tcp`. |
+| Docker Compose seed command | `docker compose exec -T go-api seed` | Passed | Seeded the Compose MySQL database with canonical machines, jobs, proposals, production logs, quality inspections, maintenance, downtime, and scheduling settings. |
+| Docker Compose Factory Agent readiness | `GET http://127.0.0.1/agent/ready` | Passed after auto-repair | Initial readiness was `503 not_ready` with `tool_registry.ok=false`, `tool_count=0`. After the Compose Factory Agent smoke attempted planning, logs showed `tool_registry_auto_repaired` with `tool_count=138`; `/agent/ready` then returned `status=ready` with database/settings/redis/tool registry ok. |
+| Docker Compose Factory Agent natural-language smoke | `FACTORY_AGENT_BASE_URL=http://127.0.0.1/agent npm run factory-agent-smoke` from `eMas Front` | Failed | Session and message creation succeeded, then `POST /sessions/3e62def1-9528-4dbc-a620-dde40b8d66c9/plans` returned `[503] ... {"detail":{"errors":["Connection error."]}}`. Factory Agent logs show planner transient retries for `list machines`, model `Qwen2.5-7B-Instruct-Q4_K_M.gguf`, then 503. Classification: Compose/container LLM connectivity or environment wiring; Phase 6 blocker for full-stack Factory Agent chat. |
+| Docker Compose shutdown | `docker compose down` | Passed | Verification containers and network were stopped/removed. `docker compose down -v` was not used. |
 
 ## Critical Flow Verification
 
 | Flow | Status | Evidence / Notes |
 |---|---|---|
-| Find all machines | Not started |  |
-| Find all jobs | Not started |  |
-| Show status for machine `M-CNC-01` | Not started |  |
-| Approval-required write flow | Not started |  |
-| Approval rejection flow | Not started |  |
-| Backend error handling | Not started |  |
-| SSE / snapshot / polling update | Not started |  |
-| Final frontend answer avoids contradictory messages | Not started |  |
+| Find all machines | Passed | With Compose running and seeded, `GET http://127.0.0.1/api/v1/machines` returned 10 machines and included `M-CNC-01`. |
+| Find all jobs | Passed | With Compose running and seeded, `GET http://127.0.0.1/api/v1/jobs` returned 26 seeded jobs. |
+| Show status for machine `M-CNC-01` | Passed | `GET http://127.0.0.1/api/v1/machines/M-CNC-01` returned `M-CNC-01`, `CNC Mill 01`, status `running`. |
+| Approval-required write flow | Passed | Through nginx/Go API, authenticated proposal approval for `AIPROP-SEED-001` with `X-User-Id=phase6-smoke` and `X-User-Role=planner` resulted in proposal status `approved`. |
+| Approval rejection flow | Passed | Generated a fresh proposal `AIPROP-4279b147` for `JOB-SEED-002`, then authenticated `POST /api/v1/ai/scheduling/proposals/AIPROP-4279b147/reject`; response succeeded and contained `rejected`. |
+| Backend error handling | Passed | `GET http://127.0.0.1/api/v1/machines/M-NOT-REAL` returned HTTP 404 through nginx. |
+| SSE / snapshot / polling update | Passed | Created Factory Agent session `6b338d31-86de-4086-96f8-9f03be8e2d4b`; `GET /agent/sessions/{id}/snapshot` returned `cursor=0`, `phase=IDLE`; `GET /agent/sessions/{id}/events` emitted an SSE `event: notification` hello frame. `curl` timed out after 3 seconds as expected for an open SSE stream. |
+| Final frontend answer avoids contradictory messages | Skipped live Compose chat; automated frontend check passed | `npm test` passed 48 component/assembly tests, including backend-unavailable rendering and completed-answer/plan-summary cases. A live Compose final-answer check could not be completed because Factory Agent plan creation failed with `503 Connection error`; no final answer was produced to inspect. |
 
 ## Cross-Layer Contract Checklist
 
@@ -153,14 +173,15 @@ Phase 5 found one merge conflict and it was resolved.
 Record untested or uncertain items here:
 
 - Phase 4 full-suite testing depends on avoiding the inaccessible default pytest temp root `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`. The suite passed with a repo-local `--basetemp`, but the underlying machine temp permission issue remains outside the integration worktree.
-- The frontend lint gate and targeted Factory Agent smoke now pass after the fix pass. The original local planner `503 Connection error` was traced to local LLM environment wiring: the shell had `OPENAI_API_BASE`, while Factory Agent reads `OPENAI_BASE_URL`, `LLM_BASE_URL`, and per-role base URL variables. A local ignored `factory-agent/.env` was created for ports 900/901; any already-running Factory Agent process must be restarted after `.env` edits to pick up changes.
-- The broad seeded live runner was intentionally not rerun after the targeted fixes because it is heavy and previously mixed several larger concerns: Go auth expectation mismatches and 63/63 real Factory Agent scenario failures from local planner connection errors. This remains a Phase 6/7 release-validation risk, not a targeted Phase 5 frontend lint/smoke blocker.
-- The current `npm run factory-agent-smoke` default uses the stable `list machines` intent. The earlier `Show status for machine M-CNC-01` path exposed local-model recursion/planner instability and still needs critical-flow verification before a final release recommendation.
+- The Phase 6 full seeded runner now passes after the seed manifest auth-header fix. The original failure was an API auth contract/test-manifest mismatch: protected scheduling/approval scenarios had `X-User-Role` but lacked `X-User-Id` while `AI_AUTH_REQUIRED=true`.
+- Docker Compose requires local environment setup before it can run from this worktree: root `.env` values for `MYSQL_PASSWORD` and `MYSQL_ROOT_PASSWORD`, an `emas/.env` env file, and `APP_MODE=development` or production-grade JWT/admin settings. Phase 6 used ephemeral shell values plus a minimal ignored local `emas/.env`; these were not staged.
+- Compose Factory Agent natural-language planning remains a Phase 6 blocker. The stack starts and `/agent/ready` becomes ready after tool registry auto-repair, but `FACTORY_AGENT_BASE_URL=http://127.0.0.1/agent npm run factory-agent-smoke` fails during plan creation with `503 {"detail":{"errors":["Connection error."]}}`. Logs show planner transient retries against model `Qwen2.5-7B-Instruct-Q4_K_M.gguf`, indicating container LLM connectivity/env wiring rather than Go API or tool registry failure.
+- Live Compose frontend final-answer verification is incomplete because the Compose Factory Agent could not produce a completed chat answer. Frontend component tests for backend-unavailable and completed-answer rendering passed, but this does not replace a live browser/chat check.
 - `npm install` reported 12 vulnerabilities (5 moderate, 7 high) and deprecated package warnings. No audit remediation was attempted during Phase 5.
 - `emas/docs/swagger.json` and `emas/docs/swagger.yaml` changed, but `rag_sources/01_emas_internal_docs/api_reference/openapi.json` did not; this needs a later cross-layer contract check.
 - Factory Agent route/service behavior changed, but `factory-agent/factory_agent/tools.md` and `rag_sources/01_emas_internal_docs/api_reference/tools.md` did not; tool documentation and generated tool definitions need verification later.
-- The Go backend adds `002_ml_training_events_lineage.sql`; database migration safety and seed data compatibility remain unverified.
-- Factory Agent production startup now has stricter env/config behavior; `APP_MODE`, `JWT_REQUIRED`, `JWT_SECRET`, `ENABLE_STARTUP_CREATE_ALL`, and `ENABLE_STARTUP_SCHEMA_COMPAT` need deployment-style verification.
+- The Go backend adds `002_ml_training_events_lineage.sql`; database migration safety remains unverified beyond successful AutoMigrate/startup in the Phase 6 Compose smoke and seeded runner.
+- Factory Agent production startup now has stricter env/config behavior. Phase 6 observed the production guard blocking startup when `APP_MODE` defaulted to production without production JWT/admin settings; deployment-style production config still needs verification.
 - Frontend EventSource streams are disabled when static bearer auth is configured because browser EventSource cannot send Authorization headers; snapshot polling fallback must be tested with bearer-token configuration.
 - Phase 3 stabilization fixed the required Go aggregate test failures. Remaining risks are now Phase 4+ cross-layer risks, not known Go backend test failures.
 
@@ -172,4 +193,4 @@ Choose one after Phase 7:
 - Safe to merge into main with minor known risks.
 - Not safe to merge into main yet.
 
-Current recommendation: `Not safe to merge into main yet` because phases 6 and 7 have not been run. Phase 5 frontend merge and targeted stabilization are complete, and Phase 6 can start with the known broader live-runner, deployment, and cross-layer contract risks above.
+Current recommendation: `Not safe to merge into main yet`. Phase 6 has been run and is not fully passing because Compose Factory Agent planning fails with an LLM connection error, and Phase 7 has not been run. Do not start Phase 7 until the Compose Factory Agent planner connectivity/environment issue is resolved or explicitly accepted as out-of-scope.

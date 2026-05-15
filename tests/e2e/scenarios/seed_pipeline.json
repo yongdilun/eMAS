@@ -857,6 +857,7 @@
     "approval_policy": "approve",
     "expected_status": 200,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
@@ -982,6 +983,7 @@
     "approval_policy": "none",
     "expected_status": 403,
     "headers": {
+      "X-User-Id": "seed-operator",
       "X-User-Role": "operator"
     },
     "request": {
@@ -1010,6 +1012,7 @@
     "approval_policy": "approve",
     "expected_status": 200,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
@@ -1038,6 +1041,7 @@
     "approval_policy": "none",
     "expected_status": 422,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
@@ -1064,6 +1068,7 @@
     "approval_policy": "approve",
     "expected_status": 409,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
@@ -1091,6 +1096,7 @@
     "approval_policy": "approve",
     "expected_status": 200,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
@@ -1139,6 +1145,7 @@
     "approval_policy": "reject",
     "expected_status": 200,
     "headers": {
+      "X-User-Id": "seed-planner",
       "X-User-Role": "planner"
     },
     "request": {
