@@ -20,7 +20,7 @@ Use one of:
 | Phase | Name | Status | Owner Notes |
 |---|---|---|---|
 | 0 | Discovery and risk mapping | Done | Current repo shape, test setup, frontend chat flow, backend/SSE routes, env/auth behavior, and risks were inspected and documented. |
-| 1 | Playwright setup and baseline browser tests | Not Started | Next action. Add Playwright to `eMas Front` with a minimal mock Factory Agent server. |
+| 1 | Playwright setup and baseline browser tests | Done | Marked In Progress during implementation; completed with Playwright config, mock Factory Agent server, and two Chromium baseline specs. |
 | 2 | Chatbot happy-path E2E tests | Not Started | Depends on Phase 1 setup. |
 | 3 | Deterministic mocking for chatbot responses | Not Started | Depends on baseline mock server and happy-path flow. |
 | 4 | SSE streaming tests | Not Started | Depends on fixture-driven mock server with real `text/event-stream`. |
@@ -32,7 +32,7 @@ Use one of:
 
 | Stage | Status | Scope | Notes |
 |---|---|---|---|
-| L0 Browser smoke | Not Started | App opens, chat opens, composer usable. | First PR-level signal. |
+| L0 Browser smoke | Done | App opens, chat opens, composer usable. | Covered by Phase 1 Chromium baseline specs. |
 | L1 Deterministic mocked chat | Not Started | REST-backed mocked session/message/plan/execute/snapshot flows. | Primary PR suite for user-visible behavior. |
 | L2 Deterministic mocked SSE | Not Started | Real `text/event-stream` from mock server for notification/activity scenarios. | Adds stream lifecycle, chunk order, fallback, and disconnect coverage. |
 | L3 Seeded full-stack browser | Not Started | Vite plus seeded Go API and Factory Agent fake planner/model provider. | Scheduled or release-branch gate, not first PR requirement. |
@@ -45,8 +45,8 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 
 | # | Scenario | Status | Layer |
 |---|---|---|---|
-| 1 | App opens dashboard and floating chat control is reachable by an accessible selector. | Not Started | L0 |
-| 2 | Chat modal opens and shows empty state plus enabled composer. | Not Started | L0 |
+| 1 | App opens dashboard and floating chat control is reachable by an accessible selector. | Done | L0 |
+| 2 | Chat modal opens and shows empty state plus enabled composer. | Done | L0 |
 | 3 | New session can be started from the sidebar. | Not Started | L1 |
 | 4 | Existing active session is restored from local storage. | Not Started | L1 |
 | 5 | User sends "Show status for machine M-CNC-01" and sees final assistant answer. | Not Started | L1 |
@@ -100,17 +100,17 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 
 ### Phase 1: Playwright Setup and Baseline Browser Tests
 
-- [ ] Add `@playwright/test` to `eMas Front`.
-- [ ] Add Playwright scripts to `eMas Front/package.json`.
-- [ ] Add `eMas Front/playwright.config.js`.
-- [ ] Add `eMas Front/e2e/README.md`.
-- [ ] Add minimal mock Factory Agent server.
-- [ ] Configure Vite `webServer` with `VITE_FACTORY_AGENT_BASE_URL` pointing at the mock server.
-- [ ] Add app-shell/chat-open baseline spec.
-- [ ] Add stable selector or accessible label for the floating chat button if needed.
-- [ ] Ignore `playwright-report/` and `test-results/`.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:e2e -- --project=chromium`.
+- [x] Add `@playwright/test` to `eMas Front`.
+- [x] Add Playwright scripts to `eMas Front/package.json`.
+- [x] Add `eMas Front/playwright.config.js`.
+- [x] Add `eMas Front/e2e/README.md`.
+- [x] Add minimal mock Factory Agent server.
+- [x] Configure Vite `webServer` with `VITE_FACTORY_AGENT_BASE_URL` pointing at the mock server.
+- [x] Add app-shell/chat-open baseline spec.
+- [x] Add stable selector or accessible label for the floating chat button if needed.
+- [x] Ignore `playwright-report/` and `test-results/`.
+- [x] Run `npm test`.
+- [x] Run `npm run test:e2e -- --project=chromium`.
 
 ### Phase 2: Chatbot Happy-Path E2E Tests
 
@@ -180,14 +180,8 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 
 ## Current Blockers
 
-- None for planning.
-
-Implementation blockers to resolve in Phase 1:
-
-- Playwright is not currently installed.
-- The floating chat button lacks an explicit `aria-label`.
-- There is no root CI workflow to extend.
-- `eMas Front/playwright-report/` exists but is not ignored in `eMas Front/.gitignore`.
+- None for Phase 1.
+- There is still no root CI workflow to extend; keep CI integration for Phase 6.
 
 ## Open Questions
 
@@ -283,7 +277,11 @@ Get-Content -Tail 80 TRACK.md
 
 ## Test Results
 
-No test suite was run during this planning-only task.
+Phase 1:
+
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 2 Chromium Playwright tests.
+- `npx playwright install chromium`: not run because the installed Chromium browser was already available for the Playwright run.
 
 Discovery command notes:
 
@@ -293,17 +291,26 @@ Discovery command notes:
 
 ## Files Changed
 
+Planning commit:
+
 - `PLAN.md`
 - `TRACK.md`
 
+Phase 1 implementation:
+
+- `eMas Front/.gitignore`
+- `eMas Front/package.json`
+- `eMas Front/package-lock.json`
+- `eMas Front/playwright.config.js`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/support/startViteForPlaywright.js`
+- `eMas Front/e2e/specs/chat-baseline.spec.js`
+- `eMas Front/playwright-report/` removed from git tracking and covered by `.gitignore`
+- `eMas Front/src/components/shared/FloatingChatButton.jsx`
+
 ## Next Action
 
-Begin Phase 1:
+Begin Phase 2 by extending the mock server with a fixture-driven happy path for session creation, user message submission, plan/execute behavior, active snapshot state, and completed assistant response rendering.
 
-```powershell
-Set-Location "eMas Front"
-npm install --save-dev @playwright/test
-npx playwright install chromium
-```
-
-Then add `playwright.config.js`, the minimal mock Factory Agent server, and one baseline app/chat-open browser test.
+Do not remove the existing Go/Python E2E pipeline during Phase 2.
