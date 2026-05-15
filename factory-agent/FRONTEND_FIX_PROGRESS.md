@@ -140,6 +140,52 @@ Phase 1 should:
 3. Run tests, lint, and build.
 4. Continue to keep UI behavior unchanged.
 
+## Phase 1 Prompt
+
+Use this prompt in the next AI window:
+
+```text
+You are working on the React frontend audit/fix plan for eMAS.
+
+Scope:
+- React frontend only: ../eMas Front
+- Tracking docs are in factory-agent:
+  - FRONTEND_ARCHITECTURE_AUDIT.md
+  - FRONTEND_FIX_PROGRESS.md
+  - CODE_PRACTICE_RULES.md
+- Do not modify Go backend or Factory Agent backend unless explicitly needed to verify a frontend contract.
+
+Worktree/branch rules:
+- Use dedicated worktree: ../emas-audit-frontend
+- Phase 1 branch: audit/frontend-phase-1 from audit/frontend-phase-0
+- Work one phase only in this window.
+- Commit after the phase is complete.
+- Do not start Phase 2.
+
+First actions:
+1. Read factory-agent/FRONTEND_FIX_PROGRESS.md.
+2. Read factory-agent/FRONTEND_ARCHITECTURE_AUDIT.md.
+3. Read the React frontend section of factory-agent/CODE_PRACTICE_RULES.md if present; if not present, follow the frontend tracker and audit rules.
+4. Check git status in the main repo and ../emas-audit-frontend.
+5. Confirm Phase 0 is Done and Phase 1 is active.
+6. Create or switch to audit/frontend-phase-1 from audit/frontend-phase-0.
+7. Work until Phase 1 is done.
+
+Execution rules:
+- Preserve current UI behavior.
+- Do not change API payloads or Factory Agent flow.
+- Add npm test for the existing Node tests.
+- Make lint ignore generated artifacts such as playwright-report.
+- Identify dead frontend modules with import checks before removing or quarantining anything.
+- Run the Phase 1 verification: npm test, npm.cmd run lint, and npx.cmd vite build.
+- Update factory-agent/FRONTEND_FIX_PROGRESS.md with status, commands, results, and rollback notes.
+- Commit after Phase 1 is complete.
+- Stop after Phase 1 is done and summarize the commit and verification.
+
+Active phase: Phase 1
+Complete Phase 1.
+```
+
 ## Update Rules For This Tracker
 
 - Update status before starting a fix and after finishing it.
