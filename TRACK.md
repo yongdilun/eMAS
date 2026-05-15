@@ -26,7 +26,7 @@ Use one of:
 | 4 | SSE streaming tests | Done | Completed with lightweight scripted notification/activity `text/event-stream` support, scoped EventSource connection logs, and two Chromium SSE specs. |
 | 5 | Failure, timeout, retry, and disconnect scenarios | Done | Completed with deterministic failure-mode scenario fixtures, malformed SSE recovery, execute retry, non-terminal active run, stream drop fallback, cancel, and modal close disconnect coverage. |
 | 6 | CI integration | Done | Added root GitHub Actions workflow for deterministic frontend Playwright chatbot E2E with Chromium-only install, frontend unit tests, Playwright run, and failure artifacts. |
-| 7 | Cleanup and replacement of old pipeline | Not Started | Do only after Playwright suite is stable and accepted. |
+| 7 | Cleanup and replacement of old pipeline | Done | Marked In Progress during implementation; completed with replacement mapping, preserved seed pipeline guidance, smoke-script decision, CI scope, commands, and final documentation updates. |
 
 ## Long-Term Scope Strategy
 
@@ -177,16 +177,16 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 
 ### Phase 7: Cleanup and Replacement of Old Pipeline
 
-- [ ] Map manual chatbot checks to Playwright specs.
-- [ ] Update docs with the replacement command.
-- [ ] Mark manual chatbot typing/waiting/checking as deprecated.
-- [ ] Decide whether `factory-agent-smoke.js` remains as API smoke.
-- [ ] Keep `tests/e2e/run_seed_pipeline.ps1` for API/seed/reliability coverage unless explicitly approved otherwise.
-- [ ] Record final replacement decisions in this tracker.
+- [x] Map manual chatbot checks to Playwright specs.
+- [x] Update docs with the replacement command.
+- [x] Mark manual chatbot typing/waiting/checking as deprecated.
+- [x] Decide whether `factory-agent-smoke.js` remains as API smoke.
+- [x] Keep `tests/e2e/run_seed_pipeline.ps1` for API/seed/reliability coverage unless explicitly approved otherwise.
+- [x] Record final replacement decisions in this tracker.
 
 ## Current Blockers
 
-- None for completed Phase 6.
+- None for completed Phase 7.
 
 ## Open Questions
 
@@ -209,6 +209,10 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 | Start with Chromium only. | Reduces initial flake and install cost. Add more browsers after stability. |
 | Cap the first browser portfolio at about 30 scenarios. | Keeps the suite meaningful and fast while covering distinct risks instead of prompt variants. |
 | Grow from mocked browser tests to seeded full-stack, production-like release validation, then safe synthetic monitoring. | This gives fast PR feedback now while preserving a path to production confidence later. |
+| Playwright replaces manual browser chatbot typing/waiting/checking for deterministic frontend validation. | It drives the real Vite UI and chat modal in Chromium while using mocked Factory Agent REST/SSE responses for stable assertions. |
+| `tests/e2e/run_seed_pipeline.ps1` remains in place. | It still covers Go API seed checks, Factory Agent pytest/API checks, Promptfoo-enabled flows, and optional full-stack/live scenarios that Playwright does not replace. |
+| `eMas Front/scripts/factory-agent-smoke.js` remains a quick API smoke. | It is useful for real Factory Agent HTTP session/message/plan/execute/cancel checks, but Playwright supersedes it for browser/modal validation. |
+| Phase 6 CI runs only the deterministic mocked frontend chatbot E2E suite. | CI runs `npm test` and `npm run test:e2e -- --project=chromium`; real LLM/RAG and full-stack checks remain opt-in/non-deterministic. |
 
 ## Commands Run During Discovery
 
@@ -331,6 +335,12 @@ Phase 6:
 - `npm test`: passed, 48 tests.
 - `npm run test:e2e -- --project=chromium`: passed, 13 Chromium Playwright tests.
 
+Phase 7:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed Phase 7 documentation changes before verification.
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 13 Chromium Playwright tests.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -400,8 +410,15 @@ Phase 6 implementation:
 - `TRACK.md`
 - `eMas Front/playwright.config.js`
 
+Phase 7 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/README.md`
+- `tests/e2e/README.md`
+
 ## Next Action
 
-Begin Phase 7 only when requested: document cleanup/replacement decisions for manual chatbot validation while preserving the existing Go/Python E2E pipeline. Keep reconnect/static bearer lifecycle expansion separate unless explicitly requested.
+Phase 7 is complete. Keep future browser expansion separate from this replacement documentation unless explicitly requested; reconnect/static bearer, RAG/source, approval, and seeded full-stack browser scenarios remain later scope items.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.
