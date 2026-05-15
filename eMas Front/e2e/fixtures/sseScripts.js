@@ -58,6 +58,66 @@ export function notificationCompletionStream({ invalidationDelayMs = 650 } = {})
   ]
 }
 
+export function malformedThenValidNotificationStream({ invalidationDelayMs = 650 } = {}) {
+  return [
+    {
+      id: 1,
+      event: 'notification',
+      data: { type: 'hello', cursor: 1 },
+    },
+    {
+      raw: 'id: 2\nevent: notification\ndata: { this is not valid json',
+      delayMs: 80,
+    },
+    {
+      id: 3,
+      event: 'notification',
+      delayMs: invalidationDelayMs,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: 2,
+        reason: 'malformed_frame_recovery',
+        session_status: 'COMPLETED',
+      },
+    },
+    {
+      id: 4,
+      event: 'notification',
+      delayMs: 40,
+      data: {
+        type: 'phase_changed',
+        cursor: 3,
+        phase: 'COMPLETED',
+        status: 'COMPLETED',
+      },
+    },
+  ]
+}
+
+export function disconnectingNotificationStream() {
+  return [
+    {
+      id: 1,
+      event: 'notification',
+      data: { type: 'hello', cursor: 1 },
+    },
+    {
+      delayMs: 80,
+      close: true,
+    },
+  ]
+}
+
+export function longRunningNotificationStream() {
+  return [
+    {
+      id: 1,
+      event: 'notification',
+      data: { type: 'hello', cursor: 1 },
+    },
+  ]
+}
+
 export function orderedActivityStream() {
   const [understanding, checking, validating] = orderedSseActivitySteps({ terminal: false })
 

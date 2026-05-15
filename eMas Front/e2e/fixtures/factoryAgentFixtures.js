@@ -19,6 +19,28 @@ export const activitySsePrompt = 'Validate ordered activity SSE steps for M-CNC-
 export const activitySseAnswer =
   'Activity SSE completed in order before the final M-CNC-01 response was shown.'
 
+export const malformedSsePrompt = 'Validate malformed SSE recovery for M-CNC-01'
+
+export const malformedSseAnswer =
+  'Malformed SSE data was ignored, and the later valid notification refreshed the completed M-CNC-01 answer.'
+
+export const retryExecutePrompt = 'Simulate execute retry for machine M-CNC-01'
+
+export const retryExecuteAnswer =
+  'Execution retried after a temporary conflict and completed the M-CNC-01 status check.'
+
+export const nonTerminalPrompt = 'Keep the Factory Agent run active without a final answer'
+
+export const nonTerminalFinalAnswer = 'This non-terminal fixture should never be rendered as a final answer.'
+
+export const cancelRunPrompt = 'Start an active run that I will cancel'
+
+export const cancelledRunMessage = 'Run cancelled by operator request.'
+
+export const disconnectPrompt = 'Open a long running SSE stream for disconnect testing'
+
+export const streamDropPrompt = 'Simulate notification SSE disconnect for M-CNC-01'
+
 const baseTime = Date.parse('2026-05-16T04:00:00.000Z')
 
 export function fixtureTime(offsetSeconds = 0) {

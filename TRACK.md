@@ -24,7 +24,7 @@ Use one of:
 | 2 | Chatbot happy-path E2E tests | Done | Marked In Progress during implementation; completed with deterministic mocked session/message/plan/execute/snapshot lifecycle and one Chromium happy-path browser spec. |
 | 3 | Deterministic mocking for chatbot responses | Done | Completed with a lightweight named scenario store, per-session scenario state, in-memory request logs, reset endpoint, reusable fixture builders, preserved happy path, and two additional REST-backed L1 scenarios. |
 | 4 | SSE streaming tests | Done | Completed with lightweight scripted notification/activity `text/event-stream` support, scoped EventSource connection logs, and two Chromium SSE specs. |
-| 5 | Failure, timeout, retry, and disconnect scenarios | Not Started | Depends on SSE and fixture framework. |
+| 5 | Failure, timeout, retry, and disconnect scenarios | Done | Completed with deterministic failure-mode scenario fixtures, malformed SSE recovery, execute retry, non-terminal active run, stream drop fallback, cancel, and modal close disconnect coverage. |
 | 6 | CI integration | Not Started | No root CI config found yet. |
 | 7 | Cleanup and replacement of old pipeline | Not Started | Do only after Playwright suite is stable and accepted. |
 
@@ -34,7 +34,7 @@ Use one of:
 |---|---|---|---|
 | L0 Browser smoke | Done | App opens, chat opens, composer usable. | Covered by Phase 1 Chromium baseline specs. |
 | L1 Deterministic mocked chat | In Progress | REST-backed mocked session/message/plan/execute/snapshot flows. | Scenario 5 happy path is covered; broader L1 scenarios remain for later phases. |
-| L2 Deterministic mocked SSE | In Progress | Real `text/event-stream` from mock server for notification/activity scenarios. | Phase 4 covers notification hello/invalidation, ordered activity rows, final snapshot completion, and simple heartbeat suppression; broader failure/reconnect/cancel coverage remains for Phase 5+. |
+| L2 Deterministic mocked SSE | In Progress | Real `text/event-stream` from mock server for notification/activity scenarios. | Phase 4 covers notification/activity success paths; Phase 5 adds malformed SSE, stream drop fallback, non-terminal, cancel, and modal disconnect coverage. Reconnect/static bearer remain later expansion items. |
 | L3 Seeded full-stack browser | Not Started | Vite plus seeded Go API and Factory Agent fake planner/model provider. | Scheduled or release-branch gate, not first PR requirement. |
 | L4 Production-like release validation | Not Started | Compose/staging with nginx paths, auth mode, polling fallback. | Release candidate gate. |
 | L5 Production synthetic monitoring | Not Started | Safe read-only canary prompts and health/latency checks. | Post-deploy monitoring only. |
@@ -62,15 +62,15 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 | 15 | SSE heartbeat frames do not create noisy visible messages. | Done | L2 |
 | 16 | SSE reconnect uses `Last-Event-ID` and does not duplicate prior activity. | Not Started | L2 |
 | 17 | Static bearer token mode disables EventSource and uses polling fallback. | Not Started | L2 |
-| 18 | Malformed SSE payload is ignored and the next valid event still updates UI. | Not Started | L2 |
-| 19 | SSE connection drops and UI shows snapshot polling fallback diagnostic. | Not Started | L2 |
+| 18 | Malformed SSE payload is ignored and the next valid event still updates UI. | Done | L2 |
+| 19 | SSE connection drops and UI shows snapshot polling fallback diagnostic. | Done | L2 |
 | 20 | Plan creation returns 503 and UI shows backend unavailable/error state without fake success. | Done | L1 |
-| 21 | Execute returns 409 once, UI/backend retries, and final response completes. | Not Started | L1 |
+| 21 | Execute returns 409 once, UI/backend retries, and final response completes. | Done | L1 |
 | 22 | Snapshot returns session not found and UI recovers to a safe state. | Not Started | L1 |
-| 23 | Active session never reaches terminal state before timeout and UI remains honest. | Not Started | L2 |
+| 23 | Active session never reaches terminal state before timeout and UI remains honest. | Done | L2 |
 | 24 | Completed snapshot has empty assistant content and does not show a stale previous answer. | Done | L1 |
-| 25 | User cancels an active run and final UI returns to idle/cancelled state. | Not Started | L2 |
-| 26 | User closes modal or navigates during an active stream and EventSource disconnects. | Not Started | L2 |
+| 25 | User cancels an active run and final UI returns to idle/cancelled state. | Done | L2 |
+| 26 | User closes modal or navigates during an active stream and EventSource disconnects. | Done | L2 |
 | 27 | Approval-required response renders risk summary, preview/table, and Approve/Reject actions. | Not Started | L1 |
 | 28 | Approval approve flow resumes and reaches completed final answer. | Not Started | L2/L3 |
 | 29 | Approval reject flow returns to idle with rejection state and no fake completion. | Not Started | L2/L3 |
@@ -151,14 +151,17 @@ Phase 3 note: RAG/source and approval-required fixtures remain available L1 expa
 
 ### Phase 5: Failure, Timeout, Retry, and Disconnect Scenarios
 
-- [ ] Test backend error event/state.
-- [ ] Test network interruption and polling fallback diagnostic.
-- [ ] Test timeout or non-terminal session behavior.
-- [ ] Test empty response.
-- [ ] Test malformed event payload.
-- [ ] Test user cancel during active stream.
-- [ ] Test modal close or navigation away disconnects EventSource.
+- [x] Test backend error event/state.
+- [x] Test network interruption and polling fallback diagnostic.
+- [x] Test execute conflict retry behavior.
+- [x] Test timeout or non-terminal session behavior.
+- [x] Test empty response.
+- [x] Test malformed event payload.
+- [x] Test user cancel during active stream.
+- [x] Test modal close or navigation away disconnects EventSource.
 - [ ] Test static bearer mode disables EventSource and uses polling fallback.
+
+Phase 5 note: static bearer mode remains a later L2 expansion item because the requested Phase 5 scope emphasized failure, retry, malformed SSE, timeout/non-terminal, cancel, and disconnect scenarios and explicitly avoided broad reconnect lifecycle expansion.
 
 ### Phase 6: CI Integration
 
@@ -183,7 +186,7 @@ Phase 3 note: RAG/source and approval-required fixtures remain available L1 expa
 
 ## Current Blockers
 
-- None for completed Phase 4.
+- None for completed Phase 5.
 - There is still no root CI workflow to extend; keep CI integration for Phase 6.
 
 ## Open Questions
@@ -311,6 +314,14 @@ Phase 4:
 - `npm run test:e2e -- --project=chromium`: passed, 7 Chromium Playwright tests.
 - `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
 
+Phase 5:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed Phase 5 working tree changes before verification.
+- `npm run test:e2e -- --project=chromium --grep "failure|stream robustness|cancel|disconnect"`: initially passed 5 of 6 focused tests and failed the non-terminal assertion because the visible active row was "Understanding your request", not "Gathering information"; adjusted the assertion to the designed active row. Re-run passed, 6 Chromium Playwright tests.
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 13 Chromium Playwright tests.
+- `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -364,8 +375,18 @@ Phase 4 implementation:
 - `eMas Front/e2e/specs/chat-sse-activity.spec.js`
 - `eMas Front/e2e/specs/chat-sse-notification.spec.js`
 
+Phase 5 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/fixtures/factoryAgentFixtures.js`
+- `eMas Front/e2e/fixtures/sseScripts.js`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/specs/chat-cancel-navigation.spec.js`
+- `eMas Front/e2e/specs/chat-stream-errors.spec.js`
+
 ## Next Action
 
-Begin Phase 5 by adding failure/timeout/retry/cancel/disconnect scenarios only when requested. Keep reconnect, malformed SSE, timeout, and disconnect lifecycle matrix out of Phase 4.
+Begin Phase 6 only when requested: add deterministic Playwright CI integration and artifacts. Keep reconnect/static bearer lifecycle expansion separate unless explicitly requested.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.

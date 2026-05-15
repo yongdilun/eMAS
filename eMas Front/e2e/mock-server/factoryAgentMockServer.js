@@ -47,6 +47,10 @@ function sendSseEvent(res, event, data, id = 1) {
   res.write(`data: ${JSON.stringify(data)}\n\n`)
 }
 
+function sendRawSseFrame(res, raw) {
+  res.write(`${raw}\n\n`)
+}
+
 function logConnection({ req, url, event, connectionId, sessionId, scenarioName = null, stream, status = null }) {
   connectionLog.push({
     at: now(),
@@ -182,6 +186,14 @@ async function runSseScript({ req, res, url, sessionId, stream, frames }) {
     if (closed || res.writableEnded) return
     if (frame.delayMs) await sleep(frame.delayMs)
     if (closed || res.writableEnded) return
+    if (frame.close) {
+      res.end()
+      return
+    }
+    if (frame.raw) {
+      sendRawSseFrame(res, frame.raw)
+      continue
+    }
     sendSseEvent(res, frame.event, frame.data, frame.id)
   }
 }
@@ -319,6 +331,41 @@ const server = http.createServer(async (req, res) => {
     sendJson(req, url, res, result.status, result.body, {
       sessionId: session.session_id,
       scenarioName: scenario.name,
+      prompt: session.last_prompt,
+      body,
+    })
+    return
+  }
+
+  const cancelMatch = url.pathname.match(/^\/sessions\/([^/]+)\/cancel$/)
+  if (req.method === 'POST' && cancelMatch) {
+    const session = sessions.get(cancelMatch[1])
+    if (!session) {
+      sendJson(req, url, res, 404, { detail: 'Session not found' }, { sessionId: cancelMatch[1] })
+      return
+    }
+    const body = await readJson(req)
+    const turnId = session.current_turn_id || `pw-cancel-${session.messages.length || 1}`
+    session.status = 'FAILED'
+    session.operation_id = null
+    session.steps = session.steps.map((step) => ({
+      ...step,
+      status: 'CANCELLED',
+      updated_at: now(),
+    }))
+    session.timeline.push({
+      event_id: `pw-cancelled-${randomUUID()}`,
+      turn_id: turnId,
+      event_type: 'session_failed',
+      content: 'Run cancelled by operator request.',
+      status: 'FAILED',
+      details: { reason: 'cancelled_by_user' },
+      created_at: now(),
+    })
+    session.updated_at = now()
+    sendJson(req, url, res, 200, { status: 'FAILED', session_id: session.session_id }, {
+      sessionId: session.session_id,
+      scenarioName: session.scenario_name,
       prompt: session.last_prompt,
       body,
     })
