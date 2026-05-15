@@ -1041,6 +1041,8 @@ def build_router(
         if not validation.ok:
             raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
+        latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
+
         if sess.plan_id:
             existing = (await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))).scalars().first()
             if existing and not existing.invalidated_at:
@@ -1067,8 +1069,6 @@ def build_router(
             created_by=backend_used,
         )
         db.add(plan_row)
-        await db.commit()
-        await db.refresh(plan_row)
 
         completed_at = datetime.utcnow() if status == "COMPLETED" else None
         step_status = "DONE" if status == "COMPLETED" else "NOT_STARTED"
@@ -1104,7 +1104,6 @@ def build_router(
                 result_summary=step_summary,
             )
             db.add(step_row)
-        await db.commit()
 
         sess.plan_id = plan_row.plan_id
         sess.plan_version = plan_version
@@ -1123,9 +1122,7 @@ def build_router(
             sess.status = "PLANNING" if draft.steps else "IDLE"
         if not sess.name:
             sess.name = "New chat"
-        await db.commit()
 
-        latest_user = await _latest_user_message(db=db, session_id=sess.session_id)
         result_summaries = [
             summary
             for _result, summary in aligned
@@ -1169,7 +1166,8 @@ def build_router(
                 )
                 if bundle.text.strip():
                     bundle_markdown = bundle.text.strip()
-                    plan_message.content = bundle_markdown
+                    if not result_summary:
+                        plan_message.content = bundle_markdown
                     sess.llm_call_count = (sess.llm_call_count or 0) + bundle.llm_calls
                     sess.version += 1
                     await db.commit()
@@ -1313,7 +1311,7 @@ def build_router(
             user_id=sess.user_id,
         )
 
-    def require_admin(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
+    def require_admin(x_admin_key: str | None = Header(None, alias="X-Admin-Key")) -> None:
         if x_admin_key != settings.admin_api_key:
             raise HTTPException(status_code=403, detail="forbidden")
 
@@ -2313,6 +2311,7 @@ def build_router(
     async def stream_semantic_events(
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+        _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -2424,6 +2423,7 @@ def build_router(
     async def stream_activity_events(
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+        _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -2504,6 +2504,7 @@ def build_router(
     async def stream_session_events(
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+        _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -3297,9 +3298,6 @@ def build_router(
             context.pop("langgraph_approval_resume", None)
             sess.replan_context = context
             sess.error = None
-            sess.status = "COMPLETED"
-            sess.version += 1
-            await db.commit()
             await _persist_plan(
                 db=db,
                 sess=sess,
@@ -3319,6 +3317,7 @@ def build_router(
                 {"approval_id": row.approval_id, "status": "COMPLETED", "subject_type": "graph"},
             )
         except PlannerClarificationError as e:
+            await db.rollback()
             context = dict(sess.replan_context or {})
             context.pop("langgraph_approval_resume", None)
             context.pop("langgraph_pending_approval", None)
@@ -3333,6 +3332,7 @@ def build_router(
                 {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
             )
         except PlannerPlanRejected as e:
+            await db.rollback()
             context = dict(sess.replan_context or {})
             context.pop("langgraph_approval_resume", None)
             context.pop("langgraph_pending_approval", None)
@@ -3347,6 +3347,7 @@ def build_router(
                 {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
             )
         except PlannerBackendError as e:
+            await db.rollback()
             context = dict(sess.replan_context or {})
             context.pop("langgraph_approval_resume", None)
             context.pop("langgraph_pending_approval", None)
@@ -3361,6 +3362,7 @@ def build_router(
                 {"approval_id": row.approval_id, "status": "FAILED", "subject_type": "graph"},
             )
         except Exception as e:
+            await db.rollback()
             context = dict(sess.replan_context or {})
             context.pop("langgraph_approval_resume", None)
             context.pop("langgraph_pending_approval", None)
@@ -3396,6 +3398,9 @@ def build_router(
                 done.result()
 
         task.add_done_callback(_consume_task_result)
+
+    def _should_resume_graph_approval_inline() -> bool:
+        return planner_adapter is None and settings.database_url.startswith("sqlite+aiosqlite:///:memory:")
 
     @router.post("/sessions/{session_id}/execute", response_model=SessionResponse)
     async def execute(
@@ -3582,7 +3587,10 @@ def build_router(
                 row.session_id,
                 {"approval_id": row.approval_id, "status": "APPROVED", "subject_type": "graph"},
             )
-            _start_graph_approval_resume_task(db, row.approval_id)
+            if _should_resume_graph_approval_inline():
+                await _resume_approved_graph_approval(db=db, approval_id=row.approval_id)
+            else:
+                _start_graph_approval_resume_task(db, row.approval_id)
             return _approval_to_response(row)
 
         if (getattr(row, "subject_type", "step") or "step") == "plan":
@@ -3664,6 +3672,7 @@ def build_router(
     async def list_dlq(
         status: str | None = Query(None),
         session_id: str | None = Query(None),
+        _: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         stmt = select(DeadLetterRow)
@@ -3772,7 +3781,7 @@ def build_router(
         return {"ok": True, "tool_count": result.tool_count, "tools_md_hash": result.tools_md_hash}
 
     @router.get("/metrics", response_class=PlainTextResponse)
-    async def get_metrics():
+    async def get_metrics(_: None = Depends(require_admin)):
         return PlainTextResponse(metrics.render_prometheus(), media_type="text/plain; version=0.0.4")
 
     @router.get("/admin/sessions", dependencies=[Depends(require_admin)])

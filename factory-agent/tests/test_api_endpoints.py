@@ -308,6 +308,63 @@ async def test_create_plan_persists_plan_and_steps(sessionmaker_override, db_ses
 
 
 @pytest.mark.asyncio
+async def test_create_plan_rolls_back_when_plan_message_persistence_fails(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.api import routes
+    from factory_agent.persistence.models import Message, Plan, PlanStep, Session
+
+    await _seed_tool(
+        db_session,
+        name="get__machines",
+        endpoint="/machines",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+        capability_tags='["machine"]',
+        is_read_only=True,
+    )
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/sessions", json={"user_id": "u1"})
+        session_id = r.json()["session_id"]
+        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+
+    ids = iter(["phase2-plan-id", "phase2-step-id"])
+
+    def fail_on_plan_message_id():
+        try:
+            return next(ids)
+        except StopIteration:
+            raise RuntimeError("injected plan message failure")
+
+    monkeypatch.setattr(routes, "generate_uuid", fail_on_plan_message_id)
+    draft = PlanDraft(
+        plan_explanation="fetch machines",
+        risk_summary="read-only",
+        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={"id": 1})],
+    )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        failed = await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
+        assert failed.status_code == 500
+
+    db_session.expire_all()
+    plans = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
+    steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
+    messages = (await db_session.execute(select(Message).where(Message.session_id == session_id))).scalars().all()
+    sess = await db_session.get(Session, session_id)
+
+    assert plans == []
+    assert steps == []
+    assert [msg.role for msg in messages] == ["user"]
+    assert sess.plan_id is None
+    assert sess.plan_version == 0
+
+
+@pytest.mark.asyncio
 async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
     await _seed_tool(
         db_session,
@@ -2532,6 +2589,8 @@ async def test_replan_validation_failure_three_times_blocks_and_pushes_dlq(sessi
 async def test_admin_dashboard_requires_x_admin_key(sessionmaker_override):
     app, _ = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.get("/admin/sessions")
+        assert missing.status_code == 403
         forbidden = await client.get("/admin/sessions", headers={"X-Admin-Key": "wrong-key"})
         assert forbidden.status_code == 403
         allowed = await client.get("/admin/sessions", headers={"X-Admin-Key": "test-admin-key"})
@@ -2543,12 +2602,47 @@ async def test_admin_dashboard_requires_x_admin_key(sessionmaker_override):
 async def test_metrics_endpoint_exposes_prometheus_format(sessionmaker_override):
     app, _ = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get("/metrics")
+        missing = await client.get("/metrics")
+        assert missing.status_code == 403
+
+        res = await client.get("/metrics", headers={"X-Admin-Key": "test-admin-key"})
         assert res.status_code == 200
         assert "text/plain" in res.headers.get("content-type", "")
         assert "# HELP" in res.text
         assert "plan_validation_failure_rate" in res.text
         assert "db_connection_pool_usage" in res.text
+
+
+@pytest.mark.asyncio
+async def test_stream_dlq_and_metrics_reads_require_auth(sessionmaker_override):
+    secret = "phase2-secret"
+    app, _ = await _make_app(sessionmaker_override, jwt_required=True, jwt_secret=secret)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        for path in (
+            "/sessions/missing/events/semantic",
+            "/sessions/missing/events/activity",
+            "/sessions/missing/events",
+            "/dlq",
+        ):
+            unauthorized = await client.get(path)
+            assert unauthorized.status_code == 401
+
+        for path in (
+            "/sessions/missing/events/semantic",
+            "/sessions/missing/events/activity",
+            "/sessions/missing/events",
+        ):
+            async with client.stream("GET", path, headers=_auth_headers(secret)) as authorized:
+                assert authorized.status_code == 200
+
+        dlq = await client.get("/dlq", headers=_auth_headers(secret))
+        assert dlq.status_code == 200
+        assert dlq.json() == []
+
+        metrics_missing = await client.get("/metrics")
+        assert metrics_missing.status_code == 403
+        metrics_ok = await client.get("/metrics", headers={"X-Admin-Key": "test-admin-key"})
+        assert metrics_ok.status_code == 200
 
 
 @pytest.mark.asyncio

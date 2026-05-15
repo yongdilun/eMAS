@@ -25,9 +25,9 @@ Status key:
 
 | ID | Issue | Severity | Phase | Status | Verification | Rollback |
 |---|---|---|---|---|---|---|
-| FA-001 | Protect unauthenticated SSE, DLQ, and metrics reads | High | 2 | Not Started | Auth contract tests for each endpoint | Temporary local-only compatibility flag |
-| FA-002 | Fail unsafe production auth/admin defaults | High | 2 | Not Started | Production config tests | Strict-mode flag rollback |
-| FA-003 | Make plan persistence atomic | High | 2 | Not Started | Injected failure rollback tests | Restore old helper behind flag |
+| FA-001 | Protect unauthenticated SSE, DLQ, and metrics reads | High | 2 | Done | Auth contract tests for SSE, DLQ, and metrics passed; full `pytest` passed | Temporary local-only compatibility flag |
+| FA-002 | Fail unsafe production auth/admin defaults | High | 2 | Done | Production config tests passed; full `pytest` passed | Strict-mode flag rollback |
+| FA-003 | Make plan persistence atomic | High | 2 | Done | Injected failure rollback test and approval resume regression passed; full `pytest` passed | Restore old helper behind flag |
 | FA-004 | Move startup schema mutation to migrations | High | 5 | Not Started | Migration smoke tests | Keep startup compat under explicit flag |
 | FA-005 | Split mixed-responsibility API router | High | 4 | Not Started | OpenAPI diff plus endpoint tests | Revert one extracted router/module |
 | FA-006 | Reduce SSE database polling risk | Medium | 5 | Not Started | Disconnect and concurrent stream tests | Keep old implementation path |
@@ -68,13 +68,22 @@ Status key:
 
 ### Phase 2: Bug Fixes and Contract Fixes
 
-- Status: Not Started
+- Status: Done
 - Goal: Fix security and data-integrity risks.
-- Candidate changes:
-  - Add auth to event streams and DLQ read.
-  - Define metrics exposure policy.
-  - Enforce production config safety.
-  - Make plan persistence transactional.
+- Completed:
+  - Added JWT enforcement to session event streams and DLQ reads.
+  - Protected metrics behind the admin API key policy.
+  - Added production startup validation for JWT/admin defaults, with an explicit unsafe override for rollback.
+  - Made plan row, step row, session pointer, and plan message persistence commit atomically.
+  - Preserved approved graph resume snapshots so completed writes expose their tool result before completion is accepted by tests.
+- Verification:
+  - `pytest tests/test_config_app_mode.py tests/test_api_endpoints.py::test_stream_dlq_and_metrics_reads_require_auth tests/test_api_endpoints.py::test_metrics_endpoint_exposes_prometheus_format tests/test_api_endpoints.py::test_admin_dashboard_requires_x_admin_key tests/test_api_endpoints.py::test_create_plan_rolls_back_when_plan_message_persistence_fails tests/test_api_endpoints.py::test_create_plan_persists_plan_and_steps tests/test_tool_output_alignment.py tests/test_reliability_e2e.py::test_pause_resume_live_instruction_update_rejects_stale_approval_and_completes -q`: 19 passed.
+  - `pytest tests/test_config_app_mode.py tests/test_approval_atomicity.py -q`: 15 passed.
+  - `pytest tests/test_reliability_e2e.py -q`: 3 passed.
+  - `pytest tests/test_api_endpoints.py -q`: 46 passed, 20 xfailed.
+  - `pytest -q`: 472 passed, 4 skipped, 20 xfailed after setting `TMP`/`TEMP` to a project-local temp directory.
+- Remaining:
+  - None for Phase 2.
 
 ### Phase 3: Test Coverage Improvement
 
