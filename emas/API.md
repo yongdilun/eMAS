@@ -1650,6 +1650,7 @@ After the initial greedy schedule, the optimizer iterates over each step and tri
 | `AI_ROLLOUT_STATE` | `heuristic-only` | Rollout state that overrides engine selection: `heuristic-only`, `shadow`, `candidate-default`, `enforced-default` |
 | `AI_SOLVER_SHADOW_MODE` | `false` | Run secondary engine in shadow and capture comparison evidence on every proposal |
 | `AI_SOLVER_TIMEOUT_MS` | `2000` | Solver timeout in milliseconds |
+| `EMAS_AUTO_MIGRATE` | `true` | Run GORM AutoMigrate on startup; set to `false` in production after applying reviewed SQL migrations |
 | `AI_AUTH_REQUIRED` | `true` | Enforce `X-User-Role` header on proposal write endpoints |
 | `AI_COMPAT_APPLY_ENABLED` | `false` | Enable deprecated job-based compatibility apply endpoint |
 | `AI_PROPOSAL_APPLY_REQUIRES_APPROVAL` | `true` | Require `approved` status before `apply` |

@@ -17,11 +17,13 @@ import (
 )
 
 func Setup(db *gorm.DB) *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "X-User-Id", "X-User-Role"},
+		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "X-User-Id", "X-User-Role", "X-Request-Id", "X-Correlation-Id"},
+		ExposeHeaders:    []string{"X-Request-Id", "X-Correlation-Id"},
 		AllowCredentials: false,
 		MaxAge:           12 * 60 * 60,
 	}))

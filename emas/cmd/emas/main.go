@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // @title eMas Factory API
@@ -28,8 +29,18 @@ func main() {
 		panic(err)
 	}
 
-	if err := repository.AutoMigrate(db); err != nil {
-		panic(err)
+	if cfg.AutoMigrate {
+		logger.L().Warn("automigrate_enabled",
+			zap.String("scope", "tests_and_local_only"),
+			zap.String("disable_with", "EMAS_AUTO_MIGRATE=false"),
+		)
+		if err := repository.AutoMigrate(db); err != nil {
+			panic(err)
+		}
+	} else {
+		logger.L().Info("automigrate_skipped",
+			zap.String("reason", "EMAS_AUTO_MIGRATE=false"),
+		)
 	}
 
 	r := router.Setup(db)

@@ -89,11 +89,11 @@ Status values:
 
 | Task | Status | Owner | Evidence / Notes |
 |---|---|---|---|
-| Move production schema changes to versioned migrations | Not Started | TBD | Keep `AutoMigrate` for tests/local until migration flow exists. |
-| Add structured request logging/correlation IDs | Not Started | TBD | Build on existing request context/logger. |
-| Add performance smoke tests for scheduling APIs | Not Started | TBD | Focus batch proposal and reschedule-all. |
-| Add deployment rollback notes | Not Started | TBD | Include DB migration rollback. |
-| Add API contract release checklist | Not Started | TBD | Include Swagger and tools.md regeneration. |
+| Move production schema changes to versioned migrations | Done | Codex | Added `EMAS_AUTO_MIGRATE=false` startup switch, documented migration safety in `docs/operations/migration_safety.md`, and captured the current `ml_training_events` production schema change as `migrations/002_ml_training_events_lineage.sql`. `AutoMigrate` remains enabled by default for tests/local. |
+| Add structured request logging/correlation IDs | Done | Codex | `RequestContext` now propagates `X-Request-Id` and `X-Correlation-Id`, emits structured Zap request logs with route/status/latency/client fields, exposes correlation headers via CORS, and router uses structured logging plus recovery instead of Gin's plaintext logger. Covered by `go test ./internal/middleware -count=1`. |
+| Add performance smoke tests for scheduling APIs | Done | Codex | Added `TestAISchedulingPerformanceSmokeBatchProposalsAndRescheduleAll` for `batch-proposals` and `reschedule-all` dry-run; documented command in `docs/operations/performance_smoke_tests.md`. |
+| Add deployment rollback notes | Done | Codex | Added `docs/operations/deployment_rollback.md` with DB snapshot, forward-compatible rollback, OpenAPI/tools, health, and structured-log checks. |
+| Add API contract release checklist | Done | Codex | Added `docs/operations/api_contract_release_checklist.md` covering route parity, response shape, error envelopes, Swagger, tools.md, and release note expectations. |
 
 ## Decision Log
 
@@ -104,8 +104,9 @@ Status values:
 | 2026-05-15 | Prefer incremental transactions over big rewrite | Reduces partial-write risk without changing API behavior. | Start with job and production-log paths. |
 | 2026-05-15 | Use snake_case for new public response DTO fields while preserving tested legacy raw-domain responses | Prevents silent casing drift without forcing a broad breaking response migration in Phase 2. | Migrate raw domain responses behind explicit DTO mapping in a later phase. |
 | 2026-05-15 | Allow Phase 3 tests to drive the smallest runtime safety fixes | Rollback and security tests exposed clear bugs that would leave partial state or authorize missing headers. | Phase 4 can broaden the same patterns to remaining multi-write flows. |
+| 2026-05-15 | Keep AutoMigrate enabled by default but make it explicitly disableable for production | Preserves test/local bootstrap behavior while allowing reviewed SQL migrations and safer rollback in deployed environments. | Adopt a migration runner before disabling AutoMigrate by default. |
 
 ## Next Recommended Action
 
-Phase 4 is complete. Next recommended action: begin Phase 5 long-term improvements, starting with versioned migration planning and deployment rollback notes.
+Phase 5 is complete. Next recommended action: choose whether to adopt a formal Go migration runner before disabling `AutoMigrate` by default in production.
 
