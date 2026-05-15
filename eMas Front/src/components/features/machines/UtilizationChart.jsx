@@ -1,15 +1,7 @@
 // Accepts data from GET /reports/machine-utilization
 // Actual API shape: { machine_id, step_id, total_minutes, slot_count }[]
 // Also handles: { machine_name, utilization_pct }[] (pre-computed)
-// Falls back to machine list with 0%, then DEMO
-
-const DEMO = [
-    { machine_name: 'CNC Mill 01', utilization_pct: 85 },
-    { machine_name: 'Lathe 01', utilization_pct: 60 },
-    { machine_name: 'Lathe 02', utilization_pct: 92 },
-    { machine_name: 'Hydraulic Press', utilization_pct: 70 },
-    { machine_name: 'Coating Station', utilization_pct: 42 },
-]
+// Falls back to machine list with 0% while utilization data is unavailable.
 
 /** Unwrap arrays that may be nested inside { data: [...] } or { success, data: [...] } */
 const unwrapArr = (d) => {
@@ -75,7 +67,7 @@ const UtilizationChart = ({ machines = [], utilizationData = null }) => {
 
         if (resolved && resolved.length > 0) return resolved
 
-        // Fallback: show real machine names at 0% while data loads
+        // Fallback: show real machine names without pretending utilization data is available.
         if (machines.length > 0) {
             return machines.slice(0, 8).map(m => ({
                 name: String(m.machine_name ?? m.machine_id ?? '—'),
@@ -83,8 +75,9 @@ const UtilizationChart = ({ machines = [], utilizationData = null }) => {
             }))
         }
 
-        return DEMO.map(d => ({ name: d.machine_name, pct: d.utilization_pct }))
+        return []
     })()
+    const hasUtilizationData = Boolean(processRows(unwrapArr(utilizationData))?.length)
 
     // Prefer pre-computed avg from API, else calculate from rows
     const apiData = unwrapArr(utilizationData)
@@ -110,26 +103,34 @@ const UtilizationChart = ({ machines = [], utilizationData = null }) => {
                 </p>
                 <div className="flex items-baseline gap-2">
                     <p className="text-ink text-[28px] font-bold leading-tight">{avg}%</p>
-                    <p className="text-semantic-success dark:text-[#0bda57] text-sm font-medium flex items-center">
+                    <p className={`${hasUtilizationData ? 'text-semantic-success dark:text-[#0bda57]' : 'text-ink-subtle'} text-sm font-medium flex items-center`}>
                         <span className="material-symbols-outlined text-base">trending_up</span>
-                        Real-time
+                        {hasUtilizationData ? 'Real-time' : 'Unavailable'}
                     </p>
                 </div>
 
-                <div className="flex flex-col gap-2 pt-2">
-                    {rows.map((row) => (
-                        <div key={row.name} className="flex items-center gap-3">
-                            <p className="text-ink-subtle dark:text-[#9cb3ba] text-xs w-28 shrink-0 truncate text-right">{row.name}</p>
-                            <div className="flex-1 h-2 bg-gray-200 dark:bg-[#283539] rounded-full overflow-hidden">
-                                <div
-                                    className={`h-full ${getColor(row.pct)} rounded-full transition-all duration-700`}
-                                    style={{ width: `${Math.min(row.pct, 100)}%` }}
-                                />
+                {!hasUtilizationData ? (
+                    <div className="rounded-lg border border-hairline bg-surface-2 px-4 py-3 text-sm text-ink-subtle">
+                        Utilization data is unavailable. No demo machine values are being shown.
+                    </div>
+                ) : null}
+
+                {rows.length > 0 ? (
+                    <div className="flex flex-col gap-2 pt-2">
+                        {rows.map((row) => (
+                            <div key={row.name} className="flex items-center gap-3">
+                                <p className="text-ink-subtle dark:text-[#9cb3ba] text-xs w-28 shrink-0 truncate text-right">{row.name}</p>
+                                <div className="flex-1 h-2 bg-gray-200 dark:bg-[#283539] rounded-full overflow-hidden">
+                                    <div
+                                        className={`h-full ${getColor(row.pct)} rounded-full transition-all duration-700`}
+                                        style={{ width: `${Math.min(row.pct, 100)}%` }}
+                                    />
+                                </div>
+                                <span className="text-[11px] text-ink-subtle w-8 text-right">{row.pct}%</span>
                             </div>
-                            <span className="text-[11px] text-ink-subtle w-8 text-right">{row.pct}%</span>
-                        </div>
-                    ))}
-                </div>
+                        ))}
+                    </div>
+                ) : null}
             </div>
         </div>
     )

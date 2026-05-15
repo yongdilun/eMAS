@@ -32,20 +32,6 @@ const MachineResources = () => {
     const [rerouteForMachine, setRerouteForMachine] = useState(null)
     const [rerouteRecs, setRerouteRecs] = useState([])
 
-    const MOCK_UTILIZATION = {
-        data: [
-            { machine_name: 'Assembly Station 01', utilization_pct: 72 },
-            { machine_name: 'CNC Mill 01', utilization_pct: 85 },
-            { machine_name: 'CNC Mill 02', utilization_pct: 68 },
-            { machine_name: 'Coating Station 01', utilization_pct: 42 },
-            { machine_name: 'Lathe 01', utilization_pct: 60 },
-            { machine_name: 'Lathe 02', utilization_pct: 92 },
-            { machine_name: 'Hydraulic Press 01', utilization_pct: 70 },
-            { machine_name: 'Quality Control Station', utilization_pct: 55 },
-        ],
-        avg_pct: 68,
-    }
-
     const fetchMachines = useCallback(async () => {
         setLoading(true)
         setFetchError('')
@@ -126,11 +112,11 @@ const MachineResources = () => {
                     }
                     setUtilData(computed)
                 } else {
-                    setUtilData(MOCK_UTILIZATION)
+                    setUtilData(null)
                 }
             } catch (err) {
                 logger.warn('Could not compute utilization from slots', { message: err?.message })
-                setUtilData(MOCK_UTILIZATION)
+                setUtilData(null)
             }
         }
         fetchUtilization()

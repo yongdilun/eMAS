@@ -1,26 +1,26 @@
 // Accepts data from GET /reports/production-output
 // Expected shape: { data: [{ label, units, planned? }] }
-// Falls back to demo data when API is unavailable
-
-const DEMO = [
-    { label: 'Mon', planned: 1200, units: 1197 },
-    { label: 'Tue', planned: 1000, units: 975 },
-    { label: 'Wed', planned: 900, units: 1050 },
-    { label: 'Thu', planned: 1200, units: 1180 },
-    { label: 'Fri', planned: 1000, units: 1025 },
-]
+// Shows an explicit unavailable state when API data is unavailable.
 
 const ProductionOutputChart = ({ data }) => {
     // Normalise API response into { label, planned, units }
     const rows = (() => {
         const arr = Array.isArray(data) ? data : (data?.data ?? null)
-        if (!arr || arr.length === 0) return DEMO
+        if (!arr || arr.length === 0) return []
         return arr.map(d => ({
             label: d.label ?? d.day ?? d.date ?? '—',
             units: d.units ?? d.actual ?? d.qty_produced ?? 0,
             planned: d.planned ?? d.target ?? null,
         }))
     })()
+
+    if (rows.length === 0) {
+        return (
+            <div className="w-full min-h-[240px] flex items-center justify-center rounded-lg border border-hairline bg-surface-1 px-4 text-center text-sm text-ink-subtle">
+                Production chart data is unavailable. No demo chart values are being shown.
+            </div>
+        )
+    }
 
     const maxValue = Math.max(...rows.map(r => Math.max(r.units, r.planned ?? r.units))) * 1.2 || 1400
     const gridCount = 4

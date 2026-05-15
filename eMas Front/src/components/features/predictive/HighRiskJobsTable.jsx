@@ -1,15 +1,9 @@
 // Fetches from GET /predictive/high-risk-jobs
 // Expected: [{ job_id, machine_id|machine_name, issue|predicted_issue, risk_level }]
-// Falls back to demo data when endpoint is unavailable (endpoint not yet implemented)
+// Shows an explicit unavailable state when endpoint data is unavailable.
 import { useState, useEffect } from 'react'
 import { predictiveApi, toList } from '../../../services/api'
 import logger from '../../../services/logger'
-
-const DEMO = [
-  { job_id: 'JOB-2403', machine_name: 'Coating Station 01', issue: 'Overdue Maintenance', risk_level: 'High' },
-  { job_id: 'JOB-2406', machine_name: 'CNC Mill 02', issue: 'High Load Duration', risk_level: 'Medium' },
-  { job_id: 'JOB-2401', machine_name: 'CNC Mill 01', issue: 'Coolant Pressure Drop', risk_level: 'Low' },
-]
 
 const RISK_STYLE = {
   High: 'bg-primary/10 text-primary',
@@ -18,16 +12,21 @@ const RISK_STYLE = {
 }
 
 const HighRiskJobsTable = () => {
-  const [jobs, setJobs] = useState(DEMO)
+  const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     predictiveApi.highRiskJobs()
       .then(data => {
         const rows = toList(data)
-        if (rows.length > 0) setJobs(rows)
+        setJobs(rows)
       })
-      .catch((err) => logger.debug('High-risk jobs API unavailable; using demo data', { message: err?.message }))
+      .catch((err) => {
+        logger.debug('High-risk jobs API unavailable', { message: err?.message })
+        setError('High-risk job data is unavailable. No demo risk rows are being shown.')
+        setJobs([])
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -55,7 +54,13 @@ const HighRiskJobsTable = () => {
             </tr>
           </thead>
           <tbody>
-            {jobs.map((job) => {
+            {!loading && jobs.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-5 py-8 text-center text-ink-subtle">
+                  {error || 'No high-risk jobs returned.'}
+                </td>
+              </tr>
+            ) : jobs.map((job) => {
               const r = normalise(job)
               return (
                 <tr key={r.id} className="border-b border-hairline last:border-b-0 hover:bg-surface-2 transition-colors">

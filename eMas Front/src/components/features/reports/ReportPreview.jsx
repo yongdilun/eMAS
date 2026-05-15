@@ -1,31 +1,12 @@
 import ProductionOutputChart from './ProductionOutputChart'
 
-const MOCK_CHART_DATA = [
-    { label: 'Mon', planned: 1200, units: 1187 },
-    { label: 'Tue', planned: 1000, units: 992 },
-    { label: 'Wed', planned: 950, units: 1048 },
-    { label: 'Thu', planned: 1200, units: 1195 },
-    { label: 'Fri', planned: 1100, units: 1082 },
-]
-
-const MOCK_TABLE_ROWS = [
-    { slot_id: 'SLOT-2409-1', machine_id: 'M-CNC-01', date: '2026-03-04', quantity_produced: 1187, quantity_scrap: 4 },
-    { slot_id: 'SLOT-2409-2', machine_id: 'M-LTH-01', date: '2026-03-04', quantity_produced: 992, quantity_scrap: 2 },
-    { slot_id: 'SLOT-2410-1', machine_id: 'M-CNC-02', date: '2026-03-05', quantity_produced: 1048, quantity_scrap: 1 },
-    { slot_id: 'SLOT-2410-2', machine_id: 'M-PRS-01', date: '2026-03-05', quantity_produced: 1195, quantity_scrap: 3 },
-    { slot_id: 'SLOT-2411-1', machine_id: 'M-CNC-01', date: '2026-03-06', quantity_produced: 1082, quantity_scrap: 0 },
-    { slot_id: 'SLOT-2411-2', machine_id: 'M-LTH-02', date: '2026-03-06', quantity_produced: 987, quantity_scrap: 5 },
-    { slot_id: 'SLOT-2412-1', machine_id: 'M-CTG-01', date: '2026-03-07', quantity_produced: 756, quantity_scrap: 2 },
-    { slot_id: 'SLOT-2412-2', machine_id: 'M-QC-01', date: '2026-03-07', quantity_produced: 1200, quantity_scrap: 0 },
-]
-
 const ReportPreview = ({
     reportType = 'Production Output',
     dateRange = '',
     data = null,
     loading = false,
 }) => {
-    // Normalise API data into rows for the table; use mock when no data
+    // Normalise API data into rows for the table.
     const rows = (() => {
         if (data) {
             if (Array.isArray(data)) return data
@@ -33,11 +14,10 @@ const ReportPreview = ({
             if (arrayKey) return data[arrayKey]
             return [data]
         }
-        return MOCK_TABLE_ROWS
+        return []
     })()
 
     const headers = rows && rows.length > 0 ? Object.keys(rows[0]) : []
-    const isMockData = !data
 
     const fmt = (v) => {
         if (v === null || v === undefined) return '—'
@@ -69,24 +49,30 @@ const ReportPreview = ({
                 </div>
             )}
 
-            {/* Report content (mock when no API data) */}
+            {/* Report content */}
             {!loading && rows && (
                 <>
                     {/* Summary */}
-                    <div className="bg-primary/10 border border-primary/20 p-4 rounded-lg">
+                    <div className={`${data ? 'bg-primary/10 border-primary/20' : 'bg-surface-2 border-hairline'} border p-4 rounded-lg`}>
                         <div className="flex items-center gap-2 mb-2">
                             <span className="material-symbols-outlined text-primary text-xl">auto_awesome</span>
                             <h3 className="text-lg font-semibold text-ink">Report Summary</h3>
                         </div>
                         <p className="text-sm text-ink-muted dark:text-[#9ab4bc] leading-relaxed">
-                            {rows.length} record{rows.length !== 1 ? 's' : ''} returned for <strong>{reportType}</strong>
-                            {dateRange ? ` · ${dateRange}` : ' · Last 7 days'}.
+                            {data ? (
+                                <>
+                                    {rows.length} record{rows.length !== 1 ? 's' : ''} returned for <strong>{reportType}</strong>
+                                    {dateRange ? ` · ${dateRange}` : ' · Last 7 days'}.
+                                </>
+                            ) : (
+                                'Report data is unavailable. No demo report rows are being shown.'
+                            )}
                         </p>
                     </div>
 
                     {/* Chart */}
                     <div className="w-full min-h-[280px] bg-surface-2 dark:bg-[#1b2528] rounded-lg p-6 border border-hairline">
-                        <ProductionOutputChart data={isMockData ? MOCK_CHART_DATA : data} />
+                        <ProductionOutputChart data={data} />
                     </div>
 
                     {/* Data table */}

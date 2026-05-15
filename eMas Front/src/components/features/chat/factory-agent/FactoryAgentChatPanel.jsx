@@ -1,8 +1,10 @@
-/* eslint-disable react/prop-types */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ChatMessage from '../ChatMessage'
 import ApprovalCard from './ApprovalCard'
 import ActivityTimeline from './ActivityTimeline'
+import DeleteSessionDialog from './DeleteSessionDialog'
+import FactoryAgentChatComposer from './FactoryAgentChatComposer'
+import FactoryAgentSessionSidebar from './FactoryAgentSessionSidebar'
 import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
@@ -326,7 +328,7 @@ function interruptStyleSummary(summaryText) {
   return s.includes('jobs affected:') || s.includes('current vs requested priority')
 }
 
-/** Snapshot table still all "low" while the bubble text is the approval bundle or claims high — hide. */
+/** Snapshot table still all "low" while the bubble text is the approval bundle or claims high - hide. */
 function targetPriorityFromSummary(summaryText) {
   const s = String(summaryText || '').toLowerCase()
   const match = s.match(/\bpriority\s+(?:set\s+)?(?:to|as)\s+(low|medium|high|urgent)\b/)
@@ -364,7 +366,7 @@ function bundleFromDecidedApprovals(approvals, getStashed) {
 
 /**
  * Latest table presentation for the turn. For LangGraph write bundles, list/GET snapshots often
- * still show pre-commit state (e.g. priority "low") while the narrative says "high" — hide those
+ * still show pre-commit state (e.g. priority "low") while the narrative says "high" - hide those
  * until session completes, and after complete skip stale tables when a newer snapshot is absent.
  */
 function bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePresentation) {
@@ -463,8 +465,8 @@ function ConfirmationOptions({ turn, onConfirm, disabled }) {
 
   const renderOption = (option, variant = 'primary') => {
     const count = Number(option?.match_count)
-    const countLabel = Number.isFinite(count) && count >= 0 ? ` · ${count} match${count === 1 ? '' : 'es'}` : ''
-    const modeLabel = option?.match_mode ? ` · ${option.match_mode}` : ''
+    const countLabel = Number.isFinite(count) && count >= 0 ? ` \u00b7 ${count} match${count === 1 ? '' : 'es'}` : ''
+    const modeLabel = option?.match_mode ? ` \u00b7 ${option.match_mode}` : ''
     const isOther = variant === 'other'
     return (
       <button
@@ -559,7 +561,7 @@ function AssistantTurnBubble({
   const presentation = bundlePresentation || getLatestToolPresentation(turn)
   const tableAnimKey = `${turn?.id || 'turn'}:${presentation?.table?.total_rows || 0}:${summary}`
   // Collapse the bundle table only once the server confirms approval_decided in the
-  // timeline. Do NOT use !pendingApproval — that can be optimistically null on click,
+  // timeline. Do NOT use !pendingApproval - that can be optimistically null on click,
   // causing the <details> element to remount collapsed before the card even disappears.
   const hasServerDecidedApproval = Boolean(
     Array.isArray(turn?.approvals) &&
@@ -580,7 +582,7 @@ function AssistantTurnBubble({
           <ActivityTimeline steps={activitySteps} />
           {showResumeBanner ? (
             <div className="mb-2 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-ink">
-              Applying approved changes…
+              Applying approved changes{'\u2026'}
             </div>
           ) : null}
           {showSummary ? (
@@ -631,7 +633,52 @@ function statusLoadingText(status) {
   return 'Working...'
 }
 
-const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
+function isBackendUnavailableError(error) {
+  const text = String(error || '').toLowerCase()
+  return text.includes('cannot reach factory-agent') || text.includes('cannot connect to factory-agent') || text.includes('service temporarily unavailable')
+}
+
+function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRetryConnection }) {
+  const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
+  if (!error && diagnostics.length === 0) return null
+
+  return (
+    <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
+      {error ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-ink">
+              {isBackendUnavailableError(error) ? 'Factory Agent backend unavailable' : 'Factory Agent needs attention'}
+            </div>
+            <div className="mt-0.5">{error}</div>
+          </div>
+          {onRetryConnection ? (
+            <button
+              type="button"
+              onClick={onRetryConnection}
+              disabled={retrying}
+              className="rounded-md border border-hairline bg-surface-1 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
+            >
+              {retrying ? 'Retrying...' : 'Retry connection'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {diagnostics.length > 0 ? (
+        <div className={error ? 'mt-2 space-y-1 border-t border-hairline pt-2' : 'space-y-1'}>
+          {diagnostics.map((item) => (
+            <div key={item.source} className="flex items-start gap-2 text-xs text-ink-subtle">
+              <span className="material-symbols-outlined mt-0.5 text-sm">settings_input_antenna</span>
+              <span>{item.message}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useFactoryAgentChat }) => {
   const chatRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const {
@@ -646,7 +693,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
     loading,
     isSending,
     isCancelling,
+    isRetryingConnection,
     error,
+    streamDiagnostics,
     pendingApproval,
     approvalReason,
     messageMode,
@@ -659,13 +708,14 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
     isResumingAfterApproval,
     handleSend,
     handleCancel,
+    retryConnection,
     decideApproval,
     decideConfirmation,
     startNewSession,
     switchSession,
     renameSession,
     deleteSession,
-  } = useFactoryAgentChat()
+  } = useChatState()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [editingName, setEditingName] = useState('')
@@ -712,220 +762,43 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
   let placeholder = 'Ask factory agent...'
   if (session?.status === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
   if (session?.status === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
-  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Request a plan change while approval is pending...'
+  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
   const displayStatus = friendlySessionStatus(session?.status, isSending)
 
   return (
     <div className="flex h-full relative">
-      {deleteTarget ? (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Delete session confirmation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !isDeletingSession) setDeleteTarget(null)
-          }}
-        >
-          <div className="w-full max-w-md rounded-lg border border-hairline bg-surface-1 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-ink">
-                  Delete session?
-                </div>
-                <div className="mt-1 text-xs text-ink-subtle">
-                  This will permanently remove the chat history and approvals for:
-                </div>
-              </div>
-              <button
-                type="button"
-                className="p-1.5 rounded-lg hover:bg-surface-2 text-ink-subtle"
-                onClick={() => {
-                  if (!isDeletingSession) setDeleteTarget(null)
-                }}
-                aria-label="Close"
-              >
-                <span className="material-symbols-outlined text-lg">close</span>
-              </button>
-            </div>
-
-            <div className="mt-3 rounded-md border border-hairline bg-surface-2 px-3 py-2">
-              <div className="text-xs font-semibold text-ink truncate">
-                {deleteTarget.name || deleteTarget.session_id}
-              </div>
-              <div className="mt-0.5 text-[11px] text-ink-subtle">
-                Session ID: {deleteTarget.session_id}
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                disabled={isDeletingSession}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold bg-surface-2 text-ink hover:bg-surface-3 disabled:opacity-60"
-                onClick={() => setDeleteTarget(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isDeletingSession}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold bg-inverse-canvas text-inverse-ink hover:opacity-90 disabled:opacity-60"
-                onClick={async () => {
-                  setIsDeletingSession(true)
-                  try {
-                    const ok = await deleteSession(deleteTarget.session_id)
-                    if (ok) setDeleteTarget(null)
-                  } finally {
-                    setIsDeletingSession(false)
-                  }
-                }}
-              >
-                {isDeletingSession ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      <aside
-        className={`${sidebarCollapsed ? 'w-14' : 'w-72'} border-r border-hairline bg-surface-1 transition-all duration-200 flex flex-col`}
-      >
-        <div className="px-2.5 py-2 border-b border-hairline flex items-center gap-2">
-          {!sidebarCollapsed ? (
-            <>
-              <button
-                type="button"
-                onClick={startNewSession}
-                className="flex-1 px-2.5 py-2 rounded-md text-xs font-semibold bg-primary text-white hover:bg-primary-hover"
-              >
-                New Session
-              </button>
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(true)}
-                className="p-2 rounded-md hover:bg-surface-2 text-ink-subtle"
-                aria-label="Collapse sessions"
-              >
-                <span className="material-symbols-outlined text-lg">left_panel_close</span>
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed(false)}
-              className="w-full p-2 rounded-md hover:bg-surface-2 text-ink-subtle"
-              aria-label="Expand sessions"
-            >
-              <span className="material-symbols-outlined text-lg">left_panel_open</span>
-            </button>
-          )}
-        </div>
-
-        {!sidebarCollapsed ? (
-          <div className="overflow-y-auto p-2 space-y-1">
-            {sessionList.length === 0 ? (
-              <div className="px-2 py-3 text-xs text-ink-subtle">
-                No sessions yet.
-              </div>
-            ) : (
-              sessionList.map((item) => {
-                const isActive = item.session_id === session?.session_id
-                const isEditing = editingSessionId === item.session_id
-                return (
-                  <div
-                    key={item.session_id}
-                    className={`group rounded-lg border transition-colors ${isActive
-                      ? 'border-primary/50 bg-primary/[0.14] shadow-[inset_4px_0_0_0_#5e6ad2] ring-1 ring-inset ring-primary/20'
-                      : 'border-transparent bg-transparent hover:border-hairline hover:bg-surface-2'
-                      }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => switchSession(item.session_id)}
-                      className="w-full text-left px-2.5 py-2"
-                    >
-                      {isEditing ? (
-                        <input
-                          autoFocus
-                          value={editingName}
-                          onChange={(e) => setEditingName(e.target.value)}
-                          onBlur={() => {
-                            renameSession(item.session_id, editingName)
-                            setEditingSessionId(null)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              renameSession(item.session_id, editingName)
-                              setEditingSessionId(null)
-                            }
-                            if (e.key === 'Escape') {
-                              setEditingSessionId(null)
-                            }
-                          }}
-                          className="w-full rounded-md border border-hairline bg-surface-2 px-2 py-1 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
-                        />
-                      ) : (
-                        <div className="flex items-start gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className={`truncate text-sm text-ink ${isActive ? 'font-semibold' : 'font-medium'}`}>
-                              {item.name}
-                            </div>
-                            <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-subtle">
-                              {friendlySessionStatus(item.status)}
-                            </div>
-                          </div>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              setEditingSessionId(item.session_id)
-                              setEditingName(item.name || '')
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                setEditingSessionId(item.session_id)
-                                setEditingName(item.name || '')
-                              }
-                            }}
-                            className="material-symbols-outlined text-base text-ink-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                          >
-                            edit
-                          </span>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              setDeleteTarget(item)
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                setDeleteTarget(item)
-                              }
-                            }}
-                            className="material-symbols-outlined text-base text-ink-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                            aria-label="Delete session"
-                            title="Delete session"
-                          >
-                            delete
-                          </span>
-                        </div>
-                      )}
-                    </button>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        ) : null}
-      </aside>
+      <DeleteSessionDialog
+        session={deleteTarget}
+        deleting={isDeletingSession}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          setIsDeletingSession(true)
+          try {
+            const ok = await deleteSession(deleteTarget.session_id)
+            if (ok) setDeleteTarget(null)
+          } finally {
+            setIsDeletingSession(false)
+          }
+        }}
+      />
+      <FactoryAgentSessionSidebar
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+        sessions={sessionList}
+        activeSessionId={session?.session_id}
+        editingSessionId={editingSessionId}
+        editingName={editingName}
+        onEditingNameChange={setEditingName}
+        onStartNewSession={startNewSession}
+        onSwitchSession={switchSession}
+        onStartEditing={(item) => {
+          setEditingSessionId(item.session_id)
+          setEditingName(item.name || '')
+        }}
+        onStopEditing={() => setEditingSessionId(null)}
+        onRenameSession={renameSession}
+        onDeleteSession={setDeleteTarget}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-hairline bg-surface-1">
@@ -966,11 +839,12 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
           />
         ) : null}
 
-        {error && (
-          <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
-            {error}
-          </div>
-        )}
+        <FactoryAgentDiagnostics
+          error={error}
+          streamDiagnostics={streamDiagnostics}
+          retrying={isRetryingConnection}
+          onRetryConnection={retryConnection}
+        />
 
         <div ref={chatRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto bg-canvas px-4 py-4">
           {loading && (turns?.length || 0) === 0 && messages.length === 0 ? (
@@ -1080,50 +954,25 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown }) => {
           )}
         </div>
 
-        <form
-          className="mx-4 mb-4 mt-2 flex flex-shrink-0 items-center gap-2 rounded-lg border border-hairline bg-surface-1 p-2.5"
-          onSubmit={(e) => {
-            e.preventDefault()
-            handleSend()
-          }}
-        >
-          <select
-            value={messageMode}
-            onChange={(e) => setMessageMode(e.target.value)}
-            disabled={inputDisabled}
-            className="h-11 rounded-md border border-hairline bg-surface-2 px-3 text-xs text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
-            aria-label="Message mode"
-          >
-            <option value="normal">Normal</option>
-            <option value="plan">Plan</option>
-          </select>
-          <textarea
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={placeholder}
-            disabled={inputDisabled}
-            className="flex-1 resize-none rounded-md border border-hairline bg-surface-2 px-4 py-2.5 text-sm text-ink outline-none placeholder:text-ink-tertiary focus:border-primary focus:ring-2 focus:ring-primary/30"
-          />
-          <button
-            type={canCancel ? 'button' : 'submit'}
-            onClick={canCancel ? handleCancel : undefined}
-            disabled={canCancel ? isCancelling : inputDisabled || !input.trim()}
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors disabled:opacity-60 ${canCancel
-              ? 'border border-hairline bg-surface-2 text-ink hover:bg-surface-3'
-              : 'bg-primary text-white hover:bg-primary-hover'
-              }`}
-            aria-label={canCancel ? 'Cancel current run' : 'Send'}
-          >
-            {canCancel ? (
-              <span className="material-symbols-outlined text-xl fill">stop</span>
-            ) : isSending ? (
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <span className="material-symbols-outlined text-xl">send</span>
-            )}
-          </button>
-        </form>
+        {session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL && pendingApproval ? (
+          <div className="mx-4 mt-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-xs text-ink-subtle">
+            Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it.
+          </div>
+        ) : null}
+
+        <FactoryAgentChatComposer
+          input={input}
+          onInputChange={setInput}
+          messageMode={messageMode}
+          onMessageModeChange={setMessageMode}
+          disabled={inputDisabled}
+          placeholder={placeholder}
+          canCancel={canCancel}
+          isCancelling={isCancelling}
+          isSending={isSending}
+          onCancel={handleCancel}
+          onSend={handleSend}
+        />
       </div>
     </div>
   )

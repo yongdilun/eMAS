@@ -8,6 +8,14 @@ const FACTORY_AGENT_BASE_URL = (
 
 const STATIC_BEARER = import.meta.env?.VITE_FACTORY_AGENT_BEARER_TOKEN || ''
 
+export const factoryAgentStreamAuth = {
+  hasBearerToken: Boolean(STATIC_BEARER),
+  eventSourceEnabled: !STATIC_BEARER,
+  disabledReason: STATIC_BEARER
+    ? 'Factory Agent REST uses a static bearer token, but browser EventSource cannot attach Authorization headers. Snapshot polling remains enabled.'
+    : '',
+}
+
 function buildUrl(path) {
   if (!path.startsWith('/')) return `${FACTORY_AGENT_BASE_URL}/${path}`
   return `${FACTORY_AGENT_BASE_URL}${path}`
