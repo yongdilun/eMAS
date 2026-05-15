@@ -36,6 +36,7 @@ Status key:
 | FA-009 | Align dependency and Docker packaging | Medium | 1 | Done | `docker build -t factory-agent-phase1-cleanup .`; container `import main` smoke passed | Revert ignore/dependency edits |
 | FA-010 | Replace mutable JSON defaults | Low/Medium | 1 | Done | `tests/test_model_json_defaults.py`; full `pytest` passed with project-local temp dir | Revert model default change |
 | FA-011 | Add missing auth/contract coverage | Medium | 3 | Done | `tests/test_phase3_contract_coverage.py`; related auth/rollback tests; full `pytest -q` passed | Revert tests independently |
+| FA-012 | Extract graph-sensitive orchestration services from `routes.py` | High | 6 | Not Started | Graph/checkpoint/approval regression suite plus full `pytest -q` | Revert one service extraction at a time |
 
 ## Phase Progress
 
@@ -167,6 +168,27 @@ Status key:
   - Optimize event delivery.
   - Profile graph compilation and checkpointing.
 
+### Phase 6: Graph Orchestration Service Extraction
+
+- Status: Not Started
+- Goal: Reduce `factory_agent/api/routes.py` by moving graph-sensitive orchestration behind tested services after Phase 5 runtime/deployment safety work.
+- Candidate changes:
+  - Move snapshot/timeline projection internals into a `SessionSnapshotService`.
+  - Move plan creation orchestration into a `PlanCreationService`.
+  - Move graph execution and resume orchestration into an `ExecutionService`.
+  - Move approval resume task coordination into an `ApprovalResumeService`.
+- What not to change:
+  - Public API paths, request bodies, response models, status codes, or auth behavior.
+  - Planner routing, checkpoint semantics, graph approval behavior, plan persistence semantics, or runtime execution behavior.
+- Verification:
+  - `pytest tests/test_phase3_contract_coverage.py -q`.
+  - `pytest tests/test_approval_atomicity.py -q`.
+  - Graph/checkpoint projection tests in `tests/test_planner_service_phase6.py`.
+  - Reliability regressions in `tests/test_reliability_e2e.py`.
+  - Full `pytest -q`.
+- Rollback:
+  - Extract one service at a time so each move can be reverted independently.
+
 ## Decision Log
 
 | Date | Decision | Reason | Follow-up |
@@ -181,4 +203,5 @@ Phase 4 is complete for the safe refactor scope. Next step:
 
 1. Start Phase 5 only after confirming this tracker state.
 2. Begin with FA-004 migration-backed startup schema work.
-3. Keep DB-level cascade constraints and graph-native plan/execution service extraction deferred until explicitly covered.
+3. Keep DB-level cascade constraints deferred to migration-backed work.
+4. Keep graph-native plan/execution service extraction deferred to Phase 6.
