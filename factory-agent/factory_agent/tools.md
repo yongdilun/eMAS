@@ -1,5 +1,926 @@
 # Available Tools
 
+## post__agent_transaction_bundle-dry-run
+**Description**: Dry run an agent transaction bundle
+**Method**: POST
+**Endpoint**: /agent/transaction/bundle-dry-run
+**Capability Tags**: ["agent", "transaction", "bundle", "dry", "run", "create", "an", "validate", "without", "committing", "change", "idempotency", "key", "staged", "write", "arg", "decision", "id", "intent", "output", "ref", "statu", "tool", "call", "name", "generation", "data", "committed", "operation", "index", "primary", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "bundle_idempotency_key": {
+      "type": "string"
+    },
+    "staged_writes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "output_ref": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          },
+          "write_generation": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {
+    "bundle_idempotency_key": "body",
+    "staged_writes": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "properties": {
+      "bundle_idempotency_key": {
+        "type": "string"
+      },
+      "staged_writes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "decision_id": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "intent_id": {
+              "type": "string"
+            },
+            "output_ref": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": "string"
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "write_generation": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-body-fields": [
+    "bundle_idempotency_key",
+    "staged_writes"
+  ],
+  "x-body-required": [],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "committed": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "idempotency_key": {
+                "type": "string"
+              },
+              "index": {
+                "type": "integer"
+              },
+              "output_ref": {
+                "type": "string"
+              },
+              "primary_id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__agent_transaction_commit
+**Description**: Commit an agent transaction bundle
+**Method**: POST
+**Endpoint**: /agent/transaction/commit
+**Capability Tags**: ["agent", "transaction", "commit", "create", "an", "bundle", "a", "validated", "idempotency", "key", "x", "staged", "write", "arg", "decision", "id", "intent", "output", "ref", "statu", "tool", "call", "name", "generation", "data", "committed", "dry", "run", "operation", "index", "primary", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "Idempotency-Key": {
+      "type": "string"
+    },
+    "X-Bundle-Idempotency-Key": {
+      "type": "string"
+    },
+    "bundle_idempotency_key": {
+      "type": "string"
+    },
+    "staged_writes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "output_ref": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tool_call_id": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          },
+          "write_generation": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {
+    "Idempotency-Key": "header",
+    "X-Bundle-Idempotency-Key": "header",
+    "bundle_idempotency_key": "body",
+    "staged_writes": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "properties": {
+      "bundle_idempotency_key": {
+        "type": "string"
+      },
+      "staged_writes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "decision_id": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "intent_id": {
+              "type": "string"
+            },
+            "output_ref": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": "string"
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "write_generation": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-body-fields": [
+    "bundle_idempotency_key",
+    "staged_writes"
+  ],
+  "x-body-required": [],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "committed": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "idempotency_key": {
+                "type": "string"
+              },
+              "index": {
+                "type": "integer"
+              },
+              "output_ref": {
+                "type": "string"
+              },
+              "primary_id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__ai_chatbot_approvals
+**Description**: Approve an approval
+**Method**: POST
+**Endpoint**: /ai/chatbot/approvals
+**Capability Tags**: ["ai", "chatbot", "approval", "create", "approve", "an", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__ai_chatbot_approvals_{id}
+**Description**: Get an approval by ID
+**Method**: GET
+**Endpoint**: /ai/chatbot/approvals/{id}
+**Capability Tags**: ["ai", "chatbot", "approval", "lookup", "an", "id", "support", "optional", "field", "selection", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "fields"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "fields": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## post__ai_chatbot_approvals_{id}_approve
+**Description**: Approve an approval
+**Method**: POST
+**Endpoint**: /ai/chatbot/approvals/{id}/approve
+**Capability Tags**: ["ai", "chatbot", "approval", "approve", "create", "an", "id", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__ai_chatbot_approvals_{id}_reject
+**Description**: Reject an approval
+**Method**: POST
+**Endpoint**: /ai/chatbot/approvals/{id}/reject
+**Capability Tags**: ["ai", "chatbot", "approval", "reject", "create", "an", "id", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## get__ai_chats
+**Description**: List all conversations
+**Method**: GET
+**Endpoint**: /ai/chats
+**Capability Tags**: ["ai", "chat", "list", "all", "conversation", "data", "created", "at", "id", "title", "updated", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__ai_chats
+**Description**: Create a new conversation
+**Method**: POST
+**Endpoint**: /ai/chats
+**Capability Tags**: ["ai", "chat", "create", "a", "new", "conversation", "title", "data", "created", "at", "id", "updated", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {
+    "title": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      }
+    }
+  },
+  "x-body-fields": [
+    "title"
+  ],
+  "x-body-required": [],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__ai_chats_{id}
+**Description**: Get a conversation by ID
+**Method**: GET
+**Endpoint**: /ai/chats/{id}
+**Capability Tags**: ["ai", "chat", "lookup", "a", "conversation", "id", "support", "optional", "field", "selection", "data", "created", "at", "title", "updated", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "fields"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "fields": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__ai_chats_{id}_approvals
+**Description**: List pending approvals
+**Method**: GET
+**Endpoint**: /ai/chats/{id}/approvals
+**Capability Tags**: ["ai", "chat", "approval", "chatbot", "lookup", "list", "pending", "id", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## post__ai_chats_{id}_messages
+**Description**: Send a message to a conversation
+**Method**: POST
+**Endpoint**: /ai/chats/{id}/messages
+**Capability Tags**: ["ai", "chat", "message", "create", "send", "a", "conversation", "id", "query", "data", "content", "created", "at", "metadata", "json", "intent", "result", "card", "entity", "etc", "role", "user", "assistant", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "query": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "query"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path",
+    "query": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "required": [
+      "query"
+    ],
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    }
+  },
+  "x-body-fields": [
+    "query"
+  ],
+  "x-body-required": [
+    "query"
+  ],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "metadata": {
+          "description": "JSON: intent, result_cards, entities, etc.",
+          "type": "string"
+        },
+        "role": {
+          "description": "user | assistant",
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
 ## post__ai_command
 **Description**: Parse a command
 **Method**: POST
@@ -1157,60 +2078,6 @@
 }
 `
 ---
-## post__ai_scheduling_jobs_{id}_apply-replenishment
-**Description**: Apply replenishment
-**Method**: POST
-**Endpoint**: /ai/scheduling/jobs/{id}/apply-replenishment
-**Capability Tags**: ["ai", "scheduling", "job", "apply", "replenishment", "create", "id", "data", "error", "success"]
-**Requires Approval**: true
-**Side Effect Level**: HIGH
-**Read Only**: false
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
 ## get__ai_scheduling_jobs_{id}_assist
 **Description**: Assist a job
 **Method**: GET
@@ -1443,60 +2310,6 @@
 }
 `
 ---
-## post__ai_scheduling_jobs_{id}_proposal
-**Description**: Generate a proposal
-**Method**: POST
-**Endpoint**: /ai/scheduling/jobs/{id}/proposal
-**Capability Tags**: ["ai", "scheduling", "job", "proposal", "create", "generate", "a", "id", "data", "error", "success"]
-**Requires Approval**: true
-**Side Effect Level**: HIGH
-**Read Only**: false
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
 ## get__ai_scheduling_jobs_{id}_proposals
 **Description**: List proposals
 **Method**: GET
@@ -1532,6 +2345,60 @@
   },
   "x-allowed-roles": [
     "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__ai_scheduling_jobs_{id}_proposals
+**Description**: Generate a proposal
+**Method**: POST
+**Endpoint**: /ai/scheduling/jobs/{id}/proposals
+**Capability Tags**: ["ai", "scheduling", "job", "proposal", "create", "generate", "a", "id", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
     "planner",
     "manager",
     "admin"
@@ -1733,6 +2600,60 @@
 **Method**: POST
 **Endpoint**: /ai/scheduling/proposals/{id}/apply
 **Capability Tags**: ["ai", "scheduling", "proposal", "apply", "create", "a", "id", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## post__ai_scheduling_proposals_{id}_apply-replenishment
+**Description**: Apply replenishment
+**Method**: POST
+**Endpoint**: /ai/scheduling/proposals/{id}/apply-replenishment
+**Capability Tags**: ["ai", "scheduling", "proposal", "apply", "replenishment", "create", "id", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
 **Read Only**: false
@@ -2264,401 +3185,6 @@
 }
 `
 ---
-## get__chatbot_approval_pending
-**Description**: List pending approvals
-**Method**: GET
-**Endpoint**: /chatbot/approval/pending
-**Capability Tags**: ["chatbot", "approval", "pending", "list", "id", "data", "arg", "json", "conversation", "created", "at", "decided", "by", "execution", "error", "idempotency", "key", "method", "path", "request", "requested", "result", "snapshot", "risk", "summary", "side", "effect", "level", "statu", "approved", "rejected", "executed", "expired", "failed", "tool", "name", "turn", "audit", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "args_json": {
-            "type": "string"
-          },
-          "conversation_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "decided_at": {
-            "type": "string"
-          },
-          "decided_by": {
-            "type": "string"
-          },
-          "execution_error": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "idempotency_key": {
-            "type": "string"
-          },
-          "method": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "requested_by": {
-            "type": "string"
-          },
-          "result_snapshot_id": {
-            "type": "string"
-          },
-          "risk_summary": {
-            "type": "string"
-          },
-          "side_effect_level": {
-            "type": "string"
-          },
-          "status": {
-            "description": "PENDING, APPROVED, REJECTED, EXECUTED, EXPIRED, FAILED",
-            "type": "string"
-          },
-          "tool_name": {
-            "type": "string"
-          },
-          "turn_audit_id": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
-## get__chatbot_approval_{id}
-**Description**: Get an approval by ID
-**Method**: GET
-**Endpoint**: /chatbot/approval/{id}
-**Capability Tags**: ["chatbot", "approval", "lookup", "an", "id", "support", "optional", "field", "selection", "data", "arg", "json", "conversation", "created", "at", "decided", "by", "execution", "error", "idempotency", "key", "method", "path", "request", "requested", "result", "snapshot", "risk", "summary", "side", "effect", "level", "statu", "pending", "approved", "rejected", "executed", "expired", "failed", "tool", "name", "turn", "audit", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "fields": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [
-    "fields"
-  ],
-  "x-param-sources": {
-    "id": "path",
-    "fields": "query"
-  },
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {
-        "args_json": {
-          "type": "string"
-        },
-        "conversation_id": {
-          "type": "string"
-        },
-        "created_at": {
-          "type": "string"
-        },
-        "decided_at": {
-          "type": "string"
-        },
-        "decided_by": {
-          "type": "string"
-        },
-        "execution_error": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "idempotency_key": {
-          "type": "string"
-        },
-        "method": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        },
-        "request_id": {
-          "type": "string"
-        },
-        "requested_by": {
-          "type": "string"
-        },
-        "result_snapshot_id": {
-          "type": "string"
-        },
-        "risk_summary": {
-          "type": "string"
-        },
-        "side_effect_level": {
-          "type": "string"
-        },
-        "status": {
-          "description": "PENDING, APPROVED, REJECTED, EXECUTED, EXPIRED, FAILED",
-          "type": "string"
-        },
-        "tool_name": {
-          "type": "string"
-        },
-        "turn_audit_id": {
-          "type": "string"
-        }
-      }
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
-## post__chatbot_approval_{id}_approve
-**Description**: Approve an approval
-**Method**: POST
-**Endpoint**: /chatbot/approval/{id}/approve
-**Capability Tags**: ["chatbot", "approval", "approve", "create", "an", "id", "data", "error", "success"]
-**Requires Approval**: true
-**Side Effect Level**: HIGH
-**Read Only**: false
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
-## post__chatbot_approval_{id}_reject
-**Description**: Reject an approval
-**Method**: POST
-**Endpoint**: /chatbot/approval/{id}/reject
-**Capability Tags**: ["chatbot", "approval", "reject", "create", "an", "id", "data", "arg", "json", "conversation", "created", "at", "decided", "by", "execution", "error", "idempotency", "key", "method", "path", "request", "requested", "result", "snapshot", "risk", "summary", "side", "effect", "level", "statu", "pending", "approved", "rejected", "executed", "expired", "failed", "tool", "name", "turn", "audit", "success"]
-**Requires Approval**: true
-**Side Effect Level**: HIGH
-**Read Only**: false
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {
-        "args_json": {
-          "type": "string"
-        },
-        "conversation_id": {
-          "type": "string"
-        },
-        "created_at": {
-          "type": "string"
-        },
-        "decided_at": {
-          "type": "string"
-        },
-        "decided_by": {
-          "type": "string"
-        },
-        "execution_error": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "idempotency_key": {
-          "type": "string"
-        },
-        "method": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        },
-        "request_id": {
-          "type": "string"
-        },
-        "requested_by": {
-          "type": "string"
-        },
-        "result_snapshot_id": {
-          "type": "string"
-        },
-        "risk_summary": {
-          "type": "string"
-        },
-        "side_effect_level": {
-          "type": "string"
-        },
-        "status": {
-          "description": "PENDING, APPROVED, REJECTED, EXECUTED, EXPIRED, FAILED",
-          "type": "string"
-        },
-        "tool_name": {
-          "type": "string"
-        },
-        "turn_audit_id": {
-          "type": "string"
-        }
-      }
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
 ## get__dashboard_kpis
 **Description**: Get KPIs
 **Method**: GET
@@ -2728,10 +3254,10 @@
 }
 `
 ---
-## get__formula
+## get__formulas
 **Description**: List all formulas
 **Method**: GET
-**Endpoint**: /formula
+**Endpoint**: /formulas
 **Capability Tags**: ["formula", "list", "all", "optional", "filter", "sorting", "and", "pagination", "q", "sort", "by", "dir", "limit", "offset", "field", "data", "createdat", "effectivefrom", "effectiveto", "formulaid", "formulaname", "instruction", "safetynote", "version", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
@@ -2833,10 +3359,10 @@
 }
 `
 ---
-## post__formula
+## post__formulas
 **Description**: Create a formula
 **Method**: POST
-**Endpoint**: /formula
+**Endpoint**: /formulas
 **Capability Tags**: ["formula", "create", "a", "id", "is", "generated", "the", "f", "prefix", "when", "omitted", "optional", "with", "name", "instruction", "safety", "note", "version", "data", "createdat", "effectivefrom", "effectiveto", "formulaid", "formulaname", "safetynote", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
@@ -2971,10 +3497,10 @@
 }
 `
 ---
-## get__formula_{id}
+## get__formulas_{id}
 **Description**: Get a formula by ID
 **Method**: GET
-**Endpoint**: /formula/{id}
+**Endpoint**: /formulas/{id}
 **Capability Tags**: ["formula", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "createdat", "effectivefrom", "effectiveto", "formulaid", "formulaname", "instruction", "safetynote", "version", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
@@ -3057,10 +3583,10 @@
 }
 `
 ---
-## delete__formula_{id}
+## delete__formulas_{id}
 **Description**: Delete a formula
 **Method**: DELETE
-**Endpoint**: /formula/{id}
+**Endpoint**: /formulas/{id}
 **Capability Tags**: ["formula", "delete", "a", "id", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
@@ -3111,10 +3637,10 @@
 }
 `
 ---
-## get__formula_{id}_ingredients
+## get__formulas_{id}_ingredients
 **Description**: List ingredients for a formula
 **Method**: GET
-**Endpoint**: /formula/{id}/ingredients
+**Endpoint**: /formulas/{id}/ingredients
 **Capability Tags**: ["formula", "ingredient", "lookup", "list", "a", "id", "data", "component", "type", "material", "name", "product", "quantity", "per", "unit", "scrap", "rate", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
@@ -3212,10 +3738,10 @@
 }
 `
 ---
-## post__formula_{id}_ingredients
+## post__formulas_{id}_ingredients
 **Description**: Add an ingredient to a formula
 **Method**: POST
-**Endpoint**: /formula/{id}/ingredients
+**Endpoint**: /formulas/{id}/ingredients
 **Capability Tags**: ["formula", "ingredient", "create", "add", "an", "a", "id", "material", "required", "if", "product", "not", "set", "percentage", "sub", "quantity", "backward", "compat", "map", "to", "per", "unit", "qty", "1", "of", "parent", "scrap", "rate", "0", "data", "component", "type", "lead", "time", "hour", "instant", "source", "make", "buy", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
@@ -4522,6 +5048,105 @@
     "data": {
       "type": "object",
       "additionalProperties": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__inventory_reservations
+**Description**: List inventory reservations
+**Method**: GET
+**Endpoint**: /inventory/reservations
+**Capability Tags**: ["inventory", "reservation", "list", "material", "id", "statu", "data", "createdat", "jobid", "jobstepid", "materialid", "neededat", "reservationid", "reservedqty", "updatedat", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "material_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "allocated",
+        "consumed",
+        "cancelled"
+      ]
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [
+    "material_id",
+    "status"
+  ],
+  "x-param-sources": {
+    "material_id": "query",
+    "status": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "jobID": {
+            "type": "string"
+          },
+          "jobStepID": {
+            "type": "string"
+          },
+          "materialID": {
+            "type": "string"
+          },
+          "neededAt": {
+            "type": "string"
+          },
+          "reservationID": {
+            "type": "string"
+          },
+          "reservedQty": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "consumed",
+              "released"
+            ]
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        }
+      }
     },
     "error": {
       "type": "string"
@@ -6172,6 +6797,131 @@
 }
 `
 ---
+## post__jobs_{id}_duplicate
+**Description**: Duplicate a job
+**Method**: POST
+**Endpoint**: /jobs/{id}/duplicate
+**Capability Tags**: ["job", "duplicate", "create", "a", "an", "optional", "deadline", "and", "quantity", "override", "id", "data", "created", "at", "statu", "is", "late", "by", "human", "readable", "2", "day", "4", "hour", "on", "time", "note", "priority", "product", "completed", "total", "updated", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-body-schema": {
+    "type": "object"
+  },
+  "x-body-fields": [],
+  "x-body-required": [],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "deadline": {
+          "type": "string"
+        },
+        "deadline_status": {
+          "type": "object",
+          "properties": {
+            "is_late": {
+              "type": "boolean"
+            },
+            "late_by": {
+              "description": "human-readable: \"2 days\", \"4 hours\", \"on time\"",
+              "type": "string"
+            }
+          }
+        },
+        "job_id": {
+          "type": "string",
+          "pattern": "^JOB-[A-Za-z0-9-]+$",
+          "x-ai-entity": "job",
+          "x-ai-id-prefix": "JOB-",
+          "x-ai-id-field": "job_id"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "urgent"
+          ]
+        },
+        "product_id": {
+          "type": "string",
+          "pattern": "^P-[A-Za-z0-9-]+$",
+          "x-ai-entity": "product",
+          "x-ai-id-prefix": "P-",
+          "x-ai-id-field": "product_id"
+        },
+        "quantity_completed": {
+          "type": "integer"
+        },
+        "quantity_total": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "scheduled",
+            "running",
+            "blocked",
+            "paused",
+            "completed",
+            "cancelled"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
 ## get__jobs_{id}_slots
 **Description**: List slots by job ID
 **Method**: GET
@@ -6296,6 +7046,105 @@
               "cancelled",
               "paused"
             ]
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## get__jobs_{id}_steps
+**Description**: List job steps
+**Method**: GET
+**Endpoint**: /jobs/{id}/steps
+**Capability Tags**: ["job", "step", "lookup", "list", "a", "id", "data", "quantity", "completed", "target", "statu", "sequence", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^JOB-[A-Za-z0-9-]+$",
+            "x-ai-entity": "job",
+            "x-ai-id-prefix": "JOB-",
+            "x-ai-id-field": "job_id"
+          },
+          "job_step_id": {
+            "type": "string",
+            "pattern": "^JS-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "JS-",
+            "x-ai-id-field": "job_step_id"
+          },
+          "quantity_completed": {
+            "type": "integer"
+          },
+          "quantity_target": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "scheduled",
+              "running",
+              "blocked",
+              "completed"
+            ]
+          },
+          "step_id": {
+            "type": "string",
+            "pattern": "^STP-[A-Za-z0-9-]+$",
+            "x-ai-entity": "step",
+            "x-ai-id-prefix": "STP-",
+            "x-ai-id-field": "step_id"
+          },
+          "step_sequence": {
+            "type": "integer"
           }
         }
       }
@@ -8317,97 +9166,6 @@
 }
 `
 ---
-## get__processes_product_{id}
-**Description**: Get a process by product ID
-**Method**: GET
-**Endpoint**: /processes/product/{id}
-**Capability Tags**: ["process", "product", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "fields": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [
-    "fields"
-  ],
-  "x-param-sources": {
-    "id": "path",
-    "fields": "query"
-  },
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {
-        "description": {
-          "type": "string"
-        },
-        "effectiveFrom": {
-          "type": "string"
-        },
-        "effectiveTo": {
-          "type": "string"
-        },
-        "isPrimary": {
-          "description": "primary vs alternative routing",
-          "type": "boolean"
-        },
-        "processID": {
-          "type": "string"
-        },
-        "processName": {
-          "type": "string"
-        },
-        "productID": {
-          "type": "string"
-        },
-        "sequence": {
-          "description": "order when multiple (0=primary)",
-          "type": "integer"
-        },
-        "version": {
-          "type": "integer"
-        }
-      }
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
-}
-`
----
 ## get__processes_{id}
 **Description**: Get a process by ID
 **Method**: GET
@@ -8984,10 +9742,10 @@
 }
 `
 ---
-## post__production-log
+## post__production-logs
 **Description**: Log production
 **Method**: POST
-**Endpoint**: /production-log
+**Endpoint**: /production-logs
 **Capability Tags**: ["production", "log", "create", "downtime", "minute", "gap", "7", "during", "slot", "for", "oee", "end", "time", "operator", "note", "quantity", "produced", "scrap", "id", "start", "data", "downtimeminute", "endtime", "operatornote", "productionid", "quantityproduced", "quantityscrap", "slotid", "starttime", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
@@ -9717,6 +10475,97 @@
       "type": "boolean"
     }
   }
+}
+`
+---
+## get__products_{id}_process
+**Description**: Get a process by product ID
+**Method**: GET
+**Endpoint**: /products/{id}/process
+**Capability Tags**: ["product", "process", "lookup", "a", "id", "support", "optional", "field", "selection", "data", "description", "effectivefrom", "effectiveto", "isprimary", "primary", "vs", "alternative", "routing", "processid", "processname", "productid", "sequence", "order", "when", "multiple", "0", "version", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "fields"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "fields": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "effectiveFrom": {
+          "type": "string"
+        },
+        "effectiveTo": {
+          "type": "string"
+        },
+        "isPrimary": {
+          "description": "primary vs alternative routing",
+          "type": "boolean"
+        },
+        "processID": {
+          "type": "string"
+        },
+        "processName": {
+          "type": "string"
+        },
+        "productID": {
+          "type": "string"
+        },
+        "sequence": {
+          "description": "order when multiple (0=primary)",
+          "type": "integer"
+        },
+        "version": {
+          "type": "integer"
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
 }
 `
 ---
@@ -10965,6 +11814,96 @@
 }
 `
 ---
+## get__reference_step-types
+**Description**: List step types
+**Method**: GET
+**Endpoint**: /reference/step-types
+**Capability Tags**: ["reference", "step", "type", "list", "q", "sort", "by", "dir", "limit", "offset", "field", "data", "default", "machine", "id", "name", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "q": {
+      "type": "string"
+    },
+    "sort_by": {
+      "type": "string"
+    },
+    "sort_dir": {
+      "type": "string"
+    },
+    "limit": {
+      "type": "integer"
+    },
+    "offset": {
+      "type": "integer"
+    },
+    "fields": {
+      "type": "string"
+    }
+  },
+  "x-path-params": [],
+  "x-query-params": [
+    "q",
+    "sort_by",
+    "sort_dir",
+    "limit",
+    "offset",
+    "fields"
+  ],
+  "x-param-sources": {
+    "q": "query",
+    "sort_by": "query",
+    "sort_dir": "query",
+    "limit": "query",
+    "offset": "query",
+    "fields": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "default_machine_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
 ## post__reference_step-types
 **Description**: Create a step type
 **Method**: POST
@@ -11342,11 +12281,11 @@
 }
 `
 ---
-## get__reports_bottleneck-forecast
+## get__reports_bottlenecks
 **Description**: Bottleneck forecast
 **Method**: GET
-**Endpoint**: /reports/bottleneck-forecast
-**Capability Tags**: ["report", "bottleneck", "forecast", "list", "data", "error", "success"]
+**Endpoint**: /reports/bottlenecks
+**Capability Tags**: ["report", "bottleneck", "list", "forecast", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -11557,11 +12496,11 @@
 }
 `
 ---
-## get__reports_oee-trends
+## get__reports_oee
 **Description**: OEE trends
 **Method**: GET
-**Endpoint**: /reports/oee-trends
-**Capability Tags**: ["report", "oee", "trend", "list", "data", "error", "success"]
+**Endpoint**: /reports/oee
+**Capability Tags**: ["report", "oee", "list", "trend", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -11597,49 +12536,6 @@
       "type": "boolean"
     }
   }
-}
-`
----
-## get__reports_parse-date-range
-**Description**: Parse date range
-**Method**: GET
-**Endpoint**: /reports/parse-date-range
-**Capability Tags**: ["report", "parse", "date", "range", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "string"
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
 }
 `
 ---
@@ -11691,146 +12587,6 @@
 **Method**: GET
 **Endpoint**: /reports/quality-trends
 **Capability Tags**: ["report", "quality", "trend", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
-}
-`
----
-## get__scheduling_backfill-training-dataset
-**Description**: Backfill training dataset
-**Method**: GET
-**Endpoint**: /scheduling/backfill-training-dataset
-**Capability Tags**: ["scheduling", "backfill", "training", "dataset", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
-}
-`
----
-## get__scheduling_candidate-machines
-**Description**: Candidate machines
-**Method**: GET
-**Endpoint**: /scheduling/steps/{id}/candidate-machines
-**Capability Tags**: ["scheduling", "step", "candidate", "machine", "lookup", "id", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    }
-  },
-  "required": [
-    "id"
-  ],
-  "x-path-params": [
-    "id"
-  ],
-  "x-query-params": [],
-  "x-param-sources": {
-    "id": "path"
-  },
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
-}
-`
----
-## get__scheduling_estimate-job-completion
-**Description**: Estimate job completion
-**Method**: GET
-**Endpoint**: /scheduling/estimate-job-completion
-**Capability Tags**: ["scheduling", "estimate", "job", "completion", "list", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -11949,11 +12705,11 @@
 }
 `
 ---
-## get__scheduling_is-time-before
-**Description**: Is time before
+## get__scheduling_jobs_{id}_earliest-completion
+**Description**: Estimate job completion
 **Method**: GET
-**Endpoint**: /scheduling/is-time-before
-**Capability Tags**: ["scheduling", "is", "time", "before", "list", "data", "error", "success"]
+**Endpoint**: /scheduling/jobs/{id}/earliest-completion
+**Capability Tags**: ["scheduling", "job", "earliest", "completion", "lookup", "estimate", "id", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -11961,10 +12717,21 @@
 `json
 {
   "type": "object",
-  "properties": {},
-  "x-path-params": [],
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
   "x-query-params": [],
-  "x-param-sources": {},
+  "x-param-sources": {
+    "id": "path"
+  },
   "x-allowed-roles": [
     "viewer",
     "planner",
@@ -11979,7 +12746,8 @@
   "type": "object",
   "properties": {
     "data": {
-      "type": "boolean"
+      "type": "object",
+      "properties": {}
     },
     "error": {
       "type": "string"
@@ -11987,51 +12755,7 @@
     "success": {
       "type": "boolean"
     }
-  },
-  "required": []
-}
-`
----
-## get__scheduling_is-valid-iso-date
-**Description**: Is valid ISO date
-**Method**: GET
-**Endpoint**: /scheduling/is-valid-iso-date
-**Capability Tags**: ["scheduling", "is", "valid", "iso", "date", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "boolean"
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  },
-  "required": []
+  }
 }
 `
 ---
@@ -12209,11 +12933,53 @@
 }
 `
 ---
-## get__scheduling_refresh-work-calendars
+## post__scheduling_refresh-work-calendars
 **Description**: Refresh work calendars
-**Method**: GET
+**Method**: POST
 **Endpoint**: /scheduling/refresh-work-calendars
-**Capability Tags**: ["scheduling", "refresh", "work", "calendar", "list", "data", "error", "success"]
+**Capability Tags**: ["scheduling", "refresh", "work", "calendar", "create", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {},
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {},
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## get__scheduling_settings
+**Description**: Get scheduling settings
+**Method**: GET
+**Endpoint**: /scheduling/settings
+**Capability Tags**: ["scheduling", "setting", "list", "data", "auto", "reschedule", "on", "event", "deviation", "penalty", "weight", "lateness", "lock", "in", "window", "minute", "objective", "public", "holiday", "setup", "slack", "split", "strategy", "updated", "at", "work", "day", "end", "time", "start", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -12240,7 +13006,50 @@
   "properties": {
     "data": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "auto_reschedule_on_event": {
+          "type": "boolean"
+        },
+        "deviation_penalty_weight": {
+          "type": "number"
+        },
+        "lateness_weight": {
+          "type": "number"
+        },
+        "lock_in_window_minutes": {
+          "type": "integer"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "public_holidays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "setup_weight": {
+          "type": "number"
+        },
+        "slack_weight": {
+          "type": "number"
+        },
+        "split_strategy": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "work_days": {
+          "type": "string"
+        },
+        "work_end_time": {
+          "type": "string"
+        },
+        "work_start_time": {
+          "type": "string"
+        }
+      }
     },
     "error": {
       "type": "string"
@@ -12248,7 +13057,8 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "required": []
 }
 `
 ---
@@ -12450,6 +13260,207 @@
 }
 `
 ---
+## post__scheduling_slots_validate
+**Description**: Validate slot
+**Method**: POST
+**Endpoint**: /scheduling/slots/validate
+**Capability Tags**: ["scheduling", "slot", "validate", "create", "exclude", "id", "job", "step", "machine", "quantity", "scheduled", "end", "start", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "exclude_slot_id": {
+      "type": "string"
+    },
+    "job_step_id": {
+      "type": "string",
+      "pattern": "^JS-[A-Za-z0-9-]+$",
+      "x-ai-entity": "step",
+      "x-ai-id-prefix": "JS-",
+      "x-ai-id-field": "job_step_id"
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id"
+    },
+    "quantity": {
+      "type": "integer"
+    },
+    "scheduled_end": {
+      "type": "string"
+    },
+    "scheduled_start": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_step_id",
+    "machine_id",
+    "quantity",
+    "scheduled_end",
+    "scheduled_start"
+  ],
+  "x-path-params": [],
+  "x-query-params": [],
+  "x-param-sources": {
+    "exclude_slot_id": "body",
+    "job_step_id": "body",
+    "machine_id": "body",
+    "quantity": "body",
+    "scheduled_end": "body",
+    "scheduled_start": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "required": [
+      "job_step_id",
+      "machine_id",
+      "quantity",
+      "scheduled_end",
+      "scheduled_start"
+    ],
+    "properties": {
+      "exclude_slot_id": {
+        "type": "string"
+      },
+      "job_step_id": {
+        "type": "string",
+        "pattern": "^JS-[A-Za-z0-9-]+$",
+        "x-ai-entity": "step",
+        "x-ai-id-prefix": "JS-",
+        "x-ai-id-field": "job_step_id"
+      },
+      "machine_id": {
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id"
+      },
+      "quantity": {
+        "type": "integer"
+      },
+      "scheduled_end": {
+        "type": "string"
+      },
+      "scheduled_start": {
+        "type": "string"
+      }
+    }
+  },
+  "x-body-fields": [
+    "exclude_slot_id",
+    "job_step_id",
+    "machine_id",
+    "quantity",
+    "scheduled_end",
+    "scheduled_start"
+  ],
+  "x-body-required": [
+    "job_step_id",
+    "machine_id",
+    "quantity",
+    "scheduled_end",
+    "scheduled_start"
+  ],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## get__scheduling_steps_{id}_candidate-machines
+**Description**: Candidate machines
+**Method**: GET
+**Endpoint**: /scheduling/steps/{id}/candidate-machines
+**Capability Tags**: ["scheduling", "step", "candidate", "machine", "lookup", "id", "start", "end", "data", "error", "success"]
+**Requires Approval**: false
+**Side Effect Level**: NONE
+**Read Only**: true
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "start": {
+      "type": "string"
+    },
+    "end": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [
+    "start",
+    "end"
+  ],
+  "x-param-sources": {
+    "id": "path",
+    "start": "query",
+    "end": "query"
+  },
+  "x-allowed-roles": [
+    "viewer",
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
 ## get__scheduling_training-dataset
 **Description**: Export training dataset
 **Method**: GET
@@ -12493,54 +13504,11 @@
 }
 `
 ---
-## get__scheduling_training-dataset-stats
-**Description**: Training dataset stats
-**Method**: GET
-**Endpoint**: /scheduling/training-dataset-stats
-**Capability Tags**: ["scheduling", "training", "dataset", "stat", "list", "data", "error", "success"]
-**Requires Approval**: false
-**Side Effect Level**: NONE
-**Read Only**: true
-**Input Schema**:
-`json
-{
-  "type": "object",
-  "properties": {},
-  "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
-  "x-allowed-roles": [
-    "viewer",
-    "planner",
-    "manager",
-    "admin"
-  ]
-}
-`
-**Output Schema**:
-`json
-{
-  "type": "object",
-  "properties": {
-    "data": {
-      "type": "object",
-      "properties": {}
-    },
-    "error": {
-      "type": "string"
-    },
-    "success": {
-      "type": "boolean"
-    }
-  }
-}
-`
----
-## post__scheduling_validate-slot
-**Description**: Validate slot
+## post__scheduling_training-dataset_backfill
+**Description**: Backfill training dataset
 **Method**: POST
-**Endpoint**: /scheduling/validate-slot
-**Capability Tags**: ["scheduling", "validate", "slot", "create", "data", "error", "success"]
+**Endpoint**: /scheduling/training-dataset/backfill
+**Capability Tags**: ["scheduling", "training", "dataset", "backfill", "create", "data", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
 **Read Only**: false
@@ -12578,11 +13546,11 @@
 }
 `
 ---
-## get__scheduling_validate-work-days
-**Description**: Validate work days
+## get__scheduling_training-dataset_stats
+**Description**: Training dataset stats
 **Method**: GET
-**Endpoint**: /scheduling/validate-work-days
-**Capability Tags**: ["scheduling", "validate", "work", "day", "list", "data", "error", "success"]
+**Endpoint**: /scheduling/training-dataset/stats
+**Capability Tags**: ["scheduling", "training", "dataset", "stat", "list", "since", "data", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -12590,10 +13558,18 @@
 `json
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "since": {
+      "type": "string"
+    }
+  },
   "x-path-params": [],
-  "x-query-params": [],
-  "x-param-sources": {},
+  "x-query-params": [
+    "since"
+  ],
+  "x-param-sources": {
+    "since": "query"
+  },
   "x-allowed-roles": [
     "viewer",
     "planner",
@@ -12617,16 +13593,15 @@
     "success": {
       "type": "boolean"
     }
-  },
-  "required": []
+  }
 }
 `
 ---
-## get__settings_get
+## get__settings
 **Description**: Get settings
 **Method**: GET
-**Endpoint**: /settings/get
-**Capability Tags**: ["setting", "get", "list", "data", "ai", "enabled", "integration", "language", "notification", "theme", "error", "success"]
+**Endpoint**: /settings
+**Capability Tags**: ["setting", "list", "data", "ai", "enabled", "integration", "language", "notification", "theme", "error", "success"]
 **Requires Approval**: false
 **Side Effect Level**: NONE
 **Read Only**: true
@@ -12685,10 +13660,10 @@
 }
 `
 ---
-## put__settings_update
+## put__settings
 **Description**: Update settings
 **Method**: PUT
-**Endpoint**: /settings/update
+**Endpoint**: /settings
 **Capability Tags**: ["setting", "update", "data", "ai", "enabled", "integration", "language", "notification", "theme", "error", "success"]
 **Requires Approval**: true
 **Side Effect Level**: HIGH
@@ -12701,6 +13676,11 @@
   "x-path-params": [],
   "x-query-params": [],
   "x-param-sources": {},
+  "x-body-schema": {
+    "type": "object"
+  },
+  "x-body-fields": [],
+  "x-body-required": [],
   "x-allowed-roles": [
     "planner",
     "manager",
@@ -12892,6 +13872,306 @@
 ## put__slots_{id}
 **Description**: Update a slot
 **Method**: PUT
+**Endpoint**: /slots/{id}
+**Capability Tags**: ["slot", "job", "update", "a", "id", "actual", "end", "start", "production", "execution", "gap", "2", "pause", "resume", "complete", "allocation", "percent", "batch", "sequence", "is", "parallel", "machine", "quantity", "planned", "scheduled", "statu", "data", "buffer", "time", "minute", "changeover", "cleaning", "step", "preparation", "processing", "proposal", "split", "group", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "actual_end": {
+      "type": "string"
+    },
+    "actual_start": {
+      "description": "Production / execution (Gap 2 - Start, Pause, Resume, Complete)",
+      "type": "string"
+    },
+    "allocation_percent": {
+      "type": "number"
+    },
+    "batch_sequence": {
+      "type": "integer"
+    },
+    "is_parallel": {
+      "type": "boolean"
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^M-[A-Za-z0-9-]+$",
+      "x-ai-entity": "machine",
+      "x-ai-id-prefix": "M-",
+      "x-ai-id-field": "machine_id"
+    },
+    "quantity_planned": {
+      "type": "integer"
+    },
+    "scheduled_end": {
+      "type": "string"
+    },
+    "scheduled_start": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "running",
+        "paused",
+        "completed",
+        "cancelled"
+      ]
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path",
+    "actual_end": "body",
+    "actual_start": "body",
+    "allocation_percent": "body",
+    "batch_sequence": "body",
+    "is_parallel": "body",
+    "machine_id": "body",
+    "quantity_planned": "body",
+    "scheduled_end": "body",
+    "scheduled_start": "body",
+    "status": "body"
+  },
+  "x-body-schema": {
+    "type": "object",
+    "properties": {
+      "actual_end": {
+        "type": "string"
+      },
+      "actual_start": {
+        "description": "Production / execution (Gap 2 - Start, Pause, Resume, Complete)",
+        "type": "string"
+      },
+      "allocation_percent": {
+        "type": "number"
+      },
+      "batch_sequence": {
+        "type": "integer"
+      },
+      "is_parallel": {
+        "type": "boolean"
+      },
+      "machine_id": {
+        "type": "string",
+        "pattern": "^M-[A-Za-z0-9-]+$",
+        "x-ai-entity": "machine",
+        "x-ai-id-prefix": "M-",
+        "x-ai-id-field": "machine_id"
+      },
+      "quantity_planned": {
+        "type": "integer"
+      },
+      "scheduled_end": {
+        "type": "string"
+      },
+      "scheduled_start": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "planned",
+          "running",
+          "paused",
+          "completed",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "x-body-fields": [
+    "actual_end",
+    "actual_start",
+    "allocation_percent",
+    "batch_sequence",
+    "is_parallel",
+    "machine_id",
+    "quantity_planned",
+    "scheduled_end",
+    "scheduled_start",
+    "status"
+  ],
+  "x-body-required": [],
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "actual_end": {
+          "type": "string"
+        },
+        "actual_start": {
+          "type": "string"
+        },
+        "allocation_percent": {
+          "type": "number"
+        },
+        "batch_sequence": {
+          "type": "integer"
+        },
+        "buffer_time_minutes": {
+          "type": "integer"
+        },
+        "changeover_time_minutes": {
+          "type": "integer"
+        },
+        "cleaning_time_minutes": {
+          "type": "integer"
+        },
+        "is_parallel": {
+          "type": "boolean"
+        },
+        "job_step_id": {
+          "type": "string",
+          "pattern": "^JS-[A-Za-z0-9-]+$",
+          "x-ai-entity": "step",
+          "x-ai-id-prefix": "JS-",
+          "x-ai-id-field": "job_step_id"
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^M-[A-Za-z0-9-]+$",
+          "x-ai-entity": "machine",
+          "x-ai-id-prefix": "M-",
+          "x-ai-id-field": "machine_id"
+        },
+        "preparation_time_minutes": {
+          "type": "integer"
+        },
+        "processing_time_minutes": {
+          "type": "integer"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+          "x-ai-entity": "proposal",
+          "x-ai-id-prefix": "AIPROP-",
+          "x-ai-id-field": "proposal_id"
+        },
+        "quantity_planned": {
+          "type": "integer"
+        },
+        "scheduled_end": {
+          "type": "string"
+        },
+        "scheduled_start": {
+          "type": "string"
+        },
+        "slot_id": {
+          "type": "string",
+          "pattern": "^SLOT-[A-Za-z0-9-]+$",
+          "x-ai-entity": "slot",
+          "x-ai-id-prefix": "SLOT-",
+          "x-ai-id-field": "slot_id"
+        },
+        "split_group_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "running",
+            "completed",
+            "cancelled",
+            "paused"
+          ]
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  },
+  "required": []
+}
+`
+---
+## delete__slots_{id}
+**Description**: Cancel a slot
+**Method**: DELETE
+**Endpoint**: /slots/{id}
+**Capability Tags**: ["slot", "job", "delete", "cancel", "a", "id", "data", "error", "success"]
+**Requires Approval**: true
+**Side Effect Level**: HIGH
+**Read Only**: false
+**Input Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "x-path-params": [
+    "id"
+  ],
+  "x-query-params": [],
+  "x-param-sources": {
+    "id": "path"
+  },
+  "x-allowed-roles": [
+    "planner",
+    "manager",
+    "admin"
+  ]
+}
+`
+**Output Schema**:
+`json
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {}
+    },
+    "error": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    }
+  }
+}
+`
+---
+## patch__slots_{id}
+**Description**: Update a slot
+**Method**: PATCH
 **Endpoint**: /slots/{id}
 **Capability Tags**: ["slot", "job", "update", "a", "id", "actual", "end", "start", "production", "execution", "gap", "2", "pause", "resume", "complete", "allocation", "percent", "batch", "sequence", "is", "parallel", "machine", "quantity", "planned", "scheduled", "statu", "data", "buffer", "time", "minute", "changeover", "cleaning", "step", "preparation", "processing", "proposal", "split", "group", "error", "success"]
 **Requires Approval**: true
