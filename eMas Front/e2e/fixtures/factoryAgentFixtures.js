@@ -3,18 +3,26 @@ export const machineStatusPrompt = 'Show status for machine M-CNC-01'
 export const machineStatusAnswer =
   'Machine M-CNC-01 is running normally at 87% utilization. No active alarms are reported, and the next preventive maintenance window is scheduled for Friday at 14:00.'
 
+export const backendUnavailablePrompt = 'Simulate backend unavailable during plan creation'
+
+export const emptyAssistantPrompt = 'Return an empty completed answer'
+
+export const emptyAssistantFallbackAnswer = 'Execution completed.'
+
 const baseTime = Date.parse('2026-05-16T04:00:00.000Z')
 
 export function fixtureTime(offsetSeconds = 0) {
   return new Date(baseTime + offsetSeconds * 1000).toISOString()
 }
 
-export function createHappyPathSession({ sessionId, userId, name }) {
+export function createFactoryAgentSession({ sessionId, userId, name, scenarioName = 'readMachineHappyPath' }) {
   const createdAt = fixtureTime()
   return {
     session_id: sessionId,
     user_id: userId || 'frontend-operator',
     name: name || 'Playwright session',
+    scenario_name: scenarioName,
+    current_turn_id: null,
     status: 'IDLE',
     created_at: createdAt,
     updated_at: createdAt,
@@ -29,19 +37,32 @@ export function createHappyPathSession({ sessionId, userId, name }) {
   }
 }
 
-export function buildHappyPathPlan(session) {
+export function createHappyPathSession(options) {
+  return createFactoryAgentSession(options)
+}
+
+export function buildFactoryAgentPlan(
+  session,
+  {
+    planId = 'pw-plan-machine-status',
+    objective = 'Review machine status for M-CNC-01',
+    stepId = 'pw-step-machine-status',
+    toolName = 'get_machine_status',
+    status = 'EXECUTING',
+  } = {},
+) {
   return {
-    plan_id: 'pw-plan-machine-status',
+    plan_id: planId,
     session_id: session.session_id,
-    status: 'EXECUTING',
-    objective: 'Review machine status for M-CNC-01',
+    status,
+    objective,
     created_at: fixtureTime(2),
     updated_at: fixtureTime(2),
     steps: [
       {
-        id: 'pw-step-machine-status',
-        plan_id: 'pw-plan-machine-status',
-        tool_name: 'get_machine_status',
+        id: stepId,
+        plan_id: planId,
+        tool_name: toolName,
         status: 'IN_PROGRESS',
         created_at: fixtureTime(3),
       },
@@ -49,64 +70,182 @@ export function buildHappyPathPlan(session) {
   }
 }
 
-export function activeHappyPathSnapshot(session) {
+export function buildHappyPathPlan(session) {
+  return buildFactoryAgentPlan(session)
+}
+
+export function userMessageEvent({ turnId, content, offsetSeconds = 1 }) {
+  return {
+    event_id: turnId,
+    turn_id: turnId,
+    event_type: 'user_message',
+    role: 'user',
+    content,
+    status: 'DONE',
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function planCreatedEvent({
+  turnId,
+  eventId = 'pw-plan-created',
+  planId = 'pw-plan-machine-status',
+  content = 'Checking machine status for M-CNC-01.',
+  status = 'COMPLETED',
+  offsetSeconds = 2,
+} = {}) {
+  return {
+    event_id: eventId,
+    turn_id: turnId,
+    event_type: 'plan_created',
+    content,
+    status,
+    operation_id: planId,
+    details: {
+      status,
+      plan_id: planId,
+      plan_explanation: content,
+    },
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function executionStartedEvent({
+  turnId,
+  eventId = 'pw-execution-started',
+  planId = 'pw-plan-machine-status',
+  offsetSeconds = 3,
+} = {}) {
+  return {
+    event_id: eventId,
+    turn_id: turnId,
+    event_type: 'execution_started',
+    content: 'Execution started.',
+    status: 'IN_PROGRESS',
+    operation_id: planId,
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function toolResultEvent({
+  turnId,
+  eventId = 'pw-tool-result-machine-status',
+  stepId = 'pw-step-machine-status',
+  planId = 'pw-plan-machine-status',
+  toolName = 'get_machine_status',
+  content = machineStatusAnswer,
+  details,
+  offsetSeconds = 4,
+} = {}) {
+  return {
+    event_id: eventId,
+    turn_id: turnId,
+    event_type: 'tool_result',
+    step_id: stepId,
+    tool_name: toolName,
+    content,
+    status: 'DONE',
+    operation_id: planId,
+    details,
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function sessionCompletedEvent({
+  turnId,
+  eventId = 'pw-session-completed',
+  planId = 'pw-plan-machine-status',
+  content = machineStatusAnswer,
+  reason = 'happy_path_fixture',
+  offsetSeconds = 5,
+} = {}) {
+  return {
+    event_id: eventId,
+    turn_id: turnId,
+    event_type: 'session_completed',
+    content,
+    status: 'COMPLETED',
+    operation_id: planId,
+    details: { reason },
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function sessionFailedEvent({
+  turnId,
+  eventId = 'pw-session-failed',
+  content = 'Service temporarily unavailable. Please retry shortly.',
+  reason = 'backend_unavailable_fixture',
+  offsetSeconds = 3,
+} = {}) {
+  return {
+    event_id: eventId,
+    turn_id: turnId,
+    event_type: 'session_failed',
+    content,
+    status: 'FAILED',
+    details: { reason },
+    created_at: fixtureTime(offsetSeconds),
+  }
+}
+
+export function snapshotFromSession(session, activitySteps = []) {
   return {
     session: sessionSummary(session),
     messages: session.messages,
     timeline: [...session.timeline],
     plan: session.plan,
     steps: session.steps,
-    activity_steps: [
-      {
-        id: 'pw-activity-understanding',
-        timestamp: Date.parse(fixtureTime(1)) / 1000,
-        group: 'planning',
-        label: 'Understanding your request',
-        detail: 'Reviewing machine M-CNC-01 and recent context',
-        state: 'running',
-      },
-    ],
-    pending_approval: null,
+    activity_steps: activitySteps,
+    pending_approval: session.pending_approval || null,
     resume_hint: null,
   }
 }
 
+export function activeHappyPathSnapshot(session) {
+  return snapshotFromSession(session, [
+    {
+      id: 'pw-activity-understanding',
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'Understanding your request',
+      detail: 'Reviewing machine M-CNC-01 and recent context',
+      state: 'running',
+    },
+  ])
+}
+
 export function completedHappyPathSnapshot(session) {
-  return {
-    session: sessionSummary(session),
-    messages: session.messages,
-    timeline: [...session.timeline],
-    plan: session.plan,
-    steps: session.steps,
-    activity_steps: [
-      {
-        id: 'pw-activity-understanding',
-        timestamp: Date.parse(fixtureTime(1)) / 1000,
-        group: 'planning',
-        label: 'Understanding your request',
-        detail: 'Reviewing machine M-CNC-01 and recent context',
-        state: 'success',
-      },
-      {
-        id: 'pw-activity-checking',
-        timestamp: Date.parse(fixtureTime(4)) / 1000,
-        group: 'research',
-        label: 'Gathering information',
-        detail: 'Checking machine records',
-        state: 'success',
-      },
-      {
-        id: 'pw-activity-complete',
-        timestamp: Date.parse(fixtureTime(5)) / 1000,
-        group: 'response',
-        label: 'Run complete',
-        detail: 'All steps finished. See the thread below.',
-        state: 'complete',
-      },
-    ],
-    pending_approval: null,
-    resume_hint: null,
-  }
+  return snapshotFromSession(session, completedActivitySteps())
+}
+
+export function completedActivitySteps() {
+  return [
+    {
+      id: 'pw-activity-understanding',
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'Understanding your request',
+      detail: 'Reviewing machine M-CNC-01 and recent context',
+      state: 'success',
+    },
+    {
+      id: 'pw-activity-checking',
+      timestamp: Date.parse(fixtureTime(4)) / 1000,
+      group: 'research',
+      label: 'Gathering information',
+      detail: 'Checking machine records',
+      state: 'success',
+    },
+    {
+      id: 'pw-activity-complete',
+      timestamp: Date.parse(fixtureTime(5)) / 1000,
+      group: 'response',
+      label: 'Run complete',
+      detail: 'All steps finished. See the thread below.',
+      state: 'complete',
+    },
+  ]
 }
 
 export function sessionSummary(session) {

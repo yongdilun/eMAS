@@ -22,7 +22,7 @@ Use one of:
 | 0 | Discovery and risk mapping | Done | Current repo shape, test setup, frontend chat flow, backend/SSE routes, env/auth behavior, and risks were inspected and documented. |
 | 1 | Playwright setup and baseline browser tests | Done | Marked In Progress during implementation; completed with Playwright config, mock Factory Agent server, and two Chromium baseline specs. |
 | 2 | Chatbot happy-path E2E tests | Done | Marked In Progress during implementation; completed with deterministic mocked session/message/plan/execute/snapshot lifecycle and one Chromium happy-path browser spec. |
-| 3 | Deterministic mocking for chatbot responses | Not Started | Depends on baseline mock server and happy-path flow. |
+| 3 | Deterministic mocking for chatbot responses | Done | Completed with a lightweight named scenario store, per-session scenario state, in-memory request logs, reset endpoint, reusable fixture builders, preserved happy path, and two additional REST-backed L1 scenarios. |
 | 4 | SSE streaming tests | Not Started | Depends on fixture-driven mock server with real `text/event-stream`. |
 | 5 | Failure, timeout, retry, and disconnect scenarios | Not Started | Depends on SSE and fixture framework. |
 | 6 | CI integration | Not Started | No root CI config found yet. |
@@ -64,11 +64,11 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 | 17 | Static bearer token mode disables EventSource and uses polling fallback. | Not Started | L2 |
 | 18 | Malformed SSE payload is ignored and the next valid event still updates UI. | Not Started | L2 |
 | 19 | SSE connection drops and UI shows snapshot polling fallback diagnostic. | Not Started | L2 |
-| 20 | Plan creation returns 503 and UI shows backend unavailable/error state without fake success. | Not Started | L1 |
+| 20 | Plan creation returns 503 and UI shows backend unavailable/error state without fake success. | Done | L1 |
 | 21 | Execute returns 409 once, UI/backend retries, and final response completes. | Not Started | L1 |
 | 22 | Snapshot returns session not found and UI recovers to a safe state. | Not Started | L1 |
 | 23 | Active session never reaches terminal state before timeout and UI remains honest. | Not Started | L2 |
-| 24 | Completed snapshot has empty assistant content and does not show a stale previous answer. | Not Started | L1 |
+| 24 | Completed snapshot has empty assistant content and does not show a stale previous answer. | Done | L1 |
 | 25 | User cancels an active run and final UI returns to idle/cancelled state. | Not Started | L2 |
 | 26 | User closes modal or navigates during an active stream and EventSource disconnects. | Not Started | L2 |
 | 27 | Approval-required response renders risk summary, preview/table, and Approve/Reject actions. | Not Started | L1 |
@@ -126,15 +126,17 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 
 ### Phase 3: Deterministic Mocking for Chatbot Responses
 
-- [ ] Add named scenario fixture store.
-- [ ] Add mock server per-test reset.
-- [ ] Add REST request log capture.
-- [ ] Add reusable Factory Agent snapshot builders.
+- [x] Add named scenario fixture store.
+- [x] Add mock server per-test reset.
+- [x] Add REST request log capture.
+- [x] Add reusable Factory Agent snapshot builders.
 - [ ] Add fixture for RAG answer with sources.
 - [ ] Add fixture for approval-required response.
-- [ ] Add fixture for backend unavailable response.
-- [ ] Add fixture for empty completed answer.
-- [ ] Document how to add scenarios.
+- [x] Add fixture for backend unavailable response.
+- [x] Add fixture for empty completed answer.
+- [x] Document how to add scenarios.
+
+Phase 3 note: RAG/source and approval-required fixtures remain available L1 expansion items, but were not necessary to complete this phase because scenarios 20 and 24 now cover additional deterministic REST-backed mocked behavior beyond the preserved happy path.
 
 ### Phase 4: SSE Streaming Tests
 
@@ -180,7 +182,7 @@ Target: about 30 meaningful, non-redundant scenarios. Implement them gradually; 
 
 ## Current Blockers
 
-- None for Phase 2.
+- None for Phase 4.
 - There is still no root CI workflow to extend; keep CI integration for Phase 6.
 
 ## Open Questions
@@ -291,6 +293,14 @@ Phase 2:
 - `npm run test:e2e -- --project=chromium`: passed, 3 Chromium Playwright tests.
 - `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
 
+Phase 3:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; Phase 3 working tree changes present before commit.
+- `npm run test:e2e -- --project=chromium --grep "scenario fixtures|happy path"`: initially failed because the test request-log filter only matched the message request and the stale-answer assertion assumed one rendered copy of the first answer; fixed by carrying prompt metadata into request logs and comparing against the pre-existing rendered answer count. Re-run passed, 3 Chromium Playwright tests.
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 5 Chromium Playwright tests.
+- `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -325,8 +335,17 @@ Phase 2 implementation:
 - `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
 - `eMas Front/e2e/specs/chat-happy-path.spec.js`
 
+Phase 3 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/fixtures/factoryAgentFixtures.js`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/specs/chat-fixtures.spec.js`
+
 ## Next Action
 
-Begin Phase 3 by extracting the happy-path mock into a small named scenario/reset pattern only if needed for additional deterministic chatbot cases.
+Begin Phase 4 by adding scripted notification/activity SSE support and browser tests for EventSource-driven snapshot invalidation and activity ordering.
 
-Do not add SSE streaming scenarios until Phase 4, and do not remove the existing Go/Python E2E pipeline.
+Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.
