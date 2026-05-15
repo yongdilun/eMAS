@@ -18,7 +18,7 @@ Use one of: `Not started`, `In progress`, `Passed`, `Failed`, `Skipped`, `Could 
 | 1 | Create integration worktree | Passed | Created `integration/qa-upgrade-merge` at `C:\Users\dilun\OneDrive\Documents\emas-integration-qa`. |
 | 2 | Review all branches before merging | Passed | Reviewed `git log`, `git diff --stat`, `git diff --name-status`, shared file overlap, and watchpoint paths for all three audit branches. No merges performed. |
 | 3 | Merge Go backend branch | Passed | `audit/go-backend-phase-5` merged cleanly with no conflicts in merge commit `b3161cf`. Initial handler failures were fixed in Phase 3 stabilization; `go test ./...` and `go test ./internal/e2e` now pass. Phase 4 is ready to start. |
-| 4 | Merge Factory Agent branch | Failed | `audit/factory-agent` merged in `9b42d3a` after one documentation conflict was resolved. Required `python -m pytest factory-agent/tests` exited 1 because pytest could not create/use the default temp root `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`; targeted checks passed/skipped as noted below. Phase 5 is not ready until the full suite can be rerun cleanly or the temp-base workaround is accepted. |
+| 4 | Merge Factory Agent branch | Passed | `audit/factory-agent` merged in `9b42d3a` after one documentation conflict was resolved. Initial `python -m pytest factory-agent/tests` exited 1 because pytest could not create/use the default temp root `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`; the same full suite passed when rerun with a repo-local `--basetemp ".pytest-basetemp"`. Targeted checks passed/skipped as noted below. Phase 5 is ready to start. |
 | 5 | Merge frontend branch | Not started | Branch: `audit/frontend-phase-5`. |
 | 6 | Full integration verification | Not started | Run after all three merges are complete. |
 | 7 | Cross-layer contract check | Not started | Run after integration verification. |
@@ -63,7 +63,7 @@ Use one of: `Not started`, `In progress`, `Passed`, `Failed`, `Skipped`, `Could 
 | Step | Branch | Result | Conflicts | Checks Run | Safe To Continue |
 |---|---|---|---|---|---|
 | 1 | `audit/go-backend-phase-5` | Merged cleanly with `git merge --no-ff audit/go-backend-phase-5` (`b3161cf`), then stabilized on the integration branch. | None | `go test ./...` passed; `go test ./internal/e2e` passed; targeted handler regression subset passed. | Yes |
-| 2 | `audit/factory-agent` | Merged with `git merge --no-ff audit/factory-agent`; merge completed as `9b42d3a Merge branch 'audit/factory-agent' into integration/qa-upgrade-merge`. | One conflict in `factory-agent/CODE_PRACTICE_RULES.md`, resolved before committing. | Full Factory Agent suite failed under the default pytest temp path: 489 passed, 4 skipped, 20 xfailed, 3 errors. Seed manifest targeted check passed. Live RAG targeted check skipped because opt-in env vars are missing. Diagnostic ingestion rerun with `--basetemp` passed. | No; the required full-suite command needs a clean rerun or an accepted temp-base workaround before Phase 5. |
+| 2 | `audit/factory-agent` | Merged with `git merge --no-ff audit/factory-agent`; merge completed as `9b42d3a Merge branch 'audit/factory-agent' into integration/qa-upgrade-merge`. | One conflict in `factory-agent/CODE_PRACTICE_RULES.md`, resolved before committing. | Initial full Factory Agent suite failed under the default pytest temp path: 489 passed, 4 skipped, 20 xfailed, 3 errors. Full suite rerun with repo-local `--basetemp` passed: 492 passed, 4 skipped, 20 xfailed. Seed manifest targeted check passed. Live RAG targeted check skipped because opt-in env vars are missing. | Yes |
 | 3 | `audit/frontend-phase-5` | Not started |  |  |  |
 
 ## Conflicts Resolved
@@ -95,6 +95,7 @@ Phase 3 found no merge conflicts. Phase 4 found one merge conflict and it was re
 | Factory Agent merge | `git merge --no-ff audit/factory-agent` from repo root, then `git commit --no-edit` after resolving the conflict | Passed | Initial merge stopped with one conflict in `factory-agent/CODE_PRACTICE_RULES.md`; conflict was resolved and merge commit `9b42d3a` was created. |
 | Phase 4 post-merge status | `git status --short --branch` from repo root | Passed | Output was only `## integration/qa-upgrade-merge` after the merge commit. |
 | Factory Agent tests after agent merge | `python -m pytest factory-agent/tests` | Failed | Exit code 1. Summary: 489 passed, 4 skipped, 20 xfailed, 1588 warnings, 3 errors in 82.09s. The three errors were `test_rag_ingestion.py` setup errors from `tmp_path`: `PermissionError: [WinError 5] Access is denied: 'C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun'`. |
+| Factory Agent tests after agent merge with repo-local temp base | `python -m pytest factory-agent/tests --basetemp ".pytest-basetemp"` | Passed | 492 passed, 4 skipped, 20 xfailed, 1588 warnings in 69.63s. This avoids the inaccessible default Windows temp root while keeping temp artifacts inside the integration worktree. |
 | Seed manifest check | `python -m pytest factory-agent/tests/test_seed_pipeline_manifest.py` | Passed | 125 passed, 1 warning in 0.76s. |
 | Live RAG check | `python -m pytest factory-agent/tests/test_rag_live_llm.py` | Skipped | 1 skipped, 1 warning in 0.55s. |
 | Live RAG skip reason check | `python -m pytest -rs factory-agent/tests/test_rag_live_llm.py` | Skipped | 1 skipped, 1 warning in 0.71s. Skip reason: `FACTORY_AGENT_LIVE_RAG / FACTORY_AGENT_LIVE_LLM not set; live RAG eval is opt-in.` |
@@ -137,7 +138,7 @@ Phase 3 found no merge conflicts. Phase 4 found one merge conflict and it was re
 
 Record untested or uncertain items here:
 
-- Phase 4 required full-suite command `python -m pytest factory-agent/tests` failed under the default pytest temp root because `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun` is not accessible. The failing ingestion tests passed with a repo-local `--basetemp`, but the required command still needs a clean rerun or an accepted temp-base workaround before Phase 5.
+- Phase 4 full-suite testing depends on avoiding the inaccessible default pytest temp root `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`. The suite passed with a repo-local `--basetemp`, but the underlying machine temp permission issue remains outside the integration worktree.
 - Frontend has not been merged. Remaining frontend conflict risk is inferred from changed files only; actual conflicts may still appear in Phase 5.
 - `emas/docs/swagger.json` and `emas/docs/swagger.yaml` changed, but `rag_sources/01_emas_internal_docs/api_reference/openapi.json` did not; this needs a later cross-layer contract check.
 - Factory Agent route/service behavior changed, but `factory-agent/factory_agent/tools.md` and `rag_sources/01_emas_internal_docs/api_reference/tools.md` did not; tool documentation and generated tool definitions need verification later.
@@ -154,4 +155,4 @@ Choose one after Phase 7:
 - Safe to merge into main with minor known risks.
 - Not safe to merge into main yet.
 
-Current recommendation: `Not safe to merge into main yet` because Phase 4 has a required check failure under the default test environment, and phases 5 through 7 have not been run.
+Current recommendation: `Not safe to merge into main yet` because phases 5 through 7 have not been run.
