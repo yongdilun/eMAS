@@ -2,6 +2,8 @@
 
 Purpose: Track frontend improvement work from `FRONTEND_ARCHITECTURE_AUDIT.md` without losing rollback safety.
 
+Use one AI window/thread per phase. Each phase must start by reading this tracker, identifying the active phase, checking the previous phase status, using the correct worktree/branch base, completing only that phase, updating this file, and committing before stopping.
+
 Status key:
 
 - Not Started
@@ -10,11 +12,81 @@ Status key:
 - Done
 - Deferred
 
+## Worktree And Branch Strategy
+
+Use a dedicated worktree for frontend audit/fix work:
+
+```powershell
+git worktree add ../emas-audit-frontend audit/frontend
+```
+
+Branch chain:
+
+- Phase 0 branch: `audit/frontend-phase-0`
+- Phase 1 branch: `audit/frontend-phase-1`, based on completed Phase 0 branch.
+- Phase 2 branch: `audit/frontend-phase-2`, based on completed Phase 1 branch.
+- Phase 3 branch: `audit/frontend-phase-3`, based on completed Phase 2 branch.
+- Phase 4 branch: `audit/frontend-phase-4`, based on completed Phase 3 branch.
+- Phase 5 branch: `audit/frontend-phase-5`, based on completed Phase 4 branch.
+
+Rule: commit after each phase is complete. Do not start the next phase until the current phase is committed and this tracker is updated.
+
+Suggested branch commands after the worktree exists:
+
+```powershell
+git switch -c audit/frontend-phase-0
+git switch -c audit/frontend-phase-1 audit/frontend-phase-0
+git switch -c audit/frontend-phase-2 audit/frontend-phase-1
+git switch -c audit/frontend-phase-3 audit/frontend-phase-2
+git switch -c audit/frontend-phase-4 audit/frontend-phase-3
+git switch -c audit/frontend-phase-5 audit/frontend-phase-4
+```
+
+If a branch already exists, switch to it instead of recreating it. Before starting, check `git status --short` and do not overwrite unrelated user changes.
+
+## Phase Window Prompt Template
+
+Use this prompt when opening a new AI window for a phase:
+
+```text
+You are working on the React frontend audit/fix plan for eMAS.
+
+Scope:
+- React frontend only: ../eMas Front
+- Tracking docs are in the repo root:
+  - FRONTEND_ARCHITECTURE_AUDIT.md
+  - FRONTEND_FIX_PROGRESS.md
+  - factory-agent/CODE_PRACTICE_RULES.md
+- Do not modify Go backend or Factory Agent backend unless explicitly needed to verify a frontend contract.
+
+First actions:
+1. Read FRONTEND_FIX_PROGRESS.md.
+2. Read FRONTEND_ARCHITECTURE_AUDIT.md.
+3. Read the React frontend section of factory-agent/CODE_PRACTICE_RULES.md.
+4. Check git status.
+5. Confirm which phase is active from the tracker.
+6. Use the dedicated worktree ../emas-audit-frontend.
+7. Use the branch for this phase. Phase N must be based on completed Phase N-1.
+
+Execution rules:
+- Work only on the active phase.
+- Do not start future-phase work.
+- Preserve current working behavior unless the phase explicitly fixes a documented bug.
+- Add or update focused tests when behavior changes.
+- Run the verification listed for the phase.
+- Update FRONTEND_FIX_PROGRESS.md with status, commands, results, and rollback notes.
+- Commit after the phase is complete.
+- Stop after the phase is done and summarize the commit and verification.
+
+Active phase: [replace with Phase 0/1/2/3/4/5]
+```
+
 ## Baseline
 
 | Item | Status | Owner | Notes |
 |---|---|---|---|
-| Create frontend fix branch | Not Started | TBD | Use `codex/` prefix unless directed otherwise. |
+| Create dedicated worktree | Not Started | TBD | Use `git worktree add ../emas-audit-frontend audit/frontend`. |
+| Create Phase 0 branch | Not Started | TBD | Use `audit/frontend-phase-0` in the worktree. |
 | Run current frontend utility tests | Done | Codex | 35 tests passed on 2026-05-15 using direct `node --test` command. |
 | Run current lint | Done | Codex | `npm.cmd run lint` failed with 1085 errors and 26 warnings; generated `playwright-report` is currently included. |
 | Run production build | Done | Codex | `npx.cmd vite build --outDir C:\tmp\emas-front-build-audit-20260515` passed; main JS chunk warning at 617.77 kB. |

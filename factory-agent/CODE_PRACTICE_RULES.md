@@ -139,3 +139,147 @@ Before merging a backend cleanup:
 - Did Docker/import smoke pass if packaging changed?
 - Is rollback possible?
 - Did the progress tracker get updated?
+
+## 13. React Frontend Practice Rules
+
+Use these rules for work in `../eMas Front`.
+
+### Frontend Safety
+
+- Do not directly refactor working UI without first identifying the current behavior and the risk.
+- Prefer small changes that can be reverted independently.
+- Do not mix visual cleanup, state behavior changes, API contract changes, and test harness changes in one commit unless they are inseparable.
+- Before fixing a UI state bug, add or identify a test that can catch the regression.
+- Preserve current working behavior unless the change is explicitly intended to fix a documented bug.
+- Do not silently replace missing backend data with demo or mock data in operator-facing screens.
+- If demo data is needed, gate it behind an explicit flag and show a visible demo/unavailable label.
+
+### Frontend/API Contracts
+
+- Keep REST API clients separated by backend responsibility.
+- Main eMAS API calls belong in the main eMAS client layer.
+- Factory Agent calls belong in the Factory Agent client layer.
+- Do not duplicate endpoint strings in page components when a service client already owns that endpoint.
+- Every response mapper should handle missing, null, partial, and wrapped data intentionally.
+- Do not show success copy until the relevant backend operation has actually succeeded.
+- Avoid contradictory messages such as "success" and "no match" in the same UI state.
+- Snapshot, SSE, and polling behavior must share one documented state model.
+- If REST calls use auth, streaming/SSE behavior must have an explicit compatible auth strategy.
+
+### Factory Agent Chat Flow
+
+- Treat the flow as a state machine:
+  - user message
+  - session create or resume
+  - message persisted
+  - plan created
+  - execution started
+  - snapshot/SSE/polling updates
+  - approval required if needed
+  - approval or rejection
+  - resumed execution or stopped state
+  - final answer
+- Do not clear an approval card unless the UI also has a trustworthy next state.
+- Approval approve and reject paths should both refresh or otherwise confirm fresh session state.
+- Pending approval follow-up messages must make stale approval behavior explicit.
+- Do not display stale tables when the final narrative describes a newer committed state.
+- Do not display raw internal planner/tool text to normal users unless developer mode is enabled.
+- Session switching must clear or scope activity rows, approval state, optimistic messages, and stream state correctly.
+
+### Component Boundaries
+
+- Page components should orchestrate data loading and layout, not contain large business logic.
+- Shared UI components should not know backend-specific contracts unless intentionally named for that domain.
+- Large components should be split only after tests or baseline behavior exist.
+- Keep approval form validation separate from approval rendering where practical.
+- Keep timeline assembly separate from timeline rendering.
+- Keep transport hooks separate from presentation components.
+- Prefer explicit helper names over generic "utils" for contract-sensitive logic.
+
+### State Management
+
+- Keep server state snapshot-derived where possible.
+- Use optimistic UI only when rollback/error handling is clear.
+- Avoid multiple independent sources of truth for the same status.
+- Avoid stale local storage restoring deleted or inaccessible sessions.
+- Polling and SSE fallback should be active only when useful.
+- Loading, retry, blocked, failed, completed, and unavailable states must be distinct.
+
+### Accessibility And Usability
+
+- Do not nest interactive controls inside other interactive controls.
+- Use real `button`, `input`, `select`, and `textarea` elements for controls.
+- Provide accessible labels for icon-only actions.
+- Keyboard users must be able to select, rename, delete, approve, reject, send, cancel, and close.
+- Error states should be visible and specific enough to guide recovery.
+- Do not hide backend unavailability behind generic success or demo content.
+
+### Frontend Testing
+
+- Keep existing utility tests for timeline, approval display, and turn summaries.
+- Add component tests before changing Factory Agent chat behavior.
+- Minimum Factory Agent chat test coverage:
+  - send message
+  - create or resume session
+  - snapshot update rendering
+  - SSE or polling update handling
+  - approval card display
+  - approve behavior
+  - reject behavior
+  - final answer rendering
+  - backend unavailable state
+  - no stale approval after decision
+- Minimum page/data test coverage:
+  - loading state
+  - empty state
+  - backend error state
+  - real data display
+  - no silent demo data unless explicitly flagged
+- Add or maintain an `npm test` script when frontend tests exist.
+- Lint should ignore generated artifacts and fail meaningfully on source issues.
+
+### Frontend Rollback Rules
+
+- Every behavior change must have a rollback note in `FRONTEND_FIX_PROGRESS.md`.
+- Prefer feature flags for risky transport or stream changes.
+- Keep config-only safety changes separate from UI behavior changes when practical.
+- Do not remove legacy code until import checks and build verification pass.
+
+### Frontend Phase Window And Worktree Rules
+
+- Use one AI window/thread per frontend phase.
+- At the start of each phase, read `FRONTEND_FIX_PROGRESS.md`, `FRONTEND_ARCHITECTURE_AUDIT.md`, and this rules file.
+- Use the dedicated worktree `../emas-audit-frontend` for frontend audit/fix work.
+- Create the worktree with:
+
+```powershell
+git worktree add ../emas-audit-frontend audit/frontend
+```
+
+- Use chained branches:
+  - `audit/frontend-phase-0` from `audit/frontend`
+  - `audit/frontend-phase-1` from `audit/frontend-phase-0`
+  - `audit/frontend-phase-2` from `audit/frontend-phase-1`
+  - `audit/frontend-phase-3` from `audit/frontend-phase-2`
+  - `audit/frontend-phase-4` from `audit/frontend-phase-3`
+  - `audit/frontend-phase-5` from `audit/frontend-phase-4`
+- Work only on the active phase.
+- Do not begin future-phase work in the current phase window.
+- Update `FRONTEND_FIX_PROGRESS.md` before and after the phase.
+- Commit after completing each phase.
+- The next phase must branch from the committed previous phase.
+
+## 14. Frontend Review Checklist
+
+Before merging a frontend cleanup:
+
+- Did current behavior stay the same, or is the behavior change documented?
+- Did the change avoid fake success and silent demo data?
+- Are missing, null, partial, and error responses handled?
+- Are Factory Agent approval states fresh after approve and reject?
+- Are SSE and polling states bounded and observable?
+- Are tests focused on the risk changed?
+- Did `npm test`, lint, and build run or is the blocker documented?
+- Did browser behavior get checked for chat, approval, final answer, and error states?
+- Is rollback possible?
+- Did `FRONTEND_FIX_PROGRESS.md` get updated?
