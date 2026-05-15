@@ -32,15 +32,7 @@ Temporary frontend server:
 npm.cmd run dev -- --host 127.0.0.1 --port 5173
 ```
 
-The server was stopped after capture.
-
-Local browser capture files were written under `captures/frontend-phase0/`:
-
-- `00-dashboard.png`: dashboard with floating AI Assistant entry point.
-- `01-chat-open.png`: Factory Agent modal with session list loaded from the live backend.
-- `02-completed-session-final-answer.png`: completed session `de25fdec-ed66-44c4-b55d-a61006f1a52d` (`Chat 448`) rendering final answer and job table.
-- `03-pending-approval-card.png`: pending approval session `307e8018-677a-42bf-a422-d63058d5568b` (`Chat 355`) rendering approval bundle table plus Approve and Reject controls.
-- `05-send-plan-error-after-wait.png`: fresh send path where `POST /plans` fails and the UI displays raw `{"errors":["Connection error."]}` text.
+The server was stopped after the browser check.
 
 Observed behavior:
 
@@ -58,8 +50,6 @@ Local backend health:
 { "status": "ok" }
 ```
 
-Captured API examples were written locally to `captures/frontend-phase0/factory-agent-api-examples.json`.
-
 Representative responses:
 
 - Completed snapshot: `GET /sessions/de25fdec-ed66-44c4-b55d-a61006f1a52d/snapshot`
@@ -75,8 +65,8 @@ Representative responses:
   - HTTP status: `503`
   - body: `{"detail":{"errors":["Connection error."]}}`
 - SSE sampling:
-  - `GET /sessions/{id}/events` and `GET /sessions/{id}/events/activity` opened against completed/pending sessions but produced no frames before the 2.5s capture timeout.
+  - `GET /sessions/{id}/events` and `GET /sessions/{id}/events/activity` opened against completed/pending sessions but produced no frames before the 2.5s sampling timeout.
 
 ## Rollback
 
-Phase 0 is documentation and baseline evidence only. To roll back the tracked change, revert this phase commit. Generated evidence under `captures/frontend-phase0/` can be deleted without affecting application behavior.
+Phase 0 is documentation and baseline evidence only. To roll back the tracked change, revert this phase commit.

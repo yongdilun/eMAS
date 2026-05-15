@@ -18,8 +18,8 @@ Status key:
 | Run current frontend utility tests | Done | Codex | 35 tests passed on 2026-05-15 using direct `node --test` command; rerun on Phase 0 branch also passed. |
 | Run current lint | Done | Codex | `npm.cmd run lint` failed with 1085 errors and 26 warnings; generated `playwright-report` is currently included. |
 | Run production build | Done | Codex | `npx.cmd vite build --outDir C:\tmp\emas-front-build-phase0-20260515` passed; main JS chunk warning at 618.15 kB. |
-| Record current Factory Agent UI behavior | Done | Codex | Browser notes recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`; local screenshots captured under `captures/frontend-phase0/`. Fresh planning currently fails with a 503 connection error, so approve/reject was observed on an existing pending session rather than executing an old approval. |
-| Snapshot Factory Agent API examples | Done | Codex | Existing completed/pending snapshots and failed fresh `POST /plans` response recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`; full local JSON capture at `captures/frontend-phase0/factory-agent-api-examples.json`. |
+| Record current Factory Agent UI behavior | Done | Codex | Browser notes recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`. Fresh planning currently fails with a 503 connection error, so approve/reject was observed on an existing pending session rather than executing an old approval. |
+| Snapshot Factory Agent API examples | Done | Codex | Existing completed/pending snapshots and failed fresh `POST /plans` response recorded in `factory-agent/FRONTEND_PHASE0_BASELINE.md`. |
 
 ## Issue Tracker
 
