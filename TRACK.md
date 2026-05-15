@@ -25,7 +25,7 @@ Use one of:
 | 3 | Deterministic mocking for chatbot responses | Done | Completed with a lightweight named scenario store, per-session scenario state, in-memory request logs, reset endpoint, reusable fixture builders, preserved happy path, and two additional REST-backed L1 scenarios. |
 | 4 | SSE streaming tests | Done | Completed with lightweight scripted notification/activity `text/event-stream` support, scoped EventSource connection logs, and two Chromium SSE specs. |
 | 5 | Failure, timeout, retry, and disconnect scenarios | Done | Completed with deterministic failure-mode scenario fixtures, malformed SSE recovery, execute retry, non-terminal active run, stream drop fallback, cancel, and modal close disconnect coverage. |
-| 6 | CI integration | Not Started | No root CI config found yet. |
+| 6 | CI integration | Done | Added root GitHub Actions workflow for deterministic frontend Playwright chatbot E2E with Chromium-only install, frontend unit tests, Playwright run, and failure artifacts. |
 | 7 | Cleanup and replacement of old pipeline | Not Started | Do only after Playwright suite is stable and accepted. |
 
 ## Long-Term Scope Strategy
@@ -165,15 +165,15 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 
 ### Phase 6: CI Integration
 
-- [ ] Identify CI provider/config location.
-- [ ] Add Playwright CI job.
-- [ ] Cache/install Node dependencies.
-- [ ] Install Chromium browser.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:e2e -- --project=chromium`.
-- [ ] Upload Playwright report/test-results artifacts.
-- [ ] Configure traces, screenshots, and video on failure.
-- [ ] Keep full-stack/real-service browser job separate from deterministic mock job.
+- [x] Identify CI provider/config location.
+- [x] Add Playwright CI job.
+- [x] Cache/install Node dependencies.
+- [x] Install Chromium browser.
+- [x] Run `npm test`.
+- [x] Run `npm run test:e2e -- --project=chromium`.
+- [x] Upload Playwright report/test-results artifacts.
+- [x] Configure traces, screenshots, and video on failure.
+- [x] Keep full-stack/real-service browser job separate from deterministic mock job.
 
 ### Phase 7: Cleanup and Replacement of Old Pipeline
 
@@ -186,8 +186,7 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 
 ## Current Blockers
 
-- None for completed Phase 5.
-- There is still no root CI workflow to extend; keep CI integration for Phase 6.
+- None for completed Phase 6.
 
 ## Open Questions
 
@@ -322,6 +321,16 @@ Phase 5:
 - `npm run test:e2e -- --project=chromium`: passed, 13 Chromium Playwright tests.
 - `npx playwright install chromium`: not run because Chromium was already available and the Playwright run succeeded.
 
+Phase 6:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed only Phase 6 workflow/config/tracker changes before verification.
+- First `npm ci`: failed with Windows `EPERM` unlinking `node_modules\@esbuild\win32-x64\esbuild.exe` because an existing local `npm run dev`/Vite process was holding esbuild open.
+- Stopped only the stale local frontend Node/Vite/esbuild processes from `eMas Front`, then re-ran verification.
+- `npm ci`: passed; npm reported 12 audit vulnerabilities and existing deprecation warnings.
+- `npx playwright install chromium`: passed.
+- `npm test`: passed, 48 tests.
+- `npm run test:e2e -- --project=chromium`: passed, 13 Chromium Playwright tests.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -385,8 +394,14 @@ Phase 5 implementation:
 - `eMas Front/e2e/specs/chat-cancel-navigation.spec.js`
 - `eMas Front/e2e/specs/chat-stream-errors.spec.js`
 
+Phase 6 implementation:
+
+- `.github/workflows/playwright-e2e.yml`
+- `TRACK.md`
+- `eMas Front/playwright.config.js`
+
 ## Next Action
 
-Begin Phase 6 only when requested: add deterministic Playwright CI integration and artifacts. Keep reconnect/static bearer lifecycle expansion separate unless explicitly requested.
+Begin Phase 7 only when requested: document cleanup/replacement decisions for manual chatbot validation while preserving the existing Go/Python E2E pipeline. Keep reconnect/static bearer lifecycle expansion separate unless explicitly requested.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.
