@@ -23,7 +23,7 @@ const selectedReliability = selectedGrep.some((grep) => grep.includes('@reliabil
 const selectedSecurityPrivacy = selectedGrep.some((grep) => grep.includes('@security') || grep.includes('@privacy'))
 const selectedOperational = selectedGrep.some((grep) => grep.includes('@operational'))
 const syntheticEnv = syntheticRuntimeEnv({ validate: selectedSynthetic })
-const mockedIgnorePatterns = ['(full-stack|release)-.*\\.spec\\.js', 'production-synthetic\\.spec\\.js']
+const mockedIgnorePatterns = ['(full-stack|release|real-langgraph)-.*\\.spec\\.js', 'production-synthetic\\.spec\\.js']
 if (!selectedReliability) mockedIgnorePatterns.push('reliability-soak\\.spec\\.js')
 if (!selectedSecurityPrivacy) mockedIgnorePatterns.push('security-privacy\\.spec\\.js')
 if (!selectedOperational) mockedIgnorePatterns.push('operational-readiness\\.spec\\.js')

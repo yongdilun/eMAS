@@ -26,7 +26,7 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 6 | Seeded full-stack data and audit oracles | Done | Seeded Go API plus Factory Agent DB rows, approvals, audit rows, snapshot, timeline, final response, and UI now agree under Phase 6 oracles. |
 | 7 | Non-seeded LangGraph browser proof | Done | SO-001 real LangGraph browser proof is committed at `9054b87`. |
 | 8 | Manual failure promotion workflow | Done | Manual misses now have a required intake template, oracle mapping, lowest-layer regression mapping, and failing-regression closure rule. |
-| 9 | CI gate restructure | Not Started | Put fast oracle tests in PR and heavier ones in release gates. |
+| 9 | CI gate restructure | Done | PR gate now runs fast backend stateful oracles, frontend unit tests, and mocked Chromium. Seeded stateful oracles are release/pre-merge/manual; real LangGraph and synthetic remain opt-in/read-only. |
 | 10 | Ledger refactor decision | Not Started | Decide whether a durable operation ledger is needed. |
 
 ## Phase 0 Checklist: Test Reality Audit
@@ -942,13 +942,139 @@ Start Phase 9: CI Gate Restructure. Keep PR gates fast and deterministic, preser
 
 ## Phase 9 Checklist: CI Gate Restructure
 
-- [ ] Add fast backend oracle pytest command to PR gate.
-- [ ] Keep mocked Chromium in PR gate.
-- [ ] Keep seeded data oracles in release/pre-merge gate.
-- [ ] Keep real LangGraph browser as opt-in or release gate.
-- [ ] Keep production synthetic read-only.
-- [ ] Upload oracle artifacts on failure.
-- [ ] Document local run commands.
+- [x] Add fast backend oracle pytest command to PR gate.
+- [x] Keep mocked Chromium in PR gate.
+- [x] Keep seeded data oracles in release/pre-merge gate.
+- [x] Keep real LangGraph browser as opt-in or release gate.
+- [x] Keep production synthetic read-only.
+- [x] Upload oracle artifacts on failure.
+- [x] Document local run commands.
+
+## Phase 9 Implementation: CI Gate Restructure
+
+Status: Done
+
+Updated: 2026-05-16
+
+Scope completed in this pass:
+
+- Reworked `.github/workflows/playwright-e2e.yml` into `Chatbot Oracle Gates`.
+- The default PR/push fast gate now installs Factory Agent test dependencies and runs:
+  - `python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q`
+  - `npm test`
+  - `npm run test:e2e:mocked`
+- The PR gate uploads backend oracle pytest results plus Playwright report/test-results on failure.
+- Added a seeded full-stack oracle job for `main`, `release/**`, `pre-merge/**`, or explicit workflow dispatch. It runs `npm run test:e2e:seeded-oracles`.
+- Added explicit workflow-dispatch jobs for real LangGraph critical browser proof and read-only synthetic checks. They do not run on pull requests.
+- Updated the Phase 17 operational gate matrix to include backend stateful oracles, seeded data/prompt/SSE oracles, and the real LangGraph critical proof.
+- Updated operational readiness CI to install Factory Agent dev test dependencies so the new backend oracle command can run from `npm run operational:gate`.
+- Added discoverable npm scripts for local/CI gate commands.
+- Fixed a Phase 9 test-gating bug: `real-langgraph-critical.spec.js` was being collected by the default mocked `chromium` project. `playwright.config.js` now excludes `real-langgraph-*` specs from mocked PR runs, keeping real LangGraph opt-in/release-gated only.
+- Documented the split gates in `eMas Front/e2e/README.md` and `docs/operations/chatbot_release_runbook.md`.
+
+Commands run:
+
+```powershell
+git status --short --branch
+Get-Content -Raw -Path 'docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md'
+Get-Content -Raw -Path 'docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md'
+Get-Content -Raw -Path 'docs/qa/manual_prompt_regression_bank.md'
+Get-Content -Raw -Path 'eMas Front/e2e/README.md'
+Get-Content -Raw -Path 'eMas Front/package.json'
+Get-Content -Raw -Path 'eMas Front/playwright.config.js'
+Get-Content -Raw -Path '.github/workflows/playwright-e2e.yml'
+Get-Content -Raw -Path '.github/workflows/playwright-operational-readiness.yml'
+Get-Content -Raw -Path '.github/workflows/playwright-reliability-soak.yml'
+Get-Content -Raw -Path 'docs/operations/chatbot_release_runbook.md'
+
+Set-Location "eMas Front"
+npm run test:backend-oracles
+npm test
+node --check "e2e/support/operationalGate.js"
+node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
+npm run test:e2e:mocked -- --list
+npm run test:e2e:seeded-oracles -- --list
+npm run test:e2e:real-langgraph -- --list
+node --check playwright.config.js
+npm run test:e2e:synthetic -- --list
+npm run operational:gate -- --dry-run
+npm run test:e2e:mocked
+
+Set-Location ".."
+python -c "import yaml, pathlib; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]; print('workflow yaml OK')"
+git diff --check
+git status --short
+git diff --stat
+```
+
+Test results:
+
+```text
+Backend oracle PR command:
+  npm run test:backend-oracles: 21 passed, 1 warning in 1.20s.
+
+Frontend unit suite:
+  npm test: 53 passed in 7240.0161ms.
+
+Mocked Chromium PR browser suite:
+  npm run test:e2e:mocked: 21 passed in 36.0s.
+
+Package/script syntax:
+  e2e/support/operationalGate.js node --check: passed.
+  package.json JSON parse: passed.
+  playwright.config.js node --check: passed.
+
+Workflow YAML sanity:
+  PyYAML parsed all `.github/workflows/*.yml`: passed.
+  Ruby YAML check was attempted first but Ruby is not installed locally.
+
+Playwright command wiring:
+  npm run test:e2e:mocked -- --list: 21 tests, and real LangGraph is no longer collected by mocked Chromium.
+  npm run test:e2e:seeded-oracles -- --list: 14 tests in 3 files.
+  npm run test:e2e:real-langgraph -- --list: 1 test in 1 file.
+  npm run test:e2e:synthetic -- --list: 9 read-only synthetic tests in 1 file.
+
+Operational gate dry run:
+  npm run operational:gate -- --dry-run: listed backend oracles, mocked Chromium, seeded oracles, real LangGraph, release, synthetic, security/privacy, and reliability lanes.
+
+Diff hygiene:
+  git diff --check: passed with line-ending warnings only.
+```
+
+Warnings observed:
+
+- Existing `LangChainPendingDeprecationWarning` from `langgraph.checkpoint.serde.jsonplus`.
+- Existing `PytestDeprecationWarning` for unset `asyncio_default_fixture_loop_scope`.
+- Git line-ending warnings noted that LF will be replaced by CRLF next time Git touches the edited files.
+
+Files changed:
+
+- `.github/workflows/playwright-e2e.yml`
+- `.github/workflows/playwright-operational-readiness.yml`
+- `docs/operations/chatbot_release_runbook.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/support/operationalGate.js`
+- `eMas Front/package.json`
+- `eMas Front/playwright.config.js`
+
+Decisions made:
+
+- The default PR gate blocks fast deterministic backend oracle regressions, frontend unit regressions, and mocked Chromium browser regressions only.
+- Seeded stateful data/prompt/SSE oracles run on `main`, `release/**`, `pre-merge/**`, or manual dispatch, not on pull requests.
+- Real LangGraph browser proof stays explicit workflow dispatch and release/operational gated; it is excluded from mocked Chromium collection.
+- Synthetic checks remain opt-in and read-only. The CI dispatch uses the local release harness by default; live production/staging mode still requires explicit read-only credentials and prompts.
+- Browser/oracle failure artifacts are retained via workflow artifact uploads for backend pytest, mocked Chromium, seeded oracles, real LangGraph, and synthetic jobs.
+
+Blockers/open questions:
+
+- No Phase 9 blockers remain.
+- The named QA regression bank owner is still a team/process question from Phase 8.
+- The durable operation ledger question remains open for Phase 10.
+
+Next action:
+
+Start Phase 10: Ledger Refactor Decision. Review recurring projection failures from Phases 3-9 and decide whether the current invariant-backed projections are sufficient or whether a durable operation ledger is needed.
 
 ## Phase 10 Checklist: Ledger Refactor Decision
 
@@ -960,15 +1086,14 @@ Start Phase 9: CI Gate Restructure. Keep PR gates fast and deterministic, preser
 
 ## Current Blockers
 
-- No Phase 8 blockers remain.
-- The remaining backlog is CI restructuring, real LangGraph expansion, and the Phase 10 ledger decision.
+- No Phase 9 blockers remain.
+- The remaining backlog is real LangGraph expansion and the Phase 10 ledger decision.
 
 ## Open Questions
 
 - Should all cascading bulk mutations default to original-state semantics? Current plan says yes unless the oracle explicitly says current-state semantics.
 - Which additional scenarios should get non-seeded LangGraph browser coverage next? Proposed: SO-005, SO-011, SO-021, SO-034.
 - Is a durable operation ledger required, or can invariant tests stabilize current projections?
-- Which CI workflow should block release branches for seeded oracle failures?
 - Who is the named QA regression bank owner for the documented weekly review cadence?
 
 ## Decisions Made
@@ -992,44 +1117,66 @@ Start Phase 9: CI Gate Restructure. Keep PR gates fast and deterministic, preser
 - Final completed graph responses should replace raw quick summaries with deterministic post-commit recaps when commit outputs are available.
 - Phase 8 manual failures close only as promoted regressions or accepted gaps; `tested manually only` is not an acceptable closure state.
 - New manual misses must capture exact prompt/action, artifact link, observed/expected behavior, oracle mapping, lowest useful layer, owner/severity, failing regression evidence, and passing-after-fix evidence.
+- Phase 9 PR gates include fast backend stateful oracles, frontend unit tests, and mocked Chromium only.
+- Seeded stateful oracles are release/pre-merge/manual gates; real LangGraph browser proof remains opt-in/release-gated and excluded from mocked Chromium collection.
+- Production synthetic checks stay opt-in and read-only, with local release harness as the default CI dispatch mode.
 
 ## Commands Run
 
-Latest Phase 8 implementation and verification:
+Latest Phase 9 implementation and verification:
 
 ```powershell
 git status --short
 git diff --stat
 
-Set-Location "factory-agent"
-python -m py_compile tests\test_phase18_manual_prompt_bank.py
-python -m pytest tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_schema.py -q
+Set-Location "eMas Front"
+npm run test:backend-oracles
+npm test
+node --check "e2e/support/operationalGate.js"
+node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
+npm run test:e2e:mocked -- --list
+npm run test:e2e:seeded-oracles -- --list
+npm run test:e2e:real-langgraph -- --list
+node --check playwright.config.js
+npm run test:e2e:synthetic -- --list
+npm run operational:gate -- --dry-run
+npm run test:e2e:mocked
 
 Set-Location ".."
-node -e "JSON.parse(require('fs').readFileSync('tests/e2e/scenarios/manual_prompt_regressions.json','utf8')); console.log('manual_prompt_regressions.json OK')"
+python -c "import yaml, pathlib; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]; print('workflow yaml OK')"
+git diff --check
 ```
 
 ## Test Results
 
-Phase 8 verification passed after one wording fix:
+Phase 9 verification passed:
 
 ```text
-Initial focused pytest run: 7 passed, 1 failed.
-  Reason: JSON closure rule needed to include the exact guarded phrase "failing regression".
-
-Final focused pytest run: 8 passed, 1 warning in 0.63s.
-Python syntax check: passed.
-JSON parse check: manual_prompt_regressions.json OK.
+npm run test:backend-oracles: 21 passed, 1 warning in 1.20s.
+npm test: 53 passed in 7240.0161ms.
+npm run test:e2e:mocked: 21 passed in 36.0s.
+Mocked list check: 21 tests, real LangGraph excluded from default Chromium.
+Seeded oracle list check: 14 tests in 3 files.
+Real LangGraph list check: 1 test in 1 file.
+Synthetic list check: 9 read-only tests in 1 file.
+node --check for operationalGate.js and playwright.config.js: passed.
+package.json JSON parse: passed.
+workflow YAML parse: passed.
+operational gate dry run: passed.
+git diff --check: passed with line-ending warnings only.
 ```
 
 ## Files Changed
 
+- `.github/workflows/playwright-e2e.yml`
+- `.github/workflows/playwright-operational-readiness.yml`
+- `docs/operations/chatbot_release_runbook.md`
 - `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
-- `docs/qa/manual_prompt_regression_bank.md`
 - `eMas Front/e2e/README.md`
-- `factory-agent/tests/test_phase18_manual_prompt_bank.py`
-- `tests/e2e/scenarios/manual_prompt_regressions.json`
+- `eMas Front/e2e/support/operationalGate.js`
+- `eMas Front/package.json`
+- `eMas Front/playwright.config.js`
 
 ## Next Action
 
-Start Phase 9: CI Gate Restructure.
+Start Phase 10: Ledger Refactor Decision.

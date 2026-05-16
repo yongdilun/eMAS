@@ -121,6 +121,13 @@ export function operationalGateMatrix(options = {}) {
       timeoutMs: 120_000,
     },
     {
+      label: 'pr-backend-oracles',
+      category: 'pr',
+      severityOnFailure: 'critical',
+      args: ['run', 'test:backend-oracles'],
+      timeoutMs: 120_000,
+    },
+    {
       label: 'pr-mocked-chromium',
       category: 'pr',
       severityOnFailure: 'critical',
@@ -150,6 +157,30 @@ export function operationalGateMatrix(options = {}) {
         ...childOutputArgs(artifactDir, 'seeded-hard-orchestration'),
       ]),
       timeoutMs: 300_000,
+    },
+    {
+      label: 'seeded-stateful-oracles',
+      category: 'seeded',
+      severityOnFailure: 'critical',
+      args: npmArgsForPlaywright([
+        '--project=chromium-seeded',
+        '--grep',
+        '@data-integrity|@prompt-regression|@sse',
+        ...childOutputArgs(artifactDir, 'seeded-stateful-oracles'),
+      ]),
+      timeoutMs: 420_000,
+    },
+    {
+      label: 'real-langgraph-critical',
+      category: 'real-langgraph',
+      severityOnFailure: 'critical',
+      args: npmArgsForPlaywright([
+        '--project=chromium-real-langgraph',
+        '--grep',
+        '@critical',
+        ...childOutputArgs(artifactDir, 'real-langgraph-critical'),
+      ]),
+      timeoutMs: 420_000,
     },
     {
       label: 'release-validation',

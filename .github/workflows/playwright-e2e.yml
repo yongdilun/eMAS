@@ -1,4 +1,4 @@
-name: Playwright Chatbot E2E
+name: Chatbot Oracle Gates
 
 on:
   pull_request:
@@ -6,17 +6,31 @@ on:
     branches:
       - main
       - "codex/**"
+      - "release/**"
+      - "pre-merge/**"
   workflow_dispatch:
+    inputs:
+      seeded_oracles:
+        description: Run seeded full-stack stateful oracle release gate.
+        required: false
+        type: boolean
+        default: false
+      real_langgraph:
+        description: Run opt-in real LangGraph browser proof.
+        required: false
+        type: boolean
+        default: false
+      production_synthetic:
+        description: Run read-only synthetic checks against the local release harness.
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  frontend-chatbot-e2e:
-    name: Frontend chatbot Playwright E2E
+  pr-fast-oracle-gate:
+    name: PR fast deterministic oracle gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    defaults:
-      run:
-        working-directory: eMas Front
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -29,32 +43,233 @@ jobs:
           cache: npm
           cache-dependency-path: eMas Front/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: factory-agent/requirements*.txt
+
       - name: Install frontend dependencies
+        working-directory: eMas Front
         run: npm ci
 
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
       - name: Install Playwright Chromium
+        working-directory: eMas Front
         run: npx playwright install --with-deps chromium
 
-      - name: Run frontend unit tests
-        run: npm test
+      - name: Run backend stateful oracle pytest
+        working-directory: factory-agent
+        run: |
+          mkdir -p test-results/backend-oracle
+          python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q --junitxml test-results/backend-oracle/pytest-results.xml
 
-      - name: Run chatbot Playwright E2E
-        run: npm run test:e2e -- --project=chromium
-
-      - name: Upload Playwright report
+      - name: Upload backend oracle artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: backend-oracle-pytest-results
+          path: factory-agent/test-results/backend-oracle/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run frontend unit tests
+        working-directory: eMas Front
+        run: npm test
+
+      - name: Run mocked Chromium chatbot E2E
+        working-directory: eMas Front
+        run: npm run test:e2e:mocked
+
+      - name: Upload mocked Chromium Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-mocked-playwright-report
           path: eMas Front/playwright-report/
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload Playwright test results
+      - name: Upload mocked Chromium test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-test-results
+          name: pr-mocked-playwright-test-results
           path: eMas Front/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  seeded-full-stack-oracle-gate:
+    name: Release seeded full-stack oracle gate
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.seeded_oracles) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/pre-merge/'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: eMas Front/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: factory-agent/requirements*.txt
+
+      - name: Install frontend dependencies
+        working-directory: eMas Front
+        run: npm ci
+
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        working-directory: eMas Front
+        run: npx playwright install --with-deps chromium
+
+      - name: Run seeded full-stack oracle Playwright gate
+        working-directory: eMas Front
+        run: npm run test:e2e:seeded-oracles
+
+      - name: Upload seeded oracle Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seeded-oracle-playwright-artifacts
+          path: |
+            eMas Front/playwright-report/
+            eMas Front/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  real-langgraph-opt-in-gate:
+    name: Opt-in real LangGraph browser proof
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_langgraph }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: eMas Front/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: factory-agent/requirements*.txt
+
+      - name: Install frontend dependencies
+        working-directory: eMas Front
+        run: npm ci
+
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        working-directory: eMas Front
+        run: npx playwright install --with-deps chromium
+
+      - name: Run real LangGraph critical browser proof
+        working-directory: eMas Front
+        run: npm run test:e2e:real-langgraph
+
+      - name: Upload real LangGraph Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-langgraph-playwright-artifacts
+          path: |
+            eMas Front/playwright-report/
+            eMas Front/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  synthetic-read-only-gate:
+    name: Opt-in read-only synthetic gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.production_synthetic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      PLAYWRIGHT_SYNTHETIC_OWNER: chatbot-oncall
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: eMas Front/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: factory-agent/requirements*.txt
+
+      - name: Install frontend dependencies
+        working-directory: eMas Front
+        run: npm ci
+
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        working-directory: eMas Front
+        run: npx playwright install --with-deps chromium
+
+      - name: Run read-only synthetic Playwright checks
+        working-directory: eMas Front
+        run: npm run test:e2e:synthetic
+
+      - name: Upload synthetic Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-read-only-playwright-artifacts
+          path: |
+            eMas Front/playwright-report/
+            eMas Front/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -82,16 +82,19 @@ Default PR validation remains:
 
 ```powershell
 Set-Location "eMas Front"
+npm run test:backend-oracles
 npm test
-npm run test:e2e -- --project=chromium
+npm run test:e2e:mocked
 ```
 
-The seeded, release, and synthetic projects remain opt-in:
+The backend oracle command runs the fast Factory Agent state-machine and snapshot/final-response pytest contracts without live services. The seeded, real LangGraph, release, and synthetic projects remain outside the default PR gate:
 
 ```powershell
 Set-Location "eMas Front"
 npm run test:e2e -- --project=chromium-seeded --grep "@l3-foundation"
 npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"
+npm run test:e2e:seeded-oracles
+npm run test:e2e:real-langgraph
 npm run test:e2e -- --project=chromium-release
 npm run test:e2e -- --project=chromium-synthetic
 ```
@@ -127,8 +130,8 @@ Coverage:
 Rules:
 
 - Keep memory-specific assertions out of this phase until the memory feature exists.
-- Keep default PR CI on `npm run test:e2e -- --project=chromium`; this remains deterministic and mocked.
-- Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in unless the team deliberately promotes them.
+- Keep default PR CI on `npm run test:backend-oracles`, `npm test`, and `npm run test:e2e:mocked`; the browser half remains deterministic and mocked.
+- Keep `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` opt-in unless the team deliberately promotes them.
 - Do not use these scenarios to claim production-grade hardening is complete.
 
 ## Phase 14 Data Integrity
@@ -155,8 +158,8 @@ Rules:
 - `@data-integrity` must run against resettable seeded services only. Do not run these mutating checks against production or synthetic live mode.
 - Each test resets canonical seeded job priorities before it starts.
 - Any mismatch between visible claims and persisted state is a blocking Phase 14 defect unless recorded as an accepted gap with owner, severity, risk, target, reason, and workaround.
-- Keep default PR CI on `npm test` plus `npm run test:e2e -- --project=chromium`; `chromium-seeded --grep "@data-integrity"` remains opt-in.
-- Keep `chromium-release` and `chromium-synthetic` opt-in. Phase 14 does not complete production-grade hardening; Phase 19 remains the final prompt/workflow robustness signoff.
+- Keep default PR CI on `npm run test:backend-oracles`, `npm test`, and `npm run test:e2e:mocked`; `chromium-seeded --grep "@data-integrity"` remains opt-in.
+- Keep `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` opt-in. Phase 14 does not complete production-grade hardening; Phase 19 remains the final prompt/workflow robustness signoff.
 
 ## Phase 15 Reliability and Soak
 
@@ -166,8 +169,9 @@ Default PR validation remains:
 
 ```powershell
 Set-Location "eMas Front"
+npm run test:backend-oracles
 npm test
-npm run test:e2e -- --project=chromium
+npm run test:e2e:mocked
 ```
 
 Reliability commands:
@@ -198,8 +202,8 @@ Coverage:
 
 Rules:
 
-- `@reliability` mocked tests are excluded from un-grepped `chromium` runs so default PR CI remains deterministic mocked Chromium without soak overhead.
-- `chromium-seeded`, `chromium-release`, and `chromium-synthetic` remain opt-in. Scenario 95 invokes release smoke only inside the opt-in soak runner or scheduled reliability workflow.
+- `@reliability` mocked tests are excluded from un-grepped `chromium` runs so default PR CI remains fast deterministic backend oracles plus mocked Chromium without soak overhead.
+- `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` remain opt-in. Scenario 95 invokes release smoke only inside the opt-in soak runner or scheduled reliability workflow.
 - The scheduled/dispatch workflow is `.github/workflows/playwright-reliability-soak.yml`; it does not run on pull requests.
 - No real LLM dependency is introduced. Seeded and release smoke checks use deterministic fake planner/provider/RAG adapters unless a later phase explicitly opts into real-provider smoke.
 - These checks harden reliability risks but do not claim production-grade hardening is complete.
@@ -227,8 +231,8 @@ Coverage:
 
 Rules:
 
-- Keep default PR CI on `npm test` plus `npm run test:e2e -- --project=chromium`; Phase 16 is an opt-in grep until deliberately promoted.
-- Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in. The release cross-check is explicit and uses deterministic seeded providers.
+- Keep default PR CI on `npm run test:backend-oracles`, `npm test`, and `npm run test:e2e:mocked`; Phase 16 is an opt-in grep until deliberately promoted.
+- Keep `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` opt-in. The release cross-check is explicit and uses deterministic seeded providers.
 - The release harness builds the frontend with `/agent`, `/api/v1`, a signed test JWT bearer, and polling fallback because browser `EventSource` cannot attach Authorization headers.
 - Do not store raw bearer tokens, API keys, token query params, session ids, operation ids, approval ids, or trace ids in retained text artifacts.
 - No real LLM/RAG dependency is introduced, and Phase 16 does not claim production-grade hardening is complete.
@@ -252,12 +256,12 @@ Coverage:
 | 102 rollback validation | `chromium` with `@operational`, release gate command | `operationalGate.js` | The rollback command targets `chromium-release` scenario 68 and validates a previous known-good `/__release/precheck` URL. |
 | 103 emergency disable | `chromium` with `@operational` | `App.jsx`, `FloatingChatButton.jsx` | `VITE_FACTORY_AGENT_EMERGENCY_DISABLED` keeps the app usable, shows a clear diagnostic, and does not open a Factory Agent session. |
 | 104 clean environment recreation | `chromium` with `@operational` | `operationalGate.js` | Seeded, release, and synthetic artifact/env overrides are generated for a fresh DB plus synthetic-account rerun. |
-| 105 gate matrix | `chromium` with `@operational`, manual workflow | `operationalGate.js`, `.github/workflows/playwright-operational-readiness.yml` | Matrix covers PR, seeded, hard, release, synthetic, security/privacy, and reliability checks, with critical/high failures blocking signoff. |
+| 105 gate matrix | `chromium` with `@operational`, manual workflow | `operationalGate.js`, `.github/workflows/playwright-operational-readiness.yml` | Matrix covers PR backend/frontend checks, seeded stateful oracles, hard orchestration, real LangGraph proof, release, synthetic, security/privacy, and reliability checks, with critical/high failures blocking signoff. |
 
 Rules:
 
 - Keep `@operational` out of un-grepped `chromium`; use `npm run test:e2e:operational` or the manual workflow.
-- Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in.
+- Keep `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` opt-in.
 - Critical failures block release or require rollback. High failures block operational signoff. Medium gaps require owner, risk, target, reason, and workaround. Low gaps are tracked.
 - Phase 17 proves operational readiness gates only. Phase 19 remains the final prompt/workflow robustness signoff.
 
@@ -305,7 +309,7 @@ Troubleshooting notes:
 
 - If `chromium-seeded` cannot start, inspect `env-fingerprint.json` first, then the three service logs.
 - Do not run these hard scenarios against real LLM/RAG credentials; Phase 9 expects deterministic fake planner/provider/RAG behavior.
-- Keep default PR validation on `npm run test:e2e -- --project=chromium`; `chromium-seeded --grep "@l3-hard"` is an opt-in L3 gate.
+- Keep default PR validation on `npm run test:backend-oracles`, `npm test`, and `npm run test:e2e:mocked`; `chromium-seeded --grep "@l3-hard"` is an opt-in L3 gate.
 
 ## Release Validation L4
 
@@ -355,7 +359,7 @@ Troubleshooting notes:
 - If `/agent/ready` is not reachable, the release project will not start browser tests.
 - If static bearer fallback fails, look for EventSource requests in the Playwright trace; the release suite expects none.
 - If a bad env or schema mismatch is suspected, open `/__release/precheck` in the release proxy. The diagnostic page is intentionally visible and fails before browser smoke can claim success.
-- Keep this command out of default PR CI unless the team intentionally promotes L4. PR CI remains `npm test` plus `npm run test:e2e -- --project=chromium`.
+- Keep this command out of default PR CI unless the team intentionally promotes L4. PR CI remains `npm run test:backend-oracles`, `npm test`, and `npm run test:e2e:mocked`.
 
 ## Production Synthetic Monitoring L5
 
@@ -419,19 +423,41 @@ Troubleshooting notes:
 - If live mode fails before tests start, confirm all three required live env vars are present.
 - If scenario 76 fails, rotate or replace the synthetic token and check whether the production/staging auth policy changed.
 - If scenario 77 alerts, inspect provider/RAG readiness before changing browser assertions; the canary is designed to avoid mutating production data during dependency outages.
-- Keep this command out of default PR CI. PR CI remains mocked `chromium`; `chromium-seeded`, `chromium-release`, and `chromium-synthetic` stay opt-in.
+- Keep this command out of default PR CI. PR CI remains fast backend oracles plus mocked `chromium`; `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic` stay opt-in or release-gated.
 
 ## CI Scope
 
-Phase 6 CI runs only the deterministic mocked frontend chatbot E2E suite:
+Phase 9 CI uses a split gate model. The default PR gate is fast and deterministic:
 
 ```powershell
 Set-Location "eMas Front"
+npm run test:backend-oracles
 npm test
-npm run test:e2e -- --project=chromium
+npm run test:e2e:mocked
 ```
 
-The CI workflow does not start the real Go API, real Factory Agent service, Docker, Promptfoo, or an LLM provider. That separation keeps PR feedback deterministic and leaves full-stack/live validation opt-in.
+The PR gate does not start the real Go API, real Factory Agent service, Docker, Promptfoo, real LangGraph browser stack, production synthetic live mode, or an LLM provider. That separation keeps PR feedback deterministic while still blocking broken state-machine and snapshot/final-response invariants.
+
+Seeded full-stack oracles are release/pre-merge or explicit opt-in gates:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e:seeded-oracles
+```
+
+Real LangGraph browser proof remains explicit opt-in or release-gated:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e:real-langgraph
+```
+
+Production synthetic checks stay read-only. The default synthetic command uses the local release harness; live production/staging mode requires explicit read-only synthetic credentials and read-only prompts:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e:synthetic
+```
 
 ## Factory Agent API Smoke
 
