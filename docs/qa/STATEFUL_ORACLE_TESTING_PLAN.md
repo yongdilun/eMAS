@@ -626,6 +626,49 @@ Risks:
 
 - Ledger is a product refactor. Do it only if invariant tests show projection fixes are becoming fragile.
 
+Phase 10 decision, 2026-05-16:
+
+Do not implement a durable operation ledger in this phase. The current projection model is acceptable for now because Phases 3-9 converted the known projection risks into invariant-backed oracle gates, and the latest focused checks still pass. Keep the ledger as a reopening option, not as immediate product work.
+
+Evidence:
+
+- Phase 3 found no product defect in the LangGraph state-machine invariant pass; it proved cursor advancement, staged-write cleanup, rejection/timeout boundaries, distinct approvals, and original-state cascade semantics before browser execution.
+- Phase 4 found and fixed a frontend projection bug where a stale terminal event from approval 1 could outrank a newer pending approval 2; the backend contract now rejects empty/missing timeline evidence, premature final response ordering, duplicate SSE ids, stale approval ids, and false success wording.
+- Phase 5 found and fixed an SSE reconnect defect where an unknown `Last-Event-ID` could suppress current evidence; runtime and browser checks now require monotonic unique activity ids, snapshot invalidation, malformed-frame recovery, stream-drop polling, and snapshot-gated final UI.
+- Phase 6 found and fixed backend snapshot projection bugs: approval-wait copy was projected as `session_completed`, plan rows could be backdated before approval/commit evidence, and commit tool results lacked ordered approval-id evidence.
+- Phase 7 found real LangGraph evidence bugs: truncated committed audit steps, missing commit outputs, capped completed bulk audit persistence, and raw-output final assistant text. The SO-001 real LangGraph browser proof now ties DB rows, approvals, snapshot/timeline/activity, audit-plan rows, final text, and visible UI together.
+- Phase 9 moved the fast state-machine and snapshot/final-response oracles into the PR gate and kept seeded plus real LangGraph gates available for release/pre-merge or explicit dispatch.
+
+Projection audit:
+
+- `session_snapshot_service.py` remains the canonical server projection for snapshot, timeline, activity, pending approval, effective status, and final completion content. It derives from existing durable rows: sessions, messages, plans, plan steps, approvals, execution snapshots, and workflow checkpoints.
+- `events.py` does not maintain separate business state; notification, activity, and semantic SSE streams poll the same snapshot projection and apply reconnect/duplicate filtering only.
+- `summary_backend.py` and `approval_summary.py` format approval and final-response copy from structured bundle/tool facts; they do not decide terminal state.
+- The frontend still has fallback timeline/activity/turn assembly logic for stale or older snapshots, but the server `activity_steps` and timeline are preferred, and frontend tests assert that final UI stays terminal-gated.
+
+Remaining risks:
+
+- The projection is still synthesized from several durable tables plus LangGraph checkpoint data, so a new workflow shape can introduce another mapping edge case.
+- Frontend fallback projection can drift from the server projection if new event types are added without paired unit fixtures.
+- Real LangGraph browser coverage currently proves SO-001 only; more non-seeded browser cases are still backlog.
+- There is no append-only event history for forensic reconstruction beyond the existing tables/checkpoint/audit evidence.
+
+Guardrail tests that must stay in CI:
+
+- PR gate: `python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q`.
+- Focused SSE regression: `python -m pytest tests/test_event_stream_runtime.py -q`.
+- Release/pre-merge gate: `npm run test:e2e:seeded-oracles`.
+- Explicit release/dispatch proof: `npm run test:e2e:real-langgraph`.
+- Frontend projection guard: `npm test`.
+
+Reopen the durable ledger decision if any of these happen:
+
+- A projection bug recurs after the relevant invariant was already in CI.
+- Snapshot, SSE, timeline, final assistant response, and browser UI require a third independent implementation of terminal/approval/commit semantics.
+- A new workflow needs forensic replay of intermediate operation state that cannot be reconstructed from existing rows, checkpoints, audit rows, and oracle artifacts.
+- Seeded or real LangGraph gates start requiring brittle timestamp or ordering workarounds to keep projections aligned.
+- More than two Phase 10-style projection bugs appear in one release cycle.
+
 ## First Critical Scenario Set
 
 Implement these before claiming manual chatbot testing is retired.

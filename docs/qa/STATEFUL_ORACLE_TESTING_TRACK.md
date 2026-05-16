@@ -27,7 +27,7 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 7 | Non-seeded LangGraph browser proof | Done | SO-001 real LangGraph browser proof is committed at `9054b87`. |
 | 8 | Manual failure promotion workflow | Done | Manual misses now have a required intake template, oracle mapping, lowest-layer regression mapping, and failing-regression closure rule. |
 | 9 | CI gate restructure | Done | PR gate now runs fast backend stateful oracles, frontend unit tests, and mocked Chromium. Seeded stateful oracles are release/pre-merge/manual; real LangGraph and synthetic remain opt-in/read-only. |
-| 10 | Ledger refactor decision | Not Started | Decide whether a durable operation ledger is needed. |
+| 10 | Ledger refactor decision | Done | Durable operation ledger is not needed now; keep invariant-backed projections and reopen only on documented trigger conditions. |
 
 ## Phase 0 Checklist: Test Reality Audit
 
@@ -1078,22 +1078,131 @@ Start Phase 10: Ledger Refactor Decision. Review recurring projection failures f
 
 ## Phase 10 Checklist: Ledger Refactor Decision
 
-- [ ] Review recurring projection failures.
-- [ ] Decide if durable operation ledger is required.
-- [ ] If yes, write migration/design plan.
-- [ ] If no, document why existing projections are now stable.
-- [ ] Keep invariant tests either way.
+- [x] Review recurring projection failures.
+- [x] Decide if durable operation ledger is required.
+- [x] If yes, write migration/design plan. Not applicable: ledger is not required now.
+- [x] If no, document why existing projections are now stable.
+- [x] Keep invariant tests either way.
+
+## Phase 10 Implementation: Ledger Refactor Decision
+
+Status: Done
+
+Updated: 2026-05-16
+
+Decision:
+
+Do not implement a durable operation ledger in this phase. The current invariant-backed snapshot, timeline, SSE, approval, audit, and final-response projections are stable enough for now. Keep a durable ledger as a future refactor option if the guardrail tests start showing repeated projection fragility.
+
+Evidence reviewed from Phases 3-9:
+
+- Phase 3 added LangGraph state-machine invariants for cursor movement, staged-write cleanup, distinct approvals, rejection, timeout, stale approval, no hidden continuation, and original-state cascade semantics. No product defect was found in that phase.
+- Phase 4 added the snapshot/timeline/final-response contract and fixed a frontend projection bug where stale terminal completion from approval 1 could outrank newer pending approval 2.
+- Phase 5 added runtime and browser SSE contracts and fixed an SSE reconnect bug where stale or unknown `Last-Event-ID` could suppress all current activity/timeline rows.
+- Phase 6 found real backend projection bugs and fixed them in `session_snapshot_service.py`: approval-wait copy no longer projects as `session_completed`, plan timeline rows keep their real creation time instead of being backdated before approvals, and commit tool-result evidence carries approval ids ordered after matching approval decisions.
+- Phase 7 found real LangGraph evidence bugs and fixed them: OpenAPI tool preload without seeded mode, non-truncated bulk audit plans, approval-resume commit outputs, completed bulk audit persistence beyond the old step cap, and deterministic post-commit recaps.
+- Phase 9 moved the fast backend state-machine and snapshot/final-response oracle suite into the PR gate while preserving seeded and real LangGraph release/dispatch gates.
+
+Projection/product audit:
+
+- Snapshot/timeline/activity/final projection is centralized server-side in `factory-agent/factory_agent/services/session_snapshot_service.py`, derived from existing durable sessions, messages, plans, plan steps, approvals, execution snapshots, and workflow checkpoints.
+- SSE in `factory-agent/factory_agent/api/routers/events.py` does not own terminal business state; notification, activity, and semantic streams poll the same snapshot projection and add only stream-level duplicate/reconnect semantics.
+- Approval and final-response copy helpers in `factory-agent/factory_agent/graph/approval_summary.py` and `factory-agent/factory_agent/analysis/summary_backend.py` format structured facts; they do not decide terminal state.
+- The frontend still has fallback turn/activity projection logic, but server `activity_steps` and timeline are preferred, and unit tests guard stale terminal rows, pending approvals, and terminal-gated assistant visibility.
+- Duplicated logic remains mainly in UI fallback projection and user-facing activity labels. That duplication is acceptable while it remains a fallback and is covered by frontend tests; it is not an independent source of commit/approval truth.
+
+Remaining risks:
+
+- New workflow shapes can still expose mapping gaps because the snapshot is synthesized from several existing tables and LangGraph checkpoint data.
+- Frontend fallback activity/turn logic can drift if new timeline event types are added without fixtures.
+- Real LangGraph browser proof currently covers SO-001 only; SO-005, SO-011, SO-021, and SO-034 remain proposed next expansions.
+- Forensic replay is limited to existing rows, checkpoints, audit evidence, and oracle artifacts rather than a single append-only event table.
+
+Guardrail tests that must stay in CI:
+
+- Fast PR backend oracles: `python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q`.
+- Focused SSE runtime regression: `python -m pytest tests/test_event_stream_runtime.py -q`.
+- Frontend projection fixtures: `npm test`.
+- Release/pre-merge seeded stateful oracles: `npm run test:e2e:seeded-oracles`.
+- Explicit release/dispatch real LangGraph proof: `npm run test:e2e:real-langgraph`.
+
+Reopen the ledger decision if:
+
+- A projection bug recurs after the relevant invariant is already in CI.
+- Snapshot, SSE, timeline, final assistant response, and browser UI require a third independent implementation of terminal/approval/commit semantics.
+- A workflow needs forensic replay of intermediate operation state that existing rows, checkpoints, audit rows, and oracle artifacts cannot reconstruct.
+- Seeded or real LangGraph gates start requiring brittle timestamp/order workarounds to keep projections aligned.
+- More than two Phase 10-style projection bugs appear in one release cycle.
+
+Commands run:
+
+```powershell
+git status --short --branch
+Get-Content -Raw -LiteralPath 'docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md'
+Get-Content -Raw -LiteralPath 'docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md'
+Get-Content -Raw -LiteralPath 'docs/qa/manual_prompt_regression_bank.md'
+Get-Content -Raw -LiteralPath 'docs/operations/chatbot_release_runbook.md'
+Get-Content -Raw -LiteralPath 'eMas Front/e2e/README.md'
+Get-Content -Raw -LiteralPath 'factory-agent/tests/test_snapshot_timeline_final_response_contract.py'
+Get-Content -Raw -LiteralPath 'factory-agent/tests/test_event_stream_runtime.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/services/session_snapshot_service.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/api/routers/events.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/analysis/summary_backend.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/graph/approval_summary.py'
+rg -n "ledger|operation_|approval_id|session_completed|final_response|timeline|pending_approval|activity_steps|checkpoint|graph_native|audit|commit" factory-agent/factory_agent/services/session_snapshot_service.py factory-agent/factory_agent/api/routers/events.py factory-agent/factory_agent/analysis/summary_backend.py factory-agent/factory_agent/graph/approval_summary.py factory-agent/factory_agent/persistence/models.py factory-agent/factory_agent/graph factory-agent/tests/test_snapshot_timeline_final_response_contract.py factory-agent/tests/test_event_stream_runtime.py
+rg -n "session_completed|approval_required|approval_decided|tool_result|Run complete|final|pending approval|terminal|activity" "eMas Front/src/components/features/chat" "eMas Front/e2e/specs" "eMas Front/e2e/support"
+
+Set-Location "factory-agent"
+python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_event_stream_runtime.py -q
+python -m pytest tests/test_langgraph_state_machine_oracles.py -q
+```
+
+Test results:
+
+```text
+tests/test_snapshot_timeline_final_response_contract.py tests/test_event_stream_runtime.py:
+  13 passed, 1 warning in 1.23s.
+
+tests/test_langgraph_state_machine_oracles.py:
+  14 passed, 1 warning in 1.06s.
+```
+
+Warnings observed:
+
+- Existing `LangChainPendingDeprecationWarning` from `langgraph.checkpoint.serde.jsonplus`.
+- Existing `PytestDeprecationWarning` for unset `asyncio_default_fixture_loop_scope`.
+
+Files changed:
+
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+
+Decisions made:
+
+- A durable operation ledger is not required now.
+- Existing projection paths remain acceptable only while the Phase 3-9 oracle gates stay in CI and release/dispatch workflows.
+- The durable ledger decision is reopened by repeated projection bugs, irreconcilable forensic replay needs, brittle timestamp/order workarounds, or any third independent terminal-state implementation.
+- Phase 10 is documentation and decision scope only; no seeded, real LangGraph, SSE, snapshot, or PR oracle pipeline was weakened or deleted.
+
+Blockers/open questions:
+
+- No Phase 10 blockers remain.
+- The QA regression bank owner question remains open from Phase 8.
+- The next real LangGraph expansion still needs prioritization; proposed scenarios remain SO-005, SO-011, SO-021, and SO-034.
+
+Next action:
+
+Expand real LangGraph browser coverage beyond SO-001 when the team is ready, and assign the QA regression bank owner for the weekly review cadence.
 
 ## Current Blockers
 
-- No Phase 9 blockers remain.
-- The remaining backlog is real LangGraph expansion and the Phase 10 ledger decision.
+- No Phase 10 blockers remain.
+- The remaining backlog is real LangGraph expansion and QA regression bank ownership.
 
 ## Open Questions
 
 - Should all cascading bulk mutations default to original-state semantics? Current plan says yes unless the oracle explicitly says current-state semantics.
 - Which additional scenarios should get non-seeded LangGraph browser coverage next? Proposed: SO-005, SO-011, SO-021, SO-034.
-- Is a durable operation ledger required, or can invariant tests stabilize current projections?
 - Who is the named QA regression bank owner for the documented weekly review cadence?
 
 ## Decisions Made
@@ -1120,63 +1229,34 @@ Start Phase 10: Ledger Refactor Decision. Review recurring projection failures f
 - Phase 9 PR gates include fast backend stateful oracles, frontend unit tests, and mocked Chromium only.
 - Seeded stateful oracles are release/pre-merge/manual gates; real LangGraph browser proof remains opt-in/release-gated and excluded from mocked Chromium collection.
 - Production synthetic checks stay opt-in and read-only, with local release harness as the default CI dispatch mode.
+- Phase 10 does not implement a durable operation ledger now; invariant-backed projections are acceptable until the documented reopen triggers occur.
 
 ## Commands Run
 
-Latest Phase 9 implementation and verification:
+Latest Phase 10 implementation and verification:
 
 ```powershell
-git status --short
-git diff --stat
+git status --short --branch
 
-Set-Location "eMas Front"
-npm run test:backend-oracles
-npm test
-node --check "e2e/support/operationalGate.js"
-node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
-npm run test:e2e:mocked -- --list
-npm run test:e2e:seeded-oracles -- --list
-npm run test:e2e:real-langgraph -- --list
-node --check playwright.config.js
-npm run test:e2e:synthetic -- --list
-npm run operational:gate -- --dry-run
-npm run test:e2e:mocked
-
-Set-Location ".."
-python -c "import yaml, pathlib; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]; print('workflow yaml OK')"
-git diff --check
+Set-Location "factory-agent"
+python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_event_stream_runtime.py -q
+python -m pytest tests/test_langgraph_state_machine_oracles.py -q
 ```
 
 ## Test Results
 
-Phase 9 verification passed:
+Phase 10 verification passed:
 
 ```text
-npm run test:backend-oracles: 21 passed, 1 warning in 1.20s.
-npm test: 53 passed in 7240.0161ms.
-npm run test:e2e:mocked: 21 passed in 36.0s.
-Mocked list check: 21 tests, real LangGraph excluded from default Chromium.
-Seeded oracle list check: 14 tests in 3 files.
-Real LangGraph list check: 1 test in 1 file.
-Synthetic list check: 9 read-only tests in 1 file.
-node --check for operationalGate.js and playwright.config.js: passed.
-package.json JSON parse: passed.
-workflow YAML parse: passed.
-operational gate dry run: passed.
-git diff --check: passed with line-ending warnings only.
+tests/test_snapshot_timeline_final_response_contract.py tests/test_event_stream_runtime.py: 13 passed, 1 warning in 1.23s.
+tests/test_langgraph_state_machine_oracles.py: 14 passed, 1 warning in 1.06s.
 ```
 
 ## Files Changed
 
-- `.github/workflows/playwright-e2e.yml`
-- `.github/workflows/playwright-operational-readiness.yml`
-- `docs/operations/chatbot_release_runbook.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
 - `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
-- `eMas Front/e2e/README.md`
-- `eMas Front/e2e/support/operationalGate.js`
-- `eMas Front/package.json`
-- `eMas Front/playwright.config.js`
 
 ## Next Action
 
-Start Phase 10: Ledger Refactor Decision.
+Expand real LangGraph browser coverage beyond SO-001 when prioritized, and assign the QA regression bank owner for the weekly review cadence.
