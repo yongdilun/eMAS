@@ -204,7 +204,7 @@ class LangGraphPlanner:
             )
 
         from .nodes.tool_pipeline import commit_node_impl
-        from .nodes.validate import make_validate_node
+        from .nodes.validate import _commit_tool_outputs_from_state, make_validate_node
 
         validated = make_validate_node(self._settings)(values)
         draft = validated.get("validated_plan")
@@ -229,13 +229,14 @@ class LangGraphPlanner:
         last_commit = commit.get("last_commit_result") if isinstance(commit, dict) else None
         if isinstance(last_commit, dict) and last_commit.get("ok") is False:
             raise LangGraphPlannerError(str(last_commit.get("error") or last_commit.get("body") or "commit failed"))
+        commit_outputs = _commit_tool_outputs_from_state({**commit_state, **(commit if isinstance(commit, dict) else {})})
         contract = validated.get("intent_contract") or values.get("intent_contract") or {
                 "intent": str(values.get("intent") or values.get("original_query") or ""),
                 "backend": "langgraph",
                 "steps": [],
             }
         draft, contract = _append_create_followup_read(draft, contract, values)
-        return (draft, contract, tool_outputs)
+        return (draft, contract, [*tool_outputs, *commit_outputs])
 
     async def generate(
         self,

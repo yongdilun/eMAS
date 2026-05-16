@@ -1,11 +1,12 @@
 import { defineConfig, devices } from '@playwright/test'
-import { seededRuntimeEnv } from './e2e/support/fullStackEnv.js'
+import { realLangGraphRuntimeEnv, seededRuntimeEnv } from './e2e/support/fullStackEnv.js'
 import { releaseRuntimeEnv } from './e2e/support/releaseEnv.js'
 import { syntheticRuntimeEnv } from './e2e/support/syntheticEnv.js'
 
 const factoryAgentPort = Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)
 const appPort = Number(process.env.PLAYWRIGHT_VITE_PORT || 4175)
 const seededEnv = seededRuntimeEnv()
+const realLangGraphEnv = realLangGraphRuntimeEnv()
 const releaseEnv = releaseRuntimeEnv()
 const selectedProjects = process.argv
   .flatMap((arg, index, all) => (arg === '--project' ? [all[index + 1]] : arg.startsWith('--project=') ? [arg.slice('--project='.length)] : []))
@@ -14,6 +15,7 @@ const selectedGrep = process.argv
   .flatMap((arg, index, all) => (arg === '--grep' ? [all[index + 1]] : arg.startsWith('--grep=') ? [arg.slice('--grep='.length)] : []))
   .filter(Boolean)
 const selectedSeeded = selectedProjects.some((project) => project === 'chromium-seeded')
+const selectedRealLangGraph = selectedProjects.some((project) => project === 'chromium-real-langgraph')
 const selectedRelease = selectedProjects.some((project) => project === 'chromium-release')
 const selectedSynthetic = selectedProjects.some((project) => project === 'chromium-synthetic')
 const selectedMocked = selectedProjects.length === 0 || selectedProjects.some((project) => project === 'chromium')
@@ -35,6 +37,10 @@ process.env.PLAYWRIGHT_SEEDED_GO_API_PORT = String(seededEnv.goApiPort)
 process.env.PLAYWRIGHT_SEEDED_FACTORY_AGENT_PORT = String(seededEnv.factoryAgentPort)
 process.env.PLAYWRIGHT_SEEDED_VITE_PORT = String(seededEnv.vitePort)
 process.env.PLAYWRIGHT_SEEDED_ARTIFACT_DIR = seededEnv.artifactDir
+process.env.PLAYWRIGHT_REAL_LANGGRAPH_GO_API_PORT = String(realLangGraphEnv.goApiPort)
+process.env.PLAYWRIGHT_REAL_LANGGRAPH_FACTORY_AGENT_PORT = String(realLangGraphEnv.factoryAgentPort)
+process.env.PLAYWRIGHT_REAL_LANGGRAPH_VITE_PORT = String(realLangGraphEnv.vitePort)
+process.env.PLAYWRIGHT_REAL_LANGGRAPH_ARTIFACT_DIR = realLangGraphEnv.artifactDir
 process.env.PLAYWRIGHT_RELEASE_GO_API_PORT = String(releaseEnv.goApiPort)
 process.env.PLAYWRIGHT_RELEASE_FACTORY_AGENT_PORT = String(releaseEnv.factoryAgentPort)
 process.env.PLAYWRIGHT_RELEASE_PROXY_PORT = String(releaseEnv.proxyPort)
@@ -71,6 +77,14 @@ if (selectedSeeded) {
     timeout: 150_000,
   })
 }
+if (selectedRealLangGraph) {
+  webServer.push({
+    command: `node e2e/support/startRealLangGraphStackForPlaywright.js`,
+    url: realLangGraphEnv.viteBaseUrl,
+    reuseExistingServer: false,
+    timeout: 150_000,
+  })
+}
 if (selectedRelease) {
   webServer.push({
     command: `node e2e/support/startReleaseStackForPlaywright.js`,
@@ -90,12 +104,18 @@ if (selectedSynthetic && !syntheticEnv.live) {
 
 export default defineConfig({
   testDir: './e2e/specs',
-  timeout: selectedReliability ? 360_000 : selectedRelease || selectedSynthetic ? 90_000 : selectedSeeded ? 60_000 : 30_000,
+  timeout: selectedReliability
+    ? 360_000
+    : selectedRelease || selectedSynthetic || selectedRealLangGraph
+      ? 90_000
+      : selectedSeeded
+        ? 60_000
+        : 30_000,
   expect: {
     timeout: 10_000,
   },
   fullyParallel: true,
-  workers: selectedSeeded || selectedRelease || selectedSynthetic || process.env.CI ? 1 : undefined,
+  workers: selectedSeeded || selectedRealLangGraph || selectedRelease || selectedSynthetic || process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
@@ -117,6 +137,14 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         baseURL: seededEnv.viteBaseUrl,
+      },
+    },
+    {
+      name: 'chromium-real-langgraph',
+      testMatch: /real-langgraph-.*\.spec\.js/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: realLangGraphEnv.viteBaseUrl,
       },
     },
     {

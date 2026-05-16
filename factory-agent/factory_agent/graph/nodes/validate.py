@@ -129,6 +129,53 @@ def _blueprint_has_duplicate_tool_args(plan_blueprint: Any) -> bool:
     return False
 
 
+def _commit_tool_outputs_from_state(state: AgentState) -> list[dict[str, Any]]:
+    staged = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+    commit = state.get("last_commit_result")
+    if not staged or not isinstance(commit, dict) or commit.get("ok") is not True:
+        return []
+    body = commit.get("body") if isinstance(commit.get("body"), dict) else {}
+    data = body.get("data") if isinstance(body.get("data"), dict) else body
+    raw_operations = data.get("operations") if isinstance(data, dict) else None
+    operations = [op for op in raw_operations if isinstance(op, dict)] if isinstance(raw_operations, list) else []
+    operation_by_index: dict[int, dict[str, Any]] = {}
+    for fallback_idx, operation in enumerate(operations):
+        try:
+            operation_idx = int(operation.get("index"))
+        except (TypeError, ValueError):
+            operation_idx = fallback_idx
+        operation_by_index[operation_idx] = operation
+
+    outputs: list[dict[str, Any]] = []
+    for idx, staged_write in enumerate(staged):
+        operation = operation_by_index.get(idx, {})
+        args = staged_write.get("args") if isinstance(staged_write.get("args"), dict) else {}
+        op_data = operation.get("data") if isinstance(operation.get("data"), dict) else {}
+        primary_id = str(operation.get("primary_id") or args.get("id") or args.get("job_id") or "").strip()
+        result_data = dict(args)
+        result_data.update(op_data)
+        if primary_id and not any(result_data.get(key) for key in ("id", "job_id", "machine_id", "product_id")):
+            if "jobs" in str(staged_write.get("tool_name") or ""):
+                result_data["job_id"] = primary_id
+            else:
+                result_data["id"] = primary_id
+        outputs.append(
+            {
+                "tool_name": operation.get("tool_name") or staged_write.get("tool_name"),
+                "tool_call_id": staged_write.get("tool_call_id"),
+                "args": dict(args),
+                "result": {"success": True, "data": result_data},
+                "http_status": commit.get("http_status"),
+                "status": "DONE"
+                if str(operation.get("status") or "committed").lower() == "committed"
+                else operation.get("status"),
+                "idempotency_key": operation.get("idempotency_key") or staged_write.get("idempotency_key"),
+                "output_ref": operation.get("output_ref") or staged_write.get("output_ref"),
+            }
+        )
+    return outputs
+
+
 def make_validate_node(settings: Settings):
     def validate_node(state: AgentState) -> AgentState:
         plan_blueprint = state.get("plan_blueprint")
@@ -175,7 +222,15 @@ def make_validate_node(settings: Settings):
         step_drafts: list[PlanStepDraft] = []
         contract_steps: list[dict[str, Any]] = []
 
-        for idx, raw_step in enumerate(plan_blueprint.steps[: settings.max_plan_steps]):
+        staged_for_validation = [x for x in (state.get("staged_writes") or []) if isinstance(x, dict)]
+        step_limit = settings.max_plan_steps
+        if staged_for_validation:
+            # Graph-native bulk approvals can stage more row-level writes than
+            # the generic interactive plan limit. Do not silently truncate the
+            # audit plan after committing the full staged bundle.
+            step_limit = max(step_limit, len(plan_blueprint.steps or []))
+
+        for idx, raw_step in enumerate(plan_blueprint.steps[:step_limit]):
             tool = tools_by_name.get(raw_step.tool_name)
             if not tool:
                 raise LangGraphPlannerClarification(f"I could not safely select a supported tool for step {idx + 1}.")
@@ -320,7 +375,7 @@ def make_validate_node(settings: Settings):
             risk_summary=plan_blueprint.risk_summary.strip() or "Review the proposed tool calls before execution.",
             steps=step_drafts,
         )
-        validation = validate_plan(draft, tools_by_name, max_steps=settings.max_plan_steps)
+        validation = validate_plan(draft, tools_by_name, max_steps=step_limit)
         if not validation.ok:
             raise LangGraphPlannerError("; ".join(validation.errors))
         return {
@@ -384,6 +439,9 @@ def make_final_validator_node(settings: Settings):
                 }
             ],
         }
+        commit_outputs = _commit_tool_outputs_from_state(state)
+        if commit_outputs:
+            out["tool_outputs"] = commit_outputs
         if next_idx is None:
             out.update({"status": "completed", "next_route": "end"})
             return out

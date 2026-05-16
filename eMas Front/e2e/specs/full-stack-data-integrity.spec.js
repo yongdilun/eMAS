@@ -591,6 +591,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
       requestedPriority: 'high',
       count: 1,
     })
+    await expect(page.getByText(/Expired approval fixture/i).first()).toBeVisible()
     const expiredApprove = await approveApproval(expired.approval_id, 'phase14-expired-replay')
     expect(expiredApprove.status).toBe(409)
     await expect.poll(async () => (await factoryAgentJson(`/approvals/${expired.approval_id}`)).status).toBe('EXPIRED')

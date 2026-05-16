@@ -201,7 +201,13 @@ async def lifespan(app: FastAPI):
         pass
 
     async with AsyncSessionLocal() as db:
-        if os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}:
+        seeded_mode = os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
+        preload_openapi_tools = os.getenv("FACTORY_AGENT_PRELOAD_OPENAPI_TOOLS", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if seeded_mode or preload_openapi_tools:
             repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             local_swagger = os.path.abspath(os.path.join(repo_root, "..", "emas", "docs", "swagger.json"))
             await tool_registry.regenerate_from_openapi(
@@ -211,6 +217,8 @@ async def lifespan(app: FastAPI):
                 force_local=False,
                 replace_db=True,
             )
+            if preload_openapi_tools and not seeded_mode:
+                log_event("playwright_real_langgraph_openapi_tools_preloaded")
         await tool_registry.load_from_db(db)
 
     async def refresh_operational_gauges(db) -> None:

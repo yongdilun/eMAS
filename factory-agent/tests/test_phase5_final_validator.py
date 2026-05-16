@@ -9,9 +9,10 @@ from factory_agent.config import get_settings
 from factory_agent.graph.checkpointing import clear_graph_checkpointer_cache
 from factory_agent.graph.errors import LangGraphPlannerApprovalRequired
 from factory_agent.graph.nodes.tool_pipeline import commit_node_impl
-from factory_agent.graph.nodes.validate import make_final_validator_node
+from factory_agent.graph.nodes.validate import make_final_validator_node, make_validate_node
 from factory_agent.graph.nodes.tool_pipeline import route_after_bundle, route_after_commit, route_after_validate
 from factory_agent.graph.planner_graph import LangGraphPlanner
+from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep
 from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.schemas import ToolInfo
 from tests.support.operation_assertions import assert_audit_rows_match
@@ -158,6 +159,106 @@ def _job_delete_tool() -> ToolInfo:
         requires_approval=True,
         side_effect_level="HIGH",
     )
+
+
+def test_validate_node_preserves_bulk_staged_steps_beyond_default_limit():
+    settings = replace(get_settings(), max_plan_steps=3)
+    node = make_validate_node(settings)
+    steps = [
+        AgentPlanStep(tool_name="put__jobs_{id}", args={"id": f"JOB-{i:03d}", "priority": "high"})
+        for i in range(5)
+    ]
+
+    out = node(
+        {
+            "plan_blueprint": AgentPlanOutput(
+                plan_explanation="Stage every selected row-level write.",
+                risk_summary="Bulk job priority update requires approval.",
+                steps=steps,
+            ),
+            "staged_writes": [
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": {"id": f"JOB-{i:03d}", "priority": "high"},
+                    "status": "staged",
+                }
+                for i in range(5)
+            ],
+            "scoped_tools": [_job_update_tool()],
+            "context": {},
+            "original_query": "change all medium priority jobs to high",
+        }
+    )
+
+    assert out["status"] == "completed"
+    assert len(out["validated_plan"].steps) == 5
+    assert [step.args["id"] for step in out["validated_plan"].steps] == [f"JOB-{i:03d}" for i in range(5)]
+
+
+def test_final_validator_appends_commit_operation_outputs_for_final_summary():
+    settings = get_settings()
+    node = make_final_validator_node(settings)
+
+    out = node(
+        {
+            "working_intents": [{"intent_id": "i1", "status": "in_progress"}],
+            "intent_cursor": 0,
+            "staged_writes": [
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "tool_call_id": "tc-1",
+                    "args": {"id": "JOB-1", "priority": "high"},
+                    "idempotency_key": "idem-1",
+                    "output_ref": "$ref:job-1",
+                    "status": "staged",
+                },
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "tool_call_id": "tc-2",
+                    "args": {"id": "JOB-2", "priority": "high"},
+                    "idempotency_key": "idem-2",
+                    "output_ref": "$ref:job-2",
+                    "status": "staged",
+                },
+            ],
+            "last_commit_result": {
+                "ok": True,
+                "http_status": 200,
+                "body": {
+                    "success": True,
+                    "data": {
+                        "committed": True,
+                        "operations": [
+                            {
+                                "index": 1,
+                                "tool_name": "put__jobs_{id}",
+                                "status": "committed",
+                                "primary_id": "JOB-2",
+                                "data": {"job_id": "JOB-2"},
+                            },
+                            {
+                                "index": 0,
+                                "tool_name": "put__jobs_{id}",
+                                "status": "committed",
+                                "primary_id": "JOB-1",
+                                "data": {"job_id": "JOB-1"},
+                            },
+                        ],
+                    },
+                },
+            },
+            "repair_attempts": 0,
+        }
+    )
+
+    assert out["status"] == "completed"
+    assert out["next_route"] == "end"
+    rows = out["tool_outputs"]
+    assert [row["args"]["id"] for row in rows] == ["JOB-1", "JOB-2"]
+    assert all(row["tool_name"] == "put__jobs_{id}" for row in rows)
+    assert all(row["status"] == "DONE" for row in rows)
+    assert [row["result"]["data"]["job_id"] for row in rows] == ["JOB-1", "JOB-2"]
+    assert [row["result"]["data"]["priority"] for row in rows] == ["high", "high"]
 
 
 def test_final_validator_commit_409_with_hard_constraint_requests_clarification():

@@ -55,3 +55,56 @@ export function seededRuntimeEnv(repoRoot = path.resolve(process.cwd(), '..')) {
     },
   }
 }
+
+export function realLangGraphPortPlan() {
+  const base = process.env.PLAYWRIGHT_REAL_LANGGRAPH_PORT_BASE
+    ? Number(process.env.PLAYWRIGHT_REAL_LANGGRAPH_PORT_BASE)
+    : seededPortPlan().vitePort + 50
+  return {
+    goApiPort: Number(process.env.PLAYWRIGHT_REAL_LANGGRAPH_GO_API_PORT || base + 11),
+    factoryAgentPort: Number(process.env.PLAYWRIGHT_REAL_LANGGRAPH_FACTORY_AGENT_PORT || base + 12),
+    vitePort: Number(process.env.PLAYWRIGHT_REAL_LANGGRAPH_VITE_PORT || base + 13),
+  }
+}
+
+export function realLangGraphArtifactDir(repoRoot = path.resolve(process.cwd(), '..')) {
+  return path.resolve(
+    process.env.PLAYWRIGHT_REAL_LANGGRAPH_ARTIFACT_DIR ||
+      path.join(repoRoot, 'eMas Front', 'test-results', 'real-langgraph-stack'),
+  )
+}
+
+export function realLangGraphRuntimeEnv(repoRoot = path.resolve(process.cwd(), '..')) {
+  const ports = realLangGraphPortPlan()
+  const artifactDir = realLangGraphArtifactDir(repoRoot)
+  const dbDir = path.join(artifactDir, 'db')
+  fs.mkdirSync(dbDir, { recursive: true })
+
+  const goApiBaseUrl = `http://127.0.0.1:${ports.goApiPort}/api/v1`
+  const factoryAgentBaseUrl = `http://127.0.0.1:${ports.factoryAgentPort}`
+  const viteBaseUrl = `http://127.0.0.1:${ports.vitePort}`
+  const goDbPath = path.join(dbDir, `emas-real-langgraph-${ports.goApiPort}.sqlite`)
+  const factoryAgentDbPath = path.join(dbDir, `factory-agent-real-langgraph-${ports.factoryAgentPort}.sqlite`)
+
+  return {
+    ...ports,
+    repoRoot,
+    artifactDir,
+    goApiBaseUrl,
+    factoryAgentBaseUrl,
+    viteBaseUrl,
+    goApiHealthUrl: `http://127.0.0.1:${ports.goApiPort}/health`,
+    factoryAgentReadyUrl: `${factoryAgentBaseUrl}/ready`,
+    openApiUrl: `http://127.0.0.1:${ports.goApiPort}/swagger/doc.json`,
+    goDbPath,
+    factoryAgentDbPath,
+    factoryAgentDatabaseUrl: `sqlite+aiosqlite:///${normalizePathForSqlite(factoryAgentDbPath)}`,
+    fingerprintPath: path.join(artifactDir, 'env-fingerprint.json'),
+    platform: {
+      pid: process.pid,
+      node: process.version,
+      cwd: process.cwd(),
+      tmpdir: os.tmpdir(),
+    },
+  }
+}

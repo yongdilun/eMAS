@@ -759,15 +759,105 @@ Start Phase 7: Non-Seeded LangGraph Browser Proof. Prioritize SO-001 in the real
 
 ## Phase 7 Checklist: Non-Seeded LangGraph Browser Proof
 
-- [ ] Add real LangGraph Playwright project or opt-in spec.
-- [ ] Start seeded Go API.
-- [ ] Start Factory Agent without `SeededPlaywrightPlanner`.
-- [ ] Prepopulate tool registry healthily.
-- [ ] Drive SO-001 through the browser.
-- [ ] Assert approval 1 card.
-- [ ] Assert approval 2 card.
-- [ ] Assert final UI and backend state.
-- [ ] Add at least four more critical non-seeded browser cases after SO-001 is stable.
+- [x] Add real LangGraph Playwright project or opt-in spec.
+- [x] Start seeded Go API.
+- [x] Start Factory Agent without `SeededPlaywrightPlanner`.
+- [x] Prepopulate tool registry healthily.
+- [x] Drive SO-001 through the browser.
+- [x] Assert approval 1 card.
+- [x] Assert approval 2 card.
+- [x] Assert final UI and backend state.
+- [x] Keep this pass scoped to SO-001; defer additional non-seeded critical cases to the next expansion pass.
+
+## Phase 7 Implementation: Non-Seeded LangGraph Browser Proof
+
+Status: Done
+
+Updated: 2026-05-16
+
+Scope completed in this pass:
+
+- Added an opt-in `chromium-real-langgraph` Playwright project and stack launcher that starts the seeded Go API, starts Factory Agent without `SeededPlaywrightPlanner`, preloads OpenAPI tools, and points Vite at that real LangGraph backend.
+- Added SO-001 real-browser coverage for `change all medium priority job to high then change all high priority job to medium`.
+- Asserted approval 1 targets the original medium rows, approval 2 targets the original high rows, the approval ids are distinct/ordered, newly mutated rows are excluded from approval 2, and no `Run complete` text appears before approval 2 commits.
+- Asserted final Go DB priorities, Factory Agent approval rows, snapshot status, timeline approval evidence, activity steps, plan audit rows, final assistant text, visible UI, and `/ready` registry health all agree.
+- Kept the seeded Phase 6 pipeline intact and fixed a small scenario-89 UI race by waiting until the expired approval fixture is actually visible before driving the API replay.
+- Fixed real product issues exposed by Phase 7: OpenAPI tool preload now works without seeded mode, graph bulk-write validation no longer truncates committed row-level audit plans, approval-resume fallback carries commit outputs, completed graph audit plans can persist all committed row steps, and completed graph executions replace raw quick summaries with deterministic post-commit recaps.
+
+Commands run:
+
+```powershell
+Set-Location "factory-agent"
+python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py
+python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py factory_agent\services\plan_creation_service.py
+python -m py_compile factory_agent\services\plan_creation_service.py
+python -m pytest tests\test_phase5_final_validator.py -q
+
+Set-Location "..\eMas Front"
+node --check e2e/support/fullStackEnv.js; node --check e2e/support/startRealLangGraphStackForPlaywright.js; node --check e2e/support/realLangGraphArtifacts.js; node --check e2e/support/realLangGraphScenarios.js; node --check e2e/specs/real-langgraph-critical.spec.js
+npm run test:e2e -- --project=chromium-real-langgraph --grep "@critical"
+npm run test:e2e -- --project=chromium-seeded --grep "scenario 89"
+npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression"
+```
+
+Test results:
+
+```text
+Initial real LangGraph browser runs: failed as intended by the oracle.
+  Exposed product/evidence bugs: truncated committed audit steps, missing commit outputs in final evidence, completed bulk audit persistence capped at 10 steps, and raw-output final assistant text.
+
+Final real LangGraph browser proof:
+  chromium-real-langgraph @critical: 1 passed in 12.7s.
+
+Focused backend guard:
+  tests/test_phase5_final_validator.py: 17 passed, 4 warnings in 0.96s.
+
+Seeded pipeline regression:
+  First full seeded run after Phase 7: 11 passed, 1 failed.
+    Reason: scenario 89 drove an expired-approval API replay before the browser had rendered the expired fixture text.
+  Focused scenario 89 after UI wait: 1 passed in 11.4s.
+  Final chromium-seeded @data-integrity|@prompt-regression: 12 passed in 1.6m.
+```
+
+Warnings observed:
+
+- Existing `LangChainPendingDeprecationWarning` from `langgraph.checkpoint.serde.jsonplus`.
+- Existing `DeprecationWarning` from `factory_agent.observability.telemetry` using `datetime.utcnow()`.
+- Existing `PytestDeprecationWarning` for unset `asyncio_default_fixture_loop_scope`.
+
+Files changed:
+
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `eMas Front/playwright.config.js`
+- `eMas Front/e2e/specs/full-stack-data-integrity.spec.js`
+- `eMas Front/e2e/specs/real-langgraph-critical.spec.js`
+- `eMas Front/e2e/support/fullStackEnv.js`
+- `eMas Front/e2e/support/realLangGraphArtifacts.js`
+- `eMas Front/e2e/support/realLangGraphScenarios.js`
+- `eMas Front/e2e/support/startRealLangGraphStackForPlaywright.js`
+- `factory-agent/main.py`
+- `factory-agent/factory_agent/graph/nodes/validate.py`
+- `factory-agent/factory_agent/graph/planner_graph.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_phase5_final_validator.py`
+
+Decisions made:
+
+- Phase 7 is scoped to SO-001 real LangGraph browser proof rather than adding the four additional critical cases in the older checklist.
+- The real browser project is opt-in and separate from `chromium-seeded`; it does not delete or replace the seeded adapter pipeline.
+- Factory Agent can preload OpenAPI tools for Playwright real-LangGraph runs without enabling seeded planner mode.
+- Completed LangGraph bulk-write audit plans may exceed the generic interactive draft step cap only when persisting concrete completed execution evidence.
+- Final completed graph responses should prefer the deterministic post-commit recap over the raw quick summary when commit outputs are available.
+
+Blockers/open questions:
+
+- No Phase 7 blockers remain.
+- The next real-LangGraph expansion still needs the agreed additional critical scenarios beyond SO-001.
+- The durable operation ledger question remains open for Phase 10.
+
+Next action:
+
+Start Phase 8, or do a Phase 7 expansion pass for the next real-LangGraph critical scenarios before CI restructuring.
 
 ## Phase 8 Checklist: Manual Failure Promotion Workflow
 
@@ -800,14 +890,13 @@ Start Phase 7: Non-Seeded LangGraph Browser Proof. Prioritize SO-001 in the real
 
 ## Current Blockers
 
-- Existing phase docs mark many phases `Done`, but recent bugs prove several tests had weak oracles.
-- Some seeded Playwright tests prove seeded adapters, not real LangGraph behavior.
-- No Phase 6 blockers remain.
+- No Phase 7 blockers remain.
+- The remaining backlog is expansion/CI work, not a blocker for the SO-001 real LangGraph proof.
 
 ## Open Questions
 
 - Should all cascading bulk mutations default to original-state semantics? Current plan says yes unless the oracle explicitly says current-state semantics.
-- Which five scenarios must get non-seeded LangGraph browser coverage first? Proposed: SO-001, SO-005, SO-011, SO-021, SO-034.
+- Which additional scenarios should get non-seeded LangGraph browser coverage next? Proposed: SO-005, SO-011, SO-021, SO-034.
 - Is a durable operation ledger required, or can invariant tests stabilize current projections?
 - Which CI workflow should block release branches for seeded oracle failures?
 
@@ -827,50 +916,58 @@ Start Phase 7: Non-Seeded LangGraph Browser Proof. Prioritize SO-001 in the real
 - For Phase 6 seeded oracles, DB rows, approval rows, audit rows, snapshot, timeline, final response, and visible UI must agree before the scenario can pass.
 - Partial-failure copy must name failed row ids, not only aggregate counts.
 - Graph-native snapshot tool-result evidence should carry the approval id and be ordered after the matching approval decision.
+- Phase 7's first pass proves SO-001 only; the real LangGraph Playwright project stays opt-in and separate from the seeded adapter project.
+- Completed LangGraph bulk-write audit plans may exceed the generic draft step cap only when persisting concrete completed execution evidence.
+- Final completed graph responses should replace raw quick summaries with deterministic post-commit recaps when commit outputs are available.
 
 ## Commands Run
 
-Latest Phase 6 implementation and verification:
+Latest Phase 7 implementation and verification:
 
 ```powershell
 git status --short
 git diff --stat
 
-Set-Location "eMas Front"
-npm run test:e2e -- --project=chromium-seeded --grep "medium-to-high"
-npm run test:e2e -- --project=chromium-seeded --grep "cascading priority update uses original-state"
-npm run test:e2e -- --project=chromium-seeded --grep "bulk partial failure"
-npm run test:e2e -- --project=chromium-seeded --grep "medium-to-high then high-to-medium"
-npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression"
-npm test
-
 Set-Location "factory-agent"
-python -m py_compile "factory_agent\services\session_snapshot_service.py"
-python -m py_compile "factory_agent\testing_seeded_adapters.py" "factory_agent\services\session_snapshot_service.py"
-python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_phase19_prompt_workflow_regression.py -q
+python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py
+python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py factory_agent\services\plan_creation_service.py
+python -m py_compile factory_agent\services\plan_creation_service.py
+python -m pytest tests\test_phase5_final_validator.py -q
+
+Set-Location "..\eMas Front"
+node --check e2e/support/fullStackEnv.js; node --check e2e/support/startRealLangGraphStackForPlaywright.js; node --check e2e/support/realLangGraphArtifacts.js; node --check e2e/support/realLangGraphScenarios.js; node --check e2e/specs/real-langgraph-critical.spec.js
+npm run test:e2e -- --project=chromium-real-langgraph --grep "@critical"
+npm run test:e2e -- --project=chromium-seeded --grep "scenario 89"
+npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression"
 ```
 
 ## Test Results
 
-Phase 6 verification passed:
+Phase 7 verification passed:
 
 ```text
-Initial full Phase 6 seeded run: 3 passed, 9 failed.
-  New oracles exposed projection/order defects and missing failed-row summary evidence.
-Final chromium-seeded @data-integrity|@prompt-regression: 12 passed in 2.7m
-Focused backend contract/parser guard: 25 passed, 5 warnings in 0.73s
-eMas Front npm test: 53 passed in 5644.8313ms
+Final chromium-real-langgraph @critical: 1 passed in 12.7s.
+Focused backend final-validator guard: 17 passed, 4 warnings in 0.96s.
+Focused seeded scenario 89 after UI wait: 1 passed in 11.4s.
+Final chromium-seeded @data-integrity|@prompt-regression: 12 passed in 1.6m.
 ```
 
 ## Files Changed
 
 - `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `eMas Front/playwright.config.js`
 - `eMas Front/e2e/specs/full-stack-data-integrity.spec.js`
-- `eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js`
-- `eMas Front/e2e/support/dataIntegrityScenarios.js`
-- `factory-agent/factory_agent/services/session_snapshot_service.py`
-- `factory-agent/factory_agent/testing_seeded_adapters.py`
+- `eMas Front/e2e/specs/real-langgraph-critical.spec.js`
+- `eMas Front/e2e/support/fullStackEnv.js`
+- `eMas Front/e2e/support/realLangGraphArtifacts.js`
+- `eMas Front/e2e/support/realLangGraphScenarios.js`
+- `eMas Front/e2e/support/startRealLangGraphStackForPlaywright.js`
+- `factory-agent/main.py`
+- `factory-agent/factory_agent/graph/nodes/validate.py`
+- `factory-agent/factory_agent/graph/planner_graph.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_phase5_final_validator.py`
 
 ## Next Action
 
-Start Phase 7: Non-Seeded LangGraph Browser Proof. Keep Phase 7 focused on proving SO-001 through the real LangGraph browser path before adding more critical scenarios.
+Start Phase 8, or run a Phase 7 expansion pass for the next real-LangGraph critical scenarios before CI restructuring.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import Counter
 from datetime import datetime, timedelta
 from collections.abc import Callable
 from typing import Any
@@ -85,6 +86,36 @@ class PlanCreationService:
         if not sess or not sess.plan_id:
             return None
         return (await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))).scalars().first()
+
+    def _plan_validation_step_limit(
+        self,
+        draft: Any,
+        *,
+        backend_used: str,
+        kind: str,
+        status: str,
+        tool_outputs: list[dict[str, Any]] | None,
+    ) -> int:
+        limit = int(self._settings.max_plan_steps)
+        steps = getattr(draft, "steps", []) or []
+        if (
+            backend_used == "langgraph"
+            and kind == "execution"
+            and status == "COMPLETED"
+            and tool_outputs
+            and len(steps) > limit
+        ):
+            step_tool_counts = Counter(str(getattr(step, "tool_name", "") or "") for step in steps)
+            output_tool_counts = Counter(
+                str(row.get("tool_name") or "") for row in tool_outputs if isinstance(row, dict)
+            )
+            if not all(output_tool_counts[name] >= count for name, count in step_tool_counts.items() if name):
+                return limit
+            # Completed LangGraph bulk-write plans are an audit projection of
+            # already committed row-level operations; preserving every row is
+            # safer than hiding committed writes behind the interactive draft cap.
+            return len(steps)
+        return limit
 
     async def _persist_conversation_reply_as_empty_plan(self,
         *,
@@ -397,7 +428,17 @@ class PlanCreationService:
         context_to_keep: dict[str, Any] | None = None,
         tool_outputs: list[dict[str, Any]] | None = None,
     ) -> PlanResponse:
-        validation = validate_plan(draft, tools_by_name, max_steps=self._settings.max_plan_steps)
+        validation = validate_plan(
+            draft,
+            tools_by_name,
+            max_steps=self._plan_validation_step_limit(
+                draft,
+                backend_used=backend_used,
+                kind=kind,
+                status=status,
+                tool_outputs=tool_outputs,
+            ),
+        )
         if not validation.ok:
             raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
@@ -548,7 +589,7 @@ class PlanCreationService:
                 )
                 if bundle.text.strip():
                     bundle_markdown = bundle.text.strip()
-                    if not result_summary:
+                    if bundle_markdown != (plan_message.content or "").strip():
                         plan_message.content = bundle_markdown
                     sess.llm_call_count = (sess.llm_call_count or 0) + bundle.llm_calls
                     sess.version += 1
@@ -918,7 +959,19 @@ class PlanCreationService:
         if invalid_scoped:
             raise HTTPException(status_code=400, detail={"errors": [f"Tool not allowed by scope: {t}" for t in invalid_scoped]})
 
-        validation = validate_plan(draft, tools_by_name, max_steps=self._settings.max_plan_steps)
+        plan_kind = "discovery" if mode == "plan" else "execution"
+        plan_status = "COMPLETED" if (backend_used == "langgraph" and plan_kind == "execution") else "DRAFT"
+        validation = validate_plan(
+            draft,
+            tools_by_name,
+            max_steps=self._plan_validation_step_limit(
+                draft,
+                backend_used=backend_used,
+                kind=plan_kind,
+                status=plan_status,
+                tool_outputs=tool_outputs_for_plan,
+            ),
+        )
         if not validation.ok:
             metrics.inc("plan_validation_failure_total")
             metrics.inc("plan_validation_failure_rate")
@@ -946,8 +999,6 @@ class PlanCreationService:
                 await db.commit()
                 raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
-        plan_kind = "discovery" if mode == "plan" else "execution"
-        plan_status = "COMPLETED" if (backend_used == "langgraph" and plan_kind == "execution") else "DRAFT"
         response = await self._persist_plan(
             db=db,
             sess=sess,
