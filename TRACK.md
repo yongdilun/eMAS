@@ -32,7 +32,7 @@ Use one of:
 | 10 | L4 production-like release validation | Done | Completed with opt-in `chromium-release`, production-built frontend behind nginx-style `/`, `/agent`, and `/api/v1` proxy paths, static-bearer polling fallback, CORS/preflight checks, latency budgets, release artifacts, outage/precheck drills, mobile/keyboard/slow-network/rollback/cache/long-stream coverage, and deterministic seeded providers by default. |
 | 11 | L5 production synthetic monitoring | Done | Completed with opt-in `chromium-synthetic`, safe read-only canary prompts, live-mode env/token guardrails, machine-readable redacted results, alert classification, auth/provider fault drills, latency burn-rate reporting, and failure-only artifact policy. |
 | 12 | Manual testing retirement and governance | Done | Completed with replacement matrix, scenario 80 governance audit, owner model, lifecycle rules, quarterly review, accepted gaps, preserved seed-pipeline guidance, and full L0-L5 verification. |
-| 13 | Normal-use production hardening | Not Started | Add realistic daily operator browser scenarios around long normal chats, session history, reloads, composer state, and modal lifecycle. |
+| 13 | Normal-use production hardening | Done | Completed with mocked scenarios 81-85 plus opt-in seeded reload/source coverage for scenario 83. Production-grade hardening is not complete; Phase 17 remains the final signoff. |
 | 14 | Data integrity and side-effect safety | Not Started | Add exact DB/audit/UI/SSE checks for mutating chatbot workflows, including cascading priority updates and approval idempotency. |
 | 15 | Reliability, scale, and soak hardening | Not Started | Add concurrent read-only sessions, long streams, large results, slow-path behavior, and repeated soak cleanup checks. |
 | 16 | Security, privacy, and abuse hardening | Not Started | Add session tampering, unauthorized access, artifact redaction, oversized input, unsafe markdown, and tool allowlist checks. |
@@ -49,7 +49,7 @@ Use one of:
 | L3 Hard orchestration | Done | Multi-step, multi-approval, concurrency, state recovery, SSE ordering, and service interruption against seeded services. | Phase 9 completed as opt-in `chromium-seeded --grep "@l3-hard"` gate. |
 | L4 Production-like release validation | Done | Compose/staging-style release validation with nginx paths, auth mode, polling fallback, slow network, mobile, and release artifacts. | Phase 10 completed as opt-in `chromium-release`; not default PR CI. |
 | L5 Production synthetic monitoring | Done | Safe read-only canary prompts, provider signals, alerting, health, and latency checks. | Phase 11 completed as opt-in `chromium-synthetic`; not default PR CI. |
-| Production-grade hardening | Not Started | Normal-use, data integrity, reliability, security/privacy, and operational readiness gates. | Phases 13-17. Opt-in/scheduled until stable. |
+| Production-grade hardening | In Progress | Normal-use, data integrity, reliability, security/privacy, and operational readiness gates. | Phase 13 is complete; Phases 14-17 remain opt-in/scheduled until stable and Phase 17 is the only production-grade signoff. |
 
 ## Phase Gate Rule
 
@@ -152,11 +152,11 @@ These scenarios extend the original 30 into seeded full-stack, failure-seeking o
 | 78 | Synthetic latency burn-rate check reports degraded performance before hard outage. | Done | L5 |
 | 79 | Production trace/screenshot redaction prevents leaking sensitive operational data on failure. | Done | L5 |
 | 80 | Manual replacement matrix audit confirms every old manual chatbot check has an automated gate or accepted gap. | Done | Governance |
-| 81 | Ten-turn normal operator chat mixes machine status, jobs, LOTO/RAG, and follow-up questions without stale answers or lost UI state. | Not Started | Production hardening |
-| 82 | Session list with many historical sessions loads, selects, and restores the correct transcript. | Not Started | Production hardening |
-| 83 | Browser reload after a completed run restores final answer, sources/details, and non-busy composer state. | Not Started | Production hardening |
-| 84 | User edits a draft, switches mode, and submits once with the final text and mode. | Not Started | Production hardening |
-| 85 | Repeatedly open/close the chat across completed, failed, and cancelled sessions without leaked streams, timers, or stale banners. | Not Started | Production hardening |
+| 81 | Ten-turn normal operator chat mixes machine status, jobs, LOTO/RAG, and follow-up questions without stale answers or lost UI state. | Done | Production hardening |
+| 82 | Session list with many historical sessions loads, selects, and restores the correct transcript. | Done | Production hardening |
+| 83 | Browser reload after a completed run restores final answer, sources/details, and non-busy composer state. | Done | Production hardening |
+| 84 | User edits a draft, switches mode, and submits once with the final text and mode. | Done | Production hardening |
+| 85 | Repeatedly open/close the chat across completed, failed, and cancelled sessions without leaked streams, timers, or stale banners. | Done | Production hardening |
 | 86 | Cascading priority update changes all original high-priority jobs to low, then all original low-priority jobs to medium, with separate approvals and exact final DB state. | Not Started | Data integrity |
 | 87 | Bulk update partial failure records exact per-row outcomes and does not claim all jobs succeeded. | Not Started | Data integrity |
 | 88 | Approval double-click, refresh, or replay does not apply the same mutation twice. | Not Started | Data integrity |
@@ -477,16 +477,16 @@ npm run test:e2e -- --project=chromium-synthetic
 
 ### Phase 13: Normal-Use Production Hardening
 
-- [ ] Add `@normal-use` scenario tag and file structure.
-- [ ] Implement scenario 81.
-- [ ] Implement scenario 82.
-- [ ] Implement scenario 83.
-- [ ] Implement scenario 84.
-- [ ] Implement scenario 85.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:e2e -- --project=chromium --grep "@normal-use"`.
-- [ ] Run `npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"`.
-- [ ] Record defects, fixes, accepted gaps, and files changed.
+- [x] Add `@normal-use` scenario tag and file structure.
+- [x] Implement scenario 81.
+- [x] Implement scenario 82.
+- [x] Implement scenario 83.
+- [x] Implement scenario 84.
+- [x] Implement scenario 85.
+- [x] Run `npm test`.
+- [x] Run `npm run test:e2e -- --project=chromium --grep "@normal-use"`.
+- [x] Run `npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"`.
+- [x] Record defects, fixes, accepted gaps, and files changed.
 
 ### Phase 14: Data Integrity and Side-Effect Safety
 
@@ -872,6 +872,38 @@ Phase 13-17 planning update:
 - Documentation-only update. No application tests were run.
 - Added production-grade hardening phases and scenarios 81-105.
 
+Phase 13:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed pre-existing `PLAN.md` modification before Phase 13 edits.
+- `git switch codex/playwright-e2e-plan`: already on `codex/playwright-e2e-plan`.
+- `node --check e2e/support/normalUseScenarios.js; node --check e2e/mock-server/fixtureStore.js; node --check e2e/mock-server/factoryAgentMockServer.js; node --check e2e/specs/normal-use-hardening.spec.js; node --check e2e/specs/full-stack-normal-use.spec.js`: passed.
+- First `npm run test:e2e -- --project=chromium --grep "@normal-use"` exposed Phase 13 fixture/assertion issues. After fixes, passed 5 mocked Chromium normal-use tests.
+- First `npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"` passed 1 seeded Chromium normal-use test.
+- Verification `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed Phase 13 working tree changes plus pre-existing `PLAN.md`.
+- `npm test`: passed, 49 tests.
+- First verification `npm run test:e2e -- --project=chromium`: new Phase 13 tests passed, but the existing `chat-sse-activity.spec.js` timing issue hit once. Immediate rerun passed 18 mocked Chromium Playwright tests.
+- Final `npm run test:e2e -- --project=chromium --grep "@normal-use"`: passed 5 mocked Chromium normal-use tests.
+- Final `npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"`: passed 1 seeded Chromium normal-use test.
+
+Phase 13 coverage and layer decisions:
+
+- Scenario 81 is mocked in `normal-use-hardening.spec.js`: ten-turn normal operator chat covers machine status, jobs, LOTO/RAG source chrome, follow-ups, details, table rendering, stable session id, idle composer, and no stale terminal banners.
+- Scenario 82 is mocked in `normal-use-hardening.spec.js`: the mock server seeds many completed historical sessions, then the browser selects the target session and verifies the correct transcript without decoy transcript leakage.
+- Scenario 83 is both mocked and seeded: mocked coverage verifies reload/UI persistence; seeded `full-stack-normal-use.spec.js` verifies real Factory Agent snapshot restoration and controlled seeded RAG source metadata.
+- Scenario 84 is mocked: request-log assertions verify the draft text is not submitted, the final edited text is submitted exactly once, and `mode: "plan"` is preserved.
+- Scenario 85 is mocked: completed, failed, and cancelled sessions are reopened/closed repeatedly; assertions cover stale banners, non-busy composer state, and mock-server EventSource close evidence.
+- Default PR CI remains `npm test` plus `npm run test:e2e -- --project=chromium`; this is still deterministic and mocked.
+- `chromium-seeded`, `chromium-release`, and `chromium-synthetic` remain opt-in only.
+- Existing Go/Python E2E coverage and `tests/e2e/run_seed_pipeline.ps1` remain preserved.
+- Phase 13 does not claim production-grade hardening is complete; Phase 17 remains the final production-grade gate.
+
+Phase 13 defect/fix notes:
+
+- Fixture defect: the lifecycle prompt for scenario 85 was missing from the normal-use mock scenario resolver. Fix: include it in the `normalUseConversation` prompt list.
+- Assertion defect: the LOTO answer renders citation chrome instead of raw `[^1]` text, and raw args/result details are dev-only. Fix: assert visible rendered answer text and the user-facing `Show details` disclosure.
+- Existing intermittent: the full mocked Chromium suite hit the previously observed SSE activity timing issue once; immediate rerun passed. No reproducible Phase 13 defect remained.
+- No accepted gaps, blockers, production/staging data mutation, real LLM exact-text assertion, or memory-specific assertion was introduced for Phase 13.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -1036,10 +1068,21 @@ Phase 13-17 planning update:
 - `PLAN.md`
 - `TRACK.md`
 
+Phase 13 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/fixtures/factoryAgentFixtures.js`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/specs/normal-use-hardening.spec.js`
+- `eMas Front/e2e/specs/full-stack-normal-use.spec.js`
+- `eMas Front/e2e/support/normalUseScenarios.js`
+
 ## Next Action
 
-Phase 12 is complete. Routine manual chatbot regression is retired for PR, release, and post-deploy smoke through the L0-L5 gates and Scenario 80 governance audit. Do not start Phase 13 unless explicitly requested. Phase 13-17 remain the later production-grade hardening track and are not complete.
+Phase 13 is complete. Continue to Phase 14 only when explicitly requested. Phases 14-17 remain the later production-grade hardening track and are not complete.
 
-Keep the default PR CI on the mocked `chromium` suite, keep `chromium-seeded` as the opt-in L3 full-stack foundation/hard-orchestration gate, keep `chromium-release` as an opt-in L4 release-candidate gate, keep `chromium-synthetic` as the opt-in L5 post-deploy monitor, and keep Phase 13-17 reliability/security/operational gates opt-in or scheduled until stable.
+Keep the default PR CI on the mocked `chromium` suite, keep `chromium-seeded` as the opt-in L3 full-stack foundation/hard-orchestration/normal-use gate, keep `chromium-release` as an opt-in L4 release-candidate gate, keep `chromium-synthetic` as the opt-in L5 post-deploy monitor, and keep Phase 14-17 data-integrity/reliability/security/operational gates opt-in or scheduled until stable.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, release proxy, or real LLM dependencies to the default Playwright suite.

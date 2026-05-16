@@ -90,6 +90,41 @@ npm run test:e2e -- --project=chromium-release
 npm run test:e2e -- --project=chromium-synthetic
 ```
 
+## Phase 13 Normal-Use Hardening
+
+Phase 13 adds `@normal-use` browser scenarios for realistic daily operator behavior. These checks harden normal chatbot usage after L0-L5 and governance are in place, but they do not complete production-grade hardening; that remains Phase 17.
+
+Default mocked normal-use command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium --grep "@normal-use"
+```
+
+Opt-in seeded normal-use command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"
+```
+
+Coverage:
+
+| Scenario | Project | Spec | Why this layer |
+|---|---|---|---|
+| 81 ten-turn operator chat | `chromium` | `e2e/specs/normal-use-hardening.spec.js` | UI-heavy transcript, source/detail, table, busy-state, and composer-state checks are deterministic with mocked responses. |
+| 82 many historical sessions | `chromium` | `e2e/specs/normal-use-hardening.spec.js` | The mock server seeds many completed sessions and verifies sidebar selection restores the correct transcript without real service startup. |
+| 83 reload after completion | `chromium` and `chromium-seeded` | `normal-use-hardening.spec.js`, `full-stack-normal-use.spec.js` | Mocked coverage checks UI persistence; seeded coverage verifies the real Factory Agent snapshot/RAG-source contract. |
+| 84 edited draft plus mode switch | `chromium` | `e2e/specs/normal-use-hardening.spec.js` | Request-log assertions prove only the final edited text is sent and that `mode: "plan"` is preserved. |
+| 85 repeated open/close across terminal sessions | `chromium` | `e2e/specs/normal-use-hardening.spec.js` | Mocked terminal sessions and SSE connection logs make stream close/leak evidence deterministic. |
+
+Rules:
+
+- Keep memory-specific assertions out of this phase until the memory feature exists.
+- Keep default PR CI on `npm run test:e2e -- --project=chromium`; this remains deterministic and mocked.
+- Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in unless the team deliberately promotes them.
+- Do not use these scenarios to claim production-grade hardening is complete.
+
 ## Seeded Full-Stack L3
 
 Phase 8 adds an opt-in seeded project:

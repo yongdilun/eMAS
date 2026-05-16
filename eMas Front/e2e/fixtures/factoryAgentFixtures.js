@@ -189,6 +189,7 @@ export function sessionCompletedEvent({
   planId = 'pw-plan-machine-status',
   content = machineStatusAnswer,
   reason = 'happy_path_fixture',
+  details = {},
   offsetSeconds = 5,
 } = {}) {
   return {
@@ -198,7 +199,7 @@ export function sessionCompletedEvent({
     content,
     status: 'COMPLETED',
     operation_id: planId,
-    details: { reason },
+    details: { reason, ...details },
     created_at: fixtureTime(offsetSeconds),
   }
 }

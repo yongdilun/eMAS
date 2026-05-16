@@ -2,6 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import {
   activityStreamForScenario,
+  createNormalUseHistorySession,
   createScenarioSession,
   getScenario,
   notificationStreamForScenario,
@@ -9,6 +10,7 @@ import {
   scenarioNames,
   summarizeScenarioSession,
 } from './fixtureStore.js'
+import { normalUseHistoryFixtures } from '../support/normalUseScenarios.js'
 
 const args = new Map()
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -231,6 +233,32 @@ const server = http.createServer(async (req, res) => {
     requestLog = []
     connectionLog = []
     sendJson(req, url, res, 200, { ok: true })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/__test/normal-use-history') {
+    const body = await readJson(req)
+    const runId = body.run_id || randomUUID().slice(0, 8)
+    const seeded = normalUseHistoryFixtures(runId)
+    const created = seeded.sessions.map((item, index) => {
+      const sessionId = `pw-normal-use-history-${runId}-${String(index + 1).padStart(2, '0')}`
+      const session = createNormalUseHistorySession({
+        ...item,
+        sessionId,
+        userId: body.user_id || 'frontend-operator',
+      })
+      sessions.set(sessionId, session)
+      return summarizeScenarioSession(session)
+    })
+    sendJson(req, url, res, 200, {
+      ok: true,
+      run_id: runId,
+      sessions: created,
+      target: created.find((session) => session.name === seeded.target.name),
+      target_prompt: seeded.target.prompt,
+      target_answer: seeded.target.answer,
+      decoy_answer: seeded.sessions.find((session) => session.key === 'history-07')?.answer || null,
+    }, { body })
     return
   }
 

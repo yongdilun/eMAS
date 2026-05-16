@@ -41,6 +41,12 @@ import {
   notificationCompletionStream,
   orderedActivityStream,
 } from '../fixtures/sseScripts.js'
+import {
+  normalUseLifecycleCompletedPrompt,
+  normalUsePlanModeFinalPrompt,
+  normalUsePromptSet,
+  normalUseTurnForPrompt,
+} from '../support/normalUseScenarios.js'
 
 export const DEFAULT_SCENARIO = 'readMachineHappyPath'
 
@@ -130,7 +136,146 @@ function defaultIdleSnapshot(session) {
   return snapshotFromSession(session)
 }
 
+function normalUseIds(session, turn) {
+  const safeKey = String(turn?.key || 'turn').replace(/[^a-z0-9-]/gi, '-').toLowerCase()
+  const sequence = session.messages.length || 1
+  return {
+    turnId: session.current_turn_id || `pw-turn-normal-use-${safeKey}-${sequence}`,
+    planId: `pw-plan-normal-use-${safeKey}-${sequence}`,
+    stepId: `pw-step-normal-use-${safeKey}-${sequence}`,
+  }
+}
+
+function normalUseDetails(turn) {
+  return {
+    args: turn.args || {},
+    result: {
+      ...(turn.result || {}),
+      _summary: turn.answer,
+    },
+    ...(turn.presentation ? { presentation: turn.presentation } : {}),
+  }
+}
+
+function normalUseActivitySteps(turn) {
+  return [
+    {
+      id: `pw-normal-use-understanding-${turn.key}`,
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'Understanding your request',
+      detail: turn.plan,
+      state: 'success',
+    },
+    {
+      id: `pw-normal-use-checking-${turn.key}`,
+      timestamp: Date.parse(fixtureTime(2)) / 1000,
+      group: 'research',
+      label: 'Gathering information',
+      detail: `Using ${turn.toolName} for the normal-use fixture`,
+      state: 'success',
+    },
+    {
+      id: `pw-normal-use-complete-${turn.key}`,
+      timestamp: Date.parse(fixtureTime(3)) / 1000,
+      group: 'response',
+      label: 'Run complete',
+      detail: 'Normal-use turn completed.',
+      state: 'complete',
+    },
+  ]
+}
+
+function currentNormalUseTurn(session) {
+  return session.normal_use_current_turn || normalUseTurnForPrompt(session.last_prompt)
+}
+
 export const scenarioCatalog = {
+  normalUseConversation: {
+    name: 'normalUseConversation',
+    description: 'Phase 13 realistic normal-use operator turns with deterministic final answers.',
+    prompts: [...normalUsePromptSet, normalUsePlanModeFinalPrompt, normalUseLifecycleCompletedPrompt],
+    onMessage(session, content) {
+      const turn = normalUseTurnForPrompt(content)
+      session.normal_use_current_turn = turn
+      const turnId = addUserTurn(session, content || turn.prompt, `pw-turn-normal-use-${turn.key}`)
+      session.normal_use_current_turn_id = turnId
+    },
+    onPlan(session) {
+      const turn = currentNormalUseTurn(session)
+      const ids = normalUseIds(session, turn)
+      session.status = 'EXECUTING'
+      session.operation_id = ids.planId
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: ids.planId,
+        objective: turn.plan,
+        stepId: ids.stepId,
+        toolName: turn.toolName,
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-created`,
+          planId: ids.planId,
+          content: turn.plan,
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: ids.planId } }
+    },
+    async onExecute(session, sleep) {
+      const turn = currentNormalUseTurn(session)
+      const ids = normalUseIds(session, turn)
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-execution-started`,
+          planId: ids.planId,
+        }),
+      )
+      await sleep(120)
+      session.status = 'COMPLETED'
+      completeSteps(session)
+      appendTimeline(
+        session,
+        toolResultEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.stepId}-tool-result`,
+          stepId: ids.stepId,
+          planId: ids.planId,
+          toolName: turn.toolName,
+          content: turn.answer,
+          details: normalUseDetails(turn),
+        }),
+      )
+      appendTimeline(
+        session,
+        sessionCompletedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-completed`,
+          planId: ids.planId,
+          content: turn.answer,
+          reason: 'normal_use_fixture',
+          details: {
+            ...(turn.sources ? { sources: turn.sources } : {}),
+            ...(turn.safetyContent ? { safety_content: turn.safetyContent } : {}),
+          },
+        }),
+      )
+      return { status: 200, body: { status: 'COMPLETED', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      const turn = currentNormalUseTurn(session)
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, normalUseActivitySteps(turn))
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return activeHappyPathSnapshot(session)
+      return defaultIdleSnapshot(session)
+    },
+  },
+
   readMachineHappyPath: {
     name: 'readMachineHappyPath',
     description: 'Phase 2 machine status happy path.',
@@ -789,6 +934,100 @@ export function getScenario(name) {
 
 export function createScenarioSession({ sessionId, userId, name, scenarioName = DEFAULT_SCENARIO }) {
   return createFactoryAgentSession({ sessionId, userId, name, scenarioName })
+}
+
+export function createNormalUseHistorySession({
+  sessionId,
+  userId = 'frontend-operator',
+  name,
+  prompt,
+  answer,
+  updatedOffsetSeconds = 0,
+  sources = [],
+}) {
+  const session = createFactoryAgentSession({
+    sessionId,
+    userId,
+    name,
+    scenarioName: 'normalUseConversation',
+  })
+  const timeOffset = 200 + Number(updatedOffsetSeconds || 0)
+  const createdAt = fixtureTime(timeOffset)
+  const updatedAt = fixtureTime(timeOffset + 5)
+  const turn = {
+    key: `history-${String(updatedOffsetSeconds).replace(/[^a-z0-9-]/gi, '-')}`,
+    prompt,
+    answer,
+    plan: `Restoring historical transcript for ${name}.`,
+    toolName: 'get_machine_status',
+    args: { machine_id: 'M-CNC-01' },
+    result: { machine_id: 'M-CNC-01', status: 'RUNNING', restored: true },
+    sources,
+  }
+  const turnId = `${sessionId}-turn-1`
+  const planId = `${sessionId}-plan-1`
+  const stepId = `${sessionId}-step-1`
+
+  session.status = 'COMPLETED'
+  session.created_at = createdAt
+  session.updated_at = updatedAt
+  session.current_turn_id = turnId
+  session.messages.push({
+    id: `${sessionId}-message-1`,
+    role: 'user',
+    content: prompt,
+    mode: 'normal',
+    created_at: fixtureTime(timeOffset + 1),
+  })
+  session.plan = buildFactoryAgentPlan(session, {
+    planId,
+    objective: turn.plan,
+    stepId,
+    toolName: turn.toolName,
+    status: 'COMPLETED',
+  })
+  session.steps = session.plan.steps.map((step) => ({
+    ...step,
+    status: 'DONE',
+    updated_at: fixtureTime(timeOffset + 4),
+  }))
+  session.activity_steps = normalUseActivitySteps(turn)
+  session.timeline.push(
+    userMessageEvent({ turnId, content: prompt, offsetSeconds: timeOffset + 1 }),
+    planCreatedEvent({
+      turnId,
+      eventId: `${sessionId}-plan-created`,
+      planId,
+      content: turn.plan,
+      offsetSeconds: timeOffset + 2,
+    }),
+    executionStartedEvent({
+      turnId,
+      eventId: `${sessionId}-execution-started`,
+      planId,
+      offsetSeconds: timeOffset + 3,
+    }),
+    toolResultEvent({
+      turnId,
+      eventId: `${sessionId}-tool-result`,
+      stepId,
+      planId,
+      toolName: turn.toolName,
+      content: answer,
+      details: normalUseDetails(turn),
+      offsetSeconds: timeOffset + 4,
+    }),
+    sessionCompletedEvent({
+      turnId,
+      eventId: `${sessionId}-completed`,
+      planId,
+      content: answer,
+      reason: 'normal_use_history_fixture',
+      details: sources.length ? { sources } : {},
+      offsetSeconds: timeOffset + 5,
+    }),
+  )
+  return session
 }
 
 export function summarizeScenarioSession(session) {
