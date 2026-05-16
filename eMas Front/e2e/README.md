@@ -35,6 +35,12 @@ Manual check replaced by Playwright:
 
 This suite intentionally validates the deterministic mocked frontend path. Real Factory Agent, Go API, live RAG, and real LLM behavior remain outside this default browser suite.
 
+## Manual Failure Promotion
+
+When QA or a developer finds a chatbot failure manually, use the Phase 8 intake template in [`../../docs/qa/manual_prompt_regression_bank.md`](../../docs/qa/manual_prompt_regression_bank.md). The bug must capture the exact prompt or user action, artifact/log/screenshot/trace link, observed behavior, expected behavior, selected existing oracle or proposed new oracle, lowest useful test layer, owner, and severity.
+
+Do not close a chatbot failure as manual-only. Add a failing regression at the lowest useful layer before or with the fix, then record the passing command after the fix. The regression bank or stateful oracle file must map the bug to the test file and command.
+
 ## Phase 12 Governance and Retirement
 
 Routine manual chatbot regression is retired only through the Phase 12 governance gate in [`../../docs/operations/chatbot_test_governance.md`](../../docs/operations/chatbot_test_governance.md). Scenario 80 is the audit checklist: every old manual chatbot check must be mapped to an L0-L5 automated gate or recorded as a human-only accepted gap with owner, severity, risk, target, reason, and workaround.

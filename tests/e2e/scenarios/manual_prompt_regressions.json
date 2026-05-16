@@ -7,18 +7,56 @@
       "source_prompt",
       "observed_failure",
       "expected_behavior",
+      "artifact_link",
+      "selected_oracle",
+      "proposed_oracle",
       "owner",
       "severity",
       "lowest_test_layer",
-      "browser_coverage"
+      "browser_coverage",
+      "regression"
     ],
     "severity_values": ["critical", "high", "medium", "low"],
     "coverage_categories": ["parser", "route", "seeded-workflow", "mocked-browser", "seeded-browser", "accepted-gap"]
   },
+  "promotion_workflow": {
+    "required_intake_fields": [
+      "exact_prompt_or_user_action",
+      "artifact_log_screenshot_or_trace_link",
+      "observed_behavior",
+      "expected_behavior",
+      "selected_existing_oracle_or_proposed_new_oracle",
+      "lowest_useful_test_layer",
+      "owner",
+      "severity"
+    ],
+    "closure_required_fields": [
+      "regression_test_file",
+      "failing_regression_command",
+      "failing_regression_evidence",
+      "passing_regression_command",
+      "tracker_update"
+    ],
+    "closure_rule": "Manual chatbot failures cannot close as tested manually only. Close with a promoted failing regression that failed before or with the fix and passed after the fix, or record an accepted gap with owner, severity, risk, workaround, target phase/date, reason, and blocking status.",
+    "lowest_layer_order": [
+      "parser",
+      "route",
+      "pytest_graph",
+      "pytest_api",
+      "pytest_snapshot",
+      "sse_pytest",
+      "frontend_unit",
+      "mocked-browser",
+      "seeded-workflow",
+      "seeded-browser",
+      "seeded_full_stack",
+      "real_langgraph_browser"
+    ]
+  },
   "triage_rule": {
     "coverage_categories": ["parser", "route", "seeded-workflow", "browser", "accepted-gap"],
-    "closure_requirement": "Every new manual prompt or workflow miss must be mapped to parser, route, seeded-workflow, browser, or accepted-gap coverage before closure.",
-    "accepted_gap_required_fields": ["owner", "severity", "risk", "target_date_or_phase", "reason", "temporary_workaround"]
+    "closure_requirement": "Every new manual prompt or workflow miss must be mapped to parser, route, seeded-workflow, browser, or accepted-gap coverage before closure, with a failing regression before closure unless it is explicitly accepted as a gap.",
+    "accepted_gap_required_fields": ["owner", "severity", "risk", "target_date_or_phase", "reason", "temporary_workaround", "blocking_status"]
   },
   "prompts": [
     {
@@ -27,10 +65,20 @@
       "prompt": "What LOTO procedure applies before working on M-CNC-01?",
       "observed_failure": "The chatbot could ask for the machine ID even though M-CNC-01 was present in the prompt.",
       "expected_behavior": "Extract M-CNC-01, route to the LOTO/RAG path, complete without asking for the machine ID again, and return source metadata tied to LOTO-M-CNC-01.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-18-seed",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
       "owner": "qa",
       "severity": "high",
       "lowest_test_layer": "parser",
       "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this historical Phase 18 seed is preserved in the bank and parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
       "test_layer": "parser+mocked-browser+seeded-browser",
       "expected": {
         "primary_route": "rag_loto",
@@ -53,10 +101,20 @@
       "prompt": "Before servicing M-CNC-01, which LOTO procedure applies?",
       "observed_failure": "Natural LOTO wording variants could regress to the narrow exact Phase 18 phrase and ask for a machine ID.",
       "expected_behavior": "Extract M-CNC-01 and use the same LOTO/RAG route and source metadata as the original manual miss.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
       "owner": "qa",
       "severity": "high",
       "lowest_test_layer": "parser",
       "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
       "test_layer": "parser+seeded-browser",
       "expected": {
         "primary_route": "rag_loto",
@@ -79,10 +137,20 @@
       "prompt": "Need the lockout/tagout SOP for m-cnc-01 before maintenance.",
       "observed_failure": "Lowercase lockout/tagout wording could bypass the LOTO route or lose the machine ID.",
       "expected_behavior": "Normalize m-cnc-01 to M-CNC-01 and route to the deterministic LOTO/RAG answer without clarification.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
       "owner": "qa",
       "severity": "high",
       "lowest_test_layer": "parser",
       "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
       "test_layer": "parser+seeded-browser",
       "expected": {
         "primary_route": "rag_loto",
@@ -105,10 +173,20 @@
       "prompt": "For machine (M-CNC-01), what lockout procedure should I follow?",
       "observed_failure": "Parenthesized machine IDs could be missed and trigger an unnecessary clarification.",
       "expected_behavior": "Extract the parenthesized M-CNC-01 ID and route to LOTO/RAG without asking which machine.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
       "owner": "qa",
       "severity": "medium",
       "lowest_test_layer": "parser",
       "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
       "test_layer": "parser+seeded-browser",
       "expected": {
         "primary_route": "rag_loto",
@@ -131,10 +209,20 @@
       "prompt": "### Safety check\nLOTO for `M-CNC-01` before touching the spindle.",
       "observed_failure": "Markdown-formatted IDs could be parsed differently from plain text and miss the LOTO/RAG route.",
       "expected_behavior": "Extract M-CNC-01 through markdown formatting and return the same deterministic LOTO/RAG answer.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
       "owner": "qa",
       "severity": "medium",
       "lowest_test_layer": "parser",
       "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
       "test_layer": "parser+seeded-browser",
       "expected": {
         "primary_route": "rag_loto",

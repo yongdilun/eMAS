@@ -24,8 +24,8 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 4 | Snapshot, timeline, and final response contract | Done | Added Phase 4 oracle contract tests tying graph actions, approvals, audit rows, fake committed state, SSE/timeline evidence, and final response copy together; fixed frontend stale-terminal-before-approval guard. |
 | 5 | SSE contract and disconnect semantics | Done | Runtime and browser SSE oracles now prove order, reconnect, malformed recovery, disconnect, fallback, and terminal-state gating. |
 | 6 | Seeded full-stack data and audit oracles | Done | Seeded Go API plus Factory Agent DB rows, approvals, audit rows, snapshot, timeline, final response, and UI now agree under Phase 6 oracles. |
-| 7 | Non-seeded LangGraph browser proof | Not Started | Prove critical browser flows without seeded planner adapter. |
-| 8 | Manual failure promotion workflow | Not Started | Every manual miss becomes an oracle or accepted gap. |
+| 7 | Non-seeded LangGraph browser proof | Done | SO-001 real LangGraph browser proof is committed at `9054b87`. |
+| 8 | Manual failure promotion workflow | Done | Manual misses now have a required intake template, oracle mapping, lowest-layer regression mapping, and failing-regression closure rule. |
 | 9 | CI gate restructure | Not Started | Put fast oracle tests in PR and heavier ones in release gates. |
 | 10 | Ledger refactor decision | Not Started | Decide whether a durable operation ledger is needed. |
 
@@ -857,18 +857,88 @@ Blockers/open questions:
 
 Next action:
 
-Start Phase 8, or do a Phase 7 expansion pass for the next real-LangGraph critical scenarios before CI restructuring.
+Start Phase 8 manual failure promotion before CI restructuring.
 
 ## Phase 8 Checklist: Manual Failure Promotion Workflow
 
-- [ ] Add manual failure intake template.
-- [ ] Require exact prompt and artifact link.
-- [ ] Require observed failure and expected behavior.
-- [ ] Require selected oracle or new oracle.
-- [ ] Require lowest useful test layer.
-- [ ] Require owner/severity.
-- [ ] Require failing regression before closing.
-- [ ] Review regression bank weekly until stable.
+- [x] Add manual failure intake template.
+- [x] Require exact prompt and artifact link.
+- [x] Require observed failure and expected behavior.
+- [x] Require selected oracle or new oracle.
+- [x] Require lowest useful test layer.
+- [x] Require owner/severity.
+- [x] Require failing regression before closing.
+- [x] Review regression bank weekly until stable.
+
+## Phase 8 Implementation: Manual Failure Promotion Workflow
+
+Status: Done
+
+Updated: 2026-05-16
+
+Scope completed in this pass:
+
+- Added the Phase 8 manual failure promotion workflow and copyable intake/closure template to `docs/qa/manual_prompt_regression_bank.md`.
+- Linked the workflow from `eMas Front/e2e/README.md` so QA/devs find it while working in the browser E2E area.
+- Extended `tests/e2e/scenarios/manual_prompt_regressions.json` with promotion workflow metadata, closure requirements, accepted-gap blocking status, artifact links, selected oracle mapping, and regression file/command fields.
+- Added pytest coverage in `factory-agent/tests/test_phase18_manual_prompt_bank.py` so the bank requires reproducible intake fields, oracle/proposed-oracle mapping, and a failing-regression-before-closure rule.
+- Kept Phase 6 seeded and Phase 7 real LangGraph pipelines intact; no seeded or real LangGraph test implementation was weakened or deleted.
+
+Commands run:
+
+```powershell
+Set-Location "factory-agent"
+python -m py_compile tests\test_phase18_manual_prompt_bank.py
+python -m pytest tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_schema.py -q
+
+Set-Location ".."
+node -e "JSON.parse(require('fs').readFileSync('tests/e2e/scenarios/manual_prompt_regressions.json','utf8')); console.log('manual_prompt_regressions.json OK')"
+```
+
+Test results:
+
+```text
+Initial focused pytest run: 7 passed, 1 failed.
+  Reason: the JSON closure rule described the red-run requirement but did not include the exact guarded phrase "failing regression".
+
+Final focused pytest run:
+  tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_schema.py: 8 passed, 1 warning in 0.63s.
+
+Python syntax check:
+  tests\test_phase18_manual_prompt_bank.py: passed.
+
+JSON parse check:
+  manual_prompt_regressions.json OK.
+```
+
+Warnings observed:
+
+- Existing `LangChainPendingDeprecationWarning` from `langgraph.checkpoint.serde.jsonplus`.
+- Existing `PytestDeprecationWarning` for unset `asyncio_default_fixture_loop_scope`.
+
+Files changed:
+
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+- `eMas Front/e2e/README.md`
+- `factory-agent/tests/test_phase18_manual_prompt_bank.py`
+- `tests/e2e/scenarios/manual_prompt_regressions.json`
+
+Decisions made:
+
+- Manual chatbot failures now close only as a promoted regression or an accepted gap with owner, severity, risk, workaround, target phase/date, reason, and blocking status.
+- A promoted regression must name a test file, focused command, failing-before-fix evidence, and passing-after-fix evidence.
+- The current LOTO manual-prompt bank entries map to existing oracle `SO-021`; future misses must either select an existing oracle or propose a new one.
+- The workflow chooses the lowest useful layer first so parser/route defects do not wait for browser coverage, while state, SSE, snapshot, and real LangGraph defects still land in the stronger oracle layer that would have caught them.
+
+Blockers/open questions:
+
+- No Phase 8 blockers remain.
+- The weekly bank review cadence is documented; the operational owner remains the QA regression bank owner named by the team.
+
+Next action:
+
+Start Phase 9: CI Gate Restructure. Keep PR gates fast and deterministic, preserve seeded/full-stack and real LangGraph checks as opt-in or release gates until intentionally promoted.
 
 ## Phase 9 Checklist: CI Gate Restructure
 
@@ -890,8 +960,8 @@ Start Phase 8, or do a Phase 7 expansion pass for the next real-LangGraph critic
 
 ## Current Blockers
 
-- No Phase 7 blockers remain.
-- The remaining backlog is expansion/CI work, not a blocker for the SO-001 real LangGraph proof.
+- No Phase 8 blockers remain.
+- The remaining backlog is CI restructuring, real LangGraph expansion, and the Phase 10 ledger decision.
 
 ## Open Questions
 
@@ -899,6 +969,7 @@ Start Phase 8, or do a Phase 7 expansion pass for the next real-LangGraph critic
 - Which additional scenarios should get non-seeded LangGraph browser coverage next? Proposed: SO-005, SO-011, SO-021, SO-034.
 - Is a durable operation ledger required, or can invariant tests stabilize current projections?
 - Which CI workflow should block release branches for seeded oracle failures?
+- Who is the named QA regression bank owner for the documented weekly review cadence?
 
 ## Decisions Made
 
@@ -919,55 +990,46 @@ Start Phase 8, or do a Phase 7 expansion pass for the next real-LangGraph critic
 - Phase 7's first pass proves SO-001 only; the real LangGraph Playwright project stays opt-in and separate from the seeded adapter project.
 - Completed LangGraph bulk-write audit plans may exceed the generic draft step cap only when persisting concrete completed execution evidence.
 - Final completed graph responses should replace raw quick summaries with deterministic post-commit recaps when commit outputs are available.
+- Phase 8 manual failures close only as promoted regressions or accepted gaps; `tested manually only` is not an acceptable closure state.
+- New manual misses must capture exact prompt/action, artifact link, observed/expected behavior, oracle mapping, lowest useful layer, owner/severity, failing regression evidence, and passing-after-fix evidence.
 
 ## Commands Run
 
-Latest Phase 7 implementation and verification:
+Latest Phase 8 implementation and verification:
 
 ```powershell
 git status --short
 git diff --stat
 
 Set-Location "factory-agent"
-python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py
-python -m py_compile main.py factory_agent\graph\nodes\validate.py factory_agent\graph\planner_graph.py factory_agent\services\plan_creation_service.py
-python -m py_compile factory_agent\services\plan_creation_service.py
-python -m pytest tests\test_phase5_final_validator.py -q
+python -m py_compile tests\test_phase18_manual_prompt_bank.py
+python -m pytest tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_schema.py -q
 
-Set-Location "..\eMas Front"
-node --check e2e/support/fullStackEnv.js; node --check e2e/support/startRealLangGraphStackForPlaywright.js; node --check e2e/support/realLangGraphArtifacts.js; node --check e2e/support/realLangGraphScenarios.js; node --check e2e/specs/real-langgraph-critical.spec.js
-npm run test:e2e -- --project=chromium-real-langgraph --grep "@critical"
-npm run test:e2e -- --project=chromium-seeded --grep "scenario 89"
-npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression"
+Set-Location ".."
+node -e "JSON.parse(require('fs').readFileSync('tests/e2e/scenarios/manual_prompt_regressions.json','utf8')); console.log('manual_prompt_regressions.json OK')"
 ```
 
 ## Test Results
 
-Phase 7 verification passed:
+Phase 8 verification passed after one wording fix:
 
 ```text
-Final chromium-real-langgraph @critical: 1 passed in 12.7s.
-Focused backend final-validator guard: 17 passed, 4 warnings in 0.96s.
-Focused seeded scenario 89 after UI wait: 1 passed in 11.4s.
-Final chromium-seeded @data-integrity|@prompt-regression: 12 passed in 1.6m.
+Initial focused pytest run: 7 passed, 1 failed.
+  Reason: JSON closure rule needed to include the exact guarded phrase "failing regression".
+
+Final focused pytest run: 8 passed, 1 warning in 0.63s.
+Python syntax check: passed.
+JSON parse check: manual_prompt_regressions.json OK.
 ```
 
 ## Files Changed
 
 - `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
-- `eMas Front/playwright.config.js`
-- `eMas Front/e2e/specs/full-stack-data-integrity.spec.js`
-- `eMas Front/e2e/specs/real-langgraph-critical.spec.js`
-- `eMas Front/e2e/support/fullStackEnv.js`
-- `eMas Front/e2e/support/realLangGraphArtifacts.js`
-- `eMas Front/e2e/support/realLangGraphScenarios.js`
-- `eMas Front/e2e/support/startRealLangGraphStackForPlaywright.js`
-- `factory-agent/main.py`
-- `factory-agent/factory_agent/graph/nodes/validate.py`
-- `factory-agent/factory_agent/graph/planner_graph.py`
-- `factory-agent/factory_agent/services/plan_creation_service.py`
-- `factory-agent/tests/test_phase5_final_validator.py`
+- `docs/qa/manual_prompt_regression_bank.md`
+- `eMas Front/e2e/README.md`
+- `factory-agent/tests/test_phase18_manual_prompt_bank.py`
+- `tests/e2e/scenarios/manual_prompt_regressions.json`
 
 ## Next Action
 
-Start Phase 8, or run a Phase 7 expansion pass for the next real-LangGraph critical scenarios before CI restructuring.
+Start Phase 9: CI Gate Restructure.
