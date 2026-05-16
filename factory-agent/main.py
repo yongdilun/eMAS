@@ -785,6 +785,7 @@ async def lifespan(app: FastAPI):
         planner_adapter = SeededPlaywrightPlanner(settings)
         rag_pipeline_adapter = SeededPlaywrightRAGPipeline()
         log_event("playwright_seeded_mode_enabled")
+    app.state.playwright_seeded_planner = planner_adapter
 
     app.include_router(
         build_router(
@@ -898,6 +899,21 @@ async def ready(request: Request):
 async def mock_slow(ms: int = 1000):
     await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
     return {"ok": True, "slept_ms": ms}
+
+
+def _playwright_seeded_mode() -> bool:
+    return os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
+
+
+@app.get("/_playwright/data-integrity/audit")
+async def playwright_data_integrity_audit(request: Request, session_id: str | None = None):
+    if not _playwright_seeded_mode():
+        return {"entries": []}
+    planner = getattr(request.app.state, "playwright_seeded_planner", None)
+    read_audit = getattr(planner, "data_integrity_audit", None)
+    if not callable(read_audit):
+        return {"entries": []}
+    return {"entries": read_audit(session_id=session_id)}
 
 
 # Serve the Factory Agent Wiki

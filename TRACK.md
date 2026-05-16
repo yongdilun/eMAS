@@ -33,7 +33,7 @@ Use one of:
 | 11 | L5 production synthetic monitoring | Done | Completed with opt-in `chromium-synthetic`, safe read-only canary prompts, live-mode env/token guardrails, machine-readable redacted results, alert classification, auth/provider fault drills, latency burn-rate reporting, and failure-only artifact policy. |
 | 12 | Manual testing retirement and governance | Done | Completed with replacement matrix, scenario 80 governance audit, owner model, lifecycle rules, quarterly review, accepted gaps, preserved seed-pipeline guidance, and full L0-L5 verification. |
 | 13 | Normal-use production hardening | Done | Completed with mocked scenarios 81-85 plus opt-in seeded reload/source coverage for scenario 83. Production-grade hardening is not complete; Phase 17 remains the final signoff. |
-| 14 | Data integrity and side-effect safety | Not Started | Add exact DB/audit/UI/SSE checks for mutating chatbot workflows, including cascading priority updates and approval idempotency. |
+| 14 | Data integrity and side-effect safety | Done | Completed with opt-in `@data-integrity` seeded scenarios 86-90, exact DB/audit/UI/SSE/final-summary checks, multi-approval write-set evidence, and approval idempotency/staleness guards. Production-grade hardening is not complete; Phase 17 remains the final signoff. |
 | 15 | Reliability, scale, and soak hardening | Not Started | Add concurrent read-only sessions, long streams, large results, slow-path behavior, and repeated soak cleanup checks. |
 | 16 | Security, privacy, and abuse hardening | Not Started | Add session tampering, unauthorized access, artifact redaction, oversized input, unsafe markdown, and tool allowlist checks. |
 | 17 | Production-grade operational readiness | Not Started | Final production-grade gate for alerts, rollback, emergency disable, environment recreation, and full gate matrix signoff. |
@@ -49,7 +49,7 @@ Use one of:
 | L3 Hard orchestration | Done | Multi-step, multi-approval, concurrency, state recovery, SSE ordering, and service interruption against seeded services. | Phase 9 completed as opt-in `chromium-seeded --grep "@l3-hard"` gate. |
 | L4 Production-like release validation | Done | Compose/staging-style release validation with nginx paths, auth mode, polling fallback, slow network, mobile, and release artifacts. | Phase 10 completed as opt-in `chromium-release`; not default PR CI. |
 | L5 Production synthetic monitoring | Done | Safe read-only canary prompts, provider signals, alerting, health, and latency checks. | Phase 11 completed as opt-in `chromium-synthetic`; not default PR CI. |
-| Production-grade hardening | In Progress | Normal-use, data integrity, reliability, security/privacy, and operational readiness gates. | Phase 13 is complete; Phases 14-17 remain opt-in/scheduled until stable and Phase 17 is the only production-grade signoff. |
+| Production-grade hardening | In Progress | Normal-use, data integrity, reliability, security/privacy, and operational readiness gates. | Phases 13-14 are complete; Phases 15-17 remain opt-in/scheduled until stable and Phase 17 is the only production-grade signoff. |
 
 ## Phase Gate Rule
 
@@ -157,11 +157,11 @@ These scenarios extend the original 30 into seeded full-stack, failure-seeking o
 | 83 | Browser reload after a completed run restores final answer, sources/details, and non-busy composer state. | Done | Production hardening |
 | 84 | User edits a draft, switches mode, and submits once with the final text and mode. | Done | Production hardening |
 | 85 | Repeatedly open/close the chat across completed, failed, and cancelled sessions without leaked streams, timers, or stale banners. | Done | Production hardening |
-| 86 | Cascading priority update changes all original high-priority jobs to low, then all original low-priority jobs to medium, with separate approvals and exact final DB state. | Not Started | Data integrity |
-| 87 | Bulk update partial failure records exact per-row outcomes and does not claim all jobs succeeded. | Not Started | Data integrity |
-| 88 | Approval double-click, refresh, or replay does not apply the same mutation twice. | Not Started | Data integrity |
-| 89 | Expired or stale approval cannot mutate data after the session changes state. | Not Started | Data integrity |
-| 90 | Audit log, DB state, SSE timeline, and final assistant summary agree for every mutating job. | Not Started | Data integrity |
+| 86 | Cascading priority update changes all original high-priority jobs to low, then all original low-priority jobs to medium, with separate approvals and exact final DB state. | Done | Data integrity |
+| 87 | Bulk update partial failure records exact per-row outcomes and does not claim all jobs succeeded. | Done | Data integrity |
+| 88 | Approval double-click, refresh, or replay does not apply the same mutation twice. | Done | Data integrity |
+| 89 | Expired or stale approval cannot mutate data after the session changes state. | Done | Data integrity |
+| 90 | Audit log, DB state, SSE timeline, and final assistant summary agree for every mutating job. | Done | Data integrity |
 | 91 | Ten concurrent read-only browser sessions complete without cross-session leakage. | Not Started | Reliability |
 | 92 | Long stream with many activity events reaches terminal state without duplicate rows, high memory, or stuck busy UI. | Not Started | Reliability |
 | 93 | Large structured result and many sources render with stable layout and usable controls. | Not Started | Reliability |
@@ -490,17 +490,18 @@ npm run test:e2e -- --project=chromium-synthetic
 
 ### Phase 14: Data Integrity and Side-Effect Safety
 
-- [ ] Add seeded fixtures for mutating job-priority workflows.
-- [ ] Define original-state semantics for cascading priority updates.
-- [ ] Implement scenario 86.
-- [ ] Implement scenario 87.
-- [ ] Implement scenario 88.
-- [ ] Implement scenario 89.
-- [ ] Implement scenario 90.
-- [ ] Assert DB state, audit log, SSE timeline, approval ids, and visible final summary agree.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"`.
-- [ ] Record defects, fixes, accepted gaps, and files changed.
+- [x] Add seeded fixtures for mutating job-priority workflows.
+- [x] Define original-state semantics for cascading priority updates.
+- [x] Implement scenario 86.
+- [x] Implement scenario 87.
+- [x] Implement scenario 88.
+- [x] Implement scenario 89.
+- [x] Implement scenario 90.
+- [x] Assert DB state, audit log, SSE timeline, approval ids, and visible final summary agree.
+- [x] Run `npm test`.
+- [x] Run `npm run test:e2e -- --project=chromium`.
+- [x] Run `npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"`.
+- [x] Record defects, fixes, accepted gaps, and files changed.
 
 ### Phase 15: Reliability, Scale, and Soak Hardening
 
@@ -545,7 +546,7 @@ npm run test:e2e -- --project=chromium-synthetic
 
 ## Current Blockers
 
-- None for Phase 12.
+- None for Phase 14.
 
 ## Accepted Gaps
 
@@ -612,6 +613,8 @@ Phase 10-17 implementation risks to resolve:
 | Seeded, release, and synthetic projects remain opt-in. | `chromium-seeded`, `chromium-release`, and `chromium-synthetic` are explicit L3-L5 gates, not default PR work. |
 | Phase 13-17 extend beyond manual-test retirement into production-grade hardening. | They add normal-use, data-integrity, reliability, security/privacy, and operational readiness gates so the chatbot is harder to break in daily use. |
 | Scenario 86 uses original-state semantics for cascading priority updates. | This avoids accidentally converting jobs changed from high to low during step one into medium during step two unless the product explicitly chooses current-state semantics later. |
+| Phase 14 mutating coverage is seeded-only and opt-in. | Data-integrity scenarios reset deterministic job-priority fixtures and assert persisted state, audit entries, SSE/timeline evidence, approval ids, and final summaries without touching production data or default PR CI. |
+| Multi-group Phase 14 mutations require separate approval evidence per write set. | A cascading workflow must prove each group-specific write was approved independently before the final summary can claim success. |
 
 ## Commands Run During Discovery
 
@@ -904,6 +907,38 @@ Phase 13 defect/fix notes:
 - Existing intermittent: the full mocked Chromium suite hit the previously observed SSE activity timing issue once; immediate rerun passed. No reproducible Phase 13 defect remained.
 - No accepted gaps, blockers, production/staging data mutation, real LLM exact-text assertion, or memory-specific assertion was introduced for Phase 13.
 
+Phase 14:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed a pre-existing `PLAN.md` modification plus Phase 14 working tree changes.
+- `git switch codex/playwright-e2e-plan`: already on `codex/playwright-e2e-plan`.
+- `node --check e2e/support/dataIntegrityScenarios.js; node --check e2e/specs/full-stack-data-integrity.spec.js`: passed.
+- `factory-agent\.venv\Scripts\python.exe -m py_compile factory-agent\factory_agent\testing_seeded_adapters.py factory-agent\factory_agent\services\approval_resume_service.py factory-agent\factory_agent\api\routers\approvals.py factory-agent\main.py`: passed.
+- First `npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"` exposed Phase 14 defects in cascade summary shaping, partial-failure assertion wording, and stale/expired approval handling. After fixes, the command passed 5 seeded Chromium data-integrity tests.
+- Final `npm test`: passed, 49 tests.
+- Final `npm run test:e2e -- --project=chromium`: passed, 18 mocked Chromium Playwright tests.
+- Final `npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"`: passed, 5 seeded Chromium data-integrity tests.
+- Final `git status --short --branch`: branch `codex/playwright-e2e-plan`; pending Phase 14 changes only plus the pre-existing unstaged `PLAN.md` change.
+
+Phase 14 coverage and layer decisions:
+
+- Scenario 86 is seeded in `full-stack-data-integrity.spec.js`: canonical seeded priority fixtures reset before the test; original high-priority jobs become low, original low-priority jobs become medium, and original medium-priority jobs remain unchanged. The test requires two distinct approval ids and asserts exact final Go API DB state, audit entries, approval timeline evidence, SSE/timeline rows, and visible persisted summary agreement.
+- Scenario 87 is seeded: a bulk update with one missing job records row-level success/failure outcomes, persists only the valid job changes, records audit success/failure rows, leaves the session failed, and does not claim all jobs succeeded.
+- Scenario 88 is seeded: double-click/replay after refresh uses the same approval id but applies the mutation once, with one success audit row and one final DB change.
+- Scenario 89 is seeded: stale approval context and expired approval attempts return safe conflict responses and leave DB state and audit success rows unchanged.
+- Scenario 90 is seeded: for every mutating job, the final Go API DB state, seeded audit log, SSE/timeline evidence, approval id, and visible final assistant summary agree.
+- Default PR CI remains `npm test` plus mocked `npm run test:e2e -- --project=chromium`; Phase 14 did not add Go API, real Factory Agent, Docker, release proxy, or real LLM/RAG services to default PR CI.
+- `chromium-seeded`, `chromium-release`, and `chromium-synthetic` remain opt-in only. The `@data-integrity` scenarios are seeded/resettable and are not allowed to run against production data.
+- Existing Go/Python E2E coverage and `tests/e2e/run_seed_pipeline.ps1` remain preserved.
+- Phase 14 does not claim production-grade hardening is complete; Phases 15-17 remain, and Phase 17 remains the final production-grade signoff.
+
+Phase 14 defect/fix notes:
+
+- Product safety defect: expired graph approvals could still be approved and resume a seeded mutation. Fix: the approval router now rejects expired approvals before resume, clears matching pending context, and returns a conflict response without mutation.
+- Product safety defect: stale graph approvals could be replayed after the session no longer matched the pending approval context. Fix: the approval router now requires the session to still be `WAITING_APPROVAL` for the same approval id before resume.
+- Fixture/result defect: the cascade scenario initially shaped the result like a plain query table, which allowed the visible summary to look like a generic medium-priority query. Fix: the seeded adapter returns mutation outcomes and a concise final summary, and the test asserts the persisted visible summary after reload.
+- Assertion defect: the partial-failure summary honestly says not all jobs succeeded, so the negative assertion was changed to reject false full-success claims instead of the substring `all jobs succeeded`.
+- No accepted gaps, blockers, production/staging data mutation, release/synthetic CI promotion, or production-grade signoff claim was introduced for Phase 14.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -1079,10 +1114,21 @@ Phase 13 implementation:
 - `eMas Front/e2e/specs/full-stack-normal-use.spec.js`
 - `eMas Front/e2e/support/normalUseScenarios.js`
 
+Phase 14 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/specs/full-stack-data-integrity.spec.js`
+- `eMas Front/e2e/support/dataIntegrityScenarios.js`
+- `factory-agent/factory_agent/api/routers/approvals.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/testing_seeded_adapters.py`
+- `factory-agent/main.py`
+
 ## Next Action
 
-Phase 13 is complete. Continue to Phase 14 only when explicitly requested. Phases 14-17 remain the later production-grade hardening track and are not complete.
+Phase 14 is complete. Continue to Phase 15 only when explicitly requested. Phases 15-17 remain the later production-grade hardening track and are not complete.
 
-Keep the default PR CI on the mocked `chromium` suite, keep `chromium-seeded` as the opt-in L3 full-stack foundation/hard-orchestration/normal-use gate, keep `chromium-release` as an opt-in L4 release-candidate gate, keep `chromium-synthetic` as the opt-in L5 post-deploy monitor, and keep Phase 14-17 data-integrity/reliability/security/operational gates opt-in or scheduled until stable.
+Keep the default PR CI on the mocked `chromium` suite, keep `chromium-seeded` as the opt-in L3 full-stack foundation/hard-orchestration/normal-use/data-integrity gate, keep `chromium-release` as an opt-in L4 release-candidate gate, keep `chromium-synthetic` as the opt-in L5 post-deploy monitor, and keep Phase 15-17 reliability/security/operational gates opt-in or scheduled until stable.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, release proxy, or real LLM dependencies to the default Playwright suite.

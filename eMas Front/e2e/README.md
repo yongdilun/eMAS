@@ -125,6 +125,33 @@ Rules:
 - Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in unless the team deliberately promotes them.
 - Do not use these scenarios to claim production-grade hardening is complete.
 
+## Phase 14 Data Integrity
+
+Phase 14 adds `@data-integrity` scenarios for mutating chatbot workflows. These tests run only in the seeded full-stack project because they deliberately mutate job priorities and then prove the UI, Factory Agent approvals/timeline, seeded audit log, SSE evidence, and real Go API database state agree.
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"
+```
+
+Coverage:
+
+| Scenario | Spec | Evidence |
+|---|---|---|
+| 86 cascading priority update | `e2e/specs/full-stack-data-integrity.spec.js` | Original high-priority jobs become low, original low-priority jobs become medium, original medium-priority jobs remain unchanged, and each write set has a separate approval id. |
+| 87 bulk partial failure | `e2e/specs/full-stack-data-integrity.spec.js` | Per-row success/failure outcomes are recorded; the UI and persisted step state do not claim every job succeeded. |
+| 88 approval replay safety | `e2e/specs/full-stack-data-integrity.spec.js` | Double-click/refresh/replay evidence shows the approved mutation is applied once. |
+| 89 stale/expired approval safety | `e2e/specs/full-stack-data-integrity.spec.js` | Superseded or expired approvals return safe conflicts and do not mutate seeded job data. |
+| 90 cross-surface agreement | `e2e/specs/full-stack-data-integrity.spec.js` | Audit entries, DB priorities, approval id, snapshot timeline/activity, SSE connection evidence, and final assistant summary name the same jobs and outcome. |
+
+Rules:
+
+- `@data-integrity` must run against resettable seeded services only. Do not run these mutating checks against production or synthetic live mode.
+- Each test resets canonical seeded job priorities before it starts.
+- Any mismatch between visible claims and persisted state is a blocking Phase 14 defect unless recorded as an accepted gap with owner, severity, risk, target, reason, and workaround.
+- Keep default PR CI on `npm test` plus `npm run test:e2e -- --project=chromium`; `chromium-seeded --grep "@data-integrity"` remains opt-in.
+- Keep `chromium-release` and `chromium-synthetic` opt-in. Phase 14 does not complete production-grade hardening; Phase 17 remains the final signoff.
+
 ## Seeded Full-Stack L3
 
 Phase 8 adds an opt-in seeded project:

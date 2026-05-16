@@ -75,10 +75,12 @@ class ApprovalResumeService:
             tools_by_name = await self._plan_service._ensure_registry_health(db=db)
             seed_resume_context = getattr(self._planner, "seed_resume_context", None)
             if callable(seed_resume_context):
+                approval_payload = dict(row.args) if isinstance(row.args, dict) else {}
+                approval_payload["_approval_id"] = row_approval_id
                 seed_resume_context(
                     session_id=sess.session_id,
                     intent=intent,
-                    approval_payload=row.args if isinstance(row.args, dict) else None,
+                    approval_payload=approval_payload,
                 )
             resumed = await self._planner.resume_after_approval(session_id=sess.session_id, approved=True)
             draft = resumed.draft

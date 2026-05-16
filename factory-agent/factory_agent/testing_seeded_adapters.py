@@ -60,6 +60,8 @@ class SeededPlaywrightPlanner:
         self._calls_by_session: dict[str, int] = {}
         self._scenario_by_session: dict[str, str] = {}
         self._approval_counts_by_session: dict[str, int] = {}
+        self._phase14_state_by_session: dict[str, dict[str, Any]] = {}
+        self._data_integrity_audit: list[dict[str, Any]] = []
 
     def _scenario_for_resume(self, session_id: str) -> str | None:
         scenario = self._scenario_by_session.get(session_id)
@@ -82,6 +84,24 @@ class SeededPlaywrightPlanner:
     ) -> None:
         payload = approval_payload if isinstance(approval_payload, dict) else {}
         bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
+        bundle_kind = str(bundle_ui.get("kind") or "")
+        approval_id = str(payload.get("_approval_id") or payload.get("approval_id") or "").strip()
+        phase14_by_kind = {
+            "phase14_cascade_priority": "phase14_cascade",
+            "phase14_partial_failure": "phase14_partial_failure",
+            "phase14_idempotent_replay": "phase14_idempotent_replay",
+            "phase14_stale_approval": "phase14_stale_approval",
+            "phase14_expired_approval": "phase14_expired_approval",
+            "phase14_agreement": "phase14_agreement",
+        }
+        if bundle_kind in phase14_by_kind:
+            self._scenario_by_session[session_id] = phase14_by_kind[bundle_kind]
+            state = self._phase14_state_by_session.setdefault(session_id, {})
+            if approval_id:
+                state["current_approval_id"] = approval_id
+                state.setdefault("approval_ids", []).append(approval_id)
+            if bundle_ui.get("write_set"):
+                state["current_write_set"] = bundle_ui.get("write_set")
         if "phase 9 multi approval chain" in intent.lower() or bundle_ui.get("kind") == "phase9_approval_chain":
             self._scenario_by_session[session_id] = "multi_approval_chain"
             self._approval_counts_by_session.setdefault(session_id, 0)
@@ -280,6 +300,30 @@ class SeededPlaywrightPlanner:
                 risk="Read-only release long-stream fixture.",
             )
 
+        if "phase 14 cascading priority update" in lowered:
+            self._scenario_by_session[session_id] = "phase14_cascade"
+            return await self._phase14_start_cascade(session_id=session_id)
+
+        if "phase 14 bulk partial failure" in lowered:
+            self._scenario_by_session[session_id] = "phase14_partial_failure"
+            return await self._phase14_start_partial_failure(session_id=session_id)
+
+        if "phase 14 idempotent approval replay" in lowered:
+            self._scenario_by_session[session_id] = "phase14_idempotent_replay"
+            return await self._phase14_start_idempotent_replay(session_id=session_id)
+
+        if "phase 14 stale approval" in lowered:
+            self._scenario_by_session[session_id] = "phase14_stale_approval"
+            return await self._phase14_start_stale_approval(session_id=session_id, expired=False)
+
+        if "phase 14 expired approval" in lowered:
+            self._scenario_by_session[session_id] = "phase14_expired_approval"
+            return await self._phase14_start_stale_approval(session_id=session_id, expired=True)
+
+        if "phase 14 agreement audit timeline summary" in lowered:
+            self._scenario_by_session[session_id] = "phase14_agreement"
+            return await self._phase14_start_agreement(session_id=session_id)
+
         if "phase 9 large structured result" in lowered:
             self._scenario_by_session[session_id] = "large_structured_result"
             return await self._large_structured_result(intent=intent, scoped_tools=scoped_tools)
@@ -386,6 +430,16 @@ class SeededPlaywrightPlanner:
             scenario=scenario,
             count=self._approval_counts_by_session.get(session_id),
         )
+        if scenario == "phase14_cascade":
+            return await self._phase14_resume_cascade(session_id=session_id)
+        if scenario == "phase14_partial_failure":
+            return await self._phase14_resume_partial_failure(session_id=session_id)
+        if scenario == "phase14_idempotent_replay":
+            return await self._phase14_resume_idempotent_replay(session_id=session_id)
+        if scenario in {"phase14_stale_approval", "phase14_expired_approval"}:
+            return await self._phase14_resume_stale_or_expired(session_id=session_id, scenario=scenario)
+        if scenario == "phase14_agreement":
+            return await self._phase14_resume_agreement(session_id=session_id)
         if scenario == "multi_approval_chain":
             count = self._approval_counts_by_session.get(session_id, 0) + 1
             self._approval_counts_by_session[session_id] = count
@@ -614,6 +668,543 @@ class SeededPlaywrightPlanner:
             result={"data": rows, "total": len(rows)},
             summary="Phase 9 large structured result rendered 80 seeded rows without losing completion state.",
             risk="Read-only seeded large-result fixture.",
+        )
+
+    def data_integrity_audit(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+        rows = self._data_integrity_audit
+        if session_id:
+            rows = [row for row in rows if row.get("session_id") == session_id]
+        return [dict(row) for row in rows]
+
+    def _record_data_integrity_audit(
+        self,
+        *,
+        session_id: str,
+        scenario: str,
+        write_set: str,
+        approval_id: str | None,
+        job_id: str,
+        original_priority: str | None,
+        before_priority: str | None,
+        requested_priority: str,
+        after_priority: str | None,
+        status: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        entry = {
+            "audit_id": f"phase14-audit-{len(self._data_integrity_audit) + 1:04d}",
+            "session_id": session_id,
+            "scenario": scenario,
+            "write_set": write_set,
+            "approval_id": approval_id,
+            "job_id": job_id,
+            "operation": "job_priority_update",
+            "original_priority": original_priority,
+            "before_priority": before_priority,
+            "requested_priority": requested_priority,
+            "after_priority": after_priority,
+            "status": status,
+            "reason": reason,
+        }
+        self._data_integrity_audit.append(entry)
+        return entry
+
+    async def _seed_job_rows(self) -> list[dict[str, Any]]:
+        body = await self._get_json(
+            "/jobs",
+            params={
+                "fields": "job_id,priority,product_id,status,deadline",
+                "sort_by": "created_at",
+                "sort_dir": "asc",
+                "limit": 200,
+            },
+        )
+        return sorted(self._rows(body), key=lambda row: str(row.get("job_id") or ""))
+
+    async def _job_row(self, job_id: str) -> dict[str, Any] | None:
+        try:
+            body = await self._get_json(f"/jobs/{job_id}")
+        except httpx.HTTPStatusError:
+            return None
+        row = self._data(body)
+        return row if isinstance(row, dict) else None
+
+    async def _phase14_apply_priority_updates(
+        self,
+        *,
+        session_id: str,
+        scenario: str,
+        write_set: str,
+        approval_id: str | None,
+        job_ids: list[str],
+        requested_priority: str,
+        original_priorities: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        outcomes: list[dict[str, Any]] = []
+        for job_id in job_ids:
+            before = await self._job_row(job_id)
+            before_priority = str(before.get("priority")) if before and before.get("priority") is not None else None
+            original_priority = original_priorities.get(job_id)
+            try:
+                updated = await self._put_json(f"/jobs/{job_id}", json={"priority": requested_priority})
+                updated_row = self._data(updated)
+                after_priority = str(updated_row.get("priority")) if isinstance(updated_row, dict) else None
+                status = "succeeded" if after_priority == requested_priority else "failed"
+                reason = None if status == "succeeded" else f"Expected {requested_priority}, got {after_priority}."
+            except httpx.HTTPStatusError as exc:
+                after_priority = before_priority
+                status = "failed"
+                reason = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+            outcome = self._record_data_integrity_audit(
+                session_id=session_id,
+                scenario=scenario,
+                write_set=write_set,
+                approval_id=approval_id,
+                job_id=job_id,
+                original_priority=original_priority,
+                before_priority=before_priority,
+                requested_priority=requested_priority,
+                after_priority=after_priority,
+                status=status,
+                reason=reason,
+            )
+            outcomes.append(outcome)
+        return outcomes
+
+    async def _phase14_start_cascade(self, *, session_id: str) -> PlannerResult:
+        rows = await self._seed_job_rows()
+        original = {str(row.get("job_id")): str(row.get("priority")) for row in rows if row.get("job_id")}
+        high_ids = [job_id for job_id, priority in original.items() if priority == "high"]
+        low_ids = [job_id for job_id, priority in original.items() if priority == "low"]
+        medium_ids = [job_id for job_id, priority in original.items() if priority == "medium"]
+        self._phase14_state_by_session[session_id] = {
+            "scenario": "phase14_cascade",
+            "stage": "awaiting_original_high_approval",
+            "original_priorities": original,
+            "high_ids": high_ids,
+            "low_ids": low_ids,
+            "medium_ids": medium_ids,
+            "approval_ids": [],
+        }
+        raise PlannerApprovalRequired(
+            "Phase 14 cascading priority update approval 1 required.",
+            approval={
+                "summary": f"Phase 14 approval 1: change {len(high_ids)} original high-priority job(s) to low.",
+                "count": len(high_ids),
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "low"}}
+                    for job_id in high_ids
+                ],
+                "bundle_ui": {
+                    "kind": "phase14_cascade_priority",
+                    "write_set": "original_high_to_low",
+                    "headline": "Approval 1 required: original HIGH-priority jobs will become LOW.",
+                    "rows": [
+                        {"job_id": job_id, "original_priority": "high", "new_priority": "low"}
+                        for job_id in high_ids
+                    ],
+                    "original_state_semantics": (
+                        "Original high-priority jobs become low; original low-priority jobs become medium; "
+                        "original medium-priority jobs remain unchanged."
+                    ),
+                },
+            },
+        )
+
+    async def _phase14_resume_cascade(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        stage = state.get("stage")
+        if stage == "awaiting_original_high_approval":
+            high_ids = list(state.get("high_ids") or [])
+            await self._phase14_apply_priority_updates(
+                session_id=session_id,
+                scenario="86",
+                write_set="original_high_to_low",
+                approval_id=approval_id,
+                job_ids=high_ids,
+                requested_priority="low",
+                original_priorities=original,
+            )
+            state["first_approval_id"] = approval_id
+            state["stage"] = "awaiting_original_low_approval"
+            low_ids = list(state.get("low_ids") or [])
+            raise PlannerApprovalRequired(
+                "Phase 14 cascading priority update approval 2 required.",
+                approval={
+                    "summary": f"Phase 14 approval 2: change {len(low_ids)} original low-priority job(s) to medium.",
+                    "count": len(low_ids),
+                    "preview": [
+                        {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "medium"}}
+                        for job_id in low_ids
+                    ],
+                    "bundle_ui": {
+                        "kind": "phase14_cascade_priority",
+                        "write_set": "original_low_to_medium",
+                        "headline": "Approval 2 required: original LOW-priority jobs will become MEDIUM.",
+                        "rows": [
+                            {"job_id": job_id, "original_priority": "low", "new_priority": "medium"}
+                            for job_id in low_ids
+                        ],
+                        "previous_approval_id": approval_id,
+                        "original_state_semantics": (
+                            "Original high-priority jobs become low; original low-priority jobs become medium; "
+                            "original medium-priority jobs remain unchanged."
+                        ),
+                    },
+                },
+            )
+
+        if stage != "awaiting_original_low_approval":
+            return self._phase14_duplicate_resume_result(
+                scenario="86",
+                summary="Phase 14 cascading priority update was already finalized; duplicate approval resume was ignored.",
+            )
+
+        low_ids = list(state.get("low_ids") or [])
+        await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="86",
+            write_set="original_low_to_medium",
+            approval_id=approval_id,
+            job_ids=low_ids,
+            requested_priority="medium",
+            original_priorities=original,
+        )
+        state["second_approval_id"] = approval_id
+        state["stage"] = "complete"
+        high_count = len(state.get("high_ids") or [])
+        low_count = len(state.get("low_ids") or [])
+        medium_count = len(state.get("medium_ids") or [])
+        first_approval = state.get("first_approval_id")
+        second_approval = state.get("second_approval_id")
+        summary = (
+            f"Phase 14 cascading priority update complete: high->low {high_count}, "
+            f"low->medium {low_count}, medium unchanged {medium_count}."
+        )
+        steps = [
+            PlanStepDraft(step_index=0, tool_name="put__jobs_{id}", args={"write_set": "original_high_to_low", "priority": "low"}),
+            PlanStepDraft(step_index=1, tool_name="put__jobs_{id}", args={"write_set": "original_low_to_medium", "priority": "medium"}, depends_on=[0]),
+        ]
+        return self._plan_result(
+            explanation=summary,
+            risk="Phase 14 approved cascade used original-state semantics with two approval gates.",
+            steps=steps,
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": steps[0].args,
+                    "result": {
+                        "summary": summary,
+                        "approval_id": first_approval,
+                        "write_set": "original_high_to_low",
+                        "outcomes": [
+                            {"job_id": job_id, "original_priority": "high", "priority": "low"}
+                            for job_id in state.get("high_ids") or []
+                        ],
+                    },
+                    "http_status": 200,
+                    "summary": f"Approval {first_approval} changed original HIGH jobs to LOW.",
+                    "status": "DONE",
+                },
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": steps[1].args,
+                    "result": {
+                        "summary": summary,
+                        "approval_id": second_approval,
+                        "write_set": "original_low_to_medium",
+                        "outcomes": [
+                            {"job_id": job_id, "original_priority": "low", "priority": "medium"}
+                            for job_id in state.get("low_ids") or []
+                        ],
+                    },
+                    "http_status": 200,
+                    "summary": summary,
+                    "status": "DONE",
+                },
+            ],
+        )
+
+    async def _phase14_start_partial_failure(self, *, session_id: str) -> PlannerResult:
+        target_ids = ["JOB-SEED-005", "JOB-SEED-009", "JOB-SEED-MISSING-014"]
+        rows = await self._seed_job_rows()
+        original = {str(row.get("job_id")): str(row.get("priority")) for row in rows if row.get("job_id")}
+        self._phase14_state_by_session[session_id] = {
+            "scenario": "phase14_partial_failure",
+            "stage": "awaiting_bulk_approval",
+            "target_ids": target_ids,
+            "original_priorities": original,
+        }
+        raise PlannerApprovalRequired(
+            "Phase 14 bulk partial failure approval required.",
+            approval={
+                "summary": "Phase 14 bulk update will try three row-level priority updates; one seeded row is missing.",
+                "count": len(target_ids),
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "high"}}
+                    for job_id in target_ids
+                ],
+                "bundle_ui": {
+                    "kind": "phase14_partial_failure",
+                    "write_set": "bulk_partial_failure",
+                    "headline": "Approval required: bulk priority update with per-row outcome tracking.",
+                    "rows": [
+                        {"job_id": job_id, "new_priority": "high", "expected_outcome": "missing" if "MISSING" in job_id else "success"}
+                        for job_id in target_ids
+                    ],
+                },
+            },
+        )
+
+    async def _phase14_resume_partial_failure(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        target_ids = list(state.get("target_ids") or [])
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="87",
+            write_set="bulk_partial_failure",
+            approval_id=approval_id,
+            job_ids=target_ids,
+            requested_priority="high",
+            original_priorities=original,
+        )
+        succeeded = [row for row in outcomes if row.get("status") == "succeeded"]
+        failed = [row for row in outcomes if row.get("status") != "succeeded"]
+        summary = (
+            f"Phase 14 partial failure recorded exact per-row outcomes: {len(succeeded)} succeeded, "
+            f"{len(failed)} failed; not all jobs succeeded. Approval id: {approval_id}."
+        )
+        steps = [PlanStepDraft(step_index=0, tool_name="put__jobs_{id}", args={"write_set": "bulk_partial_failure", "priority": "high"})]
+        return self._plan_result(
+            explanation=summary,
+            risk="Phase 14 partial failure fixture records success and failure without claiming full success.",
+            steps=steps,
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": steps[0].args,
+                    "result": {"summary": summary, "approval_id": approval_id, "outcomes": outcomes},
+                    "http_status": 422,
+                    "summary": summary,
+                    "status": "FAILED",
+                    "last_error": summary,
+                }
+            ],
+        )
+
+    async def _phase14_start_idempotent_replay(self, *, session_id: str) -> PlannerResult:
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario="phase14_idempotent_replay",
+            job_ids=["JOB-SEED-005"],
+            requested_priority="high",
+        )
+        raise PlannerApprovalRequired(
+            "Phase 14 idempotent approval replay approval required.",
+            approval={
+                "summary": "Phase 14 approval replay test: JOB-SEED-005 will be updated to high priority exactly once.",
+                "count": 1,
+                "preview": [{"tool_name": "put__jobs_{id}", "args": {"id": "JOB-SEED-005", "priority": "high"}}],
+                "bundle_ui": {
+                    "kind": "phase14_idempotent_replay",
+                    "write_set": "single_idempotent_update",
+                    "headline": "Approval required: JOB-SEED-005 will become HIGH once.",
+                    "rows": [{"job_id": "JOB-SEED-005", "new_priority": "high"}],
+                },
+            },
+        )
+
+    async def _phase14_resume_idempotent_replay(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        if state.get("applied"):
+            return self._phase14_duplicate_resume_result(
+                scenario="88",
+                summary="Phase 14 idempotent approval replay was ignored because the mutation already applied once.",
+            )
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="88",
+            write_set="single_idempotent_update",
+            approval_id=approval_id,
+            job_ids=list(state.get("job_ids") or []),
+            requested_priority=str(state.get("requested_priority") or "high"),
+            original_priorities=original,
+        )
+        state["applied"] = True
+        summary = f"Phase 14 idempotent approval replay applied JOB-SEED-005 exactly once. Approval id: {approval_id}."
+        return self._phase14_single_step_result(
+            summary=summary,
+            risk="Phase 14 idempotency fixture applies a single approved mutation once.",
+            approval_id=approval_id,
+            outcomes=outcomes,
+        )
+
+    async def _phase14_start_stale_approval(self, *, session_id: str, expired: bool) -> PlannerResult:
+        scenario = "phase14_expired_approval" if expired else "phase14_stale_approval"
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario=scenario,
+            job_ids=["JOB-SEED-005"],
+            requested_priority="high",
+        )
+        kind = "phase14_expired_approval" if expired else "phase14_stale_approval"
+        headline = (
+            "Expired approval fixture: JOB-SEED-005 must not change after expiry."
+            if expired
+            else "Stale approval fixture: JOB-SEED-005 must not change after session state changes."
+        )
+        approval_payload = {
+            "summary": headline,
+            "count": 1,
+            "preview": [{"tool_name": "put__jobs_{id}", "args": {"id": "JOB-SEED-005", "priority": "high"}}],
+            "bundle_ui": {
+                "kind": kind,
+                "write_set": "stale_or_expired_update",
+                "headline": headline,
+                "rows": [{"job_id": "JOB-SEED-005", "new_priority": "high"}],
+            },
+        }
+        if expired:
+            approval_payload["expires_in_seconds"] = -1
+        raise PlannerApprovalRequired("Phase 14 stale or expired approval required.", approval=approval_payload)
+
+    async def _phase14_resume_stale_or_expired(self, *, session_id: str, scenario: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="89",
+            write_set="stale_or_expired_update",
+            approval_id=approval_id,
+            job_ids=list(state.get("job_ids") or []),
+            requested_priority=str(state.get("requested_priority") or "high"),
+            original_priorities=original,
+        )
+        summary = f"Phase 14 stale/expired approval unexpectedly applied for {scenario}; this is a blocking defect."
+        return self._phase14_single_step_result(
+            summary=summary,
+            risk="Phase 14 stale/expired approval fixture should be blocked before this planner path runs.",
+            approval_id=approval_id,
+            outcomes=outcomes,
+        )
+
+    async def _phase14_start_agreement(self, *, session_id: str) -> PlannerResult:
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario="phase14_agreement",
+            job_ids=["JOB-SEED-005", "JOB-SEED-009"],
+            requested_priority="high",
+        )
+        raise PlannerApprovalRequired(
+            "Phase 14 agreement audit timeline summary approval required.",
+            approval={
+                "summary": "Phase 14 agreement check: JOB-SEED-005 and JOB-SEED-009 will become high priority.",
+                "count": 2,
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "high"}}
+                    for job_id in ["JOB-SEED-005", "JOB-SEED-009"]
+                ],
+                "bundle_ui": {
+                    "kind": "phase14_agreement",
+                    "write_set": "agreement_update",
+                    "headline": "Approval required: audit, DB, SSE timeline, and summary must agree.",
+                    "rows": [
+                        {"job_id": "JOB-SEED-005", "new_priority": "high"},
+                        {"job_id": "JOB-SEED-009", "new_priority": "high"},
+                    ],
+                },
+            },
+        )
+
+    async def _phase14_resume_agreement(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="90",
+            write_set="agreement_update",
+            approval_id=approval_id,
+            job_ids=list(state.get("job_ids") or []),
+            requested_priority=str(state.get("requested_priority") or "high"),
+            original_priorities=original,
+        )
+        summary = (
+            "Phase 14 agreement complete: JOB-SEED-005 and JOB-SEED-009 are high priority; "
+            f"audit log, DB state, SSE timeline, approval {approval_id}, and final summary agree."
+        )
+        return self._phase14_single_step_result(
+            summary=summary,
+            risk="Phase 14 agreement fixture ties each mutation to audit, DB, timeline, and summary evidence.",
+            approval_id=approval_id,
+            outcomes=outcomes,
+        )
+
+    async def _phase14_seed_single_update_state(
+        self,
+        *,
+        session_id: str,
+        scenario: str,
+        job_ids: list[str],
+        requested_priority: str,
+    ) -> None:
+        rows = await self._seed_job_rows()
+        original = {str(row.get("job_id")): str(row.get("priority")) for row in rows if row.get("job_id")}
+        self._phase14_state_by_session[session_id] = {
+            "scenario": scenario,
+            "stage": "awaiting_approval",
+            "job_ids": job_ids,
+            "requested_priority": requested_priority,
+            "original_priorities": original,
+        }
+
+    def _phase14_single_step_result(
+        self,
+        *,
+        summary: str,
+        risk: str,
+        approval_id: str | None,
+        outcomes: list[dict[str, Any]],
+    ) -> PlannerResult:
+        step = PlanStepDraft(step_index=0, tool_name="put__jobs_{id}", args={"priority": "high", "approval_id": approval_id})
+        return self._plan_result(
+            explanation=summary,
+            risk=risk,
+            steps=[step],
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": step.args,
+                    "result": {"summary": summary, "approval_id": approval_id, "outcomes": outcomes},
+                    "http_status": 200,
+                    "summary": summary,
+                    "status": "DONE",
+                }
+            ],
+        )
+
+    def _phase14_duplicate_resume_result(self, *, scenario: str, summary: str) -> PlannerResult:
+        return self._plan_result(
+            explanation=summary,
+            risk=f"Phase 14 scenario {scenario} duplicate approval replay was safely ignored.",
+            steps=[PlanStepDraft(step_index=0, tool_name="put__jobs_{id}", args={"duplicate_replay": True})],
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": {"duplicate_replay": True},
+                    "result": {"summary": summary, "duplicate_replay": True},
+                    "http_status": 200,
+                    "summary": summary,
+                    "status": "DONE",
+                }
+            ],
         )
 
     async def _approved_priority_update(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:

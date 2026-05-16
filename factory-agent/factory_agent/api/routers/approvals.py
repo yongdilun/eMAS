@@ -67,6 +67,7 @@ def build_approvals_router(
         if not row:
             raise HTTPException(status_code=404, detail="approval not found")
         if (getattr(row, "subject_type", "step") or "step") == "graph":
+            now = datetime.utcnow()
             if row.status == "APPROVED":
                 sess = await session_mgr.get_session(db, session_id=row.session_id)
                 context = sess.replan_context if sess and isinstance(sess.replan_context, dict) else {}
@@ -75,13 +76,37 @@ def build_approvals_router(
                 return approval_to_response(row)
             if row.status != "PENDING":
                 raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
-            row.status = "APPROVED"
-            row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
                 raise HTTPException(status_code=404, detail="session not found")
             context = dict(sess.replan_context or {})
+            pending = context.get("langgraph_pending_approval") if isinstance(context, dict) else None
+            pending_approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
+            if row.expires_at <= now:
+                row.status = "EXPIRED"
+                row.decided_by = req.decided_by or "system"
+                row.decided_at = now
+                row.rejection_reason = "Approval expired before it was approved"
+                if pending_approval_id == row.approval_id:
+                    context.pop("langgraph_pending_approval", None)
+                    sess.replan_context = context
+                    sess.status = "IDLE"
+                    sess.error = row.rejection_reason
+                    sess.updated_at = now
+                    sess.version += 1
+                    sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
+                await db.commit()
+                raise HTTPException(status_code=409, detail="approval expired before it was approved")
+            if sess.status != "WAITING_APPROVAL" or pending_approval_id != row.approval_id:
+                row.status = "EXPIRED"
+                row.decided_by = req.decided_by or "system"
+                row.decided_at = now
+                row.rejection_reason = "Approval is stale because the session changed state"
+                await db.commit()
+                raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
+            row.status = "APPROVED"
+            row.decided_by = req.decided_by
+            row.decided_at = now
             context["langgraph_approval_resume"] = {
                 "approval_id": row.approval_id,
                 "thread_id": sess.session_id,
