@@ -150,7 +150,7 @@ Rules:
 - Each test resets canonical seeded job priorities before it starts.
 - Any mismatch between visible claims and persisted state is a blocking Phase 14 defect unless recorded as an accepted gap with owner, severity, risk, target, reason, and workaround.
 - Keep default PR CI on `npm test` plus `npm run test:e2e -- --project=chromium`; `chromium-seeded --grep "@data-integrity"` remains opt-in.
-- Keep `chromium-release` and `chromium-synthetic` opt-in. Phase 14 does not complete production-grade hardening; Phase 17 remains the final signoff.
+- Keep `chromium-release` and `chromium-synthetic` opt-in. Phase 14 does not complete production-grade hardening; Phase 19 remains the final prompt/workflow robustness signoff.
 
 ## Phase 15 Reliability and Soak
 
@@ -226,6 +226,34 @@ Rules:
 - The release harness builds the frontend with `/agent`, `/api/v1`, a signed test JWT bearer, and polling fallback because browser `EventSource` cannot attach Authorization headers.
 - Do not store raw bearer tokens, API keys, token query params, session ids, operation ids, approval ids, or trace ids in retained text artifacts.
 - No real LLM/RAG dependency is introduced, and Phase 16 does not claim production-grade hardening is complete.
+
+## Phase 17 Operational Readiness
+
+Phase 17 adds opt-in `@operational` checks for alert contracts, rollback URL support, emergency disable behavior, environment recreation, and the final operational gate matrix. These checks are excluded from un-grepped mocked Chromium runs so default PR CI stays unchanged.
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e:operational
+npm run operational:gate -- --dry-run
+npm run operational:gate
+```
+
+Coverage:
+
+| Scenario | Project | Spec/helper | Evidence |
+|---|---|---|---|
+| 101 synthetic failure alert | `chromium` with `@operational` | `operational-readiness.spec.js`, `syntheticReporter.js`, `operationalGate.js` | Synthetic failure alerts include owner, `critical` severity, message, and `docs/operations/chatbot_synthetic_monitoring.md` runbook link. |
+| 102 rollback validation | `chromium` with `@operational`, release gate command | `operationalGate.js` | The rollback command targets `chromium-release` scenario 68 and validates a previous known-good `/__release/precheck` URL. |
+| 103 emergency disable | `chromium` with `@operational` | `App.jsx`, `FloatingChatButton.jsx` | `VITE_FACTORY_AGENT_EMERGENCY_DISABLED` keeps the app usable, shows a clear diagnostic, and does not open a Factory Agent session. |
+| 104 clean environment recreation | `chromium` with `@operational` | `operationalGate.js` | Seeded, release, and synthetic artifact/env overrides are generated for a fresh DB plus synthetic-account rerun. |
+| 105 gate matrix | `chromium` with `@operational`, manual workflow | `operationalGate.js`, `.github/workflows/playwright-operational-readiness.yml` | Matrix covers PR, seeded, hard, release, synthetic, security/privacy, and reliability checks, with critical/high failures blocking signoff. |
+
+Rules:
+
+- Keep `@operational` out of un-grepped `chromium`; use `npm run test:e2e:operational` or the manual workflow.
+- Keep `chromium-seeded`, `chromium-release`, and `chromium-synthetic` opt-in.
+- Critical failures block release or require rollback. High failures block operational signoff. Medium gaps require owner, risk, target, reason, and workaround. Low gaps are tracked.
+- Phase 17 proves operational readiness gates only. Phase 19 remains the final prompt/workflow robustness signoff.
 
 ## Seeded Full-Stack L3
 
@@ -353,6 +381,7 @@ Synthetic env vars:
 | `PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN` | Required in live mode. Synthetic read-only token used for readiness probes and credential lifecycle checks. |
 | `PLAYWRIGHT_SYNTHETIC_OWNER` | Required in live mode. Alert owner written into result records. |
 | `PLAYWRIGHT_SYNTHETIC_ALERT_WEBHOOK` | Optional downstream alert sink; the Playwright run writes local alert records either way. |
+| `PLAYWRIGHT_SYNTHETIC_RUNBOOK_URL` | Optional runbook URL written into alert records. Defaults to `docs/operations/chatbot_synthetic_monitoring.md#alert-response-runbook`. |
 | `PLAYWRIGHT_SYNTHETIC_*_PROMPT` | Optional safe read-only canary prompt overrides. Keep them read-only. |
 | `PLAYWRIGHT_SYNTHETIC_CHAT_OPEN_BUDGET_MS`, `PLAYWRIGHT_SYNTHETIC_FIRST_PROGRESS_BUDGET_MS`, `PLAYWRIGHT_SYNTHETIC_FINAL_ANSWER_BUDGET_MS`, `PLAYWRIGHT_SYNTHETIC_BURN_RATE_WARNING_MS` | Latency budgets and burn-rate warning threshold. |
 | `PLAYWRIGHT_SYNTHETIC_FAILURE_ARTIFACT_RETENTION`, `PLAYWRIGHT_SYNTHETIC_RESULT_RETENTION` | Retention notes written into result output. |
@@ -363,7 +392,7 @@ Machine-readable output:
 - `test-results/synthetic-monitor/synthetic-results.ndjson`
 - `test-results/synthetic-monitor/synthetic-alerts.ndjson`
 
-Alert classifications include `synthetic_timeout`, `backend_unavailable`, `auth_failure`, `provider_outage`, `missing_final_answer`, and `latency_burn_rate`. Results redact bearer tokens, token/query secret fields, API keys, passwords, and secrets before attachments or result files are used for alerting/trend analysis.
+Alert classifications include `synthetic_timeout`, `backend_unavailable`, `auth_failure`, `provider_outage`, `missing_final_answer`, and `latency_burn_rate`. Each alert includes owner, severity, message, and runbook link. Results redact bearer tokens, token/query secret fields, API keys, passwords, and secrets before attachments or result files are used for alerting/trend analysis.
 
 Safety and nondeterminism rules:
 

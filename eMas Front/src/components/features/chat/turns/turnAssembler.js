@@ -438,9 +438,25 @@ export function computeFactoryAgentTurnSummary(turn) {
   const latestProgressTs = Math.max(toTs(lastTool?.created_at), toTs(terminal?.created_at))
   const waitingOnApproval = latestProgressTs <= approvalTs
   const waitingOnConfirmation = latestProgressTs <= confirmationTs
+  const approvalSupersedesTerminal =
+    lastApproval
+    && waitingOnApproval
+    && approvalTs >= toTs(terminal?.created_at)
 
   if (lastConfirmation?.event_type === 'confirmation_required' && waitingOnConfirmation) {
     return lastConfirmation.content || 'Please confirm the filter.'
+  }
+
+  if (lastApproval?.event_type === 'approval_required' && approvalSupersedesTerminal) {
+    const bui = lastApproval.details?.args?.bundle_ui
+    if (bui && typeof bui === 'object' && bui.headline) return String(bui.headline)
+    const raw = lastApproval.content || ''
+    const compact = compactInterruptApprovalHeadline(raw)
+    if (compact) return compact
+    return raw || 'Waiting for approval.'
+  }
+  if (lastApproval?.event_type === 'approval_decided' && approvalSupersedesTerminal) {
+    return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
   }
 
   // Terminal outcomes before approval heuristics: `waitingOnApproval` stays true after approve

@@ -15,9 +15,11 @@ import {
   currentPriorityMap,
   dataIntegrityAudit,
   expectedCascadePriorities,
+  expectedPriorityMapForCascade,
   expectAuditForJobs,
   expectNoSuccessfulAudit,
   factoryAgentRaw,
+  jobIdsByPriority,
   originalHighJobIds,
   originalLowJobIds,
   originalMediumJobIds,
@@ -54,21 +56,29 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
   })
 
   test('scenario 86 @data-integrity: cascading priority update uses original-state semantics and two approvals', async ({ page }) => {
-    const prompt = 'Run Phase 14 cascading priority update: original high jobs to low, then original low jobs to medium'
+    const prompt = 'change all high priority job to low then change all low priority job to medium'
     await openChat(page)
     await sendPrompt(page, prompt)
 
     const first = await pendingApprovalMatching(page, 'original_high_to_low')
     expect(first.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalHighJobIds].sort())
     expect(first.args.bundle_ui.original_state_semantics).toContain('original low-priority jobs become medium')
+    await expect(page.getByText(/Approval 1 required: original HIGH-priority jobs will become LOW/i).first()).toBeVisible()
     await page.getByRole('button', { name: 'Approve' }).click()
 
+    await expect
+      .poll(async () => (await snapshotForPage(page)).session.status, { timeout: 30_000 })
+      .toBe('WAITING_APPROVAL')
     const second = await pendingApprovalMatching(page, 'original_low_to_medium')
     expect(second.approval_id).not.toBe(first.approval_id)
     expect(second.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalLowJobIds].sort())
+    await expect(page.getByText(/Approval 2 required: original LOW-priority jobs will become MEDIUM/i).first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/Phase 14 cascading priority update complete/i)).toHaveCount(0)
     await page.getByRole('button', { name: 'Approve' }).click()
 
-    await waitForSessionStatus(page, 'COMPLETED')
+    await expect
+      .poll(async () => (await snapshotForPage(page)).session.status, { timeout: 30_000 })
+      .toBe('COMPLETED')
     const sessionId = await activeSessionId(page)
     await page.reload()
     await openChat(page)
@@ -113,6 +123,63 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     expect(timelineApprovalIds.has(second.approval_id)).toBe(true)
     expect(timelineText(snapshot)).toContain('high->low 11')
     expect(timelineText(snapshot)).toContain('low->medium 5')
+    expect(activityText(snapshot)).toContain('Run complete')
+  })
+
+  test('scenario 86 @data-integrity: medium-to-high then high-to-medium still requires two approvals', async ({ page }) => {
+    const prompt = 'change all medium priority job to high then change all high priority job to medium'
+    await openChat(page)
+    await sendPrompt(page, prompt)
+
+    const first = await pendingApprovalMatching(page, 'original_medium_to_high')
+    expect(first.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalMediumJobIds].sort())
+    expect(first.args.bundle_ui.original_state_semantics.toLowerCase()).toContain('original high-priority jobs become medium')
+    await expect(page.getByText(/Approval 1 required: original MEDIUM-priority jobs will become HIGH/i).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    await expect
+      .poll(async () => (await snapshotForPage(page)).session.status, { timeout: 30_000 })
+      .toBe('WAITING_APPROVAL')
+    const second = await pendingApprovalMatching(page, 'original_high_to_medium')
+    expect(second.approval_id).not.toBe(first.approval_id)
+    expect(second.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalHighJobIds].sort())
+    await expect(page.getByText(/Approval 2 required: original HIGH-priority jobs will become MEDIUM/i).first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/Phase 14 cascading priority update complete/i)).toHaveCount(0)
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    await expect
+      .poll(async () => (await snapshotForPage(page)).session.status, { timeout: 30_000 })
+      .toBe('COMPLETED')
+    const sessionId = await activeSessionId(page)
+    expect(await currentPriorityMap()).toEqual(expectedPriorityMapForCascade([
+      { source: 'medium', target: 'high' },
+      { source: 'high', target: 'medium' },
+    ]))
+    for (const jobId of jobIdsByPriority('low')) {
+      expect(await priorityForJob(jobId), `${jobId} should remain low`).toBe('low')
+    }
+
+    const audit = await dataIntegrityAudit(sessionId)
+    expectAuditForJobs(audit, {
+      scenario: '86',
+      writeSet: 'original_medium_to_high',
+      approvalId: first.approval_id,
+      jobIds: originalMediumJobIds,
+      requestedPriority: 'high',
+    })
+    expectAuditForJobs(audit, {
+      scenario: '86',
+      writeSet: 'original_high_to_medium',
+      approvalId: second.approval_id,
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+    })
+
+    const snapshot = await snapshotForPage(page)
+    expect(approvalIdsFromTimeline(snapshot).has(first.approval_id)).toBe(true)
+    expect(approvalIdsFromTimeline(snapshot).has(second.approval_id)).toBe(true)
+    expect(timelineText(snapshot)).toContain('medium->high 10')
+    expect(timelineText(snapshot)).toContain('high->medium 11')
     expect(activityText(snapshot)).toContain('Run complete')
   })
 

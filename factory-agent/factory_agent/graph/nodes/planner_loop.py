@@ -430,6 +430,76 @@ def _bulk_job_selection_ids(
     return None
 
 
+def _bulk_job_priority_snapshot_sources(
+    *,
+    state: AgentState,
+    current_intent: dict[str, Any],
+) -> list[str]:
+    """Return priority groups that must be read before a compound cascade writes.
+
+    Cascading prompts such as "medium -> high then high -> medium" are ambiguous if
+    the second read happens after the first write. Snapshotting all source groups
+    up front gives the workflow original-state semantics across approvals.
+    """
+
+    sources: list[str] = []
+    seen: set[str] = set()
+
+    def add_from_intent(intent: dict[str, Any]) -> None:
+        mutation = _infer_bulk_job_priority_mutation(str(intent.get("description") or ""))
+        if mutation is None:
+            return
+        source = str(mutation.get("source_priority") or "").strip().lower()
+        if source and source not in seen:
+            seen.add(source)
+            sources.append(source)
+
+    add_from_intent(current_intent)
+
+    working = [dict(x) for x in (state.get("working_intents") or []) if isinstance(x, dict)]
+    cursor = int(state.get("intent_cursor") or 0)
+    for item in working[max(0, cursor) :]:
+        if item.get("status") == "completed":
+            continue
+        add_from_intent(item)
+
+    return sources
+
+
+def _bulk_job_priority_snapshot_read_decision(
+    *,
+    state: AgentState,
+    current_intent: dict[str, Any],
+    tools_by_name: dict[str, ToolInfo],
+) -> PlannerDecision | None:
+    get_jobs = tools_by_name.get("get__jobs")
+    if get_jobs is None:
+        return None
+
+    missing_sources = [
+        source
+        for source in _bulk_job_priority_snapshot_sources(state=state, current_intent=current_intent)
+        if _bulk_job_selection_ids(state, source_priority=source) is None
+    ]
+    if not missing_sources:
+        return None
+
+    return PlannerDecision(
+        intent_id=str(current_intent.get("intent_id") or "unknown"),
+        kind="domain_tool",
+        tool_calls=[
+            ToolCall(tool_name="get__jobs", args=_bulk_job_priority_lookup_args(source, get_jobs))
+            for source in missing_sources
+        ],
+        decision_summary=(
+            "Snapshot original job priority groups before staging the requested cascade: "
+            + ", ".join(missing_sources)
+            + "."
+        ),
+        risk_level="read",
+    )
+
+
 def _bulk_job_priority_lookup_args(source_priority: str, tool: ToolInfo | None) -> dict[str, Any]:
     args: dict[str, Any] = {"priority": source_priority}
     if tool is None:
@@ -453,6 +523,14 @@ def _bulk_job_priority_decision(
     if mutation is None:
         return None
     source = mutation["source_priority"]
+    snapshot_read = _bulk_job_priority_snapshot_read_decision(
+        state=state,
+        current_intent=current_intent,
+        tools_by_name=tools_by_name,
+    )
+    if snapshot_read is not None:
+        return snapshot_read
+
     ids = _bulk_job_selection_ids(state, source_priority=source)
     if ids is None:
         get_jobs = tools_by_name.get("get__jobs")

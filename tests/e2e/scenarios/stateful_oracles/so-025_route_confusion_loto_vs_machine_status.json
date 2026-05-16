@@ -1,0 +1,86 @@
+{
+  "id": "SO-025",
+  "title": "Route confusion: LOTO vs machine status",
+  "risk": "A safety-procedure prompt can be routed to a machine status tool, producing a plausible but wrong answer without LOTO source evidence.",
+  "prompt": "For M-CNC-01, tell me the lockout tagout steps, not the current machine status.",
+  "initial_state": {
+    "machines": [
+      { "id": "M-CNC-01", "status": "running", "cell": "CNC" }
+    ],
+    "rag_sources": [
+      { "source_id": "SRC-LOTO-CNC-01", "machine_id": "M-CNC-01", "title": "LOTO Procedure for CNC Cell" }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "rag.loto_procedure",
+    "machine_id": "M-CNC-01",
+    "negative_route_assertions": [
+      "tool.read.machine_status",
+      "tool.read.machine_health",
+      "clarification.machine_id_missing"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "route selected",
+      "session_phase": "EXECUTING",
+      "selected_route": "rag.loto_procedure",
+      "forbidden": ["machine_status_tool_call"]
+    },
+    {
+      "after": "rag result projected",
+      "session_phase": "EXECUTING",
+      "source_ids": ["SRC-LOTO-CNC-01"],
+      "machine_status_result_must_not_drive_final": true
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      { "id": "M-CNC-01", "status": "running", "cell": "CNC" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    { "event": "operation_started" },
+    { "event": "intent_split", "intent_count": 1 },
+    { "event": "route_selected", "route": "rag.loto_procedure" },
+    { "event": "rag_retrieval_completed", "machine_id": "M-CNC-01", "source_ids": ["SRC-LOTO-CNC-01"] },
+    { "event": "final_response_created" },
+    { "event": "operation_completed" }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "route": "rag.loto_procedure",
+      "source_ids": ["SRC-LOTO-CNC-01"]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "rag_retrieval_completed SRC-LOTO-CNC-01",
+    "must_include": ["lockout", "tagout", "M-CNC-01"],
+    "must_not_include": ["currently running", "machine status only", "Which machine"]
+  },
+  "expected_ui": {
+    "must_show": ["M-CNC-01", "lockout", "SRC-LOTO-CNC-01"],
+    "must_not_show": ["Status: running", "Factory Agent needs attention"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "M-CNC-01", "status": "running" }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "route_matches_operator_intent",
+    "rag_sources_project_to_snapshot_and_ui",
+    "read_only_state_unchanged",
+    "final_summary_matches_tool_result"
+  ],
+  "required_layers": ["route_pytest", "seeded_browser"],
+  "weakness_from_phase0": "Route selection tests can pass with a selected tool name only; this oracle proves the selected route, source evidence, final response, and UI all reflect LOTO rather than status."
+}

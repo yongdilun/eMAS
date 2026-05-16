@@ -603,6 +603,6 @@ def route_after_commit(state: AgentState) -> str:
     if state.get("fatal_system_error"):
         return "fatal_end"
     commit = state.get("last_commit_result")
-    if isinstance(commit, dict) and commit.get("ok") is False:
+    if isinstance(commit, dict):
         return "final_validator"
     return "end"

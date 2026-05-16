@@ -64,7 +64,10 @@ export function syntheticRuntimeEnv(options = {}) {
     live,
     baseUrl,
     owner: process.env.PLAYWRIGHT_SYNTHETIC_OWNER || 'chatbot-oncall',
-    authToken: process.env.PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN || '',
+    runbookUrl:
+      process.env.PLAYWRIGHT_SYNTHETIC_RUNBOOK_URL ||
+      'docs/operations/chatbot_synthetic_monitoring.md#alert-response-runbook',
+    authToken: process.env.PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN || (live ? '' : releaseEnv.bearerToken),
     alertWebhook: process.env.PLAYWRIGHT_SYNTHETIC_ALERT_WEBHOOK || '',
     safePrompts: {
       machineStatus:
@@ -93,4 +96,3 @@ export function syntheticRuntimeEnv(options = {}) {
     releaseHarness: releaseEnv,
   }
 }
-

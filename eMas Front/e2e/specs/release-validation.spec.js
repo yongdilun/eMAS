@@ -27,7 +27,7 @@ test.describe('L4 production-like release validation @l4-release', () => {
 
     const logs = await proxyLogText()
     expect(logs).toContain('"/agent/sessions')
-    expect(logs).toContain('"kind":"proxy"')
+    expect(logs).toMatch(/"kind"\s*:\s*"proxy"/)
   })
 
   test('scenario 54: release path routes Go API through /api/v1', async ({ page }) => {

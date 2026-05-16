@@ -1,0 +1,84 @@
+{
+  "id": "SO-020",
+  "title": "Empty final response",
+  "risk": "A terminal snapshot with an empty assistant response can cause the UI to reuse stale text or show a fake success message.",
+  "prompt": "Show the status for machine M-CNC-01.",
+  "initial_state": {
+    "machines": [
+      { "id": "M-CNC-01", "status": "running", "cell": "CNC" }
+    ],
+    "previous_turn": {
+      "turn_id": "SO-020-T0",
+      "final_response": "Previous answer that must not be reused"
+    },
+    "fault_injection": {
+      "terminal_snapshot_final_response": ""
+    }
+  },
+  "expected_route": {
+    "route": "tool.read.machine_status",
+    "machine_id": "M-CNC-01",
+    "operation_id": "operation-so-020"
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "tool read completed",
+      "session_phase": "EXECUTING",
+      "pending_approval_id": null,
+      "tool_result": { "machine_id": "M-CNC-01", "status": "running" }
+    },
+    {
+      "after": "terminal snapshot with empty final response",
+      "session_phase": "COMPLETED",
+      "pending_approval_id": null,
+      "final_response": "",
+      "forbidden": ["reuse_previous_turn_final_response", "fake_success_text"]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      { "id": "M-CNC-01", "status": "running", "cell": "CNC" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    { "event": "operation_started", "operation_id": "operation-so-020" },
+    { "event": "tool_read_started", "machine_id": "M-CNC-01" },
+    { "event": "tool_read_completed", "machine_id": "M-CNC-01" },
+    { "event": "final_response_created", "content_state": "empty" },
+    { "event": "operation_completed", "operation_id": "operation-so-020" }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "final_response": "",
+      "must_include_tool_result_evidence": { "machine_id": "M-CNC-01", "status": "running" }
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "operation_completed operation-so-020",
+    "must_include": ["safe empty-response diagnostic"],
+    "must_not_include": ["Previous answer that must not be reused", "Run complete", "fake success"]
+  },
+  "expected_ui": {
+    "must_show": ["Unable to render final response", "M-CNC-01"],
+    "must_not_show": ["Previous answer that must not be reused", "Run complete", "Factory Agent needs attention"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "M-CNC-01", "status": "running" }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "empty_final_response_does_not_reuse_stale_text",
+    "read_only_state_unchanged",
+    "operation_id_scoped_timeline",
+    "no_generic_error_on_expected_empty_response"
+  ],
+  "required_layers": ["frontend_unit", "playwright"],
+  "weakness_from_phase0": "API and frontend tests can accept COMPLETED with empty content; this oracle requires a safe diagnostic and proves stale prior text is not reused."
+}

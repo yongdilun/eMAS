@@ -1,0 +1,116 @@
+{
+  "id": "SO-030",
+  "title": "Factory Agent restart or stream drop mid-run",
+  "risk": "A restart or stream drop can leave the browser infinitely busy, fabricate completion from stale polling, or lose commit evidence after approval.",
+  "prompt": "Change all high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      { "id": "JOB-SO030-HIGH-01", "priority": "high", "status": "open" },
+      { "id": "JOB-SO030-HIGH-02", "priority": "high", "status": "open" },
+      { "id": "JOB-SO030-LOW-01", "priority": "low", "status": "open" }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "fault_injection": {
+      "event": "factory_agent_restart",
+      "when": "after_approval_before_commit_event_delivered"
+    }
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-030-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": { "priority": "high" },
+      "new_values": { "priority": "medium" },
+      "source_row_ids": ["JOB-SO030-HIGH-01", "JOB-SO030-HIGH-02"]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-030-1",
+      "intent_id": "SO-030-I1",
+      "decision": "accepted",
+      "row_ids": ["JOB-SO030-HIGH-01", "JOB-SO030-HIGH-02"],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "stream drop",
+      "session_phase": "EXECUTING",
+      "pending_approval_id": null,
+      "client_fallback": "polling",
+      "forbidden": ["infinite_busy_without_polling", "final_response_before_terminal_snapshot"]
+    },
+    {
+      "after": "restart recovery poll",
+      "session_phase": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_recovered_from_snapshot": true
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      { "id": "JOB-SO030-HIGH-01", "priority": "medium" },
+      { "id": "JOB-SO030-HIGH-02", "priority": "medium" },
+      { "id": "JOB-SO030-LOW-01", "priority": "low" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-030-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": ["JOB-SO030-HIGH-01", "JOB-SO030-HIGH-02"],
+      "from": "high",
+      "to": "medium",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    { "event": "operation_started" },
+    { "event": "approval_requested", "approval_id": "approval-so-030-1" },
+    { "event": "approval_decided", "approval_id": "approval-so-030-1", "decision": "accepted" },
+    { "event": "stream_disconnected", "reason": "factory_agent_restart" },
+    { "event": "polling_fallback_started" },
+    { "event": "commit_completed", "approval_id": "approval-so-030-1" },
+    { "event": "snapshot_terminal_persisted", "status": "COMPLETED" },
+    { "event": "final_response_created" },
+    { "event": "operation_completed" }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_stream_drop": {
+      "status": "EXECUTING",
+      "fallback": "polling",
+      "must_not_show_final_response": true
+    },
+    "terminal_poll": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": ["approval-so-030-1"]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_terminal_persisted COMPLETED",
+    "must_include": ["2 high priority jobs changed to medium"],
+    "must_not_include": ["still running", "stream lost", "fake completion"]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": ["approval-so-030-1"],
+    "must_show": ["Run complete", "2 high priority jobs changed to medium"],
+    "must_not_show": ["stuck", "Factory Agent needs attention", "fake completion"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "JOB-SO030-LOW-01", "priority": "low" }
+  ],
+  "invariants": [
+    "stream_drop_uses_polling_fallback",
+    "no_final_before_terminal",
+    "sse_matches_snapshot",
+    "commit_matches_approval_bundle",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": ["seeded_full_stack", "playwright"],
+  "weakness_from_phase0": "Resilience tests could pass on eventual text alone; this oracle ties stream drop, polling fallback, terminal snapshot, audit rows, final response, and unchanged rows."
+}

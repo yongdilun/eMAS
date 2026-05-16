@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,6 +9,7 @@ import httpx
 
 from factory_agent.config import Settings
 from factory_agent.observability.telemetry import log_event
+from factory_agent.planning.intent import intent_constraint_values
 from factory_agent.planner import PlannerApprovalRequired
 from factory_agent.schemas import PlanDraft, PlanStepDraft, ToolInfo
 from factory_agent.services.planner_service import PlannerResult
@@ -24,31 +26,46 @@ class SeededPlaywrightRAGPipeline:
     async def run(self, *, query: str, session_id: str | None = None, route: str = "RAG_ONLY", api_data: Any = None):
         del session_id, route, api_data
         lowered = query.lower()
-        if "no-source" in lowered or "no source" in lowered or "unavailable source" in lowered:
+        machine_ids = intent_constraint_values(query, "machine_id")
+        job_ids = intent_constraint_values(query, "job_id")
+        requested_machine_id = machine_ids[0] if machine_ids else "M-CNC-01"
+        requested_job_id = job_ids[0] if job_ids else None
+        if (
+            "no-source" in lowered
+            or "no source" in lowered
+            or "unavailable source" in lowered
+            or requested_machine_id == "M-CNC-02"
+        ):
             return _FakeRagResult(
                 answer=(
-                    "Controlled seeded RAG fallback: I do not have an available cited source for this question, "
-                    "so I can only give a cautious general answer. Verify the site procedure before acting."
+                    f"Controlled seeded RAG fallback: machine {requested_machine_id} exists in seeded data, "
+                    "but I do not have an available cited LOTO source for that machine/procedure. "
+                    "Verify the site procedure before acting."
                 ),
                 sources=[],
-                safety_content="No retrievable seeded source was available for this Playwright hard-scenario answer.",
+                safety_content=f"No retrievable seeded source was available for {requested_machine_id} LOTO in this Playwright answer.",
             )
+        job_fragment = f" for {requested_job_id}" if requested_job_id else ""
         return _FakeRagResult(
             answer=(
-                "Controlled seeded RAG answer: LOTO means isolating hazardous energy, locking and tagging "
-                "energy-isolating devices, verifying zero energy, and following the site procedure before work begins. [1]"
+                f"Controlled seeded RAG answer: the LOTO procedure for {requested_machine_id}{job_fragment} requires "
+                "isolating hazardous energy, locking and tagging energy-isolating devices, verifying zero energy, "
+                "and following the site procedure before work begins. [1]"
             ),
             sources=[
                 {
                     "source_number": 1,
-                    "doc_id": "seeded-loto-procedure",
-                    "title": "Seeded LOTO Procedure",
+                    "doc_id": f"seeded-loto-procedure-{requested_machine_id.lower()}",
+                    "title": f"Seeded LOTO Procedure for {requested_machine_id}",
                     "organization": "eMas Safety",
                     "authority_level": "controlled_test_fixture",
                     "license": "internal-test",
+                    "machine_id": requested_machine_id,
+                    "procedure_id": f"LOTO-{requested_machine_id}",
+                    **({"job_id": requested_job_id} if requested_job_id else {}),
                 }
             ],
-            safety_content="Controlled fake RAG output for Playwright L3; do not treat as live safety guidance.",
+            safety_content=f"Controlled fake RAG output for Playwright L3; verify the {requested_machine_id} site procedure before acting.",
         )
 
 
@@ -300,9 +317,15 @@ class SeededPlaywrightPlanner:
                 risk="Read-only release long-stream fixture.",
             )
 
-        if "phase 14 cascading priority update" in lowered:
+        phase14_cascade_changes = self._phase14_cascade_priority_changes(lowered)
+        if phase14_cascade_changes:
             self._scenario_by_session[session_id] = "phase14_cascade"
-            return await self._phase14_start_cascade(session_id=session_id)
+            audit_scenario = "119" if "phase 19" in lowered or "prompt regression" in lowered else "86"
+            return await self._phase14_start_cascade(
+                session_id=session_id,
+                changes=phase14_cascade_changes,
+                audit_scenario=audit_scenario,
+            )
 
         if "phase 14 bulk partial failure" in lowered:
             self._scenario_by_session[session_id] = "phase14_partial_failure"
@@ -414,6 +437,12 @@ class SeededPlaywrightPlanner:
             await asyncio.sleep(1.2)
             return await self._machine_status(intent=intent, scoped_tools=scoped_tools)
 
+        if self._is_job_lookup_request(intent):
+            return await self._job_status(intent=intent, scoped_tools=scoped_tools)
+
+        if self._is_job_collection_request(lowered):
+            return await self._jobs_from_intent(intent=intent, scoped_tools=scoped_tools)
+
         if "low priority" in lowered or ("priority" in lowered and "jobs" in lowered):
             return await self._low_priority_jobs(intent=intent, scoped_tools=scoped_tools)
 
@@ -480,6 +509,30 @@ class SeededPlaywrightPlanner:
             return preferred
         return scoped_tools[0].name
 
+    def _phase14_cascade_priority_changes(self, lowered: str) -> list[tuple[str, str]]:
+        text = lowered.replace("->", " to ")
+        for ch in "-_/.,;:":
+            text = text.replace(ch, " ")
+        text = " ".join(text.split())
+        if "phase 14 cascading priority update" in text:
+            return [("high", "low"), ("low", "medium")]
+
+        matches = re.finditer(
+            r"\b(?:change|update|set|move)\s+(?:all\s+)?(?:original\s+)?"
+            r"(high|medium|low)\s+(?:priority\s+)?jobs?\s+(?:to|into)\s+"
+            r"(high|medium|low)\b",
+            text,
+        )
+        changes: list[tuple[str, str]] = []
+        for match in matches:
+            source, target = match.group(1), match.group(2)
+            if source == target:
+                continue
+            changes.append((source, target))
+        if len(changes) < 2:
+            return []
+        return changes[:2]
+
     def _read_tool(self, scoped_tools: list[ToolInfo], preferred: str = "get__jobs") -> str:
         for tool in scoped_tools:
             if tool.name == preferred:
@@ -488,6 +541,27 @@ class SeededPlaywrightPlanner:
             if str(getattr(tool, "method", "")).upper() == "GET":
                 return tool.name
         return preferred
+
+    def _is_job_lookup_request(self, intent: str) -> bool:
+        return bool(intent_constraint_values(intent, "job_id"))
+
+    def _is_job_collection_request(self, lowered: str) -> bool:
+        if not re.search(r"\b(?:jobs?|work\s*orders?|tasks?)\b", lowered):
+            return False
+        return bool(re.search(r"\b(?:urgent|overdue|priority|priorities|delayed|late|low|medium|high)\b", lowered))
+
+    def _job_filters_from_intent(self, intent: str) -> dict[str, Any]:
+        lowered = intent.lower()
+        filters: dict[str, Any] = {"fields": "job_id,priority,product_id,status,deadline", "sort_by": "deadline", "sort_dir": "asc", "limit": 5}
+        if re.search(r"\b(?:urgent|critical|high)\b", lowered):
+            filters["priority"] = "high"
+        elif "medium" in lowered:
+            filters["priority"] = "medium"
+        elif "low" in lowered:
+            filters["priority"] = "low"
+        if re.search(r"\b(?:overdue|late|delayed)\b", lowered):
+            filters["status"] = "delayed"
+        return filters
 
     def _plan_result(
         self,
@@ -505,19 +579,54 @@ class SeededPlaywrightPlanner:
         )
 
     async def _machine_status(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
-        body = await self._get_json("/machines/M-CNC-01")
+        machine_id = (intent_constraint_values(intent, "machine_id") or ["M-CNC-01"])[0]
+        body = await self._get_json(f"/machines/{machine_id}")
         data = self._data(body)
         status = data.get("status") or data.get("Status") or "unknown"
         name = data.get("machine_name") or data.get("MachineName") or "CNC Mill 01"
-        summary = f"Machine M-CNC-01 ({name}) is {status} in the seeded Go API data."
+        summary = f"Machine {machine_id} ({name}) is {status} in the seeded Go API data."
         return self._completed(
             intent=intent,
             tool_name=self._tool_name(scoped_tools, "get__machines_{id}"),
-            args={"id": "M-CNC-01"},
+            args={"id": machine_id},
             result=body,
             summary=summary,
             explanation=summary,
             risk="Read-only seeded machine lookup.",
+        )
+
+    async def _job_status(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
+        job_id = (intent_constraint_values(intent, "job_id") or ["JOB-SEED-001"])[0]
+        body = await self._get_json(f"/jobs/{job_id}")
+        data = self._data(body)
+        priority = data.get("priority") or data.get("Priority") or "unknown"
+        status = data.get("status") or data.get("Status") or "unknown"
+        summary = f"Job {job_id} is {status} with {priority} priority in the seeded Go API data."
+        return self._completed(
+            intent=intent,
+            tool_name=self._tool_name(scoped_tools, "get__jobs_{id}"),
+            args={"id": job_id},
+            result=body,
+            summary=summary,
+            explanation=summary,
+            risk="Read-only seeded job lookup.",
+        )
+
+    async def _jobs_from_intent(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
+        filters = self._job_filters_from_intent(intent)
+        body = await self._get_json("/jobs", params=filters)
+        rows = self._rows(body)
+        ids = [str(row.get("job_id") or row.get("id")) for row in rows if row.get("job_id") or row.get("id")]
+        filter_label = ", ".join(f"{key}={value}" for key, value in filters.items() if key in {"priority", "status"}) or "all"
+        summary = f"Found {len(rows)} seeded jobs for {filter_label}: {', '.join(ids[:5])}. Details are shown in the table below."
+        return self._completed(
+            intent=intent,
+            tool_name=self._tool_name(scoped_tools, "get__jobs"),
+            args=filters,
+            result=body,
+            summary=summary,
+            explanation=summary,
+            risk="Read-only seeded job list lookup.",
         )
 
     async def _low_priority_jobs(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
@@ -771,44 +880,91 @@ class SeededPlaywrightPlanner:
             outcomes.append(outcome)
         return outcomes
 
-    async def _phase14_start_cascade(self, *, session_id: str) -> PlannerResult:
+    def _phase14_cascade_write_set(self, source: str, target: str) -> str:
+        return f"original_{source}_to_{target}"
+
+    def _phase14_cascade_semantics(self, changes: list[tuple[str, str]]) -> str:
+        by_source = {source: target for source, target in changes}
+        parts = []
+        for priority in ("high", "medium", "low"):
+            target = by_source.get(priority)
+            if target:
+                parts.append(f"original {priority}-priority jobs become {target}")
+            else:
+                parts.append(f"original {priority}-priority jobs remain unchanged")
+        return "; ".join(parts).capitalize() + "."
+
+    def _phase14_cascade_approval_payload(
+        self,
+        *,
+        approval_number: int,
+        source: str,
+        target: str,
+        job_ids: list[str],
+        semantics: str,
+        previous_approval_id: str | None = None,
+    ) -> dict[str, Any]:
+        write_set = self._phase14_cascade_write_set(source, target)
+        bundle_ui: dict[str, Any] = {
+            "kind": "phase14_cascade_priority",
+            "write_set": write_set,
+            "headline": f"Approval {approval_number} required: original {source.upper()}-priority jobs will become {target.upper()}.",
+            "rows": [
+                {"job_id": job_id, "original_priority": source, "new_priority": target}
+                for job_id in job_ids
+            ],
+            "original_state_semantics": semantics,
+        }
+        if previous_approval_id:
+            bundle_ui["previous_approval_id"] = previous_approval_id
+        return {
+            "summary": f"Phase 14 approval {approval_number}: change {len(job_ids)} original {source}-priority job(s) to {target}.",
+            "count": len(job_ids),
+            "preview": [
+                {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": target}}
+                for job_id in job_ids
+            ],
+            "bundle_ui": bundle_ui,
+        }
+
+    async def _phase14_start_cascade(
+        self,
+        *,
+        session_id: str,
+        changes: list[tuple[str, str]] | None = None,
+        audit_scenario: str = "86",
+    ) -> PlannerResult:
+        change_sets = list(changes or [("high", "low"), ("low", "medium")])[:2]
         rows = await self._seed_job_rows()
         original = {str(row.get("job_id")): str(row.get("priority")) for row in rows if row.get("job_id")}
-        high_ids = [job_id for job_id, priority in original.items() if priority == "high"]
-        low_ids = [job_id for job_id, priority in original.items() if priority == "low"]
-        medium_ids = [job_id for job_id, priority in original.items() if priority == "medium"]
+        ids_by_priority = {
+            priority: [job_id for job_id, row_priority in original.items() if row_priority == priority]
+            for priority in ("high", "medium", "low")
+        }
+        first_source, first_target = change_sets[0]
+        first_ids = list(ids_by_priority.get(first_source) or [])
+        unchanged_priorities = [priority for priority in ("high", "medium", "low") if priority not in {source for source, _ in change_sets}]
+        semantics = self._phase14_cascade_semantics(change_sets)
         self._phase14_state_by_session[session_id] = {
             "scenario": "phase14_cascade",
-            "stage": "awaiting_original_high_approval",
+            "stage": "awaiting_cascade_approval_1",
+            "changes": [{"source": source, "target": target} for source, target in change_sets],
             "original_priorities": original,
-            "high_ids": high_ids,
-            "low_ids": low_ids,
-            "medium_ids": medium_ids,
+            "ids_by_priority": ids_by_priority,
+            "unchanged_priorities": unchanged_priorities,
+            "original_state_semantics": semantics,
+            "audit_scenario": audit_scenario,
             "approval_ids": [],
         }
         raise PlannerApprovalRequired(
             "Phase 14 cascading priority update approval 1 required.",
-            approval={
-                "summary": f"Phase 14 approval 1: change {len(high_ids)} original high-priority job(s) to low.",
-                "count": len(high_ids),
-                "preview": [
-                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "low"}}
-                    for job_id in high_ids
-                ],
-                "bundle_ui": {
-                    "kind": "phase14_cascade_priority",
-                    "write_set": "original_high_to_low",
-                    "headline": "Approval 1 required: original HIGH-priority jobs will become LOW.",
-                    "rows": [
-                        {"job_id": job_id, "original_priority": "high", "new_priority": "low"}
-                        for job_id in high_ids
-                    ],
-                    "original_state_semantics": (
-                        "Original high-priority jobs become low; original low-priority jobs become medium; "
-                        "original medium-priority jobs remain unchanged."
-                    ),
-                },
-            },
+            approval=self._phase14_cascade_approval_payload(
+                approval_number=1,
+                source=first_source,
+                target=first_target,
+                job_ids=first_ids,
+                semantics=semantics,
+            ),
         )
 
     async def _phase14_resume_cascade(self, *, session_id: str) -> PlannerResult:
@@ -816,80 +972,97 @@ class SeededPlaywrightPlanner:
         original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
         approval_id = str(state.get("current_approval_id") or "").strip() or None
         stage = state.get("stage")
-        if stage == "awaiting_original_high_approval":
-            high_ids = list(state.get("high_ids") or [])
+        raw_changes = state.get("changes") if isinstance(state.get("changes"), list) else []
+        changes = [
+            (str(row.get("source")), str(row.get("target")))
+            for row in raw_changes
+            if isinstance(row, dict) and row.get("source") and row.get("target")
+        ][:2]
+        if len(changes) < 2:
+            changes = [("high", "low"), ("low", "medium")]
+        ids_by_priority = state.get("ids_by_priority") if isinstance(state.get("ids_by_priority"), dict) else {}
+        semantics = str(state.get("original_state_semantics") or self._phase14_cascade_semantics(changes))
+        audit_scenario = str(state.get("audit_scenario") or "86")
+        summary_label = "Phase 19 cascade matrix" if audit_scenario == "119" else "Phase 14 cascading priority update"
+
+        if stage == "awaiting_cascade_approval_1":
+            first_source, first_target = changes[0]
+            first_ids = list(ids_by_priority.get(first_source) or [])
             await self._phase14_apply_priority_updates(
                 session_id=session_id,
-                scenario="86",
-                write_set="original_high_to_low",
+                scenario=audit_scenario,
+                write_set=self._phase14_cascade_write_set(first_source, first_target),
                 approval_id=approval_id,
-                job_ids=high_ids,
-                requested_priority="low",
+                job_ids=first_ids,
+                requested_priority=first_target,
                 original_priorities=original,
             )
             state["first_approval_id"] = approval_id
-            state["stage"] = "awaiting_original_low_approval"
-            low_ids = list(state.get("low_ids") or [])
+            state["stage"] = "awaiting_cascade_approval_2"
+            second_source, second_target = changes[1]
+            second_ids = list(ids_by_priority.get(second_source) or [])
             raise PlannerApprovalRequired(
                 "Phase 14 cascading priority update approval 2 required.",
-                approval={
-                    "summary": f"Phase 14 approval 2: change {len(low_ids)} original low-priority job(s) to medium.",
-                    "count": len(low_ids),
-                    "preview": [
-                        {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "medium"}}
-                        for job_id in low_ids
-                    ],
-                    "bundle_ui": {
-                        "kind": "phase14_cascade_priority",
-                        "write_set": "original_low_to_medium",
-                        "headline": "Approval 2 required: original LOW-priority jobs will become MEDIUM.",
-                        "rows": [
-                            {"job_id": job_id, "original_priority": "low", "new_priority": "medium"}
-                            for job_id in low_ids
-                        ],
-                        "previous_approval_id": approval_id,
-                        "original_state_semantics": (
-                            "Original high-priority jobs become low; original low-priority jobs become medium; "
-                            "original medium-priority jobs remain unchanged."
-                        ),
-                    },
-                },
+                approval=self._phase14_cascade_approval_payload(
+                    approval_number=2,
+                    source=second_source,
+                    target=second_target,
+                    job_ids=second_ids,
+                    semantics=semantics,
+                    previous_approval_id=approval_id,
+                ),
             )
 
-        if stage != "awaiting_original_low_approval":
+        if stage != "awaiting_cascade_approval_2":
             return self._phase14_duplicate_resume_result(
-                scenario="86",
-                summary="Phase 14 cascading priority update was already finalized; duplicate approval resume was ignored.",
+                scenario=audit_scenario,
+                summary=f"{summary_label} was already finalized; duplicate approval resume was ignored.",
             )
 
-        low_ids = list(state.get("low_ids") or [])
+        second_source, second_target = changes[1]
+        second_ids = list(ids_by_priority.get(second_source) or [])
         await self._phase14_apply_priority_updates(
             session_id=session_id,
-            scenario="86",
-            write_set="original_low_to_medium",
+            scenario=audit_scenario,
+            write_set=self._phase14_cascade_write_set(second_source, second_target),
             approval_id=approval_id,
-            job_ids=low_ids,
-            requested_priority="medium",
+            job_ids=second_ids,
+            requested_priority=second_target,
             original_priorities=original,
         )
         state["second_approval_id"] = approval_id
         state["stage"] = "complete"
-        high_count = len(state.get("high_ids") or [])
-        low_count = len(state.get("low_ids") or [])
-        medium_count = len(state.get("medium_ids") or [])
         first_approval = state.get("first_approval_id")
         second_approval = state.get("second_approval_id")
+        unchanged_summaries = [
+            f"{priority} unchanged {len(ids_by_priority.get(priority) or [])}"
+            for priority in (state.get("unchanged_priorities") or [])
+        ]
+        change_summaries = [
+            f"{source}->{target} {len(ids_by_priority.get(source) or [])}"
+            for source, target in changes
+        ]
         summary = (
-            f"Phase 14 cascading priority update complete: high->low {high_count}, "
-            f"low->medium {low_count}, medium unchanged {medium_count}."
+            f"{summary_label} complete: "
+            + ", ".join([*change_summaries, *unchanged_summaries])
+            + "."
         )
         steps = [
-            PlanStepDraft(step_index=0, tool_name="put__jobs_{id}", args={"write_set": "original_high_to_low", "priority": "low"}),
-            PlanStepDraft(step_index=1, tool_name="put__jobs_{id}", args={"write_set": "original_low_to_medium", "priority": "medium"}, depends_on=[0]),
+            PlanStepDraft(
+                step_index=0,
+                tool_name="put__jobs_{id}",
+                args={"write_set": self._phase14_cascade_write_set(changes[0][0], changes[0][1]), "priority": changes[0][1]},
+            ),
+            PlanStepDraft(
+                step_index=1,
+                tool_name="put__jobs_{id}",
+                args={"write_set": self._phase14_cascade_write_set(changes[1][0], changes[1][1]), "priority": changes[1][1]},
+                depends_on=[0],
+            ),
         ]
         return self._plan_result(
             explanation=summary,
-            risk="Phase 14 approved cascade used original-state semantics with two approval gates.",
+            risk=f"{summary_label} used original-state semantics with two approval gates.",
             steps=steps,
             tool_outputs=[
                 {
@@ -898,14 +1071,14 @@ class SeededPlaywrightPlanner:
                     "result": {
                         "summary": summary,
                         "approval_id": first_approval,
-                        "write_set": "original_high_to_low",
+                        "write_set": self._phase14_cascade_write_set(changes[0][0], changes[0][1]),
                         "outcomes": [
-                            {"job_id": job_id, "original_priority": "high", "priority": "low"}
-                            for job_id in state.get("high_ids") or []
+                            {"job_id": job_id, "original_priority": changes[0][0], "priority": changes[0][1]}
+                            for job_id in ids_by_priority.get(changes[0][0]) or []
                         ],
                     },
                     "http_status": 200,
-                    "summary": f"Approval {first_approval} changed original HIGH jobs to LOW.",
+                    "summary": f"Approval {first_approval} changed original {changes[0][0].upper()} jobs to {changes[0][1].upper()}.",
                     "status": "DONE",
                 },
                 {
@@ -914,10 +1087,10 @@ class SeededPlaywrightPlanner:
                     "result": {
                         "summary": summary,
                         "approval_id": second_approval,
-                        "write_set": "original_low_to_medium",
+                        "write_set": self._phase14_cascade_write_set(changes[1][0], changes[1][1]),
                         "outcomes": [
-                            {"job_id": job_id, "original_priority": "low", "priority": "medium"}
-                            for job_id in state.get("low_ids") or []
+                            {"job_id": job_id, "original_priority": changes[1][0], "priority": changes[1][1]}
+                            for job_id in ids_by_priority.get(changes[1][0]) or []
                         ],
                     },
                     "http_status": 200,

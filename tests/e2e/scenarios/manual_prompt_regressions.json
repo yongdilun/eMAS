@@ -1,0 +1,155 @@
+{
+  "version": 2,
+  "phase": 19,
+  "description": "Manual chatbot prompt misses converted into deterministic parser, route, seeded workflow, and targeted browser coverage.",
+  "schema": {
+    "required_fields": [
+      "source_prompt",
+      "observed_failure",
+      "expected_behavior",
+      "owner",
+      "severity",
+      "lowest_test_layer",
+      "browser_coverage"
+    ],
+    "severity_values": ["critical", "high", "medium", "low"],
+    "coverage_categories": ["parser", "route", "seeded-workflow", "mocked-browser", "seeded-browser", "accepted-gap"]
+  },
+  "triage_rule": {
+    "coverage_categories": ["parser", "route", "seeded-workflow", "browser", "accepted-gap"],
+    "closure_requirement": "Every new manual prompt or workflow miss must be mapped to parser, route, seeded-workflow, browser, or accepted-gap coverage before closure.",
+    "accepted_gap_required_fields": ["owner", "severity", "risk", "target_date_or_phase", "reason", "temporary_workaround"]
+  },
+  "prompts": [
+    {
+      "id": "phase18-loto-m-cnc-01",
+      "source_prompt": "What LOTO procedure applies before working on M-CNC-01?",
+      "prompt": "What LOTO procedure applies before working on M-CNC-01?",
+      "observed_failure": "The chatbot could ask for the machine ID even though M-CNC-01 was present in the prompt.",
+      "expected_behavior": "Extract M-CNC-01, route to the LOTO/RAG path, complete without asking for the machine ID again, and return source metadata tied to LOTO-M-CNC-01.",
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "test_layer": "parser+mocked-browser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "mocked-browser", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-before-service-m-cnc-01",
+      "source_prompt": "Before servicing M-CNC-01, which LOTO procedure applies?",
+      "prompt": "Before servicing M-CNC-01, which LOTO procedure applies?",
+      "observed_failure": "Natural LOTO wording variants could regress to the narrow exact Phase 18 phrase and ask for a machine ID.",
+      "expected_behavior": "Extract M-CNC-01 and use the same LOTO/RAG route and source metadata as the original manual miss.",
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-lockout-tagout-m-cnc-01",
+      "source_prompt": "Need the lockout/tagout SOP for m-cnc-01 before maintenance.",
+      "prompt": "Need the lockout/tagout SOP for m-cnc-01 before maintenance.",
+      "observed_failure": "Lowercase lockout/tagout wording could bypass the LOTO route or lose the machine ID.",
+      "expected_behavior": "Normalize m-cnc-01 to M-CNC-01 and route to the deterministic LOTO/RAG answer without clarification.",
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-parenthesized-m-cnc-01",
+      "source_prompt": "For machine (M-CNC-01), what lockout procedure should I follow?",
+      "prompt": "For machine (M-CNC-01), what lockout procedure should I follow?",
+      "observed_failure": "Parenthesized machine IDs could be missed and trigger an unnecessary clarification.",
+      "expected_behavior": "Extract the parenthesized M-CNC-01 ID and route to LOTO/RAG without asking which machine.",
+      "owner": "qa",
+      "severity": "medium",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-markdown-m-cnc-01",
+      "source_prompt": "### Safety check\nLOTO for `M-CNC-01` before touching the spindle.",
+      "prompt": "### Safety check\nLOTO for `M-CNC-01` before touching the spindle.",
+      "observed_failure": "Markdown-formatted IDs could be parsed differently from plain text and miss the LOTO/RAG route.",
+      "expected_behavior": "Extract M-CNC-01 through markdown formatting and return the same deterministic LOTO/RAG answer.",
+      "owner": "qa",
+      "severity": "medium",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    }
+  ]
+}

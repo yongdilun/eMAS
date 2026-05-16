@@ -115,6 +115,55 @@ test('FactoryAgentChatPanel renders pending approval card and follow-up guidance
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel renders pending approval even when the approval timeline row lags', async () => {
+  const { factoryAgentApi } = await server.ssrLoadModule('/src/services/factoryAgentApi.js')
+  factoryAgentApi.listTools = async () => []
+  const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
+  const pendingApproval = {
+    approval_id: 'approval-2',
+    subject_type: 'tool',
+    tool_name: 'update_job_priority',
+    side_effect_level: 'HIGH',
+    risk_summary: 'Approval 2 required: original HIGH-priority jobs will become MEDIUM.',
+    args: {
+      bundle_ui: {
+        headline: 'Approval 2 required: original HIGH-priority jobs will become MEDIUM.',
+        rows: [{ job_id: 'JOB-SEED-001', original_priority: 'high', new_priority: 'medium' }],
+      },
+    },
+  }
+  const chatState = createChatState({
+    session: { session_id: 'session-2', name: 'Cascade review', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-2', name: 'Cascade review', status: 'WAITING_APPROVAL' }],
+    activeSessionName: 'Cascade review',
+    pendingApproval,
+    turns: [
+      {
+        id: 'turn-2',
+        user: {
+          content: 'change all medium priority job to high then change all high priority job to medium',
+          created_at: '2026-05-15T12:00:00Z',
+        },
+        summary: 'Waiting for your approval.',
+        created_at: '2026-05-15T12:00:01Z',
+        approvals: [],
+      },
+    ],
+  })
+
+  const view = await render(
+    React.createElement(FactoryAgentChatPanel, {
+      useChatState: () => chatState,
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Approval required/))
+  assert.match(view.text(), /Approval 2 required: original HIGH-priority jobs will become MEDIUM/)
+  assert.match(view.text(), /Follow-up messages can revise the plan/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders backend unavailable errors without fake success', async () => {
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
   let retryCount = 0

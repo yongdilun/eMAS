@@ -19,11 +19,18 @@ const selectedSynthetic = selectedProjects.some((project) => project === 'chromi
 const selectedMocked = selectedProjects.length === 0 || selectedProjects.some((project) => project === 'chromium')
 const selectedReliability = selectedGrep.some((grep) => grep.includes('@reliability'))
 const selectedSecurityPrivacy = selectedGrep.some((grep) => grep.includes('@security') || grep.includes('@privacy'))
+const selectedOperational = selectedGrep.some((grep) => grep.includes('@operational'))
 const syntheticEnv = syntheticRuntimeEnv({ validate: selectedSynthetic })
 const mockedIgnorePatterns = ['(full-stack|release)-.*\\.spec\\.js', 'production-synthetic\\.spec\\.js']
 if (!selectedReliability) mockedIgnorePatterns.push('reliability-soak\\.spec\\.js')
 if (!selectedSecurityPrivacy) mockedIgnorePatterns.push('security-privacy\\.spec\\.js')
+if (!selectedOperational) mockedIgnorePatterns.push('operational-readiness\\.spec\\.js')
 const mockedTestIgnore = new RegExp(mockedIgnorePatterns.join('|'))
+if (selectedOperational) {
+  process.env.PLAYWRIGHT_CHAT_EMERGENCY_DISABLED = '1'
+  process.env.PLAYWRIGHT_CHAT_EMERGENCY_DISABLED_REASON =
+    'Operational readiness drill: Factory Agent chat is temporarily disabled by the emergency feature flag.'
+}
 process.env.PLAYWRIGHT_SEEDED_GO_API_PORT = String(seededEnv.goApiPort)
 process.env.PLAYWRIGHT_SEEDED_FACTORY_AGENT_PORT = String(seededEnv.factoryAgentPort)
 process.env.PLAYWRIGHT_SEEDED_VITE_PORT = String(seededEnv.vitePort)

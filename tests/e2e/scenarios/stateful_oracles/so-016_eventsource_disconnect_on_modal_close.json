@@ -1,0 +1,119 @@
+{
+  "id": "SO-016",
+  "title": "EventSource disconnect on modal close",
+  "risk": "Closing the chat modal can leave EventSource connections open, causing leaked streams to update stale UI or duplicate activity when the modal is reopened.",
+  "prompt": "Change all high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      { "id": "JOB-SO016-HIGH-01", "priority": "high", "status": "open" },
+      { "id": "JOB-SO016-LOW-01", "priority": "low", "status": "open" }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "browser_actions": [
+      { "action": "open_chat_modal" },
+      { "action": "submit_prompt" },
+      { "action": "close_chat_modal_while_waiting_approval" },
+      { "action": "reopen_chat_modal" }
+    ]
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-016-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": { "priority": "high" },
+      "new_values": { "priority": "medium" },
+      "source_row_ids": ["JOB-SO016-HIGH-01"]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-016-1",
+      "intent_id": "SO-016-I1",
+      "decision": "accepted_after_reopen",
+      "row_ids": ["JOB-SO016-HIGH-01"],
+      "row_count": 1
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "modal closed while waiting approval",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-016-1",
+      "open_eventsource_count": 0,
+      "forbidden": ["background_ui_mutation", "duplicate_eventsource_connection"]
+    },
+    {
+      "after": "modal reopened",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-016-1",
+      "open_eventsource_count": 1
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      { "id": "JOB-SO016-HIGH-01", "priority": "medium" },
+      { "id": "JOB-SO016-LOW-01", "priority": "low" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-016-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": ["JOB-SO016-HIGH-01"],
+      "from": "high",
+      "to": "medium",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    { "event": "operation_started" },
+    { "event": "approval_requested", "approval_id": "approval-so-016-1" },
+    { "event": "eventsource_disconnected", "reason": "modal_closed" },
+    { "event": "eventsource_reconnected", "reason": "modal_reopened" },
+    { "event": "approval_decided", "approval_id": "approval-so-016-1", "decision": "accepted" },
+    { "event": "commit_completed", "approval_id": "approval-so-016-1" },
+    { "event": "final_response_created" },
+    { "event": "operation_completed" }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_modal_close": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-016-1",
+      "open_eventsource_count": 0
+    },
+    "after_reopen": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-016-1",
+      "open_eventsource_count": 1
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-016-1",
+    "must_include": ["1 high priority job changed to medium"],
+    "must_not_include": ["duplicate stream", "approval processed twice"]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": ["approval-so-016-1"],
+    "must_show": ["Run complete", "1 high priority job changed to medium"],
+    "must_not_show": ["duplicate activity", "Factory Agent needs attention"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "JOB-SO016-LOW-01", "priority": "low" }
+  ],
+  "invariants": [
+    "eventsource_disconnects_on_modal_close",
+    "pending_approval_restores_after_reopen",
+    "no_duplicate_activity_rows_after_reconnect",
+    "commit_matches_approval_bundle",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": ["playwright"],
+  "weakness_from_phase0": "Existing browser tests do not prove EventSource lifecycle cleanup, so stale streams could survive modal close and still pass final visibility checks."
+}

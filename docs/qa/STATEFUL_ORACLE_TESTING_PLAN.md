@@ -1,0 +1,691 @@
+# Stateful Oracle Testing Plan
+
+Created: 2026-05-16
+
+Branch: `codex/playwright-e2e-plan`
+
+Purpose: replace routine manual chatbot validation with tests that can catch real product bugs in LangGraph flow, approvals, final responses, SSE, timeline projection, and browser behavior.
+
+This plan does not replace the existing Playwright/pytest stack. It hardens it. The failure pattern is not a lack of test volume. The failure pattern is weak oracles: tests can pass while the real system is still wrong.
+
+## Critical Diagnosis
+
+Recent bugs show these real gaps:
+
+| Gap | Why Current Tests Missed It | Required Fix |
+|---|---|---|
+| Stateful backend gap | Fake tools returned fixed rows and did not mutate after commit. | Stateful fake tools must mutate, expire approvals, track audit rows, and expose exact final state. |
+| Intermediate-state gap | Tests checked final `COMPLETED`, not each approval/commit boundary. | Assert every transition: prompt, approval 1, commit 1, approval 2, commit 2, final response. |
+| Seeded-adapter gap | Seeded Playwright planner behaved differently from real LangGraph. | Add non-seeded LangGraph mechanic tests and at least one non-seeded browser/full-stack smoke for critical flows. |
+| Projection gap | Snapshot, SSE, timeline, final response, and UI can be generated from different logic. | Introduce operation invariants and eventually a canonical operation ledger. |
+| Final-response gap | Final assistant copy can claim success while DB/audit/approval evidence disagrees. | Final response must be derived only after committed state is verified. |
+| SSE/timeline gap | EventSource tests can show activity while timeline/snapshot semantics are wrong. | Contract-test SSE, timeline, and snapshot against the same expected event sequence. |
+| Prompt wording gap | Exact prompts passed while real operator wording routed differently. | Manual prompt misses must enter a regression bank with parser, route, workflow, and browser coverage. |
+| Test-validity gap | A passing test was treated as proof without asking if it could pass while product is wrong. | Every test must answer: what real bug would this catch, and what bug could still slip through? |
+
+## Non-Negotiable Rule
+
+No high-risk scenario is accepted unless it has a state oracle.
+
+For every mutating or multi-step chatbot scenario, the test must define and verify:
+
+- Initial DB or fake-tool state.
+- User prompt and mode.
+- Expected intent split and route.
+- Expected read source groups before writes.
+- Expected approval sequence and distinct approval ids.
+- Expected DB state after each approval.
+- Expected audit rows and idempotency evidence.
+- Expected SSE/timeline event sequence.
+- Expected snapshot phase/status/pending approval state.
+- Expected final assistant summary.
+- Expected visible browser UI state.
+- Expected unchanged rows.
+
+If a scenario can pass while any of those are wrong, the test is too weak.
+
+## Stop-The-Line Policy
+
+Phase promotion stops when a reproducible defect is found.
+
+- Fix the defect before moving to the next phase.
+- Add a regression at the lowest useful layer.
+- Rerun the failed phase command plus the fast PR suite.
+- If a defect is deferred, record it as an accepted gap with severity, owner, risk, workaround, and target date.
+- Do not mark a phase `Done` when critical/high gaps are open.
+
+## Target Architecture
+
+### 1. Scenario Oracle Files
+
+Create machine-readable oracle files, not only prose.
+
+Proposed location:
+
+```text
+tests/e2e/scenarios/stateful_oracles/
+  priority_cascade_original_state.json
+  multi_approval_reject_second.json
+  final_response_timeline_consistency.json
+  sse_disconnect_recovery.json
+  loto_rag_route_machine_present.json
+```
+
+Each oracle should include:
+
+```json
+{
+  "id": "SO-001",
+  "title": "Medium to high then original high to medium",
+  "risk": "multi-step approval cascade can complete with wrong DB state",
+  "prompt": "change all medium priority job to high then change all high priority job to medium",
+  "initial_state": {
+    "jobs": [
+      { "id": "JOB-SEED-001", "priority": "high" },
+      { "id": "JOB-SEED-002", "priority": "medium" }
+    ]
+  },
+  "expected_approvals": [
+    { "previous_priority": "medium", "new_priority": "high", "row_count": 1 },
+    { "previous_priority": "high", "new_priority": "medium", "row_count": 1 }
+  ],
+  "expected_final_state": {
+    "jobs": [
+      { "id": "JOB-SEED-001", "priority": "medium" },
+      { "id": "JOB-SEED-002", "priority": "high" }
+    ]
+  },
+  "invariants": [
+    "no_final_response_before_second_approval",
+    "timeline_contains_both_approval_ids",
+    "final_summary_matches_committed_rows"
+  ]
+}
+```
+
+### 2. Stateful Test Harness
+
+Add a shared harness for backend and Playwright tests.
+
+Responsibilities:
+
+- Seed fake or real DB state.
+- Execute reads and writes through the same tool abstraction the graph uses.
+- Mutate fake state after commit.
+- Track audit rows.
+- Track approval lifecycle.
+- Track SSE/timeline emissions.
+- Export debug evidence when a test fails.
+
+Possible files:
+
+```text
+factory-agent/tests/support/stateful_oracle_harness.py
+factory-agent/tests/support/operation_assertions.py
+eMas Front/e2e/support/statefulOracleScenarios.js
+eMas Front/e2e/support/operationOracle.js
+```
+
+### 3. Operation Ledger Contract
+
+The long-term product fix should be a canonical operation ledger. Until then, tests should enforce the same invariants across existing tables and projections.
+
+Canonical event types:
+
+```text
+operation_started
+intent_split
+tool_read_started
+tool_read_completed
+approval_requested
+approval_decided
+commit_started
+commit_completed
+next_intent_started
+final_response_created
+operation_completed
+operation_failed
+```
+
+Every event should carry:
+
+```text
+session_id
+operation_id
+plan_id
+plan_version
+intent_id
+step_id
+approval_id
+sequence_number
+status
+payload
+created_at
+```
+
+Final response, snapshot, SSE, activity timeline, and browser UI should all be derivable from this event sequence.
+
+### 4. Invariant Library
+
+Create reusable assertions rather than copy-pasting fragile checks.
+
+Required invariants:
+
+| Invariant | Meaning |
+|---|---|
+| `no_final_before_terminal` | Final assistant response is not visible before all required approvals and commits finish. |
+| `approval_ids_are_distinct` | Multi-approval chains use separate approval ids and do not replay stale ids. |
+| `pending_approval_matches_snapshot` | DB pending approval, snapshot pending approval, and UI card agree. |
+| `commit_matches_approval_bundle` | Committed rows exactly match approved bundle rows. |
+| `final_summary_matches_commits` | Final assistant summary cannot claim rows that were not committed. |
+| `timeline_contains_transition_chain` | Timeline includes expected approval, commit, and terminal events in order. |
+| `sse_matches_snapshot` | SSE activity eventually matches snapshot timeline/progress state. |
+| `original_state_semantics` | Cascading source sets are captured before any write unless explicitly marked current-state. |
+| `no_generic_error_on_expected_success` | Successful routed prompts never show `Factory Agent needs attention`. |
+| `no_real_llm_in_deterministic_ci` | PR, seeded, and oracle suites do not depend on live model output. |
+
+## Phased Implementation
+
+### Phase 0: Test Reality Audit
+
+Goal:
+
+Find tests that give false confidence.
+
+Files likely touched:
+
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `factory-agent/tests/`
+- `eMas Front/e2e/specs/`
+- `eMas Front/e2e/support/`
+- `tests/e2e/scenarios/manual_prompt_regressions.json`
+
+Implementation steps:
+
+- Classify current tests by layer: parser, graph mechanic, API, seeded full-stack, mocked browser, release, synthetic.
+- Mark each high-risk test as strong, weak, duplicate, or missing oracle.
+- For each weak test, record what bug could pass unnoticed.
+- Identify top 20 high-risk scenarios needing state oracles.
+- Mark existing `Done` claims as insufficient where only final `COMPLETED` was asserted.
+
+Acceptance criteria:
+
+- Tracker lists weak-oracle tests and replacement action.
+- Top 20 scenarios are selected and ordered by risk.
+- No product code changes yet.
+
+Verification command:
+
+```powershell
+git status --short
+rg -n "COMPLETED|WAITING_APPROVAL|approval_id|timeline|pending_approval" "factory-agent/tests" "eMas Front/e2e"
+```
+
+Risks:
+
+- Audit may reveal many `Done` tests are shallow. That is useful, not failure.
+
+### Phase 1: Oracle Schema and Scenario Bank
+
+Goal:
+
+Create the source of truth for hard scenarios.
+
+Files likely touched:
+
+- `tests/e2e/scenarios/stateful_oracles/*.json`
+- `docs/qa/manual_prompt_regression_bank.md`
+- `tests/e2e/scenarios/manual_prompt_regressions.json`
+- `factory-agent/tests/test_stateful_oracle_schema.py`
+
+Implementation steps:
+
+- Define oracle JSON schema.
+- Add schema validation tests.
+- Add the first 20 oracles from the scenario list below.
+- Include exact manual failures and observed failure notes.
+- Require each oracle to name the lowest required test layer.
+
+Acceptance criteria:
+
+- Oracle files validate.
+- Every critical manual failure has an oracle entry.
+- Each oracle states what would make the scenario fail.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_stateful_oracle_schema.py -q
+```
+
+Risks:
+
+- Too much prose and not enough machine-readable data will recreate the current problem.
+
+### Phase 2: Stateful Fake Tool and Commit Harness
+
+Goal:
+
+Make fake tests behave like a real mutable backend.
+
+Files likely touched:
+
+- `factory-agent/tests/support/stateful_oracle_harness.py`
+- `factory-agent/tests/test_phase5_final_validator.py`
+- `factory-agent/tests/test_planner_phase3.py`
+- `factory-agent/factory_agent/testing_seeded_adapters.py`
+
+Implementation steps:
+
+- Build stateful fake jobs, machines, approvals, audit rows, and transaction commit behavior.
+- Reads must reflect previous commits.
+- Commits must mutate state and append audit rows.
+- Replays must be idempotent.
+- Partial failures must record exact per-row results.
+- Replace fixed fake rows in critical graph tests.
+
+Acceptance criteria:
+
+- A test fails if approval 2 reads newly mutated state when original-state semantics are expected.
+- The exact priority cascade bug cannot reappear without a failing test.
+- The harness can simulate partial failure, stale approval, double-click, and timeout.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_phase5_final_validator.py tests/test_planner_phase3.py -q
+```
+
+Risks:
+
+- Overbuilding the fake backend. Keep it small and oracle-driven.
+
+### Phase 3: LangGraph State Machine Invariants
+
+Goal:
+
+Catch multi-step and multi-approval bugs before browser tests.
+
+Files likely touched:
+
+- `factory-agent/factory_agent/graph/nodes/planner_loop.py`
+- `factory-agent/factory_agent/graph/nodes/tool_pipeline.py`
+- `factory-agent/factory_agent/graph/nodes/validate.py`
+- `factory-agent/factory_agent/graph/planner_graph.py`
+- `factory-agent/tests/test_langgraph_state_machine_oracles.py`
+
+Implementation steps:
+
+- Add tests for intent cursor movement after commit.
+- Add tests for staged write clearing after commit.
+- Add tests for next active intent selection.
+- Add tests for approval rejection and no hidden continuation.
+- Add tests for approval expiry and stale resume.
+- Add tests for no final response when another active intent remains.
+
+Acceptance criteria:
+
+- Multi-step workflows prove every intermediate transition.
+- `COMPLETED` cannot happen while an approval, staged write, or active intent remains.
+- Regressions fail in pytest before needing browser reproduction.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_phase5_final_validator.py -q
+```
+
+Risks:
+
+- Some current code may need product fixes, not test fixes.
+
+### Phase 4: Snapshot, Timeline, and Final Response Contract
+
+Goal:
+
+Stop final response, snapshot, timeline, and UI from disagreeing.
+
+Files likely touched:
+
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/analysis/summary_backend.py`
+- `factory-agent/factory_agent/graph/approval_summary.py`
+- `factory-agent/tests/test_snapshot_timeline_final_response_contract.py`
+- `eMas Front/src/components/features/chat/turns/turnAssembler.test.mjs`
+- `eMas Front/src/components/features/chat/factory-agent/activityTimeline.test.mjs`
+
+Implementation steps:
+
+- Add backend contract tests that load a snapshot after each oracle transition.
+- Assert pending approval visibility matches approval table state.
+- Assert final response exists only after terminal operation state.
+- Assert final response text matches committed row counts and ids.
+- Assert timeline contains approval ids and commit/terminal evidence.
+- Add frontend turn/timeline assembly tests for the same snapshots.
+
+Acceptance criteria:
+
+- A completed snapshot with wrong final summary fails.
+- Timeline cannot omit approval 2 for multi-approval flows.
+- UI assembly cannot display a stale previous answer as the new final response.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_snapshot_timeline_final_response_contract.py -q
+Set-Location "..\\eMas Front"
+npm test
+```
+
+Risks:
+
+- Existing snapshot projection may need refactoring toward a ledger model.
+
+### Phase 5: SSE Contract and Disconnect Semantics
+
+Goal:
+
+Prove streaming behavior is correct, not just visually busy.
+
+Files likely touched:
+
+- `factory-agent/factory_agent/api/routers/events.py`
+- `factory-agent/tests/test_event_stream_runtime.py`
+- `eMas Front/e2e/fixtures/sseScripts.js`
+- `eMas Front/e2e/specs/full-stack-sse-hard.spec.js`
+- `eMas Front/e2e/specs/chat-sse-activity.spec.js`
+- `eMas Front/src/components/features/chat/factory-agent/useActivityStream.js`
+- `eMas Front/src/components/features/chat/factory-agent/useSessionEvents.js`
+
+Implementation steps:
+
+- Assert SSE event ids are monotonic per stream.
+- Assert reconnect with `Last-Event-ID` does not duplicate activity.
+- Assert malformed events are ignored and next valid event still updates.
+- Assert stream close triggers polling or safe diagnostic.
+- Assert navigation/close disconnects EventSource.
+- Assert SSE progress never creates final UI before snapshot terminal state.
+
+Acceptance criteria:
+
+- SSE, snapshot, and timeline agree for every oracle scenario with streaming.
+- Disconnect and reconnect are observable in test artifacts.
+- No infinite busy UI after stream interruption.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_event_stream_runtime.py -q
+Set-Location "..\\eMas Front"
+npm run test:e2e -- --project=chromium --grep "@sse"
+npm run test:e2e -- --project=chromium-seeded --grep "@sse|@l3-hard"
+```
+
+Risks:
+
+- Browser EventSource and polling fallback can diverge. Both modes need coverage.
+
+### Phase 6: Seeded Full-Stack Data and Audit Oracles
+
+Goal:
+
+Prove real Factory Agent plus seeded Go API commits exactly what the oracle expects.
+
+Files likely touched:
+
+- `eMas Front/e2e/specs/full-stack-data-integrity.spec.js`
+- `eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js`
+- `eMas Front/e2e/support/dataIntegrityScenarios.js`
+- `eMas Front/e2e/support/promptRegressionScenarios.js`
+- `factory-agent/factory_agent/testing_seeded_adapters.py`
+- `emas/cmd/e2e_server`
+
+Implementation steps:
+
+- Reset seeded DB per scenario.
+- Capture initial DB state before prompt.
+- Drive scenario through seeded full-stack APIs.
+- Assert approval rows, audit rows, DB rows, timeline, snapshot, and final summary.
+- Add exact unchanged-row assertions.
+- Export artifacts on failure: initial state, approval table, final state, snapshot, timeline, browser text.
+
+Acceptance criteria:
+
+- Data integrity scenarios cannot pass with wrong committed rows.
+- Cascades use original-state semantics unless oracle explicitly says current-state.
+- Partial failure cannot claim full success.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression"
+```
+
+Risks:
+
+- Seeded adapters can drift from real LangGraph. Critical scenarios still need Phase 7.
+
+### Phase 7: Non-Seeded LangGraph Browser Proof
+
+Goal:
+
+Prove the browser can surface critical real LangGraph behavior, not only seeded adapters.
+
+Files likely touched:
+
+- `eMas Front/e2e/specs/real-langgraph-critical.spec.js`
+- `eMas Front/e2e/support/startRealLangGraphStackForPlaywright.js`
+- `factory-agent/tests/test_phase5_final_validator.py`
+- `TRACK.md` or this tracker
+
+Implementation steps:
+
+- Start seeded Go API.
+- Start Factory Agent with real LangGraph planner path and fake deterministic model disabled where deterministic graph mechanics apply.
+- Prepopulate tool registry correctly.
+- Drive the browser through the top 5 critical workflows.
+- Assert approval card order, final UI, backend DB state, and no generic success/error mismatch.
+
+Acceptance criteria:
+
+- The exact cascade prompt shows approval 1, approval 2, then final completion.
+- Final browser text and DB state match the oracle.
+- This test is opt-in or release-gate only until runtime is stable.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-real-langgraph --grep "@critical"
+```
+
+Risks:
+
+- Startup is heavier than seeded tests.
+- This must not become the default PR gate until stable.
+
+### Phase 8: Manual Failure Promotion Workflow
+
+Goal:
+
+Every manual failure becomes a permanent regression.
+
+Files likely touched:
+
+- `docs/qa/manual_prompt_regression_bank.md`
+- `tests/e2e/scenarios/manual_prompt_regressions.json`
+- `tests/e2e/scenarios/stateful_oracles/*.json`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+
+Implementation steps:
+
+- Add a required bug intake template.
+- Record exact prompt, observed failure, expected behavior, layer, owner, severity, and reproduction artifact.
+- Add a failing test before or with the fix.
+- Close only after the oracle passes at the lowest useful layer.
+
+Acceptance criteria:
+
+- No manual failure can be closed as "tested manually only".
+- Regression bank maps each bug to a test file and command.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_schema.py -q
+```
+
+Risks:
+
+- Bank can become noisy. Only add wording variants that expose distinct parser, route, state, SSE, or UI risks.
+
+### Phase 9: CI Gate Restructure
+
+Goal:
+
+Make the right tests block the right changes.
+
+Files likely touched:
+
+- `.github/workflows/*.yml`
+- `eMas Front/package.json`
+- `eMas Front/playwright.config.js`
+- `docs/operations/chatbot_release_runbook.md`
+
+Implementation steps:
+
+- Keep fast mocked Chromium on every PR.
+- Add backend oracle pytest group on every PR.
+- Add seeded full-stack oracle group on release branches or pre-merge gate.
+- Keep real LangGraph browser as opt-in or release gate.
+- Keep synthetic production checks safe and read-only.
+- Upload oracle artifacts on every failure.
+
+Acceptance criteria:
+
+- A broken state-machine invariant blocks PR.
+- A broken seeded data integrity oracle blocks release.
+- Production synthetic does not mutate data.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q
+Set-Location "..\\eMas Front"
+npm test
+npm run test:e2e -- --project=chromium
+npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity|@prompt-regression|@sse"
+```
+
+Risks:
+
+- Too many slow gates will be skipped by developers. Separate fast PR gates from release gates.
+
+### Phase 10: Ledger Refactor Decision
+
+Goal:
+
+Decide whether the product needs a real operation ledger implementation.
+
+Files likely touched if implemented:
+
+- `factory-agent/factory_agent/persistence/models.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/api/routers/events.py`
+- `factory-agent/factory_agent/graph/nodes/*.py`
+- Migration files or schema scripts
+
+Implementation steps:
+
+- Review Phase 3-6 failures.
+- If projection mismatch remains common, implement a durable operation ledger.
+- Make snapshot, SSE, timeline, and final response read from ledger-derived state.
+- Keep old tables as source data only where needed.
+
+Acceptance criteria:
+
+- One canonical event sequence can reconstruct visible operation state.
+- No duplicate business logic for final response, SSE, timeline, and snapshot terminal state.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_event_stream_runtime.py -q
+```
+
+Risks:
+
+- Ledger is a product refactor. Do it only if invariant tests show projection fixes are becoming fragile.
+
+## First Critical Scenario Set
+
+Implement these before claiming manual chatbot testing is retired.
+
+| ID | Scenario | Primary Bug It Should Catch | Required Layers |
+|---|---|---|---|
+| SO-001 | Medium priority jobs to high, then original high priority jobs to medium. | Second approval uses newly changed rows or finalizes early. | Pytest graph, seeded full-stack, real LangGraph browser |
+| SO-002 | High to low, then original low to medium. | Existing Scenario 86 regression. | Pytest graph, seeded full-stack |
+| SO-003 | Low to high, then original high to low. | Swap/cascade source overlap. | Pytest graph, seeded full-stack |
+| SO-004 | High to medium, then original medium to low. | Reverse cascade ordering. | Pytest graph, seeded full-stack |
+| SO-005 | Approval 1 accepted, approval 2 rejected. | Hidden continuation after rejection. | Pytest graph, browser |
+| SO-006 | Approval 1 accepted, approval 2 timeout. | Session completes despite pending timeout. | Pytest graph, seeded |
+| SO-007 | Approval double-click and refresh replay. | Duplicate mutation. | Pytest API, seeded |
+| SO-008 | Stale approval after new user revision. | Old approval mutates changed session. | Pytest API, browser |
+| SO-009 | Partial bulk commit failure. | Final response claims full success. | Pytest graph, seeded |
+| SO-010 | Commit succeeds but audit row missing. | UI success without audit evidence. | Seeded |
+| SO-011 | Final response before approval 2 appears. | Premature terminal response. | Pytest snapshot, browser |
+| SO-012 | Timeline omits approval 2. | UI loses intermediate approval. | Pytest snapshot, frontend unit |
+| SO-013 | SSE sends completion before snapshot terminal. | Browser shows final too early. | SSE pytest, Playwright |
+| SO-014 | SSE reconnect duplicates old activity rows. | Duplicate timeline rows. | Playwright SSE |
+| SO-015 | SSE malformed payload then valid payload. | Stream crash or stuck UI. | Playwright SSE |
+| SO-016 | EventSource disconnect on modal close. | Leaked streams and stale state. | Playwright |
+| SO-017 | Static bearer polling fallback. | Auth mode disables streaming without fallback. | Playwright release |
+| SO-018 | Browser refresh during active approval. | Lost or duplicated approval. | Playwright seeded |
+| SO-019 | Existing completed session restored. | Stale previous answer becomes new answer. | Frontend unit, Playwright |
+| SO-020 | Empty final response. | UI shows stale text or fake success. | Frontend unit, Playwright |
+| SO-021 | LOTO with `M-CNC-01`. | Machine ID extracted but backend asks again. | Parser, route, seeded browser |
+| SO-022 | LOTO missing machine id. | Should clarify honestly. | Parser, route, browser |
+| SO-023 | Lowercase/punctuation machine IDs. | Entity extraction failure. | Parser |
+| SO-024 | Job ID in markdown/quotes/newlines. | Entity extraction failure. | Parser |
+| SO-025 | Route confusion: LOTO vs machine status. | Wrong RAG/tool route. | Route pytest, seeded |
+| SO-026 | Multi-turn follow-up after completion. | New turn reuses old snapshot. | Frontend unit, Playwright |
+| SO-027 | User sends revision while waiting approval. | Pending approval not invalidated. | Pytest API, browser |
+| SO-028 | Cancel during executing graph. | Hidden continuation after cancel. | Pytest graph, browser |
+| SO-029 | Go API 500 mid-run. | Generic success after backend error. | Seeded |
+| SO-030 | Factory Agent restart or stream drop mid-run. | Infinite busy UI. | Seeded, Playwright |
+| SO-031 | Large structured result plus final completion. | Layout hides final state. | Playwright |
+| SO-032 | Two browser sessions same user. | Cross-session leakage. | Playwright seeded |
+| SO-033 | Two users with same prompt. | Session owner leakage. | API, Playwright |
+| SO-034 | Tool registry empty/unhealthy. | Misleading "No tools allowed" message. | API, Playwright |
+| SO-035 | Real LangGraph no seeded adapter. | Seeded test hides planner bug. | Pytest graph, real LangGraph browser |
+| SO-036 | RAG no source. | Fake citation or generic failure. | RAG pytest, browser |
+| SO-037 | RAG source unavailable. | Broken source UI or false confidence. | RAG pytest, browser |
+| SO-038 | Model returns malformed JSON. | Unsafe fallback or wrong mutation. | Pytest graph |
+| SO-039 | Too much context causes planner fallback. | Final answer hides context overflow. | Pytest graph, later LLM eval |
+| SO-040 | Long operation with heartbeats only. | Timeout or stuck UI. | SSE, Playwright |
+
+## Definition of Done
+
+The testing system is not good enough until these are true:
+
+- Critical scenarios fail before a known bug fix and pass after the fix.
+- Stateful fake tests mutate state like real tools.
+- Seeded full-stack tests verify DB, audit, approval rows, timeline, SSE/snapshot, final response, and UI.
+- Real LangGraph path is covered for the most important multi-approval workflows.
+- Final response cannot be produced from stale or partial evidence.
+- SSE/timeline tests can catch out-of-order, duplicate, missing, malformed, timeout, disconnect, and reconnect bugs.
+- Every manual failure becomes a regression oracle or an accepted gap.
+- No routine manual test remains as a release gate for chatbot flow.
+
+## What This Plan Does Not Promise
+
+No test strategy gives literal 100 percent certainty. This plan is designed to remove the current false confidence by testing state, transitions, and invariants. It should make normal-use bugs much harder to miss, and when a manual bug is found, the test system itself must be treated as defective until it gets a regression oracle.

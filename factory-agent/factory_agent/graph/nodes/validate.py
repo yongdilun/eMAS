@@ -343,6 +343,62 @@ def make_final_validator_node(settings: Settings):
 
     validate_node = make_validate_node(settings)
 
+    def _dependencies_satisfied(working: list[dict[str, Any]], idx: int) -> bool:
+        deps = working[idx].get("depends_on") or []
+        if not deps:
+            return True
+        done = {
+            str(item.get("intent_id"))
+            for item in working
+            if item.get("status") == "completed" and item.get("intent_id") is not None
+        }
+        return all(str(dep) in done for dep in deps)
+
+    def _next_active_after(working: list[dict[str, Any]], start: int) -> int | None:
+        for i in range(max(0, start), len(working)):
+            if working[i].get("status") in {"pending", "in_progress"} and _dependencies_satisfied(working, i):
+                return i
+        return None
+
+    def _route_after_successful_commit(state: AgentState) -> dict[str, Any]:
+        working = [dict(item) for item in (state.get("working_intents") or []) if isinstance(item, dict)]
+        cursor = int(state.get("intent_cursor") or 0)
+        if working and 0 <= cursor < len(working) and working[cursor].get("status") in {"pending", "in_progress"}:
+            working[cursor]["status"] = "completed"
+
+        next_idx = _next_active_after(working, cursor + 1) if working else None
+        out: dict[str, Any] = {
+            "working_intents": working,
+            "staged_writes": replace_list(),
+            "bundle_dry_run_result": None,
+            "last_commit_result": None,
+            "approval_requests": [],
+            "pending_decision": None,
+            "pending_relevance_batch": None,
+            "repair_attempts": 0,
+            "completed_actions": [
+                {
+                    "phase": "final_validator",
+                    "kind": "commit_success",
+                    "summary": "Committed approved write bundle and advanced the intent cursor.",
+                }
+            ],
+        }
+        if next_idx is None:
+            out.update({"status": "completed", "next_route": "end"})
+            return out
+
+        working[next_idx]["status"] = "in_progress"
+        out.update(
+            {
+                "intent_cursor": next_idx,
+                "current_intent": working[next_idx],
+                "status": "planning",
+                "next_route": "continue_planner",
+            }
+        )
+        return out
+
     def _has_fatal(state: AgentState) -> bool:
         if state.get("fatal_system_error"):
             return True
@@ -478,6 +534,8 @@ def make_final_validator_node(settings: Settings):
                 reason="business_validation_failed",
                 detail=failed_entry,
             )
+        if isinstance(commit, dict) and commit.get("ok") is True:
+            return _route_after_successful_commit(state)
 
         if staged and not isinstance(state.get("bundle_dry_run_result"), dict):
             return {

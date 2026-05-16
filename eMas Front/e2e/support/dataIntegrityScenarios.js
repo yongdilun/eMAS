@@ -35,7 +35,7 @@ export const originalHighJobIds = Object.freeze(jobIdsByPriority('high'))
 export const originalLowJobIds = Object.freeze(jobIdsByPriority('low'))
 export const originalMediumJobIds = Object.freeze(jobIdsByPriority('medium'))
 
-function jobIdsByPriority(priority) {
+export function jobIdsByPriority(priority) {
   return Object.entries(canonicalJobPriorities)
     .filter(([, value]) => value === priority)
     .map(([jobId]) => jobId)
@@ -45,6 +45,17 @@ export function expectedCascadePriorities() {
   const expected = { ...canonicalJobPriorities }
   for (const jobId of originalHighJobIds) expected[jobId] = 'low'
   for (const jobId of originalLowJobIds) expected[jobId] = 'medium'
+  return expected
+}
+
+export function expectedPriorityMapForCascade(changes) {
+  const expected = { ...canonicalJobPriorities }
+  for (const change of changes) {
+    const source = change?.source
+    const target = change?.target
+    if (!source || !target) continue
+    for (const jobId of jobIdsByPriority(source)) expected[jobId] = target
+  }
   return expected
 }
 

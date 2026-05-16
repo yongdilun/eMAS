@@ -339,6 +339,96 @@ test('builds current activity from session status when timeline is delayed', () 
   assert.equal(waitingLabels[0].detail, null)
 })
 
+test('active approval resume suppresses stale completion rows before the next approval', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'EXECUTING' },
+    steps: [],
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change high to low then low to medium',
+        created_at: '2026-05-16T09:00:00Z',
+        turn_id: 't1',
+      },
+      {
+        event_type: 'approval_decided',
+        content: 'Approved request to change record.',
+        created_at: '2026-05-16T09:00:01Z',
+        turn_id: 't1',
+        status: 'APPROVED',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'Execution completed successfully.',
+        created_at: '2026-05-16T09:00:02Z',
+        turn_id: 't1',
+        status: 'COMPLETED',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.at(-1).label, 'Applying approved changes')
+  assert.equal(steps.at(-1).state, 'running')
+})
+
+test('second approval keeps activity waiting despite stale completion after approval one', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'WAITING_APPROVAL', plan_id: 'plan-so-001', operation_id: 'plan-so-001' },
+    plan: { plan_id: 'plan-so-001' },
+    pending_approval: { approval_id: 'approval-so-001-2' },
+    steps: [],
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change all medium priority job to high then change all high priority job to medium',
+        created_at: '2026-05-16T10:00:00.000Z',
+        turn_id: 't1',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_required',
+        content: '2 medium priority jobs need approval.',
+        created_at: '2026-05-16T10:00:01.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-1',
+        status: 'PENDING',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_decided',
+        content: 'Approval approval-so-001-1 accepted.',
+        created_at: '2026-05-16T10:00:02.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-1',
+        status: 'APPROVED',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'All requested changes completed.',
+        created_at: '2026-05-16T10:00:03.000Z',
+        turn_id: 't1',
+        status: 'COMPLETED',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_required',
+        content: '1 original high priority job needs approval.',
+        created_at: '2026-05-16T10:00:04.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-2',
+        status: 'PENDING',
+        operation_id: 'plan-so-001',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.at(-1).label, 'Waiting for approval')
+  assert.equal(steps.at(-1).state, 'waiting')
+})
+
 test('uses full operation-scoped timeline across turns when operation_id matches plan', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-1', operation_id: 'plan-1' },

@@ -23,13 +23,15 @@ _CLAUSE_SPLIT_RE = re.compile(
     r"\s*\b(?:and then|then|next|after that|afterwards|finally)\b\s*|\s+\band\s+|\s+;\s*|\n+|(?<=[.!?])\s+(?=[A-Z])",
     re.IGNORECASE,
 )
-_MACHINE_ID_RE = re.compile(r"\b([A-Z]{1,3}-\d{2,})\b")
+_MACHINE_ID_PATTERN = r"(?:M-[A-Z0-9]+(?:-[A-Z0-9]+)*\d[A-Z0-9-]*|[A-Z]{1,3}-\d{2,})"
+_MACHINE_ID_RE = re.compile(rf"\b({_MACHINE_ID_PATTERN})\b", re.IGNORECASE)
 _JOB_TOKEN_RE = re.compile(
-    r"\bjob\b\s*(?:id|#)?\s*((?:[A-Z]{1,6}-)?\d{2,}|[A-Z]{1,6}-[A-Z0-9-]*\d[A-Z0-9-]*)\b",
+    r"\b(?:job|work\s*orders?|wo|task)\b\s*(?:id|#)?\s*((?:[A-Z]{1,6}-)?\d{2,}|[A-Z]{1,6}-[A-Z0-9-]*\d[A-Z0-9-]*)\b",
     re.IGNORECASE,
 )
+_BARE_JOB_ID_RE = re.compile(r"\b(JOB-[A-Z0-9-]*\d[A-Z0-9-]*)\b", re.IGNORECASE)
 _USE_MACHINE_RE = re.compile(
-    r"\b(?:use|with|for)\s+(?:machine\s+)?([A-Z]{1,3}-\d{2,})\b",
+    rf"\b(?:use|with|for|on|at)\s+(?:machine\s+|equipment\s+|asset\s+)?({_MACHINE_ID_PATTERN})\b",
     re.IGNORECASE,
 )
 _MACHINE_NAME_RE = re.compile(r"\bmachine\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
@@ -77,14 +79,26 @@ _INVENTORY_HINT = re.compile(
     re.IGNORECASE,
 )
 _MACHINE_HINT = re.compile(
-    r"\b(?:machine|machines|cnc|equipment|line|station|unit|oee|availability|available)\b",
+    r"\b(?:machine|machines|cnc|equipment|asset|assets|line|station|unit|oee|availability|available)\b",
     re.IGNORECASE,
 )
-_JOB_HINT = re.compile(r"\b(?:job|work\s*order|wo\b)\b", re.IGNORECASE)
+_JOB_HINT = re.compile(r"\b(?:jobs?|work\s*orders?|wo\b|tasks?)\b", re.IGNORECASE)
 _REPORT_HINT = re.compile(r"\b(?:report|export|csv|pdf|dashboard)\b", re.IGNORECASE)
 # M-prefixed compound machine ids (e.g. M-LTH-02): used to suppress inner XXX-NN matches from _MACHINE_ID_RE.
-_COMPOUND_M_MACHINE_RE = re.compile(r"\bM-[A-Z]+-\d{2,}\b", re.IGNORECASE)
+_COMPOUND_M_MACHINE_RE = re.compile(rf"\b{_MACHINE_ID_PATTERN}\b", re.IGNORECASE)
 _JOB_CREATE_RE = re.compile(r"\b(?:create|new|add|open)\s+job\s+", re.IGNORECASE)
+_LOTO_HINT_RE = re.compile(
+    r"\b(?:loto|lock\s*out\s*/?\s*tag\s*out|lockout\s*/?\s*tagout|lockout|tagout|energy\s+isolation|hazardous\s+energy)\b",
+    re.IGNORECASE,
+)
+_LOTO_PROCEDURE_CONTEXT_RE = re.compile(
+    r"\b(?:procedure|sop|appl(?:y|ies)|before\s+(?:working|servicing|maintenance|touching)|working\s+on|service|servicing|maintenance)\b",
+    re.IGNORECASE,
+)
+_STATUS_MACHINE_REQUEST_RE = re.compile(
+    r"\b(?:show|check|get|view|inspect|read)\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,120}\bstatus\b|\bstatus\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,120}\b(?:machine|equipment|asset|cnc|line|station|unit)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -213,6 +227,21 @@ def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
             left = clause[max(0, m.start() - 48) : m.start()].lower()
             if "product" not in left:
                 continue
+        out.append(
+            ExplicitConstraint(
+                field="job_id",
+                operator="=",
+                value=raw_val,
+                source_text=m.group(0),
+                strength=_constraint_strength(clause, m),
+                mutable=False,
+            )
+        )
+    existing_job_ids = {str(c.value).strip().upper() for c in out if c.field == "job_id"}
+    for m in _BARE_JOB_ID_RE.finditer(clause):
+        raw_val = str(m.group(1)).upper()
+        if raw_val in existing_job_ids:
+            continue
         out.append(
             ExplicitConstraint(
                 field="job_id",
@@ -369,6 +398,47 @@ def split_user_intents(query: str, *, llm: Any | None = None) -> list[Intent]:
     return _infer_depends_on(intents)
 
 
+def intent_constraint_values(text: str, field: str) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for intent in split_user_intents(text):
+        for constraint in intent.explicit_constraints:
+            if constraint.field != field:
+                continue
+            value = str(constraint.value or "").strip().upper()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+    return values
+
+
+def is_loto_query(text: str) -> bool:
+    return bool(_LOTO_HINT_RE.search(text or ""))
+
+
+def should_clarify_loto_machine(text: str) -> bool:
+    raw = text or ""
+    if not is_loto_query(raw):
+        return False
+    if intent_constraint_values(raw, "machine_id"):
+        return False
+    return bool(_LOTO_PROCEDURE_CONTEXT_RE.search(raw))
+
+
+def should_route_loto_to_rag(text: str) -> bool:
+    raw = text or ""
+    if not is_loto_query(raw) or should_clarify_loto_machine(raw):
+        return False
+    if _STATUS_MACHINE_REQUEST_RE.search(raw) and not _LOTO_PROCEDURE_CONTEXT_RE.search(raw):
+        return False
+    return bool(
+        intent_constraint_values(raw, "machine_id")
+        or _QUESTION_RE.search(raw)
+        or _LOTO_PROCEDURE_CONTEXT_RE.search(raw)
+    )
+
+
 def assess_intent(text: str) -> IntentAssessment:
     """
     Legacy API for tool scoping and API gating. Delegates to :func:`split_user_intents`
@@ -427,7 +497,7 @@ def assess_intent(text: str) -> IntentAssessment:
 
     entity: str | None = None
     lower_raw = raw.lower()
-    if re.search(r"\bjob\b", lower_raw):
+    if _JOB_HINT.search(raw):
         entity = "job"
     elif re.search(r"\bproduct\b", lower_raw):
         entity = "product"

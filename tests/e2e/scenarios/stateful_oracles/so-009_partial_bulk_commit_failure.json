@@ -1,0 +1,138 @@
+{
+  "id": "SO-009",
+  "title": "Partial bulk commit failure",
+  "risk": "A bulk write can partially fail while the final response, audit rows, or UI claim every selected row was successfully changed.",
+  "prompt": "Change all low priority jobs to high.",
+  "initial_state": {
+    "jobs": [
+      { "id": "JOB-SO009-LOW-01", "priority": "low", "status": "open", "commit_behavior": "success" },
+      { "id": "JOB-SO009-LOW-02", "priority": "low", "status": "open", "commit_behavior": "conflict_on_commit" },
+      { "id": "JOB-SO009-LOW-03", "priority": "low", "status": "open", "commit_behavior": "success" },
+      { "id": "JOB-SO009-MED-01", "priority": "medium", "status": "open", "commit_behavior": "not_targeted" }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "failure_injection": {
+      "row_id": "JOB-SO009-LOW-02",
+      "error": "version_conflict",
+      "when": "commit"
+    }
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-009-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": { "priority": "low" },
+      "new_values": { "priority": "high" },
+      "source_row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-02", "JOB-SO009-LOW-03"]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-009-1",
+      "intent_id": "SO-009-I1",
+      "decision": "accepted",
+      "previous_priority": "low",
+      "new_priority": "high",
+      "row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-02", "JOB-SO009-LOW-03"],
+      "row_count": 3,
+      "expected_commit_result": {
+        "succeeded_row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-03"],
+        "failed_row_ids": ["JOB-SO009-LOW-02"]
+      }
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "dry-run before approval",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-009-1",
+      "preview_row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-02", "JOB-SO009-LOW-03"]
+    },
+    {
+      "after": "partial commit result recorded",
+      "session_phase": "COMPLETED_WITH_ERRORS",
+      "pending_approval_id": null,
+      "commit_result": {
+        "succeeded_count": 2,
+        "failed_count": 1,
+        "failed_row_ids": ["JOB-SO009-LOW-02"]
+      },
+      "forbidden": ["final_response_claims_3_successes", "audit_rows_all_success"]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED_WITH_ERRORS",
+    "jobs": [
+      { "id": "JOB-SO009-LOW-01", "priority": "high" },
+      { "id": "JOB-SO009-LOW-02", "priority": "low" },
+      { "id": "JOB-SO009-LOW-03", "priority": "high" },
+      { "id": "JOB-SO009-MED-01", "priority": "medium" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-009-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-03"],
+      "from": "low",
+      "to": "high",
+      "status": "success"
+    },
+    {
+      "approval_id": "approval-so-009-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": ["JOB-SO009-LOW-02"],
+      "from": "low",
+      "to": "high",
+      "status": "failed",
+      "error": "version_conflict"
+    }
+  ],
+  "expected_timeline": [
+    { "event": "operation_started" },
+    { "event": "approval_requested", "approval_id": "approval-so-009-1" },
+    { "event": "approval_decided", "approval_id": "approval-so-009-1", "decision": "accepted" },
+    { "event": "commit_started", "approval_id": "approval-so-009-1" },
+    { "event": "commit_partial_failure", "approval_id": "approval-so-009-1", "succeeded_count": 2, "failed_count": 1 },
+    { "event": "audit_recorded", "approval_id": "approval-so-009-1", "status": "partial_failure" },
+    { "event": "final_response_created" },
+    { "event": "operation_completed_with_errors" }
+  ],
+  "expected_sse_or_snapshot": {
+    "terminal": {
+      "status": "COMPLETED_WITH_ERRORS",
+      "pending_approval_id": null,
+      "must_include_partial_failure": {
+        "succeeded_row_ids": ["JOB-SO009-LOW-01", "JOB-SO009-LOW-03"],
+        "failed_row_ids": ["JOB-SO009-LOW-02"],
+        "error": "version_conflict"
+      }
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "audit_recorded partial_failure approval-so-009-1",
+    "must_include": ["2 of 3 low priority jobs changed to high", "JOB-SO009-LOW-02 failed"],
+    "must_not_include": ["3 low priority jobs changed to high", "all requested changes completed", "Run complete with no errors"]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": ["approval-so-009-1"],
+    "must_show": ["Completed with errors", "2 of 3", "JOB-SO009-LOW-02"],
+    "must_not_show": ["Run complete", "3 low priority jobs changed to high", "Factory Agent needs attention"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "JOB-SO009-LOW-02", "priority": "low" },
+    { "id": "JOB-SO009-MED-01", "priority": "medium" }
+  ],
+  "invariants": [
+    "partial_failure_reports_per_row_results",
+    "final_summary_matches_commits",
+    "audit_rows_include_failed_rows",
+    "commit_matches_approval_bundle",
+    "timeline_contains_transition_chain",
+    "no_generic_error_on_expected_partial_failure"
+  ],
+  "required_layers": ["pytest_graph", "seeded_full_stack"],
+  "weakness_from_phase0": "Phase 0 found bulk approval tests that stop at selected bundle or final COMPLETED text; this oracle requires per-row commit results, audit evidence, and final copy that cannot claim full success after a partial failure."
+}

@@ -49,6 +49,15 @@ import {
   normalUseTurnForPrompt,
 } from '../support/normalUseScenarios.js'
 import {
+  manualPromptBankPrompts,
+  phase18MockRagAnswer,
+  phase18MockRagSource,
+} from '../support/intentEntityScenarios.js'
+import {
+  phase19UnknownDiagnostic,
+  phase19UnknownPrompt,
+} from '../support/promptRegressionScenarios.js'
+import {
   reliabilityConcurrentTurns,
   reliabilityLargeResultAnswer,
   reliabilityLargeResultPresentation,
@@ -837,6 +846,139 @@ export const scenarioCatalog = {
       if (session.status === 'COMPLETED') return snapshotFromSession(session, normalUseActivitySteps(turn))
       if (session.status === 'PLANNING' || session.status === 'EXECUTING') return activeHappyPathSnapshot(session)
       return defaultIdleSnapshot(session)
+    },
+  },
+
+  intentEntityPromptBank: {
+    name: 'intentEntityPromptBank',
+    description: 'Phase 18 manual prompt bank routes LOTO machine prompt to deterministic RAG without clarification.',
+    prompts: manualPromptBankPrompts,
+    onMessage(session, content) {
+      addUserTurn(session, content || manualPromptBankPrompts[0], 'pw-turn-intent-entity')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-intent-entity'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-intent-entity-rag'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-intent-entity-rag',
+        objective: 'Route the M-CNC-01 LOTO procedure prompt to controlled RAG.',
+        stepId: 'pw-step-intent-entity-rag',
+        toolName: 'rag_loto_lookup',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-intent-entity-plan-created',
+          planId: 'pw-plan-intent-entity-rag',
+          content: 'Routing to LOTO/RAG with machine_id=M-CNC-01.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-intent-entity-rag' } }
+    },
+    async onExecute(session, sleep) {
+      const turnId = session.current_turn_id || 'pw-turn-intent-entity'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-intent-entity-execution-started',
+          planId: 'pw-plan-intent-entity-rag',
+        }),
+      )
+      await sleep(140)
+      session.status = 'COMPLETED'
+      completeSteps(session)
+      appendTimeline(
+        session,
+        toolResultEvent({
+          turnId,
+          eventId: 'pw-intent-entity-tool-result',
+          stepId: 'pw-step-intent-entity-rag',
+          planId: 'pw-plan-intent-entity-rag',
+          toolName: 'rag_loto_lookup',
+          content: phase18MockRagAnswer,
+          details: {
+            args: { route: 'rag_loto', machine_id: 'M-CNC-01' },
+            result: {
+              route: 'rag_loto',
+              machine_id: 'M-CNC-01',
+              _summary: phase18MockRagAnswer,
+            },
+            sources: [phase18MockRagSource],
+            safety_content: {
+              title: 'Safety Advisory',
+              content: 'Controlled Phase 18 fixture. Verify the M-CNC-01 site procedure before acting.',
+            },
+          },
+        }),
+      )
+      appendTimeline(
+        session,
+        sessionCompletedEvent({
+          turnId,
+          eventId: 'pw-intent-entity-completed',
+          planId: 'pw-plan-intent-entity-rag',
+          content: phase18MockRagAnswer,
+          reason: 'intent_entity_prompt_bank_fixture',
+          details: {
+            sources: [phase18MockRagSource],
+            safety_content: {
+              title: 'Safety Advisory',
+              content: 'Controlled Phase 18 fixture. Verify the M-CNC-01 site procedure before acting.',
+            },
+          },
+        }),
+      )
+      return { status: 200, body: { status: 'COMPLETED', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, completedActivitySteps())
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return activeHappyPathSnapshot(session)
+      return defaultIdleSnapshot(session)
+    },
+  },
+
+  promptRegressionUnknown: {
+    name: 'promptRegressionUnknown',
+    description: 'Phase 19 true unknown prompt shows the generic Factory Agent attention diagnostic.',
+    prompts: [phase19UnknownPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || phase19UnknownPrompt, 'pw-turn-prompt-regression-unknown')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-prompt-regression-unknown'
+      session.status = 'FAILED'
+      appendTimeline(
+        session,
+        sessionFailedEvent({
+          turnId,
+          content: phase19UnknownDiagnostic,
+        }),
+      )
+      return {
+        status: 422,
+        body: { detail: phase19UnknownDiagnostic },
+      }
+    },
+    async onExecute() {
+      return { status: 409, body: { detail: 'Execution should not start for the unknown prompt fixture.' } }
+    },
+    snapshot(session) {
+      return snapshotFromSession(session, [
+        {
+          id: 'pw-activity-prompt-regression-unknown',
+          timestamp: Date.parse(fixtureTime(3)) / 1000,
+          group: 'error',
+          label: 'Prompt route not matched',
+          detail: phase19UnknownDiagnostic,
+          state: 'error',
+        },
+      ])
     },
   },
 

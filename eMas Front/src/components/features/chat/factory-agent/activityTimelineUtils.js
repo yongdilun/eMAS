@@ -73,8 +73,20 @@ export function shouldShowActivityTimeline(steps) {
   return Array.isArray(steps) && steps.length > 0
 }
 
+export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = '') {
+  const status = String(sessionStatus || '').toUpperCase()
+  const rows = Array.isArray(steps) ? steps : []
+  if (!ACTIVE_SESSION_STATUSES.has(status)) return rows
+  return rows.filter((step) => {
+    const label = String(step?.label || '').toLowerCase()
+    const group = String(step?.group || '').toLowerCase()
+    return !(step?.state === 'complete' && group === 'response') && label !== 'run complete'
+  })
+}
+
 const FINALIZED_STATES = new Set(['running', 'retry', 'waiting'])
 const MERGEABLE_STATES = new Set(['running', 'success'])
+const ACTIVE_SESSION_STATUSES = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
 
 const SAFE_DOMAIN_LABELS = [
   ['approval', 'approval requests'],
@@ -712,9 +724,10 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
   const status = String(session?.status || '').toUpperCase()
   const hasPendingApproval = Boolean(snapshot?.pending_approval)
 
-  // Suppress session_completed timeline events while an approval is still pending —
-  // showing "Run complete" while the approval card is open is misleading.
-  const timeline = hasPendingApproval
+  // Suppress session_completed timeline events while the session is still active.
+  // showing "Run complete" before the session is terminal is misleading.
+  const suppressCompletion = hasPendingApproval || ACTIVE_SESSION_STATUSES.has(status)
+  const timeline = suppressCompletion
     ? rawTimeline.filter((e) => (e?.event_type || e?.eventType) !== 'session_completed')
     : rawTimeline
 

@@ -1,0 +1,104 @@
+{
+  "id": "SO-010",
+  "title": "Commit succeeds but audit row missing",
+  "risk": "A visible success state can hide missing audit evidence, leaving no durable proof of who approved or which rows changed.",
+  "prompt": "Change all high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      { "id": "JOB-SO010-HIGH-01", "priority": "high", "status": "open" },
+      { "id": "JOB-SO010-HIGH-02", "priority": "high", "status": "open" },
+      { "id": "JOB-SO010-LOW-01", "priority": "low", "status": "open" }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-010-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": { "priority": "high" },
+      "new_values": { "priority": "medium" },
+      "source_row_ids": ["JOB-SO010-HIGH-01", "JOB-SO010-HIGH-02"]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-010-1",
+      "intent_id": "SO-010-I1",
+      "decision": "accepted",
+      "previous_priority": "high",
+      "new_priority": "medium",
+      "row_ids": ["JOB-SO010-HIGH-01", "JOB-SO010-HIGH-02"],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "approval-so-010-1 accepted before commit",
+      "session_phase": "EXECUTING",
+      "pending_approval_id": null,
+      "audit_rows": []
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      { "id": "JOB-SO010-HIGH-01", "priority": "medium" },
+      { "id": "JOB-SO010-HIGH-02", "priority": "medium" },
+      { "id": "JOB-SO010-LOW-01", "priority": "low" }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-010-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": ["JOB-SO010-HIGH-01", "JOB-SO010-HIGH-02"],
+      "from": "high",
+      "to": "medium",
+      "status": "success",
+      "must_exist": true
+    }
+  ],
+  "expected_timeline": [
+    { "event": "operation_started" },
+    { "event": "approval_requested", "approval_id": "approval-so-010-1" },
+    { "event": "approval_decided", "approval_id": "approval-so-010-1", "decision": "accepted" },
+    { "event": "commit_started", "approval_id": "approval-so-010-1" },
+    { "event": "commit_completed", "approval_id": "approval-so-010-1" },
+    { "event": "audit_recorded", "approval_id": "approval-so-010-1" },
+    { "event": "final_response_created" },
+    { "event": "operation_completed" }
+  ],
+  "expected_sse_or_snapshot": {
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "must_include_audit_evidence": {
+        "approval_id": "approval-so-010-1",
+        "row_ids": ["JOB-SO010-HIGH-01", "JOB-SO010-HIGH-02"]
+      }
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "audit_recorded approval-so-010-1",
+    "must_include": ["2 high priority jobs changed to medium"],
+    "must_not_include": ["updated without audit evidence", "audit unavailable"]
+  },
+  "expected_ui": {
+    "must_show": ["Run complete", "2 high priority jobs changed to medium"],
+    "must_not_show": ["Run complete without audit evidence", "Factory Agent needs attention"]
+  },
+  "expected_unchanged_rows": [
+    { "id": "JOB-SO010-LOW-01", "priority": "low" }
+  ],
+  "invariants": [
+    "commit_requires_audit_row",
+    "final_summary_matches_commits",
+    "timeline_contains_transition_chain",
+    "no_final_before_audit_evidence",
+    "commit_matches_approval_bundle"
+  ],
+  "required_layers": ["seeded_full_stack"],
+  "weakness_from_phase0": "Seeded approval success tests can pass on visible completion alone; this oracle requires audit rows tied to the approval id and changed row ids before final success is accepted."
+}

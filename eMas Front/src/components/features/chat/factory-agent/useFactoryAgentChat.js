@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { classifyFactoryAgentError, normalizeFactoryAgentError } from '../../../../services/factoryAgentErrors'
 import { FACTORY_AGENT_STATUS, factoryAgentApi } from '../../../../services/factoryAgentApi'
 import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../turns/turnAssembler'
-import { buildActivityStepsFromSnapshot, finalizeHistoricalActivityStates } from './activityTimelineUtils'
+import {
+  buildActivityStepsFromSnapshot,
+  finalizeHistoricalActivityStates,
+  stripPrematureTerminalActivitySteps,
+} from './activityTimelineUtils'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
 import { useActivityStream } from './useActivityStream.js'
@@ -209,6 +213,8 @@ export function useFactoryAgentChat() {
           : Array.isArray(snapshot?.activitySteps)
             ? snapshot.activitySteps
             : []
+        const visibleServerSteps = stripPrematureTerminalActivitySteps(serverSteps, nextSession?.status)
+        const visibleWithoutClient = stripPrematureTerminalActivitySteps(withoutClient, nextSession?.status)
 
         const isStreamActive = [
           'PLANNING',
@@ -218,16 +224,16 @@ export function useFactoryAgentChat() {
         ].includes(nextSession?.status)
 
         let result
-        if (serverSteps.length) {
+        if (visibleServerSteps.length) {
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be
             // ahead on some ids - only updating `withoutClient` in place drops rows
             // that exist only on the server (looks like "first and last" only).
             const byId = new Map()
-            for (const s of withoutClient) {
+            for (const s of visibleWithoutClient) {
               if (s?.id) byId.set(s.id, { ...s })
             }
-            for (const s of serverSteps) {
+            for (const s of visibleServerSteps) {
               if (!s?.id) continue
               const existing = byId.get(s.id)
               byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
@@ -242,7 +248,7 @@ export function useFactoryAgentChat() {
             // Session no longer in an active stream: drop client placeholder rows so a
             // stale `client_activity_pending` "Reviewing results..." cannot sit after
             // server "Run complete" and block the assistant body gate.
-            result = finalizeHistoricalActivityStates(serverSteps.map((s) => ({ ...s })))
+            result = finalizeHistoricalActivityStates(visibleServerSteps.map((s) => ({ ...s })))
           }
         } else {
           const built = buildActivityStepsFromSnapshot({
@@ -260,7 +266,7 @@ export function useFactoryAgentChat() {
           } else if (isStreamActive) {
             // IDLE and similar snapshots often omit activity_steps; built can still be empty
             // while the UI already showed rows during the run - keep them.
-            result = [...clientOnly, ...withoutClient].sort(
+            result = [...clientOnly, ...visibleWithoutClient].sort(
               (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
             )
           } else {
@@ -700,6 +706,14 @@ export function useFactoryAgentChat() {
           for (let attempt = 0; attempt < 8; attempt += 1) {
             const snapshot = await safelyRefreshSnapshot(session.session_id)
             const status = snapshot?.session?.status
+            const nextPendingApproval = snapshot?.pending_approval || snapshot?.pendingApproval || null
+            if (
+              status === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
+              nextPendingApproval?.approval_id &&
+              nextPendingApproval.approval_id !== resolvedId
+            ) {
+              break
+            }
             const snapshotTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
             const hasApprovalDecision = snapshotTimeline.some(
               (event) => event?.event_type === 'approval_decided' && event?.approval_id === resolvedId,

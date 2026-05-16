@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from factory_agent.config import get_settings
+from factory_agent.graph.checkpointing import clear_graph_checkpointer_cache
 from factory_agent.graph.errors import LangGraphPlannerApprovalRequired
 from factory_agent.graph.nodes.tool_pipeline import commit_node_impl
 from factory_agent.graph.nodes.validate import make_final_validator_node
@@ -13,6 +14,10 @@ from factory_agent.graph.nodes.tool_pipeline import route_after_bundle, route_af
 from factory_agent.graph.planner_graph import LangGraphPlanner
 from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.schemas import ToolInfo
+from tests.support.operation_assertions import assert_audit_rows_match
+from tests.support.operation_assertions import assert_final_state_matches_oracle
+from tests.support.operation_assertions import assert_timeline_contains_chain
+from tests.support.stateful_oracle_harness import StatefulOracleHarness
 
 import json
 import uuid
@@ -610,6 +615,69 @@ async def test_bulk_low_priority_jobs_are_deleted_as_one_approval_bundle(monkeyp
     assert [item["tool_name"] for item in dry_run_staged[0]] == ["delete__jobs_{id}", "delete__jobs_{id}"]
     assert [item["args"] for item in dry_run_staged[0]] == [{"id": "JOB-SEED-005"}, {"id": "JOB-SEED-009"}]
     assert exc.value.payload["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_two_step_priority_cascade_requires_second_langgraph_approval(monkeypatch):
+    session_id = f"real-graph-cascade-{uuid.uuid4()}"
+    settings = replace(
+        get_settings(),
+        openai_api_key="test-key",
+        planner_openai_base_url=None,
+        graph_checkpoint_backend="memory",
+        max_foreach_items=50,
+    )
+    harness = StatefulOracleHarness.from_oracle_id("SO-001", session_id=session_id)
+    harness.start_operation(intent_count=2)
+
+    def fail_model(*args, **kwargs):
+        raise AssertionError("priority cascade regression must use deterministic LangGraph mechanics, not an LLM")
+
+    clear_graph_checkpointer_cache()
+    monkeypatch.setattr("factory_agent.graph.nodes.planner_loop.build_planner_chat_model", fail_model)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.execute_tool_http", harness.execute_tool_http)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", harness.bundle_dry_run_node)
+    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.commit_node_impl", harness.commit_node)
+
+    planner = LangGraphPlanner(settings)
+    prompt = "change all medium priority job to high then change all high priority job to medium"
+    with pytest.raises(LangGraphPlannerApprovalRequired) as first:
+        await planner.generate(
+            intent=prompt,
+            scoped_tools=[_jobs_list_tool(), _job_update_tool()],
+            context={"session_id": session_id},
+        )
+
+    assert first.value.payload["bundle_ui"]["previous_priority"] == "medium"
+    assert first.value.payload["bundle_ui"]["new_priority"] == "high"
+    assert [item["args"] for item in harness.dry_runs[0]["staged_writes"]] == [
+        {"id": "JOB-SO001-MED-01", "priority": "high"},
+        {"id": "JOB-SO001-MED-02", "priority": "high"},
+    ]
+
+    with pytest.raises(LangGraphPlannerApprovalRequired) as second:
+        await planner.resume_after_approval(session_id=session_id, approved=True)
+
+    assert harness.commit_count_by_approval["approval-so-001-1"] == 1
+    assert second.value.payload["bundle_ui"]["previous_priority"] == "high"
+    assert second.value.payload["bundle_ui"]["new_priority"] == "medium"
+    assert [item["args"] for item in harness.dry_runs[1]["staged_writes"]] == [
+        {"id": "JOB-SO001-HIGH-01", "priority": "medium"},
+        {"id": "JOB-SO001-HIGH-02", "priority": "medium"},
+    ]
+
+    draft, contract, _outputs = await planner.resume_after_approval(session_id=session_id, approved=True)
+
+    assert harness.commit_count_by_approval["approval-so-001-2"] == 1
+    assert [call["args"] for call in harness.read_requests if call["tool_name"] == "get__jobs"] == [
+        {"priority": "medium"},
+        {"priority": "high"},
+    ]
+    assert draft.steps[-1].tool_name == "put__jobs_{id}"
+    assert contract["backend"] == "langgraph"
+    assert_final_state_matches_oracle(harness, harness.oracle)
+    assert_audit_rows_match(harness, harness.oracle["expected_audit_rows"])
+    assert_timeline_contains_chain(harness, harness.oracle["expected_timeline"])
 
 
 @pytest.mark.asyncio

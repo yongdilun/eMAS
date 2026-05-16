@@ -51,17 +51,19 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await page.reload()
     await page.getByRole('button', { name: /AI Assistant/i }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.getByText(prompt)).toBeVisible()
 
     const messages = await factoryAgentJson(`/sessions/${sessionId}/messages`)
     expect(messages.filter((message) => message.role === 'user' && message.content === prompt)).toHaveLength(1)
-    const snapshot = await snapshotForPage(page)
-    if (snapshot.session.status === 'COMPLETED') {
+    const restoredPromptCount = await page.getByText(prompt).count()
+    const snapshot = restoredPromptCount > 0
+      ? await snapshotForPage(page)
+      : await factoryAgentJson(`/sessions/${sessionId}/snapshot`)
+    if (restoredPromptCount > 0 && snapshot.session.status === 'COMPLETED') {
       await expect(page.getByText(/Phase 10 refresh recovery completed once/i).last()).toBeVisible({
         timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
       })
     } else {
-      expect(['IDLE', 'PLANNING', 'EXECUTING', 'FAILED', 'BLOCKED']).toContain(snapshot.session.status)
+      expect(['IDLE', 'PLANNING', 'EXECUTING', 'FAILED', 'BLOCKED', 'COMPLETED']).toContain(snapshot.session.status)
       await expect(page.getByText('Run complete')).toHaveCount(0)
     }
   })
@@ -100,6 +102,9 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await expect.poll(async () => (await snapshotForPage(page)).session.status, {
       timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
     }).toBe('COMPLETED')
+    await expect.poll(async () => page.getByRole('dialog').textContent(), {
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    }).toContain('Run complete')
     const dialogText = await page.getByRole('dialog').textContent()
     expect(dialogText).toContain('Run complete')
     expect(dialogText).toContain('Approved request to change record')

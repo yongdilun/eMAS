@@ -768,6 +768,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
     isSending ||
     isDecidingApproval ||
     session?.status === FACTORY_AGENT_STATUS.PLANNING
+  const effectiveSessionStatus = pendingApproval
+    ? FACTORY_AGENT_STATUS.WAITING_APPROVAL
+    : session?.status
 
   const showTopSessionProgress = Boolean(
     session?.session_id &&
@@ -779,16 +782,16 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-      ].includes(session?.status)),
+      ].includes(effectiveSessionStatus)),
   )
-  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(session?.status)
+  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(effectiveSessionStatus)
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
   let placeholder = 'Ask factory agent...'
-  if (session?.status === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
-  if (session?.status === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
-  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
-  const displayStatus = friendlySessionStatus(session?.status, isSending)
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
+  const displayStatus = friendlySessionStatus(effectiveSessionStatus, isSending)
 
   return (
     <div className="flex h-full relative">
@@ -908,19 +911,24 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           ) : (
             <>
               {(turns || []).map((turn, index) => {
+                const isLatestTurn = index === turns.length - 1
                 const hasApprovalCard =
                   pendingApproval &&
                   !isResumingAfterApproval &&
-                  session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
-                  Array.isArray(turn.approvals) &&
-                  turn.approvals.some((a) => a?.event_type === 'approval_required' && a?.approval_id === pendingApproval.approval_id)
+                  effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
+                  (
+                    (
+                      Array.isArray(turn.approvals) &&
+                      turn.approvals.some((a) => a?.event_type === 'approval_required' && a?.approval_id === pendingApproval.approval_id)
+                    ) ||
+                    isLatestTurn
+                  )
 
                 const userTs = turn.user?.created_at ? formatFactoryAgentTime(turn.user.created_at) : null
                 const assistantTs = turn.created_at ? formatFactoryAgentTime(turn.created_at) : null
-                const isLatestTurn = index === turns.length - 1
                 const shouldAnimateText =
                   isLatestTurn &&
-                  ![FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(session?.status)
+                  ![FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(effectiveSessionStatus)
                 const hideLegacyProgress = ACTIVITY_TIMELINE_ENABLED && isLatestTurn && isProgressSummary(turn?.summary)
                 const latestActivitySteps = isLatestTurn ? activitySteps : []
                 const shouldRenderAssistant =
@@ -928,7 +936,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                 const showResumeBanner =
                   isLatestTurn &&
                   isResumingAfterApproval &&
-                  session?.status === FACTORY_AGENT_STATUS.EXECUTING &&
+                  effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING &&
                   !hasApprovalCard
 
                 return (
@@ -979,7 +987,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           )}
         </div>
 
-        {session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL && pendingApproval ? (
+        {effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL && pendingApproval ? (
           <div className="mx-4 mt-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-xs text-ink-subtle">
             Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it.
           </div>

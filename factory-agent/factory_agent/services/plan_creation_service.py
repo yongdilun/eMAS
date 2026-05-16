@@ -31,7 +31,7 @@ from factory_agent.planner import (
     PlannerConfirmationRequired,
     PlannerPlanRejected,
 )
-from factory_agent.planning.intent import assess_intent
+from factory_agent.planning.intent import assess_intent, should_clarify_loto_machine, should_route_loto_to_rag
 from factory_agent.planning.plan_validator import validate_plan
 from factory_agent.planning.tool_output_alignment import align_tool_outputs_to_steps
 from factory_agent.planning.tool_selector import ToolSelector
@@ -177,6 +177,12 @@ class PlanCreationService:
         if not isinstance(data, dict):
             return ""
         return str(data.get("doc_id") or "")
+
+    def _loto_machine_clarification_reply(self) -> str:
+        return (
+            "Which machine ID should I use for the LOTO procedure? "
+            "Please provide the exact machine ID, for example M-CNC-01."
+        )
 
     async def _answer_knowledge_question_as_plan(self,
         *,
@@ -745,6 +751,29 @@ class PlanCreationService:
         tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
         backend_used = "langgraph" if req.draft is None else "client"
         draft = req.draft
+
+        if should_clarify_loto_machine(intent):
+            plan_resp = await self._persist_conversation_reply_as_empty_plan(
+                db=db,
+                sess=sess,
+                reply=self._loto_machine_clarification_reply(),
+                mode=mode,
+                tools_by_name=tools_by_name,
+                intent=intent,
+            )
+            metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+            return plan_resp
+
+        if should_route_loto_to_rag(intent):
+            plan_resp = await self._answer_knowledge_question_as_plan(
+                db=db,
+                sess=sess,
+                mode=mode,
+                tools_by_name=tools_by_name,
+                intent=intent,
+            )
+            metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+            return plan_resp
 
         if assessment.kind != "operations":
             if assessment.reply is None:

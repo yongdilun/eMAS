@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { alertRunbookUrlForCode } from './operationalGate.js'
 import { syntheticRuntimeEnv, redactSensitiveText } from './syntheticEnv.js'
 
 const syntheticEnv = syntheticRuntimeEnv()
@@ -17,24 +18,31 @@ function redactedJson(value) {
 export function classifySyntheticSignal(signal) {
   const alerts = []
   const owner = signal.owner || syntheticEnv.owner
+  const alert = (code, severity, message) => ({
+    code,
+    severity,
+    owner,
+    runbook_url: signal.runbookUrl || syntheticEnv.runbookUrl || alertRunbookUrlForCode(code),
+    message,
+  })
 
   if (signal.timeout) {
-    alerts.push({ code: 'synthetic_timeout', severity: 'critical', owner, message: 'Synthetic canary timed out before completion.' })
+    alerts.push(alert('synthetic_timeout', 'critical', 'Synthetic canary timed out before completion.'))
   }
   if (signal.backendUnavailable) {
-    alerts.push({ code: 'backend_unavailable', severity: 'critical', owner, message: 'Factory Agent or Go API is unavailable.' })
+    alerts.push(alert('backend_unavailable', 'critical', 'Factory Agent or Go API is unavailable.'))
   }
   if (signal.authFailure) {
-    alerts.push({ code: 'auth_failure', severity: 'critical', owner, message: 'Synthetic auth token is expired, revoked, or rejected.' })
+    alerts.push(alert('auth_failure', 'critical', 'Synthetic auth token is expired, revoked, or rejected.'))
   }
   if (signal.providerOutage) {
-    alerts.push({ code: 'provider_outage', severity: 'critical', owner, message: 'Model, RAG, or provider dependency failed.' })
+    alerts.push(alert('provider_outage', 'critical', 'Model, RAG, or provider dependency failed.'))
   }
   if (signal.missingFinalAnswer) {
-    alerts.push({ code: 'missing_final_answer', severity: 'critical', owner, message: 'Synthetic canary completed without a final answer.' })
+    alerts.push(alert('missing_final_answer', 'critical', 'Synthetic canary completed without a final answer.'))
   }
   if (signal.finalAnswerMs > syntheticEnv.latencyBudgetsMs.burnRateWarning) {
-    alerts.push({ code: 'latency_burn_rate', severity: 'warning', owner, message: 'Synthetic latency is degraded before a hard outage.' })
+    alerts.push(alert('latency_burn_rate', 'medium', 'Synthetic latency is degraded before a hard outage.'))
   }
 
   return alerts
@@ -93,4 +101,3 @@ export async function attachSyntheticResults(testInfo) {
     })
   }
 }
-

@@ -439,13 +439,20 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
     index_by_signature: dict[tuple[str, str, str, str, str], int] = {}
 
     has_pending_approval = snapshot.pending_approval is not None
+    session_status = str(getattr(snapshot.session, "status", "") or "").upper()
+    suppress_completion = has_pending_approval or session_status in {
+        "PLANNING",
+        "EXECUTING",
+        "WAITING_APPROVAL",
+        "WAITING_CONFIRMATION",
+    }
     for ev in snapshot.timeline:
         base = _activity_base_for_timeline_event(ev)
         if base is None:
             continue
-        # Suppress "Run complete" (session_completed) while an approval is
-        # still pending — the session hasn't truly finished from the user's perspective.
-        if has_pending_approval and ev.event_type == "session_completed":
+        # Suppress "Run complete" while the session is still active. A stale
+        # completion row between approval gates can hide the next pending write set.
+        if suppress_completion and ev.event_type == "session_completed":
             continue
         detail = _activity_detail_for_event(ev, label=base["label"])
         signature = _activity_merge_signature(ev, base, detail)
@@ -1236,7 +1243,7 @@ class SessionSnapshotService:
             and (latest_user_at is None or event.created_at >= latest_user_at)
             for event in events
         )
-        if sess.status == "COMPLETED" and not has_completion_for_latest_turn:
+        if sess.status == "COMPLETED" and pending_approval is None and not has_completion_for_latest_turn:
             useful_completion_message = next(
                 (
                     msg
@@ -1384,14 +1391,22 @@ class SessionSnapshotService:
         if pending_approval is not None and pending_approval.status != "PENDING":
             healed_pending_approval = None
 
-        # Also cross-check against session status: WAITING_APPROVAL without a PENDING
-        # approval row means we're in a stale state — repair silently.
-        if healed_pending_approval is None and sess.status == "WAITING_APPROVAL":
-            # There is no pending approval row; the session will self-advance on next
-            # execute call but we must not expose a "waiting" phase to the frontend.
+        # Also cross-check against approval state: a pending approval must keep the
+        # browser in WAITING_APPROVAL even if a stale terminal row is still present.
+        if healed_pending_approval is not None:
+            _effective_status = "WAITING_APPROVAL"
+        elif healed_pending_approval is None and sess.status == "WAITING_APPROVAL":
             _effective_status = sess.status
         else:
             _effective_status = sess.status
+        _session_response = session_to_response(sess)
+        if _effective_status != sess.status:
+            _session_response = _session_response.model_copy(
+                update={
+                    "status": _effective_status,
+                    "completed_at": None if _effective_status != "COMPLETED" else _session_response.completed_at,
+                }
+            )
 
         # Derive resume_hint: session is applying approved changes if it is EXECUTING
         # and replan_context carries a recent approval resume marker (decided within
@@ -1426,7 +1441,7 @@ class SessionSnapshotService:
 
         # Build server-authoritative activity steps.
         _snapshot_for_activity = SessionSnapshotResponse(
-            session=session_to_response(sess),
+            session=_session_response,
             plan=plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None,
             steps=(checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]),
             pending_approval=approval_to_response(healed_pending_approval) if healed_pending_approval else None,
@@ -1435,7 +1450,7 @@ class SessionSnapshotService:
         _activity_steps = _activity_steps_for_snapshot(_snapshot_for_activity)
 
         return SessionSnapshotResponse(
-            session=session_to_response(sess),
+            session=_session_response,
             plan=plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None,
             steps=(checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]),
             pending_approval=approval_to_response(healed_pending_approval) if healed_pending_approval else None,

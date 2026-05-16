@@ -320,3 +320,64 @@ test('completed approval turn prefers completed tool result over stale approval 
     'Approved seeded change completed: JOB-SEED-005 is now high priority.',
   )
 })
+
+test('new pending approval outranks stale terminal completion from previous approval', () => {
+  const turns = assembleFactoryAgentTurns([
+    {
+      ...userEvent,
+      content: 'change all medium priority job to high then change all high priority job to medium',
+      created_at: '2026-05-16T10:00:00.000Z',
+    },
+    {
+      event_id: 'approval:1-required',
+      event_type: 'approval_required',
+      content: '2 jobs will be updated from medium to high priority.',
+      created_at: '2026-05-16T10:00:01.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-so-001-1',
+      status: 'PENDING',
+    },
+    {
+      event_id: 'approval:1-decided',
+      event_type: 'approval_decided',
+      content: 'Approval approval-so-001-1 accepted.',
+      created_at: '2026-05-16T10:00:02.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-so-001-1',
+      status: 'APPROVED',
+    },
+    {
+      event_id: 'completed:stale-after-approval-1',
+      event_type: 'session_completed',
+      content: 'All requested changes completed.',
+      created_at: '2026-05-16T10:00:03.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+    },
+    {
+      event_id: 'approval:2-required',
+      event_type: 'approval_required',
+      content: '1 job will be updated from high to medium priority.',
+      created_at: '2026-05-16T10:00:04.000Z',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-so-001-2',
+      status: 'PENDING',
+      details: {
+        args: {
+          bundle_ui: {
+            headline: '1 job will be updated from high to medium priority.',
+          },
+        },
+      },
+    },
+  ])
+
+  assert.equal(
+    computeFactoryAgentTurnSummary(turns[0]),
+    '1 job will be updated from high to medium priority.',
+  )
+})
