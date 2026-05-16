@@ -17,7 +17,8 @@ const FACTORY_AGENT_BASE_URL = (
  *   - EventSource is unavailable
  *   - the SSE connection errors out
  *
- * The hook self-manages reconnection with exponential back-off (max 30 s).
+ * The hook lets native EventSource reconnect when possible so browsers preserve
+ * Last-Event-ID, while snapshot polling acts as the safety net during the gap.
  *
  * @param {string|null} sessionId
  * @param {() => void} onInvalidate   called whenever a new snapshot is needed
@@ -124,14 +125,10 @@ export function useSessionEvents(sessionId, onInvalidate, options = {}) {
 
     es.onerror = () => {
       if (!mountedRef.current) return
-      closeEs()
       startFallback()
-      const delay = retryDelayRef.current
-      retryDelayRef.current = Math.min(delay * 2, 30000)
       emitDiagnostic('fallback', `Snapshot stream disconnected. Polling every ${Math.round(fallbackMs / 1000)} seconds while reconnecting.`)
-      retryTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) connect()
-      }, delay)
+      // Do not close/recreate the EventSource here. Native reconnect is the
+      // only browser path that sends Last-Event-ID for already received frames.
     }
   }, [sessionId, enabled, closeEs, emitDiagnostic, fallbackMs, startFallback, stopFallback])
 

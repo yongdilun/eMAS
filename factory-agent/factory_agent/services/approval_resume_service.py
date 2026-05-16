@@ -11,9 +11,10 @@ from sqlalchemy.orm import sessionmaker
 
 from factory_agent.config import Settings
 from factory_agent.observability.events import AgentEvent, EventBus
+from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval as ApprovalRow
-from factory_agent.planner import PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
+from factory_agent.planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
 from factory_agent.services.plan_creation_service import PlanCreationService
 
 
@@ -55,6 +56,8 @@ class ApprovalResumeService:
         row = (await db.execute(select(ApprovalRow).where(ApprovalRow.approval_id == approval_id))).scalars().first()
         if not row:
             return
+        row_approval_id = row.approval_id
+        row_session_id = row.session_id
         if (getattr(row, "subject_type", "step") or "step") != "graph":
             return
         if row.status != "APPROVED":
@@ -70,6 +73,13 @@ class ApprovalResumeService:
         intent = str(sess.current_intent or "")
         try:
             tools_by_name = await self._plan_service._ensure_registry_health(db=db)
+            seed_resume_context = getattr(self._planner, "seed_resume_context", None)
+            if callable(seed_resume_context):
+                seed_resume_context(
+                    session_id=sess.session_id,
+                    intent=intent,
+                    approval_payload=row.args if isinstance(row.args, dict) else None,
+                )
             resumed = await self._planner.resume_after_approval(session_id=sess.session_id, approved=True)
             draft = resumed.draft
             backend_used = resumed.backend_used
@@ -96,7 +106,32 @@ class ApprovalResumeService:
             await self.publish_agent_event(
                 "session_resume",
                 sess.session_id,
-                {"approval_id": row.approval_id, "status": "COMPLETED", "subject_type": "graph"},
+                {"approval_id": row_approval_id, "status": "COMPLETED", "subject_type": "graph"},
+            )
+        except PlannerApprovalRequired as e:
+            log_event(
+                "graph_approval_resume_requires_followup_approval",
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+            )
+            await db.rollback()
+            sess = await self._session_mgr.get_session(db, session_id=row_session_id)
+            if not sess:
+                return
+            tools_by_name = await self._plan_service._ensure_registry_health(db=db)
+            latest_user = await self._plan_service._latest_user_message(db=db, session_id=sess.session_id)
+            await self._plan_service._persist_graph_interrupt_approval(
+                db=db,
+                sess=sess,
+                approval_payload=e.approval if isinstance(e.approval, dict) else {"kind": "approval_required"},
+                mode=latest_user.mode if latest_user else "normal",
+                tools_by_name=tools_by_name,
+                intent=intent,
+            )
+            await self.publish_agent_event(
+                "session_resume",
+                sess.session_id,
+                {"approval_id": row_approval_id, "status": "WAITING_APPROVAL", "subject_type": "graph"},
             )
         except PlannerClarificationError as e:
             await db.rollback()
@@ -111,7 +146,7 @@ class ApprovalResumeService:
             await self.publish_agent_event(
                 "session_resume",
                 sess.session_id,
-                {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
+                {"approval_id": row_approval_id, "status": "BLOCKED", "subject_type": "graph"},
             )
         except PlannerPlanRejected as e:
             await db.rollback()
@@ -126,7 +161,7 @@ class ApprovalResumeService:
             await self.publish_agent_event(
                 "session_resume",
                 sess.session_id,
-                {"approval_id": row.approval_id, "status": "BLOCKED", "subject_type": "graph"},
+                {"approval_id": row_approval_id, "status": "BLOCKED", "subject_type": "graph"},
             )
         except PlannerBackendError as e:
             await db.rollback()
@@ -141,9 +176,16 @@ class ApprovalResumeService:
             await self.publish_agent_event(
                 "session_resume",
                 sess.session_id,
-                {"approval_id": row.approval_id, "status": "FAILED", "subject_type": "graph"},
+                {"approval_id": row_approval_id, "status": "FAILED", "subject_type": "graph"},
             )
         except Exception as e:
+            log_event(
+                "graph_approval_resume_failed",
+                level="ERROR",
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                error=str(e),
+            )
             await db.rollback()
             context = dict(sess.replan_context or {})
             context.pop("langgraph_approval_resume", None)
@@ -156,7 +198,7 @@ class ApprovalResumeService:
             await self.publish_agent_event(
                 "session_resume",
                 sess.session_id,
-                {"approval_id": row.approval_id, "status": "FAILED", "subject_type": "graph"},
+                {"approval_id": row_approval_id, "status": "FAILED", "subject_type": "graph"},
             )
 
     def start_graph_approval_resume_task(self, db: AsyncSession, approval_id: str) -> None:
@@ -176,8 +218,15 @@ class ApprovalResumeService:
         task = asyncio.create_task(_runner())
 
         def _consume_task_result(done: asyncio.Task) -> None:
-            with contextlib.suppress(Exception):
+            try:
                 done.result()
+            except Exception as exc:
+                log_event(
+                    "graph_approval_resume_task_failed",
+                    level="ERROR",
+                    approval_id=approval_id,
+                    error=str(exc),
+                )
 
         task.add_done_callback(_consume_task_result)
 

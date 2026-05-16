@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 import json
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -19,6 +20,40 @@ from factory_agent.schemas import ActivityStepResponse, SessionSnapshotResponse,
 LoadSessionSnapshot = Callable[..., Awaitable[SessionSnapshotResponse | None]]
 
 
+def _seeded_playwright_mode() -> bool:
+    return os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
+
+
+def _snapshot_intent_contains(snapshot: SessionSnapshotResponse | None, text: str) -> bool:
+    if snapshot is None or snapshot.session is None:
+        return False
+    return text.lower() in str(getattr(snapshot.session, "current_intent", "") or "").lower()
+
+
+def _record_seeded_sse_connection(
+    request: Request,
+    *,
+    stream: str,
+    session_id: str,
+    last_event_id: str | None,
+) -> None:
+    if not _seeded_playwright_mode():
+        return
+    rows = getattr(request.app.state, "playwright_seeded_sse_connections", None)
+    if rows is None:
+        rows = []
+        setattr(request.app.state, "playwright_seeded_sse_connections", rows)
+    rows.append(
+        {
+            "stream": stream,
+            "session_id": session_id,
+            "last_event_id": last_event_id,
+            "at": datetime.utcnow().isoformat() + "Z",
+        }
+    )
+    del rows[:-100]
+
+
 def build_events_router(
     *,
     load_session_snapshot: LoadSessionSnapshot,
@@ -28,6 +63,13 @@ def build_events_router(
     require_jwt: Callable[..., dict[str, Any]],
 ) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/_playwright/sse-connections")
+    async def seeded_sse_connections(request: Request):
+        if not _seeded_playwright_mode():
+            return {"connections": []}
+        rows = getattr(request.app.state, "playwright_seeded_sse_connections", [])
+        return {"connections": list(rows)}
 
     @router.get("/sessions/{session_id}/events/semantic")
     async def stream_semantic_events(
@@ -44,6 +86,12 @@ def build_events_router(
         events derived from snapshot timeline diffs. EventSource reconnects can
         resume after Last-Event-ID.
         """
+        _record_seeded_sse_connection(
+            request,
+            stream="semantic",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -158,6 +206,12 @@ def build_events_router(
         the chat UI. Intra-poll changes are emitted together, then paced before
         the next poll cycle.
         """
+        _record_seeded_sse_connection(
+            request,
+            stream="activity",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -203,7 +257,14 @@ def build_events_router(
                     seen_steps[step.id] = payload_signature
                     emitted = True
                     pending_frames.append((step.id, payload))
-                for step_id, payload in pending_frames:
+                frames_to_emit = pending_frames
+                if (
+                    _seeded_playwright_mode()
+                    and _snapshot_intent_contains(snapshot, "phase 9 out-of-order duplicate sse")
+                    and len(pending_frames) >= 2
+                ):
+                    frames_to_emit = [pending_frames[-1], pending_frames[0], pending_frames[-1], *pending_frames[1:-1]]
+                for step_id, payload in frames_to_emit:
                     yield f"id: {step_id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if emitted:
                     idle_heartbeats = 0
@@ -240,6 +301,12 @@ def build_events_router(
         Emits lightweight frames: hello, snapshot_invalidated, phase_changed,
         and heartbeat. Clients re-fetch snapshots when invalidated.
         """
+        _record_seeded_sse_connection(
+            request,
+            stream="notification",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -261,6 +328,24 @@ def build_events_router(
                 async with session_factory() as poll_db:
                     return await load_session_snapshot(db=poll_db, session_id=session_id)
 
+            def _claim_seeded_drop(snapshot: SessionSnapshotResponse | None) -> bool:
+                if last_event_id or not _seeded_playwright_mode():
+                    return False
+                if not (
+                    _snapshot_intent_contains(snapshot, "phase 9 last-event-id reconnect")
+                    or _snapshot_intent_contains(snapshot, "phase 9 stream drop recovery")
+                ):
+                    return False
+                faults = getattr(request.app.state, "playwright_seeded_sse_faults", None)
+                if faults is None:
+                    faults = set()
+                    setattr(request.app.state, "playwright_seeded_sse_faults", faults)
+                key = f"notification-drop:{session_id}"
+                if key in faults:
+                    return False
+                faults.add(key)
+                return True
+
             initial = await _fresh_snapshot()
             if initial is None:
                 gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
@@ -275,7 +360,10 @@ def build_events_router(
                 "cursor": initial.cursor,
                 "phase": initial.phase,
             }
-            yield f"id: {initial.cursor}\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
+            yield f"id: {initial.cursor}\nretry: 500\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
+
+            if _claim_seeded_drop(initial):
+                return
 
             if client_cursor < initial.cursor:
                 inv = {
@@ -294,6 +382,9 @@ def build_events_router(
                 if snapshot is None:
                     gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
                     yield f"event: notification\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
+                    return
+
+                if _claim_seeded_drop(snapshot):
                     return
 
                 emitted = False

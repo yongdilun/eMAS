@@ -61,11 +61,11 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /full-stack-seeded\.spec\.js/,
+      testIgnore: /full-stack-.*\.spec\.js/,
     },
     {
       name: 'chromium-seeded',
-      testMatch: /full-stack-seeded\.spec\.js/,
+      testMatch: /full-stack-.*\.spec\.js/,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: seededEnv.viteBaseUrl,

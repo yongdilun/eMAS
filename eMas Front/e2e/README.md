@@ -55,6 +55,32 @@ This differs from `chromium`:
 
 Seeded failure artifacts include Playwright trace/screenshots/video plus `test-results/seeded-stack/env-fingerprint.json`, `go-api.log`, `factory-agent.log`, `vite.log`, and `seeded-stack.log`.
 
+## Seeded L3 Hard Scenarios
+
+Phase 9 reuses the `chromium-seeded` project and adds harder seeded-service workflows:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"
+```
+
+The `@l3-hard` specs cover scenarios 39-52: ordered multi-step jobs, two-step approval chains, approval rejection and timeout, partial tool failure, malformed schema, duplicate submit, stale/deleted session recovery, out-of-order/duplicate SSE, EventSource reconnect with `Last-Event-ID`, large structured results, two-context session isolation, stream-drop recovery, and no-source RAG fallback.
+
+The hard scenarios stay deterministic. They use the real seeded Go API from `emas/cmd/e2e_server`, real local Factory Agent, and Vite on isolated per-run ports, but Factory Agent runs with Playwright seeded planner/RAG adapters, deterministic summary/tool-selection settings, disabled memory/vector/checkpoint backends, and no real LLM or live RAG provider calls.
+
+Useful Phase 9 diagnostics:
+
+- `test-results/seeded-stack/env-fingerprint.json` records ports, URLs, and DB paths.
+- `test-results/seeded-stack/factory-agent.log`, `go-api.log`, `vite.log`, and `seeded-stack.log` capture service output.
+- Failed tests retain Playwright trace, screenshot, video, browser console/network failures, and copies of the seeded service logs.
+- The seeded Factory Agent exposes `GET /_playwright/sse-connections` only in seeded mode so reconnect tests can assert server-observed `Last-Event-ID` behavior.
+
+Troubleshooting notes:
+
+- If `chromium-seeded` cannot start, inspect `env-fingerprint.json` first, then the three service logs.
+- Do not run these hard scenarios against real LLM/RAG credentials; Phase 9 expects deterministic fake planner/provider/RAG behavior.
+- Keep default PR validation on `npm run test:e2e -- --project=chromium`; `chromium-seeded --grep "@l3-hard"` is an opt-in L3 gate.
+
 ## CI Scope
 
 Phase 6 CI runs only the deterministic mocked frontend chatbot E2E suite:

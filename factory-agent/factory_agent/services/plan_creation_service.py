@@ -428,10 +428,26 @@ class PlanCreationService:
         step_completed_at = completed_at
         step_names = [s.tool_name for s in draft.steps]
         aligned = align_tool_outputs_to_steps(step_tool_names=step_names, tool_outputs=tool_outputs)
+        raw_outputs_by_step = self._align_raw_tool_outputs_to_steps(step_tool_names=step_names, tool_outputs=tool_outputs)
+        first_failed_summary: str | None = None
+        blocked_by_failed_step = False
         for i, step in enumerate(draft.steps):
             tool = tools_by_name.get(step.tool_name)
             pair = aligned[i] if i < len(aligned) else (None, None)
             step_result, step_summary = pair
+            raw_output = raw_outputs_by_step[i] if i < len(raw_outputs_by_step) else None
+            output_status = self._tool_output_step_status(raw_output)
+            output_error = self._tool_output_error(raw_output)
+            resolved_step_status = step_status
+            resolved_completed_at = step_completed_at
+            if status == "COMPLETED" and blocked_by_failed_step:
+                resolved_step_status = "NOT_STARTED"
+                resolved_completed_at = None
+            elif status == "COMPLETED" and output_status in {"FAILED", "AMBIGUOUS"}:
+                resolved_step_status = output_status
+                resolved_completed_at = completed_at or datetime.utcnow()
+                blocked_by_failed_step = True
+                first_failed_summary = first_failed_summary or output_error or step_summary or f"{step.tool_name} failed"
             step_row = PlanStepRow(
                 step_id=self._generate_uuid(),
                 plan_id=plan_row.plan_id,
@@ -442,7 +458,7 @@ class PlanCreationService:
                 bindings=[binding.model_dump() for binding in (getattr(step, "bindings", []) or [])],
                 execution_mode=getattr(step, "execution_mode", "single") or "single",
                 bulk_state=None,
-                status=step_status,
+                status=resolved_step_status,
                 idempotency_key=compute_idempotency_key(
                     session_id=sess.session_id,
                     step_index=step.step_index,
@@ -452,7 +468,8 @@ class PlanCreationService:
                 requires_approval=bool(tool.requires_approval) if tool else False,
                 retry_count=0,
                 max_retries=3,
-                completed_at=step_completed_at,
+                completed_at=resolved_completed_at,
+                last_error=output_error if resolved_step_status in {"FAILED", "AMBIGUOUS"} else None,
                 result=step_result,
                 result_summary=step_summary,
             )
@@ -467,8 +484,13 @@ class PlanCreationService:
         sess.error = None
         sess.version += 1
         if status == "COMPLETED":
-            sess.status = "COMPLETED"
-            sess.completed_at = sess.completed_at or completed_at or datetime.utcnow()
+            if first_failed_summary:
+                sess.status = "FAILED"
+                sess.error = first_failed_summary
+                sess.completed_at = None
+            else:
+                sess.status = "COMPLETED"
+                sess.completed_at = sess.completed_at or completed_at or datetime.utcnow()
         elif status == "PENDING_APPROVAL":
             sess.status = "WAITING_APPROVAL"
         else:
@@ -542,6 +564,64 @@ class PlanCreationService:
             except SummaryBackendError:
                 pass
         return plan_to_response(plan_row)
+
+    def _align_raw_tool_outputs_to_steps(
+        self,
+        *,
+        step_tool_names: list[str],
+        tool_outputs: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any] | None]:
+        if not step_tool_names:
+            return []
+        if not tool_outputs:
+            return [None] * len(step_tool_names)
+        rows = [row for row in tool_outputs if isinstance(row, dict)]
+        out: list[dict[str, Any] | None] = []
+        start = 0
+        for name in step_tool_names:
+            found: int | None = None
+            for idx in range(start, len(rows)):
+                if str(rows[idx].get("tool_name") or "") == str(name):
+                    found = idx
+                    break
+            if found is None:
+                out.append(None)
+                continue
+            start = found + 1
+            out.append(rows[found])
+        return out
+
+    def _tool_output_step_status(self, row: dict[str, Any] | None) -> str:
+        if not isinstance(row, dict):
+            return ""
+        status = str(row.get("status") or "").strip().upper()
+        if status in {"FAILED", "ERROR"}:
+            return "FAILED"
+        if status == "AMBIGUOUS":
+            return "AMBIGUOUS"
+        if row.get("infrastructure_error"):
+            return "FAILED"
+        http_status = row.get("http_status")
+        if isinstance(http_status, int) and http_status >= 400:
+            return "FAILED"
+        if row.get("error") or row.get("last_error"):
+            return "FAILED"
+        return status
+
+    def _tool_output_error(self, row: dict[str, Any] | None) -> str | None:
+        if not isinstance(row, dict):
+            return None
+        for key in ("last_error", "error", "summary", "result_summary"):
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        result = row.get("result")
+        if isinstance(result, dict):
+            for key in ("error", "detail", "message", "summary"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     async def _create_plan_approval(self,
         *,
@@ -818,9 +898,9 @@ class PlanCreationService:
                 context["last_validation_errors"] = validation.errors
                 sess.replan_context = context
                 sess.error = "Plan validation failed"
+                sess.status = "BLOCKED"
                 sess.version += 1
                 if failures >= 3:
-                    sess.status = "BLOCKED"
                     db.add(
                         DeadLetterRow(
                             dlq_id=self._generate_uuid(),
@@ -890,6 +970,10 @@ class PlanCreationService:
             pass
         merged_payload = dict(approval_payload)
         merged_payload["narrative_markdown"] = narrative_markdown
+        expires_at = datetime.utcnow() + timedelta(hours=24)
+        expires_in_seconds = approval_payload.get("expires_in_seconds")
+        if isinstance(expires_in_seconds, (int, float)):
+            expires_at = datetime.utcnow() + timedelta(seconds=float(expires_in_seconds))
         approval = ApprovalRow(
             approval_id=self._generate_uuid(),
             session_id=sess.session_id,
@@ -901,7 +985,7 @@ class PlanCreationService:
             risk_summary=narrative_markdown,
             side_effect_level="HIGH",
             status="PENDING",
-            expires_at=datetime.utcnow() + timedelta(hours=24),
+            expires_at=expires_at,
         )
         db.add(approval)
         context = dict(sess.replan_context or {})
@@ -913,6 +997,7 @@ class PlanCreationService:
         sess.replan_context = context
         sess.status = "WAITING_APPROVAL"
         sess.error = narrative_markdown
+        sess.completed_at = None
         sess.version += 1
         await db.commit()
         await self._persist_conversation_reply_as_empty_plan(
@@ -928,6 +1013,7 @@ class PlanCreationService:
         sess.replan_context = context
         sess.status = "WAITING_APPROVAL"
         sess.error = narrative_markdown
+        sess.completed_at = None
         sess.version += 1
         await db.commit()
         return await self._session_mgr.get_session(db, session_id=sess.session_id) or sess

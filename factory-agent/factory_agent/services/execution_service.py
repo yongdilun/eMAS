@@ -121,11 +121,12 @@ class ExecutionService:
             tool_outputs=getattr(generated, "tool_outputs", None),
         )
         sess = await self._session_mgr.get_session(db, session_id=sess.session_id) or sess
-        sess.status = "COMPLETED"
-        sess.completed_at = datetime.utcnow()
-        sess.error = None
-        sess.version += 1
-        await db.commit()
+        if sess.status != "FAILED":
+            sess.status = "COMPLETED"
+            sess.completed_at = datetime.utcnow()
+            sess.error = None
+            sess.version += 1
+            await db.commit()
         return sess
 
     async def execute(

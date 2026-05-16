@@ -129,6 +129,7 @@ export function useFactoryAgentChat() {
   })
 
   const sessionPollTimerRef = useRef(null)
+  const sendingGuardRef = useRef(false)
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
@@ -327,8 +328,11 @@ export function useFactoryAgentChat() {
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
       if (kind === 'not_found') {
-        if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
-        clearSnapshotState()
+        const currentStoredId = hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null
+        if (!currentStoredId || String(currentStoredId) === String(sessionId)) {
+          if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+          clearSnapshotState()
+        }
       }
       throw err
     }
@@ -499,6 +503,7 @@ export function useFactoryAgentChat() {
         user_id: DEFAULT_USER_ID,
         name: nextSessionName(),
       })
+      if (hasStorage()) localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
       mergeSessionSummary(created)
       await refreshSessionList()
       await safelyRefreshSnapshot(created.session_id)
@@ -569,7 +574,8 @@ export function useFactoryAgentChat() {
 
   const handleSend = useCallback(async (overrideText) => {
     const text = (overrideText ?? input).trim()
-    if (!text || isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING) return
+    if (!text || sendingGuardRef.current || isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING) return
+    sendingGuardRef.current = true
 
     const optimisticId = appendOptimisticUserMessage(text)
     setInput('')
@@ -606,6 +612,7 @@ export function useFactoryAgentChat() {
       removeOptimisticMessage(optimisticId)
       clearClientProgress()
       setIsSending(false)
+      sendingGuardRef.current = false
     }
   }, [
     appendOptimisticUserMessage,

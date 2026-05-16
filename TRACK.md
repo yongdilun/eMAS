@@ -28,7 +28,7 @@ Use one of:
 | 6 | CI integration | Done | Added root GitHub Actions workflow for deterministic frontend Playwright chatbot E2E with Chromium-only install, frontend unit tests, Playwright run, and failure artifacts. |
 | 7 | Cleanup and replacement of old pipeline | Done | Marked In Progress during implementation; completed with replacement mapping, preserved seed pipeline guidance, smoke-script decision, CI scope, commands, and final documentation updates. |
 | 8 | L3 seeded full-stack foundation | Done | Completed with `chromium-seeded`, isolated seeded Go API + Factory Agent + Vite startup, deterministic fake planner/RAG adapters, L3 scenarios 31-38, failure artifacts, and local verification. |
-| 9 | L3 hard orchestration and break scenarios | Not Started | Add multi-step jobs, multi-approval chains, partial failure, duplicate submit, stale state, reconnect, and service interruption probes. |
+| 9 | L3 hard orchestration and break scenarios | Done | Completed with deterministic seeded L3 hard scenarios 39-52, product fixes for approval resume, partial failure, stale session recovery, duplicate submit, and SSE reconnect/drop behavior. |
 | 10 | L4 production-like release validation | Not Started | Add Compose/staging release validation for nginx paths, auth mode, CORS/proxy behavior, latency, mobile/keyboard, artifacts, fault checks, and optional real LLM connectivity smoke. |
 | 11 | L5 production synthetic monitoring | Not Started | Add safe read-only production/staging chatbot canaries with alerting, structural assertions, token-expiry checks, and provider-outage detection. |
 | 12 | Manual testing retirement and governance | Not Started | Final gate for eliminating routine manual chatbot regression, with ownership, accepted gaps, scenario lifecycle rules, and replacement matrix audit. |
@@ -41,7 +41,7 @@ Use one of:
 | L1 Deterministic mocked chat | In Progress | REST-backed mocked session/message/plan/execute/snapshot flows. | Scenario 5 happy path is covered; broader L1 scenarios remain for later phases. |
 | L2 Deterministic mocked SSE | In Progress | Real `text/event-stream` from mock server for notification/activity scenarios. | Phase 4 covers notification/activity success paths; Phase 5 adds malformed SSE, stream drop fallback, non-terminal, cancel, and modal disconnect coverage. Reconnect/static bearer remain later expansion items. |
 | L3 Seeded full-stack foundation | Done | Vite plus seeded Go API and Factory Agent fake planner/model/RAG provider. | Phase 8 completed as opt-in L3 gate; not default PR requirement. |
-| L3 Hard orchestration | Not Started | Multi-step, multi-approval, concurrency, state recovery, SSE ordering, and service interruption against seeded services. | Phase 9. Failure-seeking gate before production-like validation. |
+| L3 Hard orchestration | Done | Multi-step, multi-approval, concurrency, state recovery, SSE ordering, and service interruption against seeded services. | Phase 9 completed as opt-in `chromium-seeded --grep "@l3-hard"` gate. |
 | L4 Production-like release validation | Not Started | Compose/staging with nginx paths, auth mode, polling fallback, slow network, mobile, and release artifacts. | Phase 10. Release candidate gate. |
 | L5 Production synthetic monitoring | Not Started | Safe read-only canary prompts, provider signals, alerting, health, and latency checks. | Phase 11. Post-deploy monitoring only. |
 
@@ -103,20 +103,20 @@ These scenarios extend the original 30 into seeded full-stack, failure-seeking o
 | 36 | Seeded full-stack approval approve resumes and reaches completed state with controlled provider. | Done | L3 foundation |
 | 37 | Seeded full-stack cancel during execution returns to idle/cancelled state. | Done | L3 foundation |
 | 38 | Seeded full-stack notification/activity SSE opens and reaches final snapshot. | Done | L3 foundation |
-| 39 | Multi-step job runs at least four ordered steps: plan, read seeded data, apply business rule, summarize. | Not Started | L3 hard |
-| 40 | Multi-approval chain requires two approvals before final execution completes. | Not Started | L3 hard |
-| 41 | Multi-approval chain rejects the second approval and stops without running later steps. | Not Started | L3 hard |
-| 42 | Approval timeout leaves the job safe, visible, and non-terminal without hidden continuation. | Not Started | L3 hard |
-| 43 | Multi-step partial failure succeeds step 1, fails step 2, and never runs step 3. | Not Started | L3 hard |
-| 44 | Tool payload/schema mismatch returns a visible safe error instead of crashing the chat panel. | Not Started | L3 hard |
-| 45 | Duplicate submit or double-click sends only one user turn and one execute request. | Not Started | L3 hard |
-| 46 | Stale local storage points to a deleted session and the UI recovers to a new safe state. | Not Started | L3 hard |
-| 47 | Out-of-order or duplicate SSE events do not regress the visible phase or duplicate activity rows. | Not Started | L3 hard |
-| 48 | EventSource reconnect uses `Last-Event-ID` and does not replay already-rendered steps. | Not Started | L3 hard |
-| 49 | Large structured result renders without freezing, overlapping, or losing final completion state. | Not Started | L3 hard |
-| 50 | Two browser contexts run different sessions at the same time without cross-session leakage. | Not Started | L3 hard |
-| 51 | Factory Agent restarts or stream drops mid-run and the UI recovers by polling or safe failure. | Not Started | L3 hard |
-| 52 | RAG answer has no sources or an unavailable source and the UI shows an honest fallback. | Not Started | L3 hard |
+| 39 | Multi-step job runs at least four ordered steps: plan, read seeded data, apply business rule, summarize. | Done | L3 hard |
+| 40 | Multi-approval chain requires two approvals before final execution completes. | Done | L3 hard |
+| 41 | Multi-approval chain rejects the second approval and stops without running later steps. | Done | L3 hard |
+| 42 | Approval timeout leaves the job safe, visible, and non-terminal without hidden continuation. | Done | L3 hard |
+| 43 | Multi-step partial failure succeeds step 1, fails step 2, and never runs step 3. | Done | L3 hard |
+| 44 | Tool payload/schema mismatch returns a visible safe error instead of crashing the chat panel. | Done | L3 hard |
+| 45 | Duplicate submit or double-click sends only one user turn and one execute request. | Done | L3 hard |
+| 46 | Stale local storage points to a deleted session and the UI recovers to a new safe state. | Done | L3 hard |
+| 47 | Out-of-order or duplicate SSE events do not regress the visible phase or duplicate activity rows. | Done | L3 hard |
+| 48 | EventSource reconnect uses `Last-Event-ID` and does not replay already-rendered steps. | Done | L3 hard |
+| 49 | Large structured result renders without freezing, overlapping, or losing final completion state. | Done | L3 hard |
+| 50 | Two browser contexts run different sessions at the same time without cross-session leakage. | Done | L3 hard |
+| 51 | Factory Agent restarts or stream drops mid-run and the UI recovers by polling or safe failure. | Done | L3 hard |
+| 52 | RAG answer has no sources or an unavailable source and the UI shows an honest fallback. | Done | L3 hard |
 | 53 | Docker/nginx release path opens app at `/` and routes Factory Agent through `/agent`. | Not Started | L4 |
 | 54 | Docker/nginx release path routes Go API through `/api/v1`. | Not Started | L4 |
 | 55 | Production-like static bearer or auth-required mode disables EventSource and uses polling fallback. | Not Started | L4 |
@@ -278,29 +278,29 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 
 ### Phase 9: L3 Hard Orchestration and Break Scenarios
 
-- [ ] Add deterministic multi-step job fixtures for seeded full-stack services.
-- [ ] Add deterministic multi-approval chain fixtures.
-- [ ] Add fault controls for approval timeout, partial tool failure, malformed tool payload, stream drop, duplicate submit, and deleted/stale session.
-- [ ] Assert backend evidence for request counts, session IDs, tool step order, approval IDs, final state, and SSE lifecycle.
-- [ ] Implement scenario 39.
-- [ ] Implement scenario 40.
-- [ ] Implement scenario 41.
-- [ ] Implement scenario 42.
-- [ ] Implement scenario 43.
-- [ ] Implement scenario 44.
-- [ ] Implement scenario 45.
-- [ ] Implement scenario 46.
-- [ ] Implement scenario 47.
-- [ ] Implement scenario 48.
-- [ ] Implement scenario 49.
-- [ ] Implement scenario 50.
-- [ ] Implement scenario 51.
-- [ ] Implement scenario 52.
-- [ ] For every defect found, add the lowest useful regression test before moving to Phase 10.
-- [ ] Run `npm test`.
-- [ ] Run `npm run test:e2e -- --project=chromium`.
-- [ ] Run `npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"`.
-- [ ] Update this tracker with defects, fixes, results, and accepted gaps.
+- [x] Add deterministic multi-step job fixtures for seeded full-stack services.
+- [x] Add deterministic multi-approval chain fixtures.
+- [x] Add fault controls for approval timeout, partial tool failure, malformed tool payload, stream drop, duplicate submit, and deleted/stale session.
+- [x] Assert backend evidence for request counts, session IDs, tool step order, approval IDs, final state, and SSE lifecycle.
+- [x] Implement scenario 39.
+- [x] Implement scenario 40.
+- [x] Implement scenario 41.
+- [x] Implement scenario 42.
+- [x] Implement scenario 43.
+- [x] Implement scenario 44.
+- [x] Implement scenario 45.
+- [x] Implement scenario 46.
+- [x] Implement scenario 47.
+- [x] Implement scenario 48.
+- [x] Implement scenario 49.
+- [x] Implement scenario 50.
+- [x] Implement scenario 51.
+- [x] Implement scenario 52.
+- [x] For every defect found, add the lowest useful regression test before moving to Phase 10.
+- [x] Run `npm test`.
+- [x] Run `npm run test:e2e -- --project=chromium`.
+- [x] Run `npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"`.
+- [x] Update this tracker with defects, fixes, results, and accepted gaps.
 
 ### Phase 10: L4 Production-Like Release Validation
 
@@ -360,19 +360,18 @@ Phase 5 note: static bearer mode remains a later L2 expansion item because the r
 
 ## Current Blockers
 
-- None for Phase 8.
+- None for Phase 9.
 
 ## Accepted Gaps
 
-- None for Phase 8.
+- None for Phase 9.
 
-Phase 8-9 implementation risks to resolve:
+Phase 10-12 implementation risks to resolve:
 
-- A deterministic Factory Agent fake planner/model/RAG provider switch may need to be added.
-- Test-only fault controls may be needed for approval timeout, partial tool failure, malformed tool payload, stream drop, stale session, and service restart cases.
-- Service startup must isolate ports, DB paths, env vars, and teardown.
-- Seeded full-stack and hard orchestration should stay outside default PR CI until stable.
-- Any reproducible defect found in Phase 8 onward blocks the next phase until fixed or recorded as an accepted gap.
+- Release and synthetic projects must stay opt-in and separate from default PR CI unless deliberately promoted.
+- Real LLM connectivity should not run before Phase 10 and must be explicitly enabled with structural assertions only.
+- Production synthetic checks must remain safe and read-only.
+- Any reproducible defect found in Phase 10 onward blocks phase promotion until fixed or recorded as an accepted gap.
 
 ## Open Questions
 
@@ -575,6 +574,27 @@ Phase 8 defect/fix notes:
 - Defect: approved graph approval completion could leave the visible browser state on the approval-wait narrative while the real completed tool result was present in the snapshot details. Fix: added frontend regression coverage in `turnAssembler.test.mjs`, improved completed approval summary selection, and added bounded post-approval snapshot refresh in `useFactoryAgentChat.js`. Scenario 36 now verifies completed state and controlled-provider result through the real seeded browser path.
 - Assertion hardening: RAG source text can appear both in the based-on line and the source list; the L3 assertion now scopes to the first matching source text. Cancel scenario now asserts the browser returns non-busy and the real Factory Agent snapshot is `IDLE` with a cancelled error.
 
+Phase 9:
+
+- `git status --short --branch`: branch `codex/playwright-e2e-plan`; showed Phase 9 working tree changes and pre-existing `PLAN.md` modification.
+- `factory-agent/.venv/Scripts/python.exe -m py_compile factory-agent/factory_agent/testing_seeded_adapters.py factory-agent/factory_agent/services/plan_creation_service.py factory-agent/factory_agent/services/approval_resume_service.py factory-agent/factory_agent/services/execution_service.py factory-agent/factory_agent/api/routers/events.py`: passed.
+- `node --check e2e/support/fullStackScenarios.js; node --check e2e/specs/full-stack-orchestration.spec.js; node --check e2e/specs/full-stack-resilience.spec.js; node --check e2e/specs/full-stack-sse-hard.spec.js; node --check playwright.config.js`: passed.
+- `npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"`: initially exposed product defects and assertion gaps. After fixes, passed 14 Chromium seeded Playwright tests.
+- Final `npm test`: passed, 49 tests.
+- Final `npm run test:e2e -- --project=chromium`: passed, 13 mocked Chromium Playwright tests.
+- Final `npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"`: passed, 14 Chromium seeded Playwright tests.
+
+Phase 9 defect/fix notes:
+
+- Defect: graph approval resume swallowed the second approval because the background task accessed an expired SQLAlchemy approval row after rollback. Fix: capture approval/session ids before rollback, log background resume failures, and persist the follow-up graph approval. Scenarios 40 and 41 cover the two-approval approve/reject branches.
+- Defect: graph approval timeout used the default 24-hour expiry and retained `completed_at` from the compatibility empty plan. Fix: honor `expires_in_seconds` in graph approvals and clear terminal metadata while waiting. Scenario 42 covers visible, non-terminal timeout state.
+- Defect: completed plans with failed tool outputs flattened every step to done and could mark the session completed. Fix: align raw tool outputs to steps, preserve failed/ambiguous status and `last_error`, leave downstream steps `NOT_STARTED`, and keep the session `FAILED`. Scenario 43 covers partial failure.
+- Defect: malformed planner payloads left the session in a planning state after validation failure. Fix: transition validation failures to `BLOCKED` with visible safe errors. Scenario 44 covers schema mismatch.
+- Defect: double-clicking Send could race React state and submit duplicate turns/execute requests. Fix: add an immediate send guard ref in the chat hook. Scenario 45 covers request/message idempotence.
+- Defect: stale deleted-session restore could clear the newly created replacement session id due a late 404. Fix: only clear local storage for the session id that actually failed and store a new session id immediately on creation. Scenario 46 covers recovery.
+- Defect: manual EventSource recreation prevented native `Last-Event-ID` reconnect behavior and seeded stream drops only triggered when the intent was present at connection start. Fix: let native EventSource reconnect, add seeded server-side connection fingerprints, emit a short retry hint, and trigger the seeded drop after intent changes too. Scenarios 47, 48, and 51 cover ordering, reconnect, and stream-drop recovery.
+- No accepted gaps were recorded for Phase 9.
+
 Discovery command notes:
 
 - Root `package.json` does not exist; frontend package is `eMas Front/package.json`.
@@ -679,8 +699,26 @@ Phase 8 implementation:
 - `factory-agent/factory_agent/services/session_snapshot_service.py`
 - `factory-agent/factory_agent/testing_seeded_adapters.py`
 
+Phase 9 implementation:
+
+- `TRACK.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/playwright.config.js`
+- `eMas Front/e2e/specs/full-stack-orchestration.spec.js`
+- `eMas Front/e2e/specs/full-stack-resilience.spec.js`
+- `eMas Front/e2e/specs/full-stack-sse-hard.spec.js`
+- `eMas Front/e2e/support/fullStackScenarios.js`
+- `eMas Front/src/components/features/chat/factory-agent/useActivityStream.js`
+- `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js`
+- `eMas Front/src/components/features/chat/factory-agent/useSessionEvents.js`
+- `factory-agent/factory_agent/api/routers/events.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/services/execution_service.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/factory_agent/testing_seeded_adapters.py`
+
 ## Next Action
 
-Phase 8 is complete. Do not start Phase 9 unless explicitly requested; keep the default PR CI on the mocked `chromium` suite and keep `chromium-seeded` as the opt-in L3 full-stack foundation gate.
+Phase 9 is complete. Do not start Phase 10 unless explicitly requested; keep the default PR CI on the mocked `chromium` suite and keep `chromium-seeded` as the opt-in L3 full-stack foundation and hard-orchestration gate.
 
 Do not remove the existing Go/Python E2E pipeline. Do not add Go backend, Docker, real Factory Agent, or real LLM dependencies to the default Playwright suite.
