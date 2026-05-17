@@ -13,7 +13,14 @@ import {
 } from './fixtureStore.js'
 import { normalUseHistoryFixtures } from '../support/normalUseScenarios.js'
 import {
+  securityAuthFailureTargetAnswer,
+  securityCrossSessionLeakApproval,
+  securityCrossSessionLeakAudit,
+  securityCrossSessionLeakFinal,
+  securityCrossSessionLeakHidden,
+  securityCrossSessionLeakSource,
   securityOtherUserSecret,
+  securitySafeOwnAnswer,
   securityTamperSessionName,
   securityUnsafeActionBlocked,
 } from '../support/securityScenarios.js'
@@ -31,6 +38,10 @@ let sseFrameLog = []
 
 function now() {
   return new Date().toISOString()
+}
+
+function nowPlus(ms) {
+  return new Date(Date.now() + ms).toISOString()
 }
 
 function sleep(ms) {
@@ -178,6 +189,204 @@ function seedSecuritySession({ sessionId, userId, name, secret, scenarioName = '
     created_at: now(),
   })
   session.security = { require_stream_auth: requireStreamAuth }
+  sessions.set(sessionId, session)
+  return summarizeScenarioSession(session)
+}
+
+function seedSecurityCompletedLeakSession({ sessionId, userId, name }) {
+  const session = createScenarioSession({
+    sessionId,
+    userId,
+    name,
+    scenarioName: 'securityOwnerIsolatedRead',
+  })
+  const turnId = `${sessionId}-turn`
+  const planId = `${sessionId}-plan`
+  const stepId = `${sessionId}-step`
+  const sources = [
+    {
+      source_number: 1,
+      title: securityCrossSessionLeakSource,
+      doc_id: 'PHASE17-LEAK-SOURCE',
+      organization: 'Private fixture',
+    },
+  ]
+  session.status = 'COMPLETED'
+  session.current_turn_id = turnId
+  session.operation_id = planId
+  session.plan = {
+    plan_id: planId,
+    session_id: sessionId,
+    status: 'COMPLETED',
+    objective: 'Private cross-session leakage fixture.',
+    created_at: nowPlus(20),
+    updated_at: nowPlus(30),
+    steps: [
+      {
+        id: stepId,
+        plan_id: planId,
+        tool_name: 'private_audit_lookup',
+        status: 'DONE',
+        created_at: nowPlus(25),
+        updated_at: nowPlus(35),
+      },
+    ],
+  }
+  session.steps = [...session.plan.steps]
+  session.messages.push({
+    id: `${sessionId}-message`,
+    role: 'user',
+    content: 'Private cross-session leakage fixture',
+    mode: 'normal',
+    created_at: nowPlus(10),
+  })
+  session.timeline.push(
+    {
+      event_id: `${sessionId}-user`,
+      turn_id: turnId,
+      event_type: 'user_message',
+      role: 'user',
+      content: 'Private cross-session leakage fixture',
+      status: 'DONE',
+      created_at: nowPlus(10),
+    },
+    {
+      event_id: `${sessionId}-plan-created`,
+      turn_id: turnId,
+      event_type: 'plan_created',
+      content: 'Private source and audit evidence loaded.',
+      status: 'COMPLETED',
+      operation_id: planId,
+      details: {
+        plan_id: planId,
+        plan_explanation: 'Private source and audit evidence loaded.',
+      },
+      created_at: nowPlus(20),
+    },
+    {
+      event_id: `${sessionId}-tool-result`,
+      turn_id: turnId,
+      event_type: 'tool_result',
+      step_id: stepId,
+      tool_name: 'private_audit_lookup',
+      content: securityCrossSessionLeakAudit,
+      status: 'DONE',
+      operation_id: planId,
+      details: {
+        args: { session_scope: 'private' },
+        result: {
+          audit_evidence: securityCrossSessionLeakAudit,
+          source_evidence: securityCrossSessionLeakSource,
+        },
+        presentation: {
+          render_hint: 'table',
+          table: {
+            columns: [
+              { key: 'evidence', label: 'Private Evidence' },
+            ],
+            rows: [
+              { evidence: securityCrossSessionLeakSource },
+            ],
+            displayed_rows: 1,
+            total_rows: 1,
+          },
+        },
+      },
+      created_at: nowPlus(30),
+    },
+    {
+      event_id: `${sessionId}-complete`,
+      turn_id: turnId,
+      event_type: 'session_completed',
+      content: securityCrossSessionLeakFinal,
+      status: 'COMPLETED',
+      operation_id: planId,
+      details: {
+        reason: securityCrossSessionLeakHidden,
+        sources,
+      },
+      created_at: nowPlus(40),
+    },
+  )
+  sessions.set(sessionId, session)
+  return summarizeScenarioSession(session)
+}
+
+function seedSecurityPendingApprovalLeakSession({ sessionId, userId, name }) {
+  const session = createScenarioSession({
+    sessionId,
+    userId,
+    name,
+    scenarioName: 'securityUnsafeToolBlocked',
+  })
+  const turnId = `${sessionId}-turn`
+  const planId = `${sessionId}-plan`
+  const stepId = `${sessionId}-step`
+  session.status = 'WAITING_APPROVAL'
+  session.current_turn_id = turnId
+  session.operation_id = planId
+  session.plan = {
+    plan_id: planId,
+    session_id: sessionId,
+    status: 'PENDING_APPROVAL',
+    objective: 'Private pending approval fixture.',
+    created_at: nowPlus(20),
+    updated_at: nowPlus(30),
+    steps: [
+      {
+        id: stepId,
+        plan_id: planId,
+        tool_name: 'private_destructive_fixture',
+        status: 'WAITING_APPROVAL',
+        created_at: nowPlus(25),
+      },
+    ],
+  }
+  session.steps = [...session.plan.steps]
+  session.pending_approval = {
+    approval_id: `${sessionId}-approval`,
+    session_id: sessionId,
+    subject_type: 'tool',
+    tool_name: 'private_destructive_fixture',
+    side_effect_level: 'HIGH',
+    risk_summary: securityCrossSessionLeakApproval,
+    args: { private_evidence: securityCrossSessionLeakAudit },
+    status: 'PENDING',
+    created_at: nowPlus(30),
+    expires_at: nowPlus(300_000),
+  }
+  session.messages.push({
+    id: `${sessionId}-message`,
+    role: 'user',
+    content: 'Private approval leakage fixture',
+    mode: 'normal',
+    created_at: nowPlus(10),
+  })
+  session.timeline.push(
+    {
+      event_id: `${sessionId}-user`,
+      turn_id: turnId,
+      event_type: 'user_message',
+      role: 'user',
+      content: 'Private approval leakage fixture',
+      status: 'DONE',
+      created_at: nowPlus(10),
+    },
+    {
+      event_id: `${sessionId}-approval-required`,
+      turn_id: turnId,
+      event_type: 'approval_required',
+      approval_id: session.pending_approval.approval_id,
+      tool_name: session.pending_approval.tool_name,
+      content: securityCrossSessionLeakApproval,
+      status: 'PENDING',
+      details: {
+        args: session.pending_approval.args,
+        side_effect_level: session.pending_approval.side_effect_level,
+      },
+      created_at: nowPlus(30),
+    },
+  )
   sessions.set(sessionId, session)
   return summarizeScenarioSession(session)
 }
@@ -394,24 +603,43 @@ const server = http.createServer(async (req, res) => {
     const ownerSessionId = `pw-security-owner-${runId}`
     const otherSessionId = `pw-security-other-${runId}`
     const streamAuthSessionId = `pw-security-stream-auth-${runId}`
+    const crossSessionFinalId = `pw-security-cross-final-${runId}`
+    const crossSessionApprovalId = `pw-security-cross-approval-${runId}`
+    const authFailureTargetId = `pw-security-auth-target-${runId}`
     const owner = seedSecuritySession({
       sessionId: ownerSessionId,
       userId: ownerUserId,
-      name: 'Phase 16 current operator session',
-      secret: 'Phase 16 owner session safe transcript.',
+      name: `Phase 16 current operator session ${runId}`,
+      secret: securitySafeOwnAnswer,
     })
     const other = seedSecuritySession({
       sessionId: otherSessionId,
       userId: otherUserId,
-      name: securityTamperSessionName,
+      name: `${securityTamperSessionName} ${runId}`,
       secret: securityOtherUserSecret,
     })
     const streamAuth = seedSecuritySession({
       sessionId: streamAuthSessionId,
       userId: ownerUserId,
-      name: 'Phase 16 auth-required stream session',
+      name: `Phase 16 auth-required stream session ${runId}`,
       secret: 'Phase 16 stream auth diagnostic transcript.',
       requireStreamAuth: true,
+    })
+    const crossSessionFinal = seedSecurityCompletedLeakSession({
+      sessionId: crossSessionFinalId,
+      userId: ownerUserId,
+      name: `Phase 17 private final evidence session ${runId}`,
+    })
+    const crossSessionApproval = seedSecurityPendingApprovalLeakSession({
+      sessionId: crossSessionApprovalId,
+      userId: ownerUserId,
+      name: `Phase 17 private pending approval session ${runId}`,
+    })
+    const authFailureTarget = seedSecuritySession({
+      sessionId: authFailureTargetId,
+      userId: ownerUserId,
+      name: `Phase 17 auth failure target session ${runId}`,
+      secret: securityAuthFailureTargetAnswer,
     })
     sendJson(req, url, res, 200, {
       ok: true,
@@ -419,6 +647,9 @@ const server = http.createServer(async (req, res) => {
       owner,
       other,
       stream_auth: streamAuth,
+      cross_session_final: crossSessionFinal,
+      cross_session_approval: crossSessionApproval,
+      auth_failure_target: authFailureTarget,
       other_secret: securityOtherUserSecret,
     }, { body })
     return

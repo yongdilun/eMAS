@@ -1,0 +1,188 @@
+{
+  "id": "SO-032",
+  "title": "Cross-session leakage security and privacy",
+  "risk": "Switching sessions, refreshing, or restoring history can leave another session's final response, approval card, source table, audit evidence, or hidden details in the visible chat.",
+  "prompt": "Restore a private final-evidence session, switch to the safe current-operator session, refresh, then switch away from a private pending-approval session.",
+  "initial_state": {
+    "sessions": [
+      {
+        "id": "phase17-private-final",
+        "user_id": "frontend-operator",
+        "status": "COMPLETED",
+        "private_final": "PHASE17_LEAK_FINAL",
+        "private_source": "PHASE17_LEAK_SOURCE_TABLE",
+        "private_audit": "PHASE17_LEAK_AUDIT_EVIDENCE",
+        "private_hidden_detail": "PHASE17_LEAK_HIDDEN_DETAILS"
+      },
+      {
+        "id": "phase17-private-approval",
+        "user_id": "frontend-operator",
+        "status": "WAITING_APPROVAL",
+        "private_approval": "PHASE17_LEAK_APPROVAL"
+      },
+      {
+        "id": "phase17-safe-current",
+        "user_id": "frontend-operator",
+        "status": "COMPLETED",
+        "final": "Phase 16 owner session remained isolated and returned only the current operator transcript."
+      }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "session_snapshot_restore_and_switch",
+    "must_not_route_to": [
+      "cross_session_snapshot_merge",
+      "stale_pending_approval_reuse"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "private final session restored",
+      "session_phase": "COMPLETED",
+      "visible_private_evidence": true
+    },
+    {
+      "after": "safe session selected",
+      "session_phase": "COMPLETED",
+      "active_session": "phase17-safe-current",
+      "forbidden": [
+        "private final response",
+        "private source table",
+        "private audit evidence",
+        "private hidden details"
+      ]
+    },
+    {
+      "after": "browser refresh",
+      "session_phase": "COMPLETED",
+      "active_session": "phase17-safe-current",
+      "forbidden": [
+        "private final response",
+        "private approval card"
+      ]
+    },
+    {
+      "after": "pending approval session then safe session",
+      "session_phase": "COMPLETED",
+      "active_session": "phase17-safe-current",
+      "pending_approval_id": null
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "active_session": "phase17-safe-current",
+    "pending_approval_id": null,
+    "safe_final_response_visible": true
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "private_session_restored"
+    },
+    {
+      "event": "session_switch_requested"
+    },
+    {
+      "event": "snapshot_loaded",
+      "session_id": "phase17-safe-current"
+    },
+    {
+      "event": "browser_refreshed"
+    },
+    {
+      "event": "snapshot_loaded",
+      "session_id": "phase17-safe-current"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "active_session": "phase17-safe-current"
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_loaded phase17-safe-current",
+    "must_include": [
+      "current operator transcript"
+    ],
+    "must_not_include": [
+      "PHASE17_LEAK_FINAL",
+      "PHASE17_LEAK_APPROVAL",
+      "PHASE17_LEAK_SOURCE_TABLE",
+      "PHASE17_LEAK_AUDIT_EVIDENCE",
+      "PHASE17_LEAK_HIDDEN_DETAILS"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Phase 16 owner session remained isolated and returned only the current operator transcript."
+    ],
+    "must_not_show": [
+      "PHASE17_LEAK_FINAL",
+      "PHASE17_LEAK_APPROVAL",
+      "PHASE17_LEAK_SOURCE_TABLE",
+      "PHASE17_LEAK_AUDIT_EVIDENCE",
+      "PHASE17_LEAK_HIDDEN_DETAILS",
+      "Approval required"
+    ]
+  },
+  "expected_unchanged_rows": [],
+  "invariants": [
+    "no_approval_required",
+    "session_switch_clears_previous_snapshot_projection",
+    "refresh_uses_active_session_only",
+    "pending_approval_is_session_scoped",
+    "hidden_details_are_session_scoped"
+  ],
+  "required_layers": [
+    "mocked_browser",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Earlier isolation tests checked only tampered local storage and another-user denial; they did not prove same-user session switching, refresh restore, approval-card cleanup, source table cleanup, audit evidence cleanup, or hidden details cleanup.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "The browser can keep a previous session's final answer, approval card, source table, audit evidence, or hidden detail rows after a session switch or refresh.",
+    "existing_test_that_would_miss_it": "Scenario 96 denied an invalid stored session id but did not switch between two valid sessions or open details/source/table surfaces.",
+    "lowest_useful_layer": "mocked_browser",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is needed because the risk is client-side session projection and stale DOM state, not planner behavior.",
+    "required_positive_evidence": [
+      "private session evidence is visible before switching",
+      "safe session final response is visible after switching",
+      "safe session final response remains visible after refresh",
+      "pending approval from another session is removed after switching away"
+    ],
+    "required_forbidden_stale_evidence": [
+      "another session final response",
+      "another session approval card",
+      "another session source table",
+      "another session audit evidence",
+      "another session hidden details"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_stateful_oracle_schema.py"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/security-privacy.spec.js::scenario 101"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-17-security-privacy-and-abuse-hardening"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-17-security-privacy-and-abuse-hardening"
+  }
+}

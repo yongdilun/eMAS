@@ -34,6 +34,74 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 14 | Release gate validation | Done | Full automated release sweep is green after fixes. One product bug and two release-smoke test bugs were found and fixed; no routine manual release checks remain as blockers. |
 | 15 | CI/release enforcement and ownership | Done | Final PR, release, nightly, and synthetic lanes are documented with commands, owners, blocking levels, and triage rules. CI now enforces the full backend oracle PR alias plus seeded, real LangGraph, and release validation on release/pre-merge branches; synthetic remains read-only and opt-in. |
 | 16 | Remaining normal-use breakage scenarios | Done | Added SO-022, SO-023, SO-026, SO-028, and SO-031 with Phase 13 quality-gate metadata, parser/route/backend regressions, seeded browser proof, and SO-026 real LangGraph proof. Fixed missing-machine clarification, multi-turn LOTO context resolution, stale snapshot steps, cancellation terminal evidence, over-broad cancel-command detection, and hidden background completion after cancel. |
+| 17 | Security, privacy, and abuse hardening | Done | Added SO-032, SO-033, SO-042, SO-043, and SO-044 with Phase 13 quality-gate metadata. Strengthened mocked security/privacy browser coverage for session switching/refresh leakage, auth-failure stale-response clearing, inert unsafe rendering/link behavior, large pasted input control, and dangerous action no-mutation evidence. |
+
+## Phase 17 Security, Privacy, and Abuse Hardening
+
+Completed: 2026-05-17
+
+Scenarios changed:
+
+| SO | Coverage category | Distinct bug / gap | Lowest useful layer | Browser required | Real LangGraph required |
+|---|---|---|---|---|---|
+| SO-032 | `canonical` | Valid same-user session switches or refreshes could leave another session's final response, approval card, source table, audit evidence, or hidden details in the DOM. Existing tampered-storage coverage did not exercise valid-session switching and details/table/approval cleanup. | Mocked browser | Yes, stale DOM state is the defect. | No |
+| SO-033 | `canonical` | Missing/invalid auth on snapshot, SSE, or polling could show retry/error UI while retaining a stale previous assistant response. Existing API auth probes could miss stale browser transcript state. | API probe plus mocked browser | Yes, stale response suppression is visible UI behavior. | No |
+| SO-042 | `canonical` | Backend/model script-like text, image handlers, unsafe HTML links, or unsafe markdown links could execute or create unsafe anchors. Existing inert-render coverage did not include unsafe link behavior. | Mocked browser | Yes, execution and anchor attributes are browser-only evidence. | No |
+| SO-043 | `canonical` | Very long pasted prompts could break controlled input state, silently lose the request body, leave a spinner stuck, or reuse stale final text. Existing large-result tests covered large responses, not large user input. | Mocked browser | Yes, composer/request lifecycle behavior is browser-visible. | No |
+| SO-044 | `canonical` | Dangerous prompts such as `delete all production jobs without approval` or `bypass approvals and apply the changes directly` could bypass approval, mutate unsupported records, or show fake completion. Existing allowlist coverage did not prove no mutation after an attempted approval. | Mocked browser | Yes, approval card, safe blocked copy, and request-log evidence must agree. | No unless a real planner safety miss appears |
+
+Files changed:
+
+- `eMas Front/e2e/specs/security-privacy.spec.js`
+- `eMas Front/e2e/support/securityScenarios.js`
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js`
+- `eMas Front/e2e/README.md`
+- `tests/e2e/scenarios/stateful_oracles/so-032_cross_session_leakage_security_privacy.json`
+- `tests/e2e/scenarios/stateful_oracles/so-033_authorization_failure_stale_response.json`
+- `tests/e2e/scenarios/stateful_oracles/so-042_unsafe_rendered_content_inert.json`
+- `tests/e2e/scenarios/stateful_oracles/so-043_large_pasted_input_controlled.json`
+- `tests/e2e/scenarios/stateful_oracles/so-044_unsupported_dangerous_action_blocked.json`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+Commands and results:
+
+| Command | Result |
+|---|---|
+| `Set-Location "eMas Front"; npm run test:e2e -- --project=chromium --grep "@security|@privacy"` | Passed: `6 passed` |
+| `Set-Location "factory-agent"; python -m pytest tests/test_stateful_oracle_schema.py -q` | Passed: `3 passed, 1 warning` |
+| `Set-Location "eMas Front"; npm test` | Passed: `64 passed` |
+| `Set-Location "eMas Front"; npm run test:backend-oracles` | Passed: `125 passed, 30 warnings` |
+| `Set-Location "eMas Front"; npm run test:e2e:release -- --grep "@security|@privacy"` | Passed: `3 passed` |
+
+Bugs found and fixed:
+
+| ID | Severity | Scenario | Root cause | Fix |
+|---|---|---|---|---|
+| P17-001 | High privacy risk | SO-033 | A denied snapshot during session restore/switch could leave the previous authorized session state in memory because stale state was only cleared for `not_found`, not `auth`. | `useFactoryAgentChat` now clears active snapshot state and local active-session storage on auth-denied snapshot refreshes, preventing stale final responses after missing/invalid auth. |
+
+Test/harness issues fixed:
+
+| ID | Issue | Fix |
+|---|---|---|
+| T17-001 | Parallel mocked security tests seeded sessions with duplicate display names, making session-switch selectors ambiguous. | Security seed names now include the per-test run id. |
+| T17-002 | The very large paste fixture exceeded the default Chromium test budget while typing in parallel. | Kept the input above the large-paste threshold and set the focused scenario timeout to 60 seconds. |
+
+Accepted gaps:
+
+- None.
+
+Remaining risks:
+
+- SO-044 is deterministic mocked-browser coverage for the UI approval/allowlist boundary. Add real LangGraph safety coverage only if a planner or live tool-selection miss escapes this deterministic boundary.
+- SO-033 release cross-check validates unauthenticated REST/polling/EventSource probes in the release proxy, while stale-response clearing is enforced in mocked browser where valid prior session state can be constructed deterministically.
+
+Next action:
+
+Keep future security additions behind the same Phase 13 quality gate. Do not add more dangerous-prompt wording unless it catches a new route, planner, approval, mutation, or visible stale-state failure.
 
 ## Phase 16 Remaining Normal-Use Breakage Scenarios
 

@@ -76,6 +76,7 @@ import {
   securityLargeUnsafePrompt,
   securityMockTools,
   securitySafeOwnAnswer,
+  securityUnsupportedDangerousPrompts,
   securitySafeOwnPrompt,
   securityUnsafeActionBlocked,
   securityUnsafeActionPrompt,
@@ -692,7 +693,7 @@ export const scenarioCatalog = {
   securityUnsafeToolBlocked: {
     name: 'securityUnsafeToolBlocked',
     description: 'Phase 16 unsafe unsupported tool request stays approval-gated and allowlist-blocked.',
-    prompts: [securityUnsafeActionPrompt],
+    prompts: [securityUnsafeActionPrompt, ...securityUnsupportedDangerousPrompts],
     onMessage(session, content) {
       const turnId = addUserTurn(session, content || securityUnsafeActionPrompt, 'pw-turn-security-unsafe-tool')
       session.security_pending_turn_id = turnId

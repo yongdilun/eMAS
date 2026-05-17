@@ -1,0 +1,184 @@
+{
+  "id": "SO-033",
+  "title": "Authorization failure does not reuse stale assistant response",
+  "risk": "Missing or invalid auth for snapshot, SSE, or polling can leave a previous assistant response visible while showing a retry/error banner for a different unauthorized session.",
+  "prompt": "Load a completed safe session, then switch to a session whose snapshot request is missing authorization; probe unauthorized REST, snapshot polling, and EventSource access.",
+  "initial_state": {
+    "sessions": [
+      {
+        "id": "phase17-safe-current",
+        "user_id": "frontend-operator",
+        "status": "COMPLETED",
+        "final": "Phase 16 owner session remained isolated and returned only the current operator transcript."
+      },
+      {
+        "id": "phase17-auth-target",
+        "user_id": "frontend-operator",
+        "status": "COMPLETED",
+        "final": "PHASE17_AUTH_TARGET_SECRET"
+      },
+      {
+        "id": "phase17-stream-auth",
+        "user_id": "frontend-operator",
+        "status": "COMPLETED",
+        "stream_auth_required": true
+      }
+    ],
+    "auth_faults": [
+      "missing_rest_auth",
+      "wrong_user_snapshot_auth",
+      "missing_eventsource_auth",
+      "missing_snapshot_auth_while_switching"
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "auth_boundary",
+    "must_not_route_to": [
+      "stale_snapshot_success",
+      "cross_user_transcript"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "unauthorized REST list",
+      "status_code": 401,
+      "body_must_not_include": [
+        "PHASE16_OTHER_USER_SECRET"
+      ]
+    },
+    {
+      "after": "wrong-user snapshot poll",
+      "status_code": 404,
+      "body_must_not_include": [
+        "PHASE16_OTHER_USER_SECRET"
+      ]
+    },
+    {
+      "after": "missing-auth EventSource",
+      "eventsource_outcome": "denied"
+    },
+    {
+      "after": "auth-failed session switch",
+      "visible_error": true,
+      "previous_transcript_cleared": true
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "IDLE",
+    "active_session": null,
+    "pending_approval_id": null,
+    "visible_error": "Authentication required"
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "unauthorized_rest_denied"
+    },
+    {
+      "event": "unauthorized_snapshot_poll_denied"
+    },
+    {
+      "event": "unauthorized_eventsource_denied"
+    },
+    {
+      "event": "auth_failed_snapshot_switch"
+    },
+    {
+      "event": "operation_failed_safely"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "rest": {
+      "missing_auth_status": 401
+    },
+    "snapshot_polling": {
+      "wrong_user_status": 404,
+      "missing_auth_status": 401
+    },
+    "eventsource": {
+      "missing_auth_outcome": "denied"
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "never for unauthorized target",
+    "must_include": [
+      "Authentication required"
+    ],
+    "must_not_include": [
+      "Phase 16 owner session remained isolated",
+      "PHASE17_AUTH_TARGET_SECRET",
+      "PHASE16_OTHER_USER_SECRET",
+      "Run complete"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Authentication required",
+      "Retry connection"
+    ],
+    "must_not_show": [
+      "Phase 16 owner session remained isolated",
+      "PHASE17_AUTH_TARGET_SECRET",
+      "PHASE16_OTHER_USER_SECRET",
+      "Run complete"
+    ],
+    "composer": "enabled"
+  },
+  "expected_unchanged_rows": [],
+  "invariants": [
+    "no_approval_required",
+    "auth_failure_clears_active_snapshot",
+    "no_stale_final_after_auth_failure",
+    "eventsource_auth_denial_is_safe",
+    "polling_auth_denial_is_safe"
+  ],
+  "required_layers": [
+    "api",
+    "mocked_browser",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Existing API auth probes did not prove the browser cleared stale session state after a denied snapshot while switching sessions.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "An auth failure during snapshot restore or polling can leave a stale previous assistant answer visible beside a safe retry/error banner.",
+    "existing_test_that_would_miss_it": "Direct API auth checks can pass while the browser still renders stale transcript state from a previous authorized session.",
+    "lowest_useful_layer": "mocked_browser plus API probe",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is needed because the failure occurs before planner execution and is driven by REST/SSE authorization boundaries.",
+    "required_positive_evidence": [
+      "REST missing auth is denied",
+      "wrong-user snapshot polling is denied",
+      "missing-auth EventSource is denied",
+      "visible authentication/retry UI appears",
+      "composer is usable after the failure"
+    ],
+    "required_forbidden_stale_evidence": [
+      "previous assistant final response",
+      "unauthorized target final response",
+      "other-user secret transcript",
+      "Run complete"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_stateful_oracle_schema.py"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/security-privacy.spec.js::scenario 97",
+      "eMas Front/e2e/specs/release-security-privacy.spec.js::scenario 97 release"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-17-security-privacy-and-abuse-hardening"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-17-security-privacy-and-abuse-hardening"
+  }
+}

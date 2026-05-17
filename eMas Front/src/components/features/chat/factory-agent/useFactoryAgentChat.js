@@ -333,9 +333,15 @@ export function useFactoryAgentChat() {
       return await refreshSnapshot(sessionId)
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
-      if (kind === 'not_found') {
+      if (kind === 'not_found' || kind === 'auth') {
         const currentStoredId = hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null
-        if (!currentStoredId || String(currentStoredId) === String(sessionId)) {
+        const currentSnapshotId = lastSnapshotSessionIdRef.current
+        if (
+          kind === 'auth' ||
+          !currentStoredId ||
+          String(currentStoredId) === String(sessionId) ||
+          String(currentSnapshotId || '') === String(sessionId)
+        ) {
           if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
           clearSnapshotState()
         }

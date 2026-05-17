@@ -1038,6 +1038,47 @@ npx playwright test e2e/specs/full-stack-seeded.spec.js --project=chromium-seede
 npm run test:e2e:real-langgraph -- --grep "SO-026"
 ```
 
+### Phase 17: Security, Privacy, and Abuse Hardening
+
+Goal:
+
+Add the next high-risk chatbot security, privacy, and abuse checks using the Phase 13 quality gate. This phase strengthens existing `@security|@privacy` coverage rather than adding redundant prompt volume.
+
+Intended scope:
+
+| SO | Distinct product bug it catches | Existing gap | Lowest useful layer | Browser required | Real LangGraph required | Coverage category |
+|---|---|---|---|---|---|---|
+| SO-032 | Switching sessions, refreshing, or restoring history can carry over another session's final response, approval card, source table, audit evidence, or hidden details. | Earlier isolation coverage denied a tampered stored session id but did not switch between valid same-user sessions or exercise table/details/approval cleanup. | Mocked browser | Yes, because stale DOM state is the risk. | No. | `canonical` |
+| SO-033 | Missing or invalid auth for REST, snapshot polling, or EventSource can show a retry/error banner while retaining a stale previous assistant response. | API auth probes can pass while the browser still renders a stale transcript after a denied snapshot switch. | API probe plus mocked browser | Yes, because stale visible transcript and retry UI can diverge from API status. | No. | `canonical` |
+| SO-042 | Backend/model script-like markdown, image handlers, or unsafe links can execute or create unsafe anchor behavior. | Previous inert-render coverage did not include unsafe HTML links, markdown links, and target-blank behavior. | Mocked browser | Yes, DOM execution/link attributes are browser-only evidence. | No. | `canonical` |
+| SO-043 | Very long pasted input can break controlled input state, lose the submitted prompt, leave a spinner stuck, or reuse stale final text. | Large-result tests covered big responses, not large user input lifecycle and request-body preservation. | Mocked browser | Yes, composer state and request lifecycle are visible-browser concerns. | No. | `canonical` |
+| SO-044 | Dangerous prompts can bypass approval gates, mutate unsupported production records, or show fake completion. | Earlier allowlist checks did not exercise the exact dangerous operator examples or prove no mutation after an attempted approval. | Mocked browser | Yes, approval card, visible refusal, and request-log no-mutation evidence must agree. | No unless a real planner safety miss appears. | `canonical` |
+
+Required positive evidence:
+
+- SO-032: private evidence is visible before switching; safe session final response is visible after switching and refresh; pending approval from another session disappears.
+- SO-033: unauthorized REST, snapshot polling, and EventSource probes are denied; safe retry/error UI appears; composer stays usable.
+- SO-042: unsafe script/link/image markdown is visible as inert text; no XSS flags are set; no unsafe anchors exist; layout remains stable.
+- SO-043: prompt length exceeds the large-input threshold; mock request log records the submitted length; composer clears and re-enables; no busy spinner remains.
+- SO-044: approval gate appears before any action; destructive tool is absent from the allowlist; attempted approval returns safe blocked copy; snapshot has no tool-result mutation.
+
+Forbidden stale evidence:
+
+- SO-032: `PHASE17_LEAK_FINAL`, `PHASE17_LEAK_APPROVAL`, `PHASE17_LEAK_SOURCE_TABLE`, `PHASE17_LEAK_AUDIT_EVIDENCE`, `PHASE17_LEAK_HIDDEN_DETAILS`, or a stale `Approval required` card in the safe session.
+- SO-033: prior assistant final response, unauthorized target final response, other-user secret transcript, or `Run complete` after auth failure.
+- SO-042: executable `<script>`, `javascript:` links, target-blank links without `noopener`, XSS flags, layout overflow, or generic error UI.
+- SO-043: stale previous final answer, stuck spinner, uncleared composer, prompt-length mismatch, layout overflow, or generic error UI.
+- SO-044: `Run complete`, `Approved request to change record`, `deleted production`, mutation `tool_result`, `DELETE` requests, or blocked-action audit rows.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm test
+npm run test:e2e -- --project=chromium --grep "@security|@privacy"
+npm run test:e2e:release -- --grep "@security|@privacy"
+```
+
 ## First Critical Scenario Set
 
 Implement these before claiming manual chatbot testing is retired.
@@ -1076,7 +1117,7 @@ Implement these before claiming manual chatbot testing is retired.
 | SO-030 | Factory Agent restart or stream drop mid-run. | Infinite busy UI. | Seeded, Playwright |
 | SO-031 | Large structured result plus final completion. | Layout hides final state. | Seeded full-stack, Playwright |
 | SO-032 | Two browser sessions same user. | Cross-session leakage. | Playwright seeded |
-| SO-033 | Two users with same prompt. | Session owner leakage. | API, Playwright |
+| SO-033 | Authorization failure and owner leakage. | Stale previous answer remains after missing/invalid auth. | API, Playwright |
 | SO-034 | Tool registry empty/unhealthy. | Misleading "No tools allowed" message. | API, Playwright |
 | SO-035 | Real LangGraph no seeded adapter. | Seeded test hides planner bug. | Pytest graph, real LangGraph browser |
 | SO-036 | RAG no source. | Fake citation or generic failure. | RAG pytest, browser |
@@ -1085,6 +1126,9 @@ Implement these before claiming manual chatbot testing is retired.
 | SO-039 | Too much context causes planner fallback. | Final answer hides context overflow. | Pytest graph, later LLM eval |
 | SO-040 | Long operation with heartbeats only. | Timeout or stuck UI. | SSE, Playwright |
 | SO-041 | Medium priority jobs to high, then original high priority jobs to low. | Final response reports only the last approval/write set or silently changes semantics. | Pytest graph, summary contract, seeded full-stack, real LangGraph browser |
+| SO-042 | Unsafe rendered content from backend/model. | Executable HTML/script or unsafe link behavior. | Browser |
+| SO-043 | Large pasted input. | Controlled input breaks, request truncates, spinner sticks, or stale final text is reused. | Browser |
+| SO-044 | Unsupported dangerous action. | Approval bypass, mutation, or fake completion for destructive prompts. | Browser |
 
 ## Definition of Done
 

@@ -1,0 +1,145 @@
+{
+  "id": "SO-043",
+  "title": "Large pasted input remains controlled and safe",
+  "risk": "A very long pasted prompt can leave the composer uncontrolled, keep a spinner stuck, reuse a stale final answer, or silently truncate the wrong request.",
+  "prompt": "Phase 16 large unsafe markdown input should render as inert text plus a very long token",
+  "initial_state": {
+    "session": {
+      "status": "IDLE",
+      "composer": "enabled"
+    },
+    "prompt_length_min": 8000,
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "render_security_fixture",
+    "must_not_route_to": [
+      "previous_session_replay",
+      "stale_final_response"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "long prompt pasted",
+      "composer": "controlled",
+      "send_enabled": true
+    },
+    {
+      "after": "long prompt submitted",
+      "request_body_length": "matches_prompt_length",
+      "session_phase": "EXECUTING"
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "pending_approval_id": null,
+    "composer": "enabled_empty",
+    "busy_indicator_count": 0
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "request_body_recorded",
+      "prompt_length_min": 8000
+    },
+    {
+      "event": "tool_read_completed",
+      "tool": "render_security_fixture"
+    },
+    {
+      "event": "snapshot_terminal_persisted",
+      "status": "COMPLETED"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "busy_indicator_count": 0
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_terminal_persisted COMPLETED",
+    "must_include": [
+      "Phase 16 unsafe markdown was rendered as text, not executable content.",
+      "Run complete"
+    ],
+    "must_not_include": [
+      "Phase 16 owner session remained isolated",
+      "Factory Agent needs attention",
+      "Working...",
+      "Gathering information..."
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Run complete",
+      "Phase 16 unsafe markdown was rendered as text, not executable content."
+    ],
+    "must_not_show": [
+      "Phase 16 owner session remained isolated",
+      "Factory Agent needs attention"
+    ],
+    "composer": "enabled_empty",
+    "dialog_overflow": false
+  },
+  "expected_unchanged_rows": [],
+  "invariants": [
+    "no_approval_required",
+    "large_prompt_request_body_preserved",
+    "composer_state_controlled",
+    "no_stuck_spinner",
+    "no_stale_final_response"
+  ],
+  "required_layers": [
+    "mocked_browser",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Large-result tests covered big responses, but not a large pasted user prompt combined with controlled composer state and stale-final prevention.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "Large pasted input can break the controlled textarea, lose the submitted prompt, or leave the UI stuck on old final text.",
+    "existing_test_that_would_miss_it": "Renderer-only XSS tests can pass without proving the request body length, composer reset, spinner cleanup, and stale previous answer absence.",
+    "lowest_useful_layer": "mocked_browser",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is needed because the defect is frontend input control and request lifecycle handling.",
+    "required_positive_evidence": [
+      "prompt length exceeds 8000 characters",
+      "mock server request log records the full submitted prompt length",
+      "composer clears after send",
+      "composer and mode control are enabled after completion",
+      "Run complete and safe final answer are visible"
+    ],
+    "required_forbidden_stale_evidence": [
+      "previous assistant final response",
+      "stuck busy spinner",
+      "Factory Agent needs attention",
+      "dialog overflow"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_stateful_oracle_schema.py"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/security-privacy.spec.js::scenario 99"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-17-security-privacy-and-abuse-hardening"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-17-security-privacy-and-abuse-hardening"
+  }
+}
