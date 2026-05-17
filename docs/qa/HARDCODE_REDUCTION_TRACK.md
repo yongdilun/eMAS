@@ -13,7 +13,7 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 | 3 | Knowledge policy registry | Complete | Codex | Moved OSHA/LOTO fallback answer, sources, and safety content into a route-scoped RAG knowledge policy registry. |
 | 4 | SSE fault injection Adapter | Complete | Codex | Seeded duplicate/out-of-order/drop/reconnect hooks now live behind `factory_agent.testing.fault_injection`; production router uses the no-op adapter by default. |
 | 5 | Data-driven seeded scenario engine | Complete | Codex | Explicit Phase 9/10/14/19 seeded prompt selectors now live in `testing_seeded_scenarios.py`; `testing_seeded_adapters.py` delegates to scenario data and keeps only generic non-phase fallback/resume handling. |
-| 6 | Typed snapshot presentation contract | Not Started | Next agent | Backend contract needed before frontend cleanup. |
+| 6 | Typed snapshot presentation contract | Complete | Codex | Backend snapshots and terminal timeline events now include typed `presentation` evidence for approvals, mutations, partial failures, diagnostics, cancellation, rejected/expired approvals, and source-backed knowledge answers. |
 | 7 | Frontend typed presentation rendering | Not Started | Next agent | Remove primary dependence on text phrase inference. |
 | 8 | Hardcode guardrails in CI | Not Started | Next agent | Resume scenario growth after this. |
 
@@ -48,6 +48,7 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 - Phase 5 migrated scenario prompt matching into `factory_agent.testing_seeded_scenarios`, while `testing_seeded_adapters.py` delegates execution to existing seeded helper methods. No production behavior changes are intended.
 - Phase 5 exposed and fixed an import-order product bug where importing `factory_agent.api.response_mappers` could eagerly import routes and circularly re-enter `session_snapshot_service`; `factory_agent.api.build_router` is now lazy. It also exposed a seeded-mode routing bug where semantic clarification intercepted known seeded Phase 14 oracle prompts before the seeded planner could handle them; normal production planners still clarify those prompts, while the seeded planner now advertises the fixture prompts it owns.
 - Phase 5 follow-up removed the remaining explicit `if "phase ..."` prompt selectors from `SeededPlaywrightPlanner.generate_plan`. The remaining adapter conditionals are scenario-marker resume dispatch or generic fallback behavior, not phase-prompt routing.
+- Phase 6 added an additive typed presentation contract to backend snapshot payloads and terminal timeline events. Legacy text fields remain in place, but contract tests now assert state from `presentation.kind`, `presentation.state`, ids, row outcomes, sources, diagnostics, and invariant flags before checking display text compatibility. No frontend Phase 7 rendering migration was done.
 
 ## Phase 0 Inventory
 
@@ -198,11 +199,25 @@ These remain intentionally in the adapter as non-phase fallback or resume mechan
 
 ### Phase 6: Typed Snapshot Presentation Contract
 
-- [ ] Define backend typed presentation payload.
-- [ ] Add typed operation/final/approval/source/diagnostic states to snapshot.
-- [ ] Preserve legacy text fields.
-- [ ] Add contract tests that assert typed state and reject stale text-only state.
-- [ ] Run snapshot/final response and API/UI alignment tests.
+- [x] Define backend typed presentation payload.
+- [x] Add typed operation/final/approval/source/diagnostic states to snapshot.
+- [x] Preserve legacy text fields.
+- [x] Add contract tests that assert typed state and reject stale text-only state.
+- [x] Run snapshot/final response and API/UI alignment tests.
+
+#### Phase 6 Typed Presentation Coverage
+
+| Contract area | Evidence now asserted through typed fields |
+| --- | --- |
+| Pending approval | `presentation.kind=approval_required`, `state=pending`, `approval_id`, pending row evidence, and `full_success_forbidden`. |
+| Rejected approval | `kind=rejected`, `state=rejected`, rejection diagnostics, and terminal event presentation cannot be overridden by stale success text. |
+| Expired/stale approval | `kind=expired`, `state=expired`, expired row evidence, and diagnostic reason `approval_expired`. |
+| Partial failure | `kind=partial_failure`, `state=failed`, per-row succeeded/failed outcomes, and row-status invariants. |
+| Successful mutation | `kind=mutation_result`, `state=completed`, operation id, approval id, changed rows, and multi-approval row evidence. |
+| Cancellation | `kind=cancelled`, `state=cancelled`, and cancellation diagnostics. |
+| RAG/knowledge answer | `kind=knowledge_answer`, `state=completed`, and typed source metadata. |
+| Empty final response | `kind=diagnostic`, `state=failed`, `diagnostics.reason=empty_final_response`, not fake success. |
+| Stale success text | Pending, rejected, failed, and partial-failure typed states win before legacy success-like prose. |
 
 ### Phase 7: Frontend Typed Presentation Rendering
 
@@ -254,6 +269,8 @@ python -m pytest tests/test_seeded_scenario_engine.py -q
 python -m pytest tests/test_stateful_oracle_schema.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q
 python -m pytest tests/test_seeded_scenario_engine.py tests/test_stateful_oracle_schema.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q
 npm run test:e2e:seeded-oracles
+python -m pytest tests/test_typed_snapshot_presentation_contract.py -q
+python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py -q
 git status --short --branch
 git diff --check
 ```
@@ -294,6 +311,12 @@ git diff --check
   - Follow-up backend oracle contracts: `python -m pytest tests/test_stateful_oracle_schema.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q`: 64 passed, 1 warning.
   - Follow-up seeded browser coverage: `npm run test:e2e:seeded-oracles`: 24 passed.
   - Follow-up `git diff --check`: passed with CRLF normalization warnings only.
+- Phase 6 focused verification:
+  - `python -m pytest tests/test_typed_snapshot_presentation_contract.py -q`: 9 passed, 29 warnings.
+  - `python -m pytest tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py -q`: 58 passed, 26 warnings.
+  - `python -m pytest tests/test_stateful_oracle_schema.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py -q`: 64 passed, 1 warning.
+  - `git status --short --branch`: confirmed branch `codex/playwright-e2e-plan`; only Phase 6 docs/backend/test files were changed.
+  - `git diff --check`: passed with CRLF normalization warnings only.
 - Baseline reported by user for semantic routing commit:
   - `python -m pytest tests/test_intent_splitter.py tests/test_phase19_prompt_workflow_regression.py -q`: 63 passed
   - Compatibility checks: 20 passed
@@ -315,6 +338,7 @@ git diff --check
 - `factory-agent/factory_agent/api/__init__.py`
 - `factory-agent/factory_agent/api/routers/events.py`
 - `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/schemas.py`
 - `factory-agent/factory_agent/testing/__init__.py`
 - `factory-agent/factory_agent/testing/fault_injection.py`
 - `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx`
@@ -326,8 +350,9 @@ git diff --check
 - `factory-agent/tests/test_rag_knowledge_policy.py`
 - `factory-agent/tests/test_seeded_scenario_engine.py`
 - `factory-agent/tests/test_snapshot_timeline_final_response_contract.py`
+- `factory-agent/tests/test_typed_snapshot_presentation_contract.py`
 - `factory-agent/tests/test_tool_selector.py`
 
 ## Next Action
 
-Start Phase 5. Migrate seeded planner scenario branches into data-driven scenario definitions.
+Start Phase 7. Teach frontend rendering to prefer typed presentation fields while keeping legacy text parsing as fallback.

@@ -119,14 +119,15 @@ Production SSE routes should expose stable stream behavior. Test-only drop, dupl
 
 Backend snapshots should expose typed presentation blocks:
 
-- `presentation.kind`: `answer`, `approval_required`, `mutation_result`, `partial_failure`, `diagnostic`, `cancelled`
-- `presentation.state`: `pending`, `completed`, `failed`, `rejected`, `expired`, `cancelled`
+- `presentation.kind`: `answer`, `approval_required`, `mutation_result`, `partial_failure`, `diagnostic`, `cancelled`, `rejected`, `expired`, `knowledge_answer`
+- `presentation.state`: `pending`, `completed`, `failed`, `blocked`, `rejected`, `expired`, `cancelled`
 - `presentation.operation_id`
 - `presentation.approval_id`
 - `presentation.rows`
 - `presentation.sources`
 - `presentation.summary`
-- `presentation.forbidden_stale_state`
+- `presentation.diagnostics`
+- `presentation.invariants` including stale/full-success guard evidence
 
 Frontend should render this contract instead of detecting state from text.
 
@@ -391,6 +392,7 @@ Implementation steps:
 
 - Add typed `presentation` blocks to snapshot/final response payloads.
 - Include operation state, approval state, row-level mutation state, source state, and diagnostic state.
+- Include rejected, expired, cancelled, and source-backed knowledge-answer states explicitly.
 - Preserve existing text fields for compatibility.
 - Add contract tests that use typed fields first and reject stale text-only state.
 

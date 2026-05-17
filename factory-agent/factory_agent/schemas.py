@@ -333,6 +333,40 @@ class ApprovalResponse(BaseModel):
     created_at: datetime
 
 
+PresentationKind = Literal[
+    "answer",
+    "approval_required",
+    "mutation_result",
+    "partial_failure",
+    "diagnostic",
+    "cancelled",
+    "rejected",
+    "expired",
+    "knowledge_answer",
+]
+PresentationState = Literal[
+    "pending",
+    "completed",
+    "failed",
+    "blocked",
+    "rejected",
+    "expired",
+    "cancelled",
+]
+
+
+class PresentationResponse(BaseModel):
+    kind: PresentationKind
+    state: PresentationState
+    operation_id: str | None = None
+    approval_id: str | None = None
+    summary: str | None = None
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    invariants: dict[str, Any] = Field(default_factory=dict)
+
+
 class TimelineEventResponse(BaseModel):
     event_id: str
     event_type: Literal[
@@ -365,6 +399,10 @@ class TimelineEventResponse(BaseModel):
     tool_name: str | None = None
     status: str | None = None
     details: dict[str, Any] | None = None
+    presentation: PresentationResponse | None = Field(
+        default=None,
+        description="Typed display contract for this event. Legacy content/details remain for compatibility.",
+    )
 
 
 class ActivityStepResponse(BaseModel):
@@ -403,6 +441,15 @@ class SessionSnapshotResponse(BaseModel):
     activity_steps: list[ActivityStepResponse] = Field(
         default_factory=list,
         description="Server-rendered activity timeline steps. Stable ids act:{event_id}. Clients should prefer these over client-side derivation.",
+    )
+    presentation: PresentationResponse = Field(
+        default_factory=lambda: PresentationResponse(
+            kind="diagnostic",
+            state="blocked",
+            summary="Snapshot presentation has not been derived.",
+            diagnostics={"reason": "presentation_not_derived"},
+        ),
+        description="Authoritative typed presentation for the current snapshot/final response.",
     )
 
 
