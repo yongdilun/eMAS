@@ -951,6 +951,9 @@ def assess_intent(text: str) -> IntentAssessment:
             reply="Hi - tell me what factory operations request you want to run, and I will map it to the available tools.",
         )
 
+    if _CANCEL_RUN_RE.match(raw):
+        return IntentAssessment(kind="operations", action="update", entity=None, confidence=0.93, reply=None)
+
     intents = split_user_intents(raw)
     has_action_hint = any(p.search(raw) for _, p in _ACTION_PATTERNS)
     if (

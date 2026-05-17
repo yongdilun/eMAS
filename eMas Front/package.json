@@ -11,7 +11,7 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "verify-overlaps": "node scripts/verify-overlaps.js",
     "factory-agent-smoke": "node scripts/factory-agent-smoke.js",
-    "test:backend-oracles": "cd ../factory-agent && python -m pytest tests/test_stateful_oracle_schema.py tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_harness.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_phase19_prompt_workflow_regression.py tests/test_summary_bundle.py tests/test_event_stream_runtime.py -q",
+    "test:backend-oracles": "cd ../factory-agent && python -m pytest tests/test_stateful_oracle_schema.py tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_harness.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_phase19_prompt_workflow_regression.py tests/test_summary_bundle.py tests/test_event_stream_runtime.py tests/test_hardcode_guardrails.py -q",
     "test:e2e": "playwright test",
     "test:e2e:mocked": "playwright test --project=chromium",
     "test:e2e:seeded-oracles": "playwright test --project=chromium-seeded --grep \"@data-integrity|@prompt-regression|@sse\"",

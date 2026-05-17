@@ -432,7 +432,15 @@ class SeededPlaywrightPlanner:
         )
 
     async def _machine_status(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
-        machine_id = (intent_constraint_values(intent, "machine_id") or ["M-CNC-01"])[0]
+        machine_ids = intent_constraint_values(intent, "machine_id")
+        if not machine_ids:
+            summary = "Seeded machine status requires an explicit machine ID."
+            return self._plan_result(
+                explanation=summary,
+                risk="No seeded fixture machine ID was inferred from the prompt.",
+                steps=[],
+            )
+        machine_id = machine_ids[0]
         body = await self._get_json(f"/machines/{machine_id}")
         data = self._data(body)
         status = data.get("status") or data.get("Status") or "unknown"
@@ -449,7 +457,15 @@ class SeededPlaywrightPlanner:
         )
 
     async def _job_status(self, *, intent: str, scoped_tools: list[ToolInfo]) -> PlannerResult:
-        job_id = (intent_constraint_values(intent, "job_id") or ["JOB-SEED-001"])[0]
+        job_ids = intent_constraint_values(intent, "job_id")
+        if not job_ids:
+            summary = "Seeded job status requires an explicit job ID."
+            return self._plan_result(
+                explanation=summary,
+                risk="No seeded fixture job ID was inferred from the prompt.",
+                steps=[],
+            )
+        job_id = job_ids[0]
         body = await self._get_json(f"/jobs/{job_id}")
         data = self._data(body)
         priority = data.get("priority") or data.get("Priority") or "unknown"

@@ -15,7 +15,7 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 | 5 | Data-driven seeded scenario engine | Complete | Codex | Explicit Phase 9/10/14/19 seeded prompt selectors now live in `testing_seeded_scenarios.py`; `testing_seeded_adapters.py` delegates to scenario data and keeps only generic non-phase fallback/resume handling. |
 | 6 | Typed snapshot presentation contract | Complete | Codex | Backend snapshots and terminal timeline events now include typed `presentation` evidence for approvals, mutations, partial failures, diagnostics, cancellation, rejected/expired approvals, and source-backed knowledge answers. |
 | 7 | Frontend typed presentation rendering | Complete | Codex | Frontend turn summaries, final tables/sources/diagnostics, pending approval copy, and activity timeline now prefer typed `presentation` state before legacy text parsing. |
-| 8 | Hardcode guardrails in CI | Not Started | Next agent | Resume scenario growth after this. |
+| 8 | Hardcode guardrails in CI | Complete | Codex | Added blocking pytest guardrails to the backend oracle command. Resume scenario growth after this. |
 
 ## Current Blockers
 
@@ -29,7 +29,7 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 - Should curated knowledge fallbacks eventually be product-owned content in external data instead of Python registry data?
 - What typed presentation schema should be considered stable enough for frontend use?
 - Which seeded planner scenarios should migrate first: approval chains, SSE faults, or RAG/source flows?
-- Should hardcode guardrails start as blocking CI or warning-only?
+- Answered: hardcode guardrails are blocking in `npm run test:backend-oracles` because the focused allowlist kept false positives low.
 
 ## Decisions Made
 
@@ -50,6 +50,8 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 - Phase 5 follow-up removed the remaining explicit `if "phase ..."` prompt selectors from `SeededPlaywrightPlanner.generate_plan`. The remaining adapter conditionals are scenario-marker resume dispatch or generic fallback behavior, not phase-prompt routing.
 - Phase 6 added an additive typed presentation contract to backend snapshot payloads and terminal timeline events. Legacy text fields remain in place, but contract tests now assert state from `presentation.kind`, `presentation.state`, ids, row outcomes, sources, diagnostics, and invariant flags before checking display text compatibility. No frontend Phase 7 rendering migration was done.
 - Phase 7 migrated frontend rendering to prefer typed `presentation` evidence while keeping legacy phrase parsing for snapshots without `presentation`. It exposed and fixed a product bug where a terse typed failed diagnostic (`HTTP 500`) could hide richer safe recovery guidance (`Please retry`) already present in the failed plan explanation; typed failed state remains authoritative, but safe diagnostic prose is preserved.
+- Phase 8 guardrails are blocking through `eMas Front/package.json` `test:backend-oracles`. They scan product/runtime code for Phase 9/10/14/19 prompt branches, seeded phase strings in product routes, missing-entity defaults to `M-CNC-01`/`JOB-SEED-*`, and new frontend phrase-based state fallbacks outside the explicit allowlist.
+- Phase 8 exposed and fixed a seeded adapter issue: generic seeded machine/job status paths defaulted missing machine/job IDs to `M-CNC-01` and `JOB-SEED-001`. The adapter now requires explicit IDs, while existing Phase 10 release machine-status prompts are represented as fixture data in `testing_seeded_scenarios.py`.
 
 ## Phase 0 Inventory
 
@@ -242,12 +244,21 @@ These remain intentionally in the adapter as non-phase fallback or resume mechan
 
 ### Phase 8: Hardcode Guardrails In CI
 
-- [ ] Add hardcode guard pytest.
-- [ ] Add fixture allowlist.
-- [ ] Add product-code denylist for phase prompt branches and seeded mode branches.
-- [ ] Decide warning vs blocking mode.
-- [ ] Wire into backend oracle command or documented release gate.
-- [ ] Update README/QA docs with hardcode policy.
+- [x] Add hardcode guard pytest.
+- [x] Add fixture allowlist.
+- [x] Add product-code denylist for phase prompt branches and seeded mode branches.
+- [x] Decide warning vs blocking mode.
+- [x] Wire into backend oracle command or documented release gate.
+- [x] Update README/QA docs with hardcode policy.
+
+#### Phase 8 Guardrail Coverage
+
+| Guardrail | Blocking rule | Allowlist |
+| --- | --- | --- |
+| Phase prompt branches | `if` conditions in runtime files must not branch on Phase 9/10/14/19 prompt strings. | Phase prompt triggers belong in `factory_agent/testing_seeded_scenarios.py` or test/e2e/docs fixtures. |
+| Product seeded prompt strings | `intent.py`, `tool_selector.py`, `plan_creation_service.py`, and `events.py` must not embed Phase 9/10/14/19 prompt strings. | Fixture/test/data paths only. |
+| Missing entity defaults | Runtime and seeded adapter paths must not turn missing `machine_id`/`job_id` into `M-CNC-01` or `JOB-SEED-*`. | Explicit fixture IDs may remain in scenario data, tests, e2e fixtures, and docs. |
+| Frontend phrase state | Core chat rendering files may not add new `please approve`, `will be updated from`, `risk summary`, `run complete`, or `all requested changes completed` state fallbacks beyond the explicit count/reason allowlist. | Existing legacy fallback helpers and typed presentation display labels remain documented until old snapshots no longer need them. |
 
 ## Commands Run
 
@@ -346,6 +357,15 @@ git diff --check
   - First `npm run test:e2e:seeded-oracles`: 23 passed, 1 failed. SO-029 exposed a product bug where typed failed presentation hid the richer safe retry guidance.
   - `npx playwright test e2e/specs/full-stack-data-integrity.spec.js --project=chromium-seeded --grep "SO-029"` after the fix: 1 passed.
   - Final `npm run test:e2e:seeded-oracles`: 24 passed.
+- Phase 8 focused verification:
+  - `python -m pytest tests/test_hardcode_guardrails.py -q`: 6 passed, 1 warning.
+  - `python -m pytest tests/test_seeded_scenario_engine.py -q`: 27 passed, 2 warnings.
+  - `python -m pytest tests/test_stateful_oracle_schema.py tests/test_intent_splitter.py tests/test_tool_selector.py tests/test_event_stream_runtime.py tests/test_typed_snapshot_presentation_contract.py tests/test_hardcode_guardrails.py -q`: 87 passed, 40 warnings.
+  - First `npm run test:backend-oracles`: 152 passed, 1 failed. The failure exposed a product bug where `assess_intent("cancel the current run")` returned `conversation` even though the semantic frame route was `cancel_run`.
+  - After the cancel intent fix, `python -m pytest tests/test_phase19_prompt_workflow_regression.py::test_phase19_scenario_118_route_selection_matrix -q`: 5 passed, 1 warning.
+  - Final `npm run test:backend-oracles`: 153 passed, 30 warnings.
+  - `npm test`: 75 passed.
+  - `git diff --check`: passed with CRLF normalization warnings only.
 - Baseline reported by user for semantic routing commit:
   - `python -m pytest tests/test_intent_splitter.py tests/test_phase19_prompt_workflow_regression.py -q`: 63 passed
   - Compatibility checks: 20 passed
@@ -389,7 +409,10 @@ git diff --check
 - `factory-agent/tests/test_snapshot_timeline_final_response_contract.py`
 - `factory-agent/tests/test_typed_snapshot_presentation_contract.py`
 - `factory-agent/tests/test_tool_selector.py`
+- `factory-agent/tests/test_hardcode_guardrails.py`
+- `eMas Front/e2e/README.md`
+- `eMas Front/package.json`
 
 ## Next Action
 
-Start Phase 8. Add hardcode guardrails in CI now that frontend rendering no longer primarily depends on text phrase inference.
+Phase 8 is complete. Scenario growth may resume under the new hardcode guardrails.

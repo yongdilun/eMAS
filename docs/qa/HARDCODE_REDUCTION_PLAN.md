@@ -475,13 +475,15 @@ Implementation steps:
 - Add allowlisted hardcode guard tests.
 - Fail when product code adds new Playwright phase prompt branches.
 - Fail when production routes branch on seeded scenario names.
-- Warn, not fail, for fixture files.
+- Allow fixture files through explicit path/reason allowlists rather than warning-only checks.
 - Document how to add a legitimate fixture hardcode.
+- Wire the guard into `npm run test:backend-oracles` when the allowlist is focused enough to avoid false positives.
 
 Acceptance criteria:
 
 - CI catches new product hardcodes.
 - Fixture constants remain allowed in known fixture files.
+- Frontend phrase-based legacy fallbacks are count/reason allowlisted and typed `presentation` remains the preferred state contract.
 - New scenario work resumes only after guardrails are in place.
 
 Verification command:
@@ -494,6 +496,7 @@ python -m pytest tests/test_hardcode_guardrails.py -q
 Risks or unknowns:
 
 - Guardrail false positives can block useful work.
+- Keep broad fixture prompt banks out of product/runtime scans; promote any new legitimate fixture hardcode by adding it to scenario data, test data, or docs with an explicit reason.
 
 Rollback notes:
 

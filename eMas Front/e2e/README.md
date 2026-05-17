@@ -89,6 +89,8 @@ npm run test:e2e:mocked
 
 The backend oracle command runs the fast Factory Agent schema, manual-bank, state-machine, snapshot/final-response, API/UI-alignment, prompt-regression, summary, and SSE pytest contracts without live services. The seeded, real LangGraph, release, and synthetic projects remain outside the default PR gate:
 
+It also runs `factory-agent/tests/test_hardcode_guardrails.py`. That guard blocks new product/runtime Phase 9/10/14/19 prompt branches, seeded phase prompt strings in production routes, missing-entity defaults to `M-CNC-01` or `JOB-SEED-*`, and new frontend phrase-based state fallbacks unless they are explicitly allowlisted with a reason. Legitimate fixture hardcodes belong in scenario/test/data paths such as `factory-agent/factory_agent/testing_seeded_scenarios.py`, `factory-agent/tests`, `e2e`, `tests/e2e/scenarios`, or `docs/qa`.
+
 ```powershell
 Set-Location "eMas Front"
 npm run test:e2e -- --project=chromium-seeded --grep "@l3-foundation"

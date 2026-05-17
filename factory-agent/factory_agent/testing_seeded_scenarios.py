@@ -334,6 +334,29 @@ MIGRATED_SEEDED_SCENARIOS: tuple[SeededScenario, ...] = (
         description="Long-running read fixture.",
     ),
     SeededScenario(
+        scenario_id="phase10_release_machine_status",
+        oracle_ids=("SO-058", "SO-065"),
+        internal_marker="phase10_release_machine_status",
+        capabilities=(READ_ONLY_TOOL_RESULT,),
+        trigger=PromptTrigger(
+            any_phrases=(
+                "phase 10 slow network machine status",
+                "phase 10 release latency budget machine status",
+            )
+        ),
+        generate=SeededAction(
+            handler="completed_with_summary",
+            params={
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-CNC-01"},
+                "result": {"data": {"machine_id": "M-CNC-01", "status": "RUNNING"}},
+                "summary": "Machine M-CNC-01 (CNC Mill 01) is RUNNING in the seeded Go API data.",
+                "risk": "Read-only release machine-status fixture.",
+            },
+        ),
+        description="Release latency and slow-network machine-status fixture.",
+    ),
+    SeededScenario(
         scenario_id="so005_so041_medium_high_original_high_low",
         oracle_ids=("SO-005", "SO-041"),
         internal_marker="phase14_cascade",
