@@ -200,6 +200,24 @@ function latestPlanForAnswer(turn) {
   return thinking[thinking.length - 1]
 }
 
+function visiblePlanText(plan) {
+  const explanation = String(plan?.details?.plan_explanation || '').trim()
+  if (explanation) return explanation
+  const content = String(plan?.content || '').trim()
+  return content || null
+}
+
+function diagnosticSummaryForFailedTurn(turn) {
+  const lastPlan = latestPlanForAnswer(turn)
+  const planText = visiblePlanText(lastPlan)
+  if (planText && !isPlanLikeAnswer(planText) && !looksLikeRawJsonText(planText)) {
+    return stripApprovalWaitPhrases(planText)
+  }
+  const toolSummary = latestToolSummary(turn)
+  if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
+  return null
+}
+
 function nonGenericToolLines(turn) {
   const tools = Array.isArray(turn?.tools) ? turn.tools : []
   return tools
@@ -463,10 +481,15 @@ export function computeFactoryAgentTurnSummary(turn) {
   // when tool/checkpoint timestamps precede `approval_decided`, which wrongly surfaced
   // interrupt-era "Please approve…" copy even after `session_completed`.
   if (terminal?.event_type === 'session_blocked' || terminal?.event_type === 'session_failed') {
-    return terminal.content || lastTool?.content || 'Execution stopped.'
+    return diagnosticSummaryForFailedTurn(turn) || terminal.content || lastTool?.content || 'Execution stopped.'
   }
   if (terminal?.event_type === 'session_completed') {
     const lastPlan = latestPlanForAnswer(turn)
+    const terminalContent = String(terminal.content || '').trim()
+
+    if (!terminalContent) {
+      return 'Unable to render final response. The run completed, but the backend returned empty assistant content.'
+    }
 
     // RAG / Conversation Support: If no tools were executed, the plan explanation IS the answer.
     if (lastPlan?.content && (!turn.tools || turn.tools.length === 0)) {
@@ -474,7 +497,7 @@ export function computeFactoryAgentTurnSummary(turn) {
     }
 
     // Prefer the last tool result when completion is a generic status line.
-    const isGenericComplete = String(terminal.content || '').toLowerCase().includes('execution completed successfully')
+    const isGenericComplete = terminalContent.toLowerCase().includes('execution completed successfully')
     const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
     const terminalIsApprovalWait = isApprovalWaitText(terminal.content)
     if (isGenericComplete || terminalIsPlanLike || terminalIsApprovalWait) {
@@ -487,7 +510,7 @@ export function computeFactoryAgentTurnSummary(turn) {
       }
       if (lastTool?.content) return stripApprovalWaitPhrases(lastTool.content)
     }
-    return stripApprovalWaitPhrases(terminal.content || 'Execution completed.')
+    return stripApprovalWaitPhrases(terminalContent)
   }
 
   if (lastApproval?.event_type === 'approval_required' && waitingOnApproval) {

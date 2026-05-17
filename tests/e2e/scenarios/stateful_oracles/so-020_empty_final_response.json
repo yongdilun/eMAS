@@ -95,11 +95,11 @@
   "expected_final_response": {
     "allowed_after": "operation_completed operation-so-020",
     "must_include": [
-      "safe empty-response diagnostic"
+      "Unable to render final response"
     ],
     "must_not_include": [
       "Previous answer that must not be reused",
-      "Run complete",
+      "Execution completed.",
       "fake success"
     ]
   },
@@ -132,11 +132,32 @@
     "playwright"
   ],
   "weakness_from_phase0": "API and frontend tests can accept COMPLETED with empty content; this oracle requires a safe diagnostic and proves stale prior text is not reused.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A completed snapshot with empty assistant content can reuse a previous answer or render generic fake success instead of a safe empty-result diagnostic.",
+    "existing_test_that_would_miss_it": "Backend completion contracts can accept COMPLETED with empty content, and the older browser fixture only accepted the generic 'Execution completed.' fallback.",
+    "lowest_useful_layer": "frontend_unit",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "required_positive_evidence": [
+      "empty completed terminal event",
+      "safe visible empty-response diagnostic",
+      "previous turn answer count does not increase",
+      "execute request completes successfully without rendering stale text"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Previous answer that must not be reused",
+      "Execution completed.",
+      "Factory Agent needs attention",
+      "fake success"
+    ],
+    "coverage_category": "supporting"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
     ],
     "playwright": [
+      "eMas Front/e2e/specs/chat-fixtures.spec.js::completed empty assistant content does not reuse the previous answer",
       "eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs::empty final response safe diagnostic"
     ],
     "visible_dom_assertions_required": true,

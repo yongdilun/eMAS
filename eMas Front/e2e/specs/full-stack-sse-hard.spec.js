@@ -37,7 +37,7 @@ test.describe('L3 seeded hard SSE behavior @l3-hard @sse-order', () => {
     await openChat(page)
     await sendPrompt(page, 'Run Phase 9 out-of-order duplicate SSE seeded jobs workflow')
 
-    await expect(page.getByText(/Phase 9 step 2 read seeded data/i).first()).toBeVisible()
+    await expect(page.getByText(/Rule Applied/i).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toBeVisible()
     await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0)
 

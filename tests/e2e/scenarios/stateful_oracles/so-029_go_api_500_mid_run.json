@@ -79,19 +79,7 @@
     ],
     "pending_approval_id": null
   },
-  "expected_audit_rows": [
-    {
-      "approval_id": "approval-so-029-1",
-      "action": "bulk_update_job_priority",
-      "row_ids": [
-        "JOB-SO029-HIGH-01"
-      ],
-      "from": "high",
-      "to": "medium",
-      "status": "failed",
-      "error": "go_api_500"
-    }
-  ],
+  "expected_audit_rows": [],
   "expected_timeline": [
     {
       "event": "operation_started"
@@ -110,14 +98,9 @@
       "approval_id": "approval-so-029-1"
     },
     {
-      "event": "commit_failed",
+      "event": "backend_request_failed_before_audit",
       "approval_id": "approval-so-029-1",
       "error": "go_api_500"
-    },
-    {
-      "event": "audit_recorded",
-      "approval_id": "approval-so-029-1",
-      "status": "failed"
     },
     {
       "event": "operation_failed",
@@ -139,7 +122,8 @@
     "allowed_after": "operation_failed go_api_500",
     "must_include": [
       "could not complete",
-      "database unavailable"
+      "database unavailable",
+      "Please retry"
     ],
     "must_not_include": [
       "1 high priority job changed to medium",
@@ -153,7 +137,8 @@
     ],
     "must_show": [
       "could not complete",
-      "database unavailable"
+      "database unavailable",
+      "Please retry"
     ],
     "must_not_show": [
       "Run complete",
@@ -173,7 +158,7 @@
   "invariants": [
     "backend_error_blocks_success",
     "failed_commit_does_not_mutate_rows",
-    "audit_rows_include_failed_rows",
+    "backend_error_creates_no_audit_rows",
     "no_generic_error_on_expected_backend_failure",
     "final_summary_matches_commits"
   ],
@@ -181,13 +166,36 @@
     "seeded_full_stack",
     "release"
   ],
-  "weakness_from_phase0": "Seeded and release tests can pass on final visibility; this oracle forces a Go API 500 to produce failed state, failed audit evidence, unchanged rows, and no success copy.",
+  "weakness_from_phase0": "Seeded and release tests can pass on final visibility; this oracle forces a Go API 500 to produce failed state, no data-integrity audit rows, unchanged rows, and no success copy.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A Go API 500 after approval can leave rows unchanged while timeline or visible UI still shows generic/stale success and audit evidence implies a commit happened.",
+    "existing_test_that_would_miss_it": "eMas Front/e2e/specs/chat-fixtures.spec.js::plan creation 503 shows plan-start failure only; it does not cover approved mid-run commit failure, DB rows, audit rows, approval ids, or stale post-approval plan text.",
+    "lowest_useful_layer": "seeded_full_stack",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "required_positive_evidence": [
+      "approval id is approved",
+      "session and snapshot are FAILED",
+      "target job and all seeded job rows remain unchanged",
+      "data-integrity audit rows are empty",
+      "timeline has failed tool_result and session_failed",
+      "visible UI explains database unavailable and asks the operator to retry"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Run complete",
+      "stale Success plan text",
+      "priority changed to medium",
+      "all requested changes completed",
+      "data-integrity audit rows"
+    ],
+    "coverage_category": "canonical"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
     ],
     "playwright": [
-      "eMas Front/e2e/specs/chat-fixtures.spec.js::plan creation 503 shows backend unavailable without fake success"
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-029 Go API 500 mid-run fails safely without mutation or audit rows"
     ],
     "visible_dom_assertions_required": true,
     "manual_prompt_regression": [],

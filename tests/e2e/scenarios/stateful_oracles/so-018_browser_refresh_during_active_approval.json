@@ -201,12 +201,34 @@
     "playwright_seeded"
   ],
   "weakness_from_phase0": "Browser refresh tests can pass on visible completion while missing lost approval state, duplicate approval rows, or duplicate commits after reload.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "Refreshing while an approval is pending can restore the wrong pending approval id, duplicate approval cards, lose the staged bundle, or mutate before approval.",
+    "existing_test_that_would_miss_it": "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-007/SO-018 scenario 88 only proved post-completion replay/idempotency, not active-refresh restoration before approval.",
+    "lowest_useful_layer": "seeded_browser",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "required_positive_evidence": [
+      "same pending approval id before and after refresh",
+      "exactly one visible approval card/button after refresh",
+      "same staged bundle rows after refresh",
+      "no DB or audit mutation before approval",
+      "one commit and one audit row set after approval"
+    ],
+    "required_forbidden_stale_evidence": [
+      "duplicate approval card",
+      "new approval id after refresh",
+      "lost pending approval",
+      "pre-approval DB mutation",
+      "duplicate audit rows"
+    ],
+    "coverage_category": "canonical"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
     ],
     "playwright": [
-      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-007/SO-018 scenario 88"
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-018 active approval survives refresh with the same staged bundle"
     ],
     "visible_dom_assertions_required": true,
     "manual_prompt_regression": [],

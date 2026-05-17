@@ -87,6 +87,119 @@ test('generic completion terminal prefers plan summary over generic tool result'
   assert.equal(computeFactoryAgentTurnSummary(turns[0]), 'Machine 5 was not found.')
 })
 
+test('failed commit terminal prefers safe diagnostic over stale success plan text', () => {
+  const turns = assembleFactoryAgentTurns([
+    {
+      ...userEvent,
+      content: 'Run Phase 14 Go API 500 commit failure for JOB-SEED-001',
+    },
+    {
+      event_id: 'approval:1-required',
+      event_type: 'approval_required',
+      content: '1 high priority job will be updated to medium.',
+      created_at: '2026-05-13T09:36:20',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-so-029-1',
+      status: 'PENDING',
+    },
+    {
+      event_id: 'approval:1-decided',
+      event_type: 'approval_decided',
+      content: 'Approval approval-so-029-1 accepted.',
+      created_at: '2026-05-13T09:36:21',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      approval_id: 'approval-so-029-1',
+      status: 'APPROVED',
+    },
+    {
+      event_id: 'step:1',
+      event_type: 'tool_result',
+      content: 'put__jobs_{id} failed: HTTP 500: database unavailable',
+      created_at: '2026-05-13T09:36:22',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      step_id: 'step-1',
+      tool_name: 'put__jobs_{id}',
+      status: 'FAILED',
+      details: {
+        result: null,
+        last_error: 'HTTP 500: database unavailable',
+      },
+    },
+    {
+      event_id: 'plan:stale-success',
+      event_type: 'plan_created',
+      content: '**Success**\n\nUpdated **1** job(s).\n\nPriority: **medium**',
+      created_at: '2026-05-13T09:36:23',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+      details: {
+        status: 'COMPLETED',
+        plan_explanation:
+          'Could not complete the requested job priority change because the Go API returned database unavailable. No job rows were changed and no audit rows were created. Please retry after the backend recovers.',
+      },
+    },
+    {
+      event_id: 'failed:1',
+      event_type: 'session_failed',
+      content: 'HTTP 500: database unavailable',
+      created_at: '2026-05-13T09:36:24',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'FAILED',
+    },
+  ])
+
+  const summary = computeFactoryAgentTurnSummary(turns[0])
+  assert.match(summary, /Could not complete/)
+  assert.match(summary, /database unavailable/)
+  assert.match(summary, /Please retry/)
+  assert.doesNotMatch(summary, /Updated \*\*1\*\* job/)
+  assert.doesNotMatch(summary, /Priority: \*\*medium\*\*/)
+})
+
+test('empty completed terminal renders safe empty-response diagnostic', () => {
+  const turns = assembleFactoryAgentTurns([
+    {
+      ...userEvent,
+      content: 'Return an empty completed answer',
+    },
+    {
+      event_id: 'plan:empty',
+      event_type: 'plan_created',
+      content: '',
+      created_at: '2026-05-13T09:36:21',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+      details: {
+        status: 'COMPLETED',
+        plan_explanation: '',
+      },
+    },
+    {
+      event_id: 'completed:empty',
+      event_type: 'session_completed',
+      content: '',
+      created_at: '2026-05-13T09:36:22',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+    },
+  ])
+
+  const summary = computeFactoryAgentTurnSummary(turns[0])
+  assert.equal(
+    summary,
+    'Unable to render final response. The run completed, but the backend returned empty assistant content.',
+  )
+  assert.doesNotMatch(summary, /Execution completed/)
+  assert.doesNotMatch(summary, /Previous answer/)
+})
+
 test('user-only in-flight turn uses semantic progress instead of internal intent text', () => {
   const turns = assembleFactoryAgentTurns([userEvent])
 

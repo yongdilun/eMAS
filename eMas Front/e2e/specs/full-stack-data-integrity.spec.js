@@ -1,4 +1,5 @@
 import { expect, test } from '../support/seededArtifacts.js'
+import { chatSelectors } from '../fixtures/selectors.js'
 import {
   activeSessionId,
   factoryAgentJson,
@@ -697,6 +698,130 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     })
   }))
 
+  test('SO-018 @data-integrity: active approval survives refresh with the same staged bundle', async ({ page }, testInfo) => runPhase6Oracle(testInfo, 'SO-018 active approval refresh restores pending approval', page, async ({ artifact, initial, setSessionId }) => {
+    await openChat(page)
+    await sendPrompt(page, 'Run Phase 14 refresh during active approval for original high jobs to medium')
+    const sessionId = await activeSessionId(page)
+    setSessionId(sessionId)
+
+    const approval = await pendingApprovalMatching(page, 'original_high_to_medium_refresh')
+    await expectApprovalRowMatches(approval, {
+      status: 'PENDING',
+      writeSet: 'original_high_to_medium_refresh',
+      kind: 'phase14_refresh_active_approval',
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: originalHighJobIds.length,
+    })
+    await expectSnapshotApprovalState(page, { status: 'WAITING_APPROVAL', pendingApprovalId: approval.approval_id })
+    await expect(page.getByRole('heading', { name: 'Approval required' })).toHaveCount(1)
+    await expect(page.getByText(/Approval required: original HIGH-priority jobs will become MEDIUM after refresh/i).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(1)
+    expect(await currentPriorityMap()).toEqual(initial.priorities)
+    expectNoSuccessfulAudit(await dataIntegrityAudit(sessionId))
+    recordOracleCheckpoint(artifact, 'before browser refresh with approval pending', {
+      approval: await factoryAgentJson(`/approvals/${approval.approval_id}`),
+      priorities: await currentPriorityMap(),
+      audit: await dataIntegrityAudit(sessionId),
+      snapshot: await snapshotForPage(page),
+    })
+
+    await page.reload()
+    await page.getByRole('button', { name: chatSelectors.openAssistantButtonName }).click()
+    await expect(page.getByRole('dialog', { name: chatSelectors.dialogName })).toBeVisible()
+
+    await expect(page.getByRole('heading', { name: 'Approval required' })).toHaveCount(1)
+    await expect(page.getByText(/Approval required: original HIGH-priority jobs will become MEDIUM after refresh/i).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(1)
+    await expect(page.getByText(/Run complete/i)).toHaveCount(0)
+    await expectSnapshotApprovalState(page, { status: 'WAITING_APPROVAL', pendingApprovalId: approval.approval_id })
+    const pendingAfterRefresh = await pendingApprovalsForPage(page)
+    expect(pendingAfterRefresh.map((row) => row.approval_id)).toEqual([approval.approval_id])
+    await expectApprovalRowMatches(pendingAfterRefresh[0], {
+      status: 'PENDING',
+      writeSet: 'original_high_to_medium_refresh',
+      kind: 'phase14_refresh_active_approval',
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: originalHighJobIds.length,
+    })
+    expect(await currentPriorityMap()).toEqual(initial.priorities)
+    expectNoSuccessfulAudit(await dataIntegrityAudit(sessionId))
+    recordOracleCheckpoint(artifact, 'after browser refresh before approval', {
+      approval: await factoryAgentJson(`/approvals/${approval.approval_id}`),
+      pending: pendingAfterRefresh,
+      priorities: await currentPriorityMap(),
+      audit: await dataIntegrityAudit(sessionId),
+      snapshot: await snapshotForPage(page),
+    })
+
+    await page.getByRole('button', { name: 'Approve' }).click()
+    await waitForSessionStatus(page, 'COMPLETED')
+    await expectApprovalRowMatches(approval.approval_id, {
+      status: 'APPROVED',
+      writeSet: 'original_high_to_medium_refresh',
+      kind: 'phase14_refresh_active_approval',
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: originalHighJobIds.length,
+    })
+    await expectSnapshotApprovalState(page, { status: 'COMPLETED', pendingApprovalId: null })
+    expect(await currentPriorityMap()).toEqual(expectedPriorityMapForCascade([{ source: 'high', target: 'medium' }]))
+    await expectRowsUnchangedFromInitial(initial.rowsById, [...originalLowJobIds, ...originalMediumJobIds])
+
+    const audit = await dataIntegrityAudit(sessionId)
+    expectAuditCommit(audit, {
+      scenario: 'SO-018',
+      writeSet: 'original_high_to_medium_refresh',
+      approvalId: approval.approval_id,
+      succeededJobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+    })
+    expect(audit.filter((entry) => entry.scenario === 'SO-018' && entry.status === 'succeeded')).toHaveLength(originalHighJobIds.length)
+
+    const snapshot = await snapshotForPage(page)
+    expect(approvalIdsFromTimeline(snapshot).has(approval.approval_id)).toBe(true)
+    expect(timelineText(snapshot)).toContain('exactly once')
+    expectTimelineEvidenceInOrder(snapshot, [
+      {
+        label: `approval requested ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_required' && event.approval_id === approval.approval_id,
+      },
+      {
+        label: `approval decided ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_decided' && event.approval_id === approval.approval_id && event.status === 'APPROVED',
+      },
+      {
+        label: 'single restored bundle commit evidence',
+        predicate: (event) =>
+          event.event_type === 'tool_result' &&
+          (event.approval_id === approval.approval_id || event.details?.result?.approval_id === approval.approval_id) &&
+          String(event.content || '').includes('exactly once'),
+      },
+      {
+        label: 'terminal completion evidence',
+        predicate: (event) => event.event_type === 'session_completed' && event.status === 'COMPLETED',
+      },
+    ])
+    expectFinalSummaryClaimsOnly(await finalAssistantText(sessionId), {
+      mustInclude: ['high priority jobs changed to medium exactly once', approval.approval_id],
+      mustExclude: [/duplicate approval/i, /fake completion/i, /Factory Agent needs attention/i],
+    })
+    await expect
+      .poll(async () => visibleText(page), { timeout: 30_000 })
+      .toContain('Run complete')
+    await expect
+      .poll(async () => visibleText(page), { timeout: 30_000 })
+      .toContain('high priority jobs changed to medium exactly once')
+    expectFinalSummaryClaimsOnly(await visibleText(page), {
+      mustInclude: ['Run complete', 'high priority jobs changed to medium exactly once'],
+      mustExclude: [/duplicate approval/i, /fake completion/i, /Factory Agent needs attention/i],
+    })
+  }))
+
   test('SO-006/SO-008/SO-027 scenario 89 @data-integrity: stale or expired approvals cannot mutate after session state changes', async ({ page }, testInfo) => runPhase6Oracle(testInfo, 'SO-006 SO-008 SO-027 scenario 89 stale and expired approvals cannot mutate', page, async ({ initial, setSessionId }) => {
     await openChat(page)
     await sendPrompt(page, 'Run Phase 14 stale approval seeded job update')
@@ -778,6 +903,9 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
         predicate: (event) => event.event_type === 'approval_decided' && event.approval_id === expired.approval_id && event.status === 'EXPIRED',
       },
     ])
+    await expect
+      .poll(async () => visibleText(page), { timeout: 30_000 })
+      .toContain('Expired approval fixture')
     expectFinalSummaryClaimsOnly(await visibleText(page), {
       mustInclude: ['Expired approval fixture'],
       mustExclude: [/Run complete/i, /unexpectedly applied/i, /Factory Agent needs attention/i],
@@ -874,21 +1002,172 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     })
   }))
 
-  test('SO-030 @data-integrity: stream drop recovers by polling without stale final success', async ({ page }, testInfo) => runPhase6Oracle(testInfo, 'SO-030 stream drop polling recovery', page, async ({ setSessionId }) => {
+  test('SO-029 @data-integrity: Go API 500 mid-run fails safely without mutation or audit rows', async ({ page }, testInfo) => runPhase6Oracle(testInfo, 'SO-029 Go API 500 mid-run safe failure', page, async ({ initial, setSessionId }) => {
     await openChat(page)
-    await sendPrompt(page, 'Run Phase 9 stream drop recovery seeded machine workflow')
+    await sendPrompt(page, 'Run Phase 14 Go API 500 commit failure for JOB-SEED-001')
     const sessionId = await activeSessionId(page)
     setSessionId(sessionId)
 
+    const approval = await pendingApprovalMatching(page, 'go_api_500_high_to_medium')
+    await expectApprovalRowMatches(approval, {
+      status: 'PENDING',
+      writeSet: 'go_api_500_high_to_medium',
+      kind: 'phase14_go_api_500',
+      jobIds: ['JOB-SEED-001'],
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: 1,
+    })
+    await expectSnapshotApprovalState(page, { status: 'WAITING_APPROVAL', pendingApprovalId: approval.approval_id })
+    expect(await priorityForJob('JOB-SEED-001')).toBe('high')
+    await expectRowsUnchangedFromInitial(initial.rowsById, Object.keys(canonicalJobPriorities))
+    expect(await dataIntegrityAudit(sessionId)).toEqual([])
+    await expect(page.getByText(/Run complete/i)).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Approve' }).click()
+    await waitForSessionStatus(page, 'FAILED')
+    await expectApprovalRowMatches(approval.approval_id, {
+      status: 'APPROVED',
+      writeSet: 'go_api_500_high_to_medium',
+      kind: 'phase14_go_api_500',
+      jobIds: ['JOB-SEED-001'],
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: 1,
+    })
+    await expectSnapshotApprovalState(page, { status: 'FAILED', pendingApprovalId: null })
+    expect(await priorityForJob('JOB-SEED-001')).toBe('high')
+    await expectRowsUnchangedFromInitial(initial.rowsById, Object.keys(canonicalJobPriorities))
+    expect(await dataIntegrityAudit(sessionId)).toEqual([])
+
+    const snapshot = await snapshotForPage(page)
+    expect(snapshot.session.status).toBe('FAILED')
+    expect(timelineText(snapshot)).toContain('database unavailable')
+    expect(timelineText(snapshot)).not.toContain('Updated **1** job')
+    expect(timelineText(snapshot)).not.toContain('Priority: **medium**')
+    expectTimelineEvidenceInOrder(snapshot, [
+      {
+        label: `approval requested ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_required' && event.approval_id === approval.approval_id,
+      },
+      {
+        label: `approval decided ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_decided' && event.approval_id === approval.approval_id && event.status === 'APPROVED',
+      },
+      {
+        label: 'Go API 500 failure evidence',
+        predicate: (event) =>
+          event.event_type === 'tool_result' &&
+          event.status === 'FAILED' &&
+          String(event.content || '').includes('database unavailable'),
+      },
+      {
+        label: 'terminal failed session evidence',
+        predicate: (event) => event.event_type === 'session_failed' && event.status === 'FAILED',
+      },
+    ])
+    await expect
+      .poll(async () => visibleText(page), { timeout: 30_000 })
+      .toContain('Please retry')
+    expectFinalSummaryClaimsOnly(await visibleText(page), {
+      mustInclude: ['Could not complete', 'database unavailable', 'Please retry'],
+      mustExclude: [/Run complete/i, /JOB-SEED-001 is now medium/i, /1 high priority job changed/i, /all requested changes completed/i],
+    })
+  }))
+
+  test('SO-030 @data-integrity: stream drop recovers by polling without stale final success', async ({ page }, testInfo) => runPhase6Oracle(testInfo, 'SO-030 stream drop polling recovery', page, async ({ initial, setSessionId }) => {
+    await openChat(page)
+    await sendPrompt(page, 'Run Phase 14 stream drop commit recovery for original high jobs to medium')
+    const sessionId = await activeSessionId(page)
+    setSessionId(sessionId)
+
+    const approval = await pendingApprovalMatching(page, 'stream_drop_high_to_medium')
+    await expectApprovalRowMatches(approval, {
+      status: 'PENDING',
+      writeSet: 'stream_drop_high_to_medium',
+      kind: 'phase14_stream_drop_commit',
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: originalHighJobIds.length,
+    })
+    await expectSnapshotApprovalState(page, { status: 'WAITING_APPROVAL', pendingApprovalId: approval.approval_id })
+    await expect
+      .poll(async () => (await sseConnections(sessionId)).some((entry) => entry.stream === 'notification' && entry.event === 'seeded_drop'), { timeout: 10_000 })
+      .toBe(true)
+    await expect(page.getByText(/Run complete/i)).toHaveCount(0)
+    expect(await currentPriorityMap()).toEqual(initial.priorities)
+    expectNoSuccessfulAudit(await dataIntegrityAudit(sessionId))
+
+    await page.getByRole('button', { name: 'Approve' }).click()
+    await expect
+      .poll(async () => (await snapshotForPage(page)).session.status, { timeout: 5_000 })
+      .toBe('EXECUTING')
+    await expect(page.getByText(/Run complete/i)).toHaveCount(0)
+
     await waitForSessionStatus(page, 'COMPLETED')
-    await expect(page.getByText('Run complete').first()).toBeVisible()
+    await expect(page.getByText('Run complete').first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/Phase 14 stream drop commit recovered from polling after terminal snapshot/i).first()).toBeVisible()
+    await expectApprovalRowMatches(approval.approval_id, {
+      status: 'APPROVED',
+      writeSet: 'stream_drop_high_to_medium',
+      kind: 'phase14_stream_drop_commit',
+      jobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'high',
+      count: originalHighJobIds.length,
+    })
+    await expectSnapshotApprovalState(page, { status: 'COMPLETED', pendingApprovalId: null })
+    expect(await currentPriorityMap()).toEqual(expectedPriorityMapForCascade([{ source: 'high', target: 'medium' }]))
+    await expectRowsUnchangedFromInitial(initial.rowsById, [...originalLowJobIds, ...originalMediumJobIds])
+
+    const audit = await dataIntegrityAudit(sessionId)
+    expectAuditCommit(audit, {
+      scenario: 'SO-030',
+      writeSet: 'stream_drop_high_to_medium',
+      approvalId: approval.approval_id,
+      succeededJobIds: originalHighJobIds,
+      requestedPriority: 'medium',
+    })
 
     const snapshot = await snapshotForPage(page)
     expect(snapshot.session.status).toBe('COMPLETED')
     expect(activityText(snapshot)).toContain('Run complete')
-    expect(timelineText(snapshot)).toContain('Phase 9 stream drop recovered by snapshot polling')
+    expect(timelineText(snapshot)).toContain('Phase 14 stream drop commit recovered from polling after terminal snapshot')
+    expect(approvalIdsFromTimeline(snapshot).has(approval.approval_id)).toBe(true)
+    expectTimelineEvidenceInOrder(snapshot, [
+      {
+        label: `approval requested ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_required' && event.approval_id === approval.approval_id,
+      },
+      {
+        label: `approval decided ${approval.approval_id}`,
+        predicate: (event) => event.event_type === 'approval_decided' && event.approval_id === approval.approval_id && event.status === 'APPROVED',
+      },
+      {
+        label: 'stream-drop commit evidence',
+        predicate: (event) =>
+          event.event_type === 'tool_result' &&
+          (event.approval_id === approval.approval_id || event.details?.result?.approval_id === approval.approval_id) &&
+          String(event.content || '').includes('after terminal snapshot'),
+      },
+      {
+        label: 'terminal completion evidence',
+        predicate: (event) => event.event_type === 'session_completed' && event.status === 'COMPLETED',
+      },
+    ])
+    await expect
+      .poll(async () => {
+        const streams = new Set((await sseConnections(sessionId)).map((entry) => entry.stream))
+        return streams.has('notification')
+      })
+      .toBe(true)
+    expectFinalSummaryClaimsOnly(await finalAssistantText(sessionId), {
+      mustInclude: ['Phase 14 stream drop commit recovered from polling after terminal snapshot', approval.approval_id],
+      mustExclude: [/fake completion/i, /stream lost/i, /Factory Agent needs attention/i],
+    })
     expectFinalSummaryClaimsOnly(await visibleText(page), {
-      mustInclude: ['Run complete'],
+      mustInclude: ['Run complete', 'Phase 14 stream drop commit recovered from polling after terminal snapshot'],
       mustExclude: [/stream lost/i, /fake completion/i, /Factory Agent needs attention/i],
     })
   }))

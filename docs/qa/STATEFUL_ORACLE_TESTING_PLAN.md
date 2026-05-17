@@ -862,6 +862,18 @@ Rollback notes:
 - If this phase accidentally weakens confidence, restore the removed or downgraded test and record why the overlap was useful.
 - If a future manual bug escapes because a test was classified as duplicate, reopen Phase 13 and promote that failure into a canonical or supporting oracle.
 
+### Phase 13 Next Batch Application
+
+The next chatbot automation batch applies the quality gate to the highest-risk remaining gaps instead of adding prompt-volume tests:
+
+| SO | Decision | Lowest useful layer | Browser? | Real LangGraph? | Coverage category |
+|---|---|---|---|---|---|
+| SO-018 | Strengthen active-refresh proof so the same pending approval id, single approval card, staged bundle, DB rows, and audit rows survive refresh and mutate only after approval. | Seeded browser | Yes | No | `canonical` |
+| SO-030 | Strengthen stream-drop recovery proof so polling cannot fabricate success before terminal snapshot, and timeline/snapshot/final/UI agree after commit. | Seeded full-stack | Yes | No | `canonical` |
+| SO-029 | Promote approved mid-run Go API 500 to seeded full-stack proof: no generic success, no data-integrity audit rows, unchanged DB rows, and visible retry guidance. | Seeded full-stack plus frontend unit | Yes | No | `canonical` |
+| SO-020 | Strengthen the existing empty-final browser/component proof so empty terminal content renders an explicit diagnostic, not stale prior answer text or generic fake success. | Frontend unit | Yes | No | `supporting` |
+| SO-021 / SO-025 | Do not add new real LangGraph/browser wording variants in this batch. Current parser/route and seeded browser coverage remain canonical unless a planner/RAG miss escapes seeded coverage. | Parser/route | Existing seeded browser only | No | `canonical` |
+
 ## First Critical Scenario Set
 
 Implement these before claiming manual chatbot testing is retired.

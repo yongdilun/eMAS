@@ -140,6 +140,28 @@
     "seeded_browser"
   ],
   "weakness_from_phase0": "Route selection tests can pass with a selected tool name only; this oracle proves the selected route, source evidence, final response, and UI all reflect LOTO rather than status.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A route-confusion prompt can return plausible machine status text instead of the requested lockout/tagout procedure and source evidence.",
+    "existing_test_that_would_miss_it": "SO-021 proves machine-id LOTO extraction but would not fail if an explicit 'not current status' prompt still chose the machine status route.",
+    "lowest_useful_layer": "route_pytest",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No new real LangGraph coverage in this batch because seeded route/browser coverage exercises the route/source projection bug; real LangGraph should be added only if seeded adapters hide planner route or RAG source behavior.",
+    "required_positive_evidence": [
+      "LOTO/RAG route selected",
+      "M-CNC-01 retained",
+      "lockout/tagout source evidence is visible",
+      "machine status route is absent",
+      "machine state unchanged"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Status: running",
+      "currently running",
+      "machine status only",
+      "Which machine"
+    ],
+    "coverage_category": "canonical"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract",

@@ -566,7 +566,7 @@ class PlanCreationService:
         await db.commit()
 
         bundle_markdown = ""
-        if str(status) == "COMPLETED" and str(kind) == "execution" and tool_outputs:
+        if str(status) == "COMPLETED" and str(kind) == "execution" and tool_outputs and not first_failed_summary:
             try:
                 tool_outputs_compact = compact_tool_outputs_for_narrative(tool_outputs)
                 bundle = await self._summary_adapter.synthesize_bundle_markdown(

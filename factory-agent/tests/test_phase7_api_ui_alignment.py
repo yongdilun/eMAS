@@ -461,6 +461,117 @@ async def test_phase7_completed_session_without_completed_at_gets_terminal_timel
 
 
 @pytest.mark.asyncio
+async def test_phase7_failed_session_plan_event_uses_failure_guidance_not_stale_success(sessionmaker_override, db_session):
+    session_id = "phase7-failed-no-stale-success"
+    plan_id = "phase7-failed-plan"
+    step_id = "phase7-failed-step"
+    created_at = datetime(2026, 5, 16, 10, 0, 0)
+    plan_at = created_at + timedelta(seconds=1)
+    failed_at = created_at + timedelta(seconds=3)
+    safe_guidance = (
+        "Could not complete the requested job priority change because the Go API returned "
+        "database unavailable. No job rows were changed and no audit rows were created. "
+        "Please retry after the backend recovers."
+    )
+
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="FAILED",
+            current_intent="Run Phase 14 Go API 500 commit failure for JOB-SEED-001",
+            plan_id=plan_id,
+            plan_version=1,
+            plan_hash="phase7-failed-hash",
+            current_step_index=0,
+            step_count=1,
+            llm_call_count=0,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=failed_at,
+            completed_at=None,
+            error="HTTP 500: database unavailable",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-failed-user",
+            session_id=session_id,
+            role="user",
+            content="Run Phase 14 Go API 500 commit failure for JOB-SEED-001",
+            mode="normal",
+            created_at=created_at,
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="COMPLETED",
+            dependency_graph={"0": []},
+            parallel_groups=[],
+            plan_hash="phase7-failed-hash",
+            plan_explanation=safe_guidance,
+            risk_summary="Seeded Go API 500 failure must fail safely.",
+            created_at=plan_at,
+            created_by="seeded-fake",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-failed-stale-plan-message",
+            session_id=session_id,
+            role="assistant",
+            content="**Success**\n\nUpdated **1** job(s).\n\nPriority: **medium**",
+            mode="normal",
+            tool_name="__plan__",
+            step_id=plan_id,
+            created_at=plan_at,
+        )
+    )
+    db_session.add(
+        PlanStep(
+            step_id=step_id,
+            plan_id=plan_id,
+            session_id=session_id,
+            step_index=0,
+            tool_name="put__jobs_{id}",
+            args={"id": "JOB-SEED-001", "priority": "medium"},
+            bindings=[],
+            status="FAILED",
+            idempotency_key="phase7-failed-idempotency",
+            requires_approval=True,
+            retry_count=0,
+            max_retries=3,
+            completed_at=failed_at,
+            last_error="HTTP 500: database unavailable",
+            result={"error": "database unavailable"},
+            result_summary=safe_guidance,
+        )
+    )
+    await db_session.commit()
+
+    app = await _make_phase7_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["status"] == "FAILED"
+    plan_events = [event for event in body["timeline"] if event["event_type"] == "plan_created"]
+    assert plan_events
+    assert "Could not complete" in plan_events[-1]["content"]
+    assert "database unavailable" in plan_events[-1]["content"]
+    assert "Please retry" in plan_events[-1]["content"]
+    assert "**Success**" not in plan_events[-1]["content"]
+    assert "Updated **1** job" not in plan_events[-1]["content"]
+    failed_events = [event for event in body["timeline"] if event["event_type"] == "session_failed"]
+    assert failed_events[-1]["content"] == "HTTP 500: database unavailable"
+
+
+@pytest.mark.asyncio
 async def test_phase7_completed_graph_checkpoint_prefers_result_summary_over_plan_prose(sessionmaker_override, db_session):
     session_id = "phase7-completed-result-summary"
     created_at = datetime(2026, 5, 13, 10, 44, 22)

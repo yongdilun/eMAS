@@ -1451,6 +1451,76 @@ Next action:
 
 Start the next scenario implementation batch using the Phase 13 quality gate: add a new scenario only when it names a distinct product bug, lowest useful layer, required evidence, and forbidden stale evidence.
 
+## Phase 13 Next Chatbot Oracle Risk Group
+
+Scenarios changed:
+
+- `SO-018`: added canonical seeded browser proof for refresh during active approval. It now checks same pending approval id, one approval card, restored staged bundle, no DB/audit mutation before approval, and exactly one commit/audit set after approval.
+- `SO-030`: strengthened seeded stream-drop recovery from read-only/polling proof to mutating commit proof. It now checks seeded notification drop, no final UI before terminal snapshot, DB/audit rows after approval, and timeline/snapshot/final/UI agreement.
+- `SO-029`: promoted approved Go API 500 from plan-start mock coverage to canonical seeded full-stack commit-failure coverage. It now requires failed session/snapshot, unchanged rows, no data-integrity audit rows, failed timeline evidence, and visible retry guidance.
+- `SO-020`: strengthened empty-final coverage at frontend unit/component plus mocked browser. Empty terminal content now renders an explicit empty-response diagnostic and does not reuse prior answer text or generic `Execution completed.`.
+- `SO-021` / `SO-025`: recorded the Phase 13 decision not to add real LangGraph or extra browser wording variants in this batch. Parser/route plus seeded browser remain canonical until seeded coverage hides a real planner/RAG miss.
+
+Bugs found and fixed:
+
+- `SO-029` exposed a real product bug: after an approved Go API 500, the persisted/snapshot plan message could be overwritten with stale success-shaped recap text. Fixed by skipping completed bundle narration for failed tool outputs and by guarding failed-session snapshot plan content against stale success messages.
+- `SO-029` also exposed a UI assembly gap: failed sessions preferred a terse terminal error over the safe plan diagnostic. Fixed by making failed turn summaries prefer safe plan explanation/tool failure detail and by adding component/browser assertions for database-unavailable retry guidance.
+- `SO-020` exposed that empty completed assistant content used the fake generic `Execution completed.` fallback. Fixed with an explicit empty-result diagnostic in turn assembly and fixture/browser coverage.
+- The full seeded sweep exposed three test-stability gaps outside the new scenario group: streamed final text was asserted before completion in scenario 89 and prompt workflow matrix checks, and SO-014 asserted hidden detail text as visible. Stabilized those tests without changing product behavior.
+
+Commands run:
+
+```powershell
+git status --short --branch
+
+Set-Location "factory-agent"
+python -m pytest tests/test_phase7_api_ui_alignment.py::test_phase7_failed_session_plan_event_uses_failure_guidance_not_stale_success -q
+python -m pytest tests/test_stateful_oracle_schema.py tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract -q
+python -m pytest tests/test_stateful_oracle_schema.py tests/test_phase18_manual_prompt_bank.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_phase19_prompt_workflow_regression.py -q
+
+Set-Location "..\eMas Front"
+node --test --test-concurrency=1 "src/components/features/chat/turns/turnAssembler.test.mjs"
+node --test --test-concurrency=1 "src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs"
+node --check "src/components/features/chat/turns/turnAssembler.js"
+node --check "e2e/specs/chat-fixtures.spec.js"
+node --check "e2e/specs/full-stack-data-integrity.spec.js"
+node --check "e2e/specs/full-stack-prompt-workflow-regression.spec.js"
+node --check "e2e/specs/full-stack-sse-hard.spec.js"
+npm test
+npx playwright test e2e/specs/chat-fixtures.spec.js --grep "empty assistant"
+npx playwright test e2e/specs/full-stack-data-integrity.spec.js --project=chromium-seeded --grep "SO-018|SO-029|SO-030"
+npx playwright test e2e/specs/chat-stream-errors.spec.js --grep "SO-030"
+npx playwright test e2e/specs/full-stack-data-integrity.spec.js --project=chromium-seeded --grep "SO-006/SO-008/SO-027"
+npx playwright test e2e/specs/full-stack-prompt-workflow-regression.spec.js --project=chromium-seeded --grep "SO-002|SO-001|SO-041"
+npx playwright test e2e/specs/full-stack-sse-hard.spec.js --project=chromium-seeded --grep "scenario 47"
+npm run test:e2e:seeded-oracles
+```
+
+Results:
+
+```text
+Backend focused SO-029 snapshot regression: 1 passed.
+Oracle schema plus all snapshot/final-response contracts: 30 passed.
+Backend requested gate: 77 passed, warnings only.
+Frontend turn assembler focused tests: 12 passed.
+Frontend FactoryAgentChatPanel component tests: 9 passed.
+Frontend npm test: 63 passed.
+SO-020 mocked browser fixture: 1 passed.
+SO-018/SO-029/SO-030 seeded data-integrity grep: 4 passed.
+SO-030 stream-error supporting browser: 1 passed.
+Stabilized focused reruns for scenario 89, prompt workflow SO-001/SO-002/SO-041, and SO-014 scenario 47: all passed.
+Seeded oracle suite: 20 passed.
+```
+
+Remaining gaps:
+
+- No real LangGraph run was added for `SO-021` / `SO-025`; keep that as an opt-in addition only if seeded parser/route/RAG coverage hides real planner or source behavior.
+- `SO-030` now proves notification stream drop plus polling recovery with a mutating seeded commit, but it does not kill and restart the Factory Agent process. Add a process-restart proof only if release evidence shows polling can diverge from persisted terminal snapshot after actual restart.
+
+Next action:
+
+Continue with the next Phase 13-ranked group only if it proves a distinct product bug: likely large structured results/long heartbeat operations/cross-session leakage before adding any more LOTO wording volume.
+
 ## Commands Run
 
 Latest Phase 11 implementation and verification:

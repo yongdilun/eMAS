@@ -63,6 +63,8 @@ test.describe('Factory Agent chat scenario fixtures', () => {
 
     await expect(page.getByText(emptyAssistantFallbackAnswer).last()).toBeVisible()
     await expect(page.getByText(machineStatusAnswer)).toHaveCount(existingMachineAnswerCount)
+    await expect(page.getByText('Execution completed.')).toHaveCount(0)
+    await expect(page.getByText('Factory Agent needs attention')).toHaveCount(0)
 
     await expect
       .poll(async () => {

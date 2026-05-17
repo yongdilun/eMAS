@@ -105,6 +105,17 @@ Review cadence: the QA regression bank owner reviews new entries and accepted ga
 |---|---|---|---|
 | `phase12-so005-medium-high-high-low-reject-approval-2` | Same prompt, approve approval 1, reject approval 2. | Original medium jobs commit to high, original high jobs remain high instead of changing to low, approval 2 is `REJECTED`, visible UI says the second approval was rejected or stopped, no stale full-success text is shown, and no approval-2 audit rows exist. | SO-005 oracle, backend graph/snapshot contracts, dedicated seeded browser DOM/data-integrity proof |
 
+## Phase 13 Next Risk Group
+
+This batch does not add new LOTO wording variants. SO-021 and SO-025 stay at parser/route plus seeded browser because the current bugs are extraction, route selection, source projection, and visible stale route evidence. A new real LangGraph browser proof is reserved for a future miss where seeded adapters hide planner route, RAG retrieval, tool selection, or live integration behavior.
+
+| ID | Prompt / flow | Expected deterministic behavior | Coverage |
+|---|---|---|---|
+| `phase13-so018-active-refresh-approval` | Start high-to-medium job approval, refresh while approval is pending, then approve. | Restore the same pending approval id and staged bundle after refresh, show exactly one approval card, keep DB/audit unchanged until approval, and commit/audit once after approval. | SO-018 oracle, seeded full-stack browser |
+| `phase13-so030-stream-drop-commit-recovery` | Start high-to-medium job approval, drop notification stream during execution, recover by polling. | Do not fabricate final success before terminal snapshot; after approval, DB rows, audit rows, timeline, snapshot, final response, and UI agree. | SO-030 oracle, seeded full-stack browser plus stream-error supporting browser |
+| `phase13-so029-go-api-500-approved-commit` | Approve a high-to-medium job change whose Go API write returns 500. | Fail safely with unchanged rows, no data-integrity audit rows, failed snapshot/timeline evidence, and visible database-unavailable retry guidance without stale success copy. | SO-029 oracle, backend snapshot regression, frontend turn/component tests, seeded full-stack browser |
+| `phase13-so020-empty-final-diagnostic` | Completed run returns empty assistant content after a previous completed answer. | Render an explicit empty-result diagnostic and do not reuse the previous answer or generic `Execution completed.` fallback. | SO-020 oracle, frontend turn/component tests, mocked browser |
+
 ## Future Scenario Quality Gate
 
 Before adding a new prompt or SO scenario, answer these questions in the bank entry, oracle file, or tracker:

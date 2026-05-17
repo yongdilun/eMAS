@@ -7,7 +7,8 @@ export const backendUnavailablePrompt = 'Simulate backend unavailable during pla
 
 export const emptyAssistantPrompt = 'Return an empty completed answer'
 
-export const emptyAssistantFallbackAnswer = 'Execution completed.'
+export const emptyAssistantFallbackAnswer =
+  'Unable to render final response. The run completed, but the backend returned empty assistant content.'
 
 export const notificationSsePrompt = 'Validate notification SSE refresh for M-CNC-01'
 

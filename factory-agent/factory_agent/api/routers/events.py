@@ -37,6 +37,7 @@ def _record_seeded_sse_connection(
     stream: str,
     session_id: str,
     last_event_id: str | None,
+    event: str = "open",
 ) -> None:
     if not _seeded_playwright_mode():
         return
@@ -49,6 +50,7 @@ def _record_seeded_sse_connection(
             "stream": stream,
             "session_id": session_id,
             "last_event_id": last_event_id,
+            "event": event,
             "at": datetime.utcnow().isoformat() + "Z",
         }
     )
@@ -358,6 +360,7 @@ def build_events_router(
                 if not (
                     _snapshot_intent_contains(snapshot, "phase 9 last-event-id reconnect")
                     or _snapshot_intent_contains(snapshot, "phase 9 stream drop recovery")
+                    or _snapshot_intent_contains(snapshot, "phase 14 stream drop commit recovery")
                 ):
                     return False
                 faults = getattr(request.app.state, "playwright_seeded_sse_faults", None)
@@ -368,6 +371,13 @@ def build_events_router(
                 if key in faults:
                     return False
                 faults.add(key)
+                _record_seeded_sse_connection(
+                    request,
+                    stream="notification",
+                    session_id=session_id,
+                    last_event_id=last_event_id,
+                    event="seeded_drop",
+                )
                 return True
 
             initial = await _fresh_snapshot()

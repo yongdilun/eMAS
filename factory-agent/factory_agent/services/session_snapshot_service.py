@@ -138,6 +138,52 @@ def _is_operator_result_text(value: str | None) -> bool:
     return not _looks_like_raw_json_text(text) and not _is_plan_like_completion_text(text)
 
 
+def _is_success_like_plan_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        text.startswith("**success**")
+        or "updated **" in text
+        or "all requested changes completed" in text
+        or "run complete" in text
+    )
+
+
+def _is_failure_guidance_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "could not complete" in text
+        or "failed" in text
+        or "database unavailable" in text
+        or "please retry" in text
+    )
+
+
+def _plan_timeline_content(
+    *,
+    session_status: str | None,
+    plan_row: PlanRow,
+    plan_message: MessageRow | None,
+) -> str:
+    content = (
+        plan_message.content
+        if plan_message and plan_message.content
+        else (plan_row.plan_explanation or "Execution plan created.")
+    )
+    explanation = plan_row.plan_explanation or ""
+    if (
+        str(session_status or "").upper() == "FAILED"
+        and explanation
+        and _is_failure_guidance_text(explanation)
+        and _is_success_like_plan_text(content)
+    ):
+        return explanation
+    return content
+
+
 _TIMELINE_EVENT_PRIORITY = {
     "user_message": 0,
     "plan_created": 1,
@@ -907,10 +953,10 @@ class SessionSnapshotService:
             if plan_message is None and idx < len(unscoped_plan_messages):
                 plan_message = unscoped_plan_messages[idx]
             plan_event_created_at = _plan_timeline_created_at(plan_row)
-            content = (
-                plan_message.content
-                if plan_message and plan_message.content
-                else (plan_row.plan_explanation or "Execution plan created.")
+            content = _plan_timeline_content(
+                session_status=sess.status,
+                plan_row=plan_row,
+                plan_message=plan_message,
             )
             events.append(
                 _timeline_event(

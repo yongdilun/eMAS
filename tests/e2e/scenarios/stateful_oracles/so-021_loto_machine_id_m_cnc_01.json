@@ -142,6 +142,28 @@
     "seeded_browser"
   ],
   "weakness_from_phase0": "LOTO wording regressions were covered mostly by seeded parser/browser paths; this oracle requires exact machine-id extraction, RAG routing, source projection, and no repeat clarification.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "LOTO prompts that include M-CNC-01 can still ask for the machine id again, route to machine status, or omit RAG/source evidence.",
+    "existing_test_that_would_miss_it": "A browser-only wording variant can pass on controlled text while parser/route extraction regresses; generic source rendering checks can miss repeated machine-id clarification.",
+    "lowest_useful_layer": "parser_route",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No new real LangGraph coverage in this batch because the current parser/route tests exercise the actual deterministic route extraction, and the seeded browser proof covers source projection; a wording-only variant would be a duplicate candidate until a planner/tool-selection miss escapes.",
+    "required_positive_evidence": [
+      "M-CNC-01 extracted",
+      "LOTO/RAG route selected",
+      "source id projects to snapshot and UI",
+      "no approval required",
+      "machine state unchanged"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Which machine",
+      "provide the machine ID",
+      "machine status-only route",
+      "No tools allowed"
+    ],
+    "coverage_category": "canonical"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract",

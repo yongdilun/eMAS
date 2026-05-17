@@ -233,8 +233,18 @@ async function runCascadeInvariant(page, scenario, testInfo) {
     mustExclude: [/Factory Agent needs attention/i, /Run complete before approval/i],
   })
   await expect
-    .poll(async () => visibleText(page), { timeout: 30_000 })
-    .toContain('Phase 19 cascade matrix complete')
+    .poll(
+      async () => {
+        const text = await visibleText(page)
+        return (
+          text.includes('Phase 19 cascade matrix complete') &&
+          text.includes(`${firstChange.source}->${firstChange.target} ${firstJobIds.length}`) &&
+          text.includes(`${secondChange.source}->${secondChange.target} ${secondJobIds.length}`)
+        )
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true)
   expectFinalSummaryClaimsOnly(await visibleText(page), {
     mustInclude: [
       'Run complete',

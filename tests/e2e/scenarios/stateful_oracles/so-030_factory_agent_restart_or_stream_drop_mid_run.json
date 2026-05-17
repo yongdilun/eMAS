@@ -197,6 +197,29 @@
     "playwright"
   ],
   "weakness_from_phase0": "Resilience tests could pass on eventual text alone; this oracle ties stream drop, polling fallback, terminal snapshot, audit rows, final response, and unchanged rows.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A dropped notification stream or Factory Agent restart can make polling fabricate final success before the terminal snapshot or make the final UI disagree with the DB/audit timeline.",
+    "existing_test_that_would_miss_it": "eMas Front/e2e/specs/chat-stream-errors.spec.js::SO-030 notification stream drop proves the mocked stream does not show a final answer while disconnected, but it cannot prove DB mutation, audit rows, terminal snapshot ordering, or final/timeline agreement.",
+    "lowest_useful_layer": "seeded_full_stack",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "required_positive_evidence": [
+      "seeded notification stream drop is recorded",
+      "no visible final response before approval/terminal snapshot",
+      "approval id is approved",
+      "DB rows change only after approval",
+      "audit rows match the committed approval bundle",
+      "timeline, snapshot, final assistant message, and visible UI agree"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Run complete before terminal snapshot",
+      "fake completion",
+      "missing audit rows after committed success",
+      "snapshot/final response mismatch",
+      "Factory Agent needs attention on recovered success"
+    ],
+    "coverage_category": "canonical"
+  },
   "executable_enforcement": {
     "pytest": [
       "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"

@@ -107,6 +107,9 @@ class SeededPlaywrightPlanner:
             "phase14_cascade_priority": "phase14_cascade",
             "phase14_partial_failure": "phase14_partial_failure",
             "phase14_idempotent_replay": "phase14_idempotent_replay",
+            "phase14_refresh_active_approval": "phase14_refresh_active_approval",
+            "phase14_stream_drop_commit": "phase14_stream_drop_commit",
+            "phase14_go_api_500": "phase14_go_api_500",
             "phase14_stale_approval": "phase14_stale_approval",
             "phase14_expired_approval": "phase14_expired_approval",
             "phase14_agreement": "phase14_agreement",
@@ -335,6 +338,18 @@ class SeededPlaywrightPlanner:
             self._scenario_by_session[session_id] = "phase14_idempotent_replay"
             return await self._phase14_start_idempotent_replay(session_id=session_id)
 
+        if "phase 14 refresh during active approval" in lowered:
+            self._scenario_by_session[session_id] = "phase14_refresh_active_approval"
+            return await self._phase14_start_refresh_active_approval(session_id=session_id)
+
+        if "phase 14 stream drop commit recovery" in lowered:
+            self._scenario_by_session[session_id] = "phase14_stream_drop_commit"
+            return await self._phase14_start_stream_drop_commit(session_id=session_id)
+
+        if "phase 14 go api 500 commit failure" in lowered:
+            self._scenario_by_session[session_id] = "phase14_go_api_500"
+            return await self._phase14_start_go_api_500(session_id=session_id)
+
         if "phase 14 stale approval" in lowered:
             self._scenario_by_session[session_id] = "phase14_stale_approval"
             return await self._phase14_start_stale_approval(session_id=session_id, expired=False)
@@ -465,6 +480,12 @@ class SeededPlaywrightPlanner:
             return await self._phase14_resume_partial_failure(session_id=session_id)
         if scenario == "phase14_idempotent_replay":
             return await self._phase14_resume_idempotent_replay(session_id=session_id)
+        if scenario == "phase14_refresh_active_approval":
+            return await self._phase14_resume_refresh_active_approval(session_id=session_id)
+        if scenario == "phase14_stream_drop_commit":
+            return await self._phase14_resume_stream_drop_commit(session_id=session_id)
+        if scenario == "phase14_go_api_500":
+            return await self._phase14_resume_go_api_500(session_id=session_id)
         if scenario in {"phase14_stale_approval", "phase14_expired_approval"}:
             return await self._phase14_resume_stale_or_expired(session_id=session_id, scenario=scenario)
         if scenario == "phase14_agreement":
@@ -1219,6 +1240,243 @@ class SeededPlaywrightPlanner:
             risk="Phase 14 idempotency fixture applies a single approved mutation once.",
             approval_id=approval_id,
             outcomes=outcomes,
+        )
+
+    async def _phase14_start_refresh_active_approval(self, *, session_id: str) -> PlannerResult:
+        rows = await self._seed_job_rows()
+        target_ids = [
+            str(row.get("job_id"))
+            for row in rows
+            if row.get("job_id") and str(row.get("priority") or "").lower() == "high"
+        ]
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario="phase14_refresh_active_approval",
+            job_ids=target_ids,
+            requested_priority="medium",
+        )
+        raise PlannerApprovalRequired(
+            "Phase 14 refresh-active approval required.",
+            approval={
+                "summary": (
+                    f"Phase 14 refresh check: {len(target_ids)} original high-priority job(s) "
+                    "will become medium after the browser refreshes."
+                ),
+                "count": len(target_ids),
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "medium"}}
+                    for job_id in target_ids
+                ],
+                "bundle_ui": {
+                    "kind": "phase14_refresh_active_approval",
+                    "write_set": "original_high_to_medium_refresh",
+                    "headline": "Approval required: original HIGH-priority jobs will become MEDIUM after refresh.",
+                    "rows": [
+                        {
+                            "job_id": job_id,
+                            "original_priority": "high",
+                            "new_priority": "medium",
+                        }
+                        for job_id in target_ids
+                    ],
+                },
+            },
+        )
+
+    async def _phase14_resume_refresh_active_approval(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        if state.get("applied"):
+            return self._phase14_duplicate_resume_result(
+                scenario="SO-018",
+                summary="Phase 14 refresh-active approval replay was ignored because the mutation already applied once.",
+            )
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        target_ids = list(state.get("job_ids") or [])
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="SO-018",
+            write_set="original_high_to_medium_refresh",
+            approval_id=approval_id,
+            job_ids=target_ids,
+            requested_priority="medium",
+            original_priorities=original,
+        )
+        state["applied"] = True
+        succeeded = [row for row in outcomes if row.get("status") == "succeeded"]
+        summary = (
+            f"Phase 14 refresh active approval complete: {len(succeeded)} high priority jobs changed to medium "
+            f"exactly once. Approval id: {approval_id}."
+        )
+        step = PlanStepDraft(
+            step_index=0,
+            tool_name="put__jobs_{id}",
+            args={"write_set": "original_high_to_medium_refresh", "priority": "medium", "approval_id": approval_id},
+        )
+        return self._plan_result(
+            explanation=summary,
+            risk="Phase 14 refresh-active fixture applies the restored pending approval bundle once.",
+            steps=[step],
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": step.args,
+                    "result": {"summary": summary, "approval_id": approval_id, "outcomes": outcomes},
+                    "http_status": 200,
+                    "summary": summary,
+                    "status": "DONE",
+                }
+            ],
+        )
+
+    async def _phase14_start_stream_drop_commit(self, *, session_id: str) -> PlannerResult:
+        rows = await self._seed_job_rows()
+        target_ids = [
+            str(row.get("job_id"))
+            for row in rows
+            if row.get("job_id") and str(row.get("priority") or "").lower() == "high"
+        ]
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario="phase14_stream_drop_commit",
+            job_ids=target_ids,
+            requested_priority="medium",
+        )
+        raise PlannerApprovalRequired(
+            "Phase 14 stream-drop commit approval required.",
+            approval={
+                "summary": (
+                    f"Phase 14 stream drop recovery: {len(target_ids)} original high-priority job(s) "
+                    "will become medium after polling observes the terminal snapshot."
+                ),
+                "count": len(target_ids),
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": job_id, "priority": "medium"}}
+                    for job_id in target_ids
+                ],
+                "bundle_ui": {
+                    "kind": "phase14_stream_drop_commit",
+                    "write_set": "stream_drop_high_to_medium",
+                    "headline": "Approval required: stream-drop recovery will change original HIGH jobs to MEDIUM.",
+                    "rows": [
+                        {
+                            "job_id": job_id,
+                            "original_priority": "high",
+                            "new_priority": "medium",
+                        }
+                        for job_id in target_ids
+                    ],
+                },
+            },
+        )
+
+    async def _phase14_resume_stream_drop_commit(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        if state.get("applied"):
+            return self._phase14_duplicate_resume_result(
+                scenario="SO-030",
+                summary="Phase 14 stream-drop commit replay was ignored because terminal evidence already existed.",
+            )
+        await asyncio.sleep(2.0)
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        original = state.get("original_priorities") if isinstance(state.get("original_priorities"), dict) else {}
+        target_ids = list(state.get("job_ids") or [])
+        outcomes = await self._phase14_apply_priority_updates(
+            session_id=session_id,
+            scenario="SO-030",
+            write_set="stream_drop_high_to_medium",
+            approval_id=approval_id,
+            job_ids=target_ids,
+            requested_priority="medium",
+            original_priorities=original,
+        )
+        state["applied"] = True
+        succeeded = [row for row in outcomes if row.get("status") == "succeeded"]
+        summary = (
+            f"Phase 14 stream drop commit recovered from polling after terminal snapshot: "
+            f"{len(succeeded)} high priority jobs changed to medium. Approval id: {approval_id}."
+        )
+        step = PlanStepDraft(
+            step_index=0,
+            tool_name="put__jobs_{id}",
+            args={"write_set": "stream_drop_high_to_medium", "priority": "medium", "approval_id": approval_id},
+        )
+        return self._plan_result(
+            explanation=summary,
+            risk="Phase 14 stream-drop fixture requires polling terminal evidence before final UI success.",
+            steps=[step],
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": step.args,
+                    "result": {"summary": summary, "approval_id": approval_id, "outcomes": outcomes},
+                    "http_status": 200,
+                    "summary": summary,
+                    "status": "DONE",
+                }
+            ],
+        )
+
+    async def _phase14_start_go_api_500(self, *, session_id: str) -> PlannerResult:
+        await self._phase14_seed_single_update_state(
+            session_id=session_id,
+            scenario="phase14_go_api_500",
+            job_ids=["JOB-SEED-001"],
+            requested_priority="medium",
+        )
+        raise PlannerApprovalRequired(
+            "Phase 14 Go API 500 failure approval required.",
+            approval={
+                "summary": "Phase 14 Go API 500 check: JOB-SEED-001 would become medium, but commit will hit a seeded backend failure.",
+                "count": 1,
+                "preview": [{"tool_name": "put__jobs_{id}", "args": {"id": "JOB-SEED-001", "priority": "medium"}}],
+                "bundle_ui": {
+                    "kind": "phase14_go_api_500",
+                    "write_set": "go_api_500_high_to_medium",
+                    "headline": "Approval required: seeded Go API 500 failure must not mutate JOB-SEED-001.",
+                    "rows": [
+                        {
+                            "job_id": "JOB-SEED-001",
+                            "original_priority": "high",
+                            "new_priority": "medium",
+                        }
+                    ],
+                },
+            },
+        )
+
+    async def _phase14_resume_go_api_500(self, *, session_id: str) -> PlannerResult:
+        state = self._phase14_state_by_session.setdefault(session_id, {})
+        approval_id = str(state.get("current_approval_id") or "").strip() or None
+        summary = (
+            "Could not complete the requested job priority update because the Go API returned HTTP 500: "
+            f"database unavailable. No job rows were changed and no audit rows were created. Please retry after "
+            f"the backend recovers. Approval id: {approval_id}."
+        )
+        step = PlanStepDraft(
+            step_index=0,
+            tool_name="put__jobs_{id}",
+            args={"id": "JOB-SEED-001", "priority": "medium", "approval_id": approval_id},
+        )
+        return self._plan_result(
+            explanation=summary,
+            risk="Phase 14 seeded Go API 500 fixture must fail safely without mutation or audit rows.",
+            steps=[step],
+            tool_outputs=[
+                {
+                    "tool_name": "put__jobs_{id}",
+                    "args": step.args,
+                    "result": {
+                        "approval_id": approval_id,
+                        "error": "database unavailable",
+                        "summary": summary,
+                    },
+                    "http_status": 500,
+                    "summary": summary,
+                    "status": "FAILED",
+                    "last_error": "HTTP 500: database unavailable",
+                }
+            ],
         )
 
     async def _phase14_start_stale_approval(self, *, session_id: str, expired: bool) -> PlannerResult:

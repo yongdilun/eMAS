@@ -367,6 +367,128 @@ test('FactoryAgentChatPanel renders backend unavailable errors without fake succ
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel renders failed commit diagnostics without stale success copy', async () => {
+  const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
+  const safeSummary =
+    'Could not complete the requested job priority change because the Go API returned database unavailable. No job rows were changed and no audit rows were created. Please retry after the backend recovers.'
+  const chatState = createChatState({
+    session: { session_id: 'session-so-029', name: 'Go API failure', status: 'FAILED' },
+    sessionList: [{ session_id: 'session-so-029', name: 'Go API failure', status: 'FAILED' }],
+    activeSessionName: 'Go API failure',
+    turns: [
+      {
+        id: 'turn-so-029',
+        created_at: '2026-05-16T10:00:00.000Z',
+        user: {
+          content: 'Run Phase 14 Go API 500 commit failure for JOB-SEED-001',
+          created_at: '2026-05-16T10:00:00.000Z',
+        },
+        summary: safeSummary,
+        thinking: [],
+        tools: [
+          {
+            tool_name: 'put__jobs_{id}',
+            status: 'FAILED',
+            content: 'put__jobs_{id} failed: HTTP 500: database unavailable',
+            details: { last_error: 'HTTP 500: database unavailable' },
+          },
+        ],
+        approvals: [],
+        confirmations: [],
+        status: [],
+        terminal: {
+          event_type: 'session_failed',
+          content: 'HTTP 500: database unavailable',
+          status: 'FAILED',
+        },
+        sources: [],
+        safetyContent: null,
+      },
+    ],
+    activitySteps: [
+      {
+        id: 'failed',
+        timestamp: Date.parse('2026-05-16T10:00:03.000Z') / 1000,
+        group: 'system',
+        label: 'Something needs attention',
+        detail: 'The request could not be completed',
+        state: 'error',
+      },
+    ],
+  })
+
+  const view = await render(
+    React.createElement(FactoryAgentChatPanel, {
+      useChatState: () => chatState,
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Could not complete/))
+  await waitFor(() => assert.match(view.text(), /database unavailable/))
+  await waitFor(() => assert.match(view.text(), /Please retry/))
+  assert.doesNotMatch(view.text(), /Run complete/)
+  assert.doesNotMatch(view.text(), /Updated\s+1\s+job/i)
+  assert.doesNotMatch(view.text(), /Priority:\s+medium/i)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel empty final response safe diagnostic', async () => {
+  const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
+  const safeSummary =
+    'Unable to render final response. The run completed, but the backend returned empty assistant content.'
+  const chatState = createChatState({
+    session: { session_id: 'session-so-020', name: 'Empty answer', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-so-020', name: 'Empty answer', status: 'COMPLETED' }],
+    activeSessionName: 'Empty answer',
+    turns: [
+      {
+        id: 'turn-so-020',
+        created_at: '2026-05-16T10:00:00.000Z',
+        user: {
+          content: 'Return an empty completed answer',
+          created_at: '2026-05-16T10:00:00.000Z',
+        },
+        summary: safeSummary,
+        thinking: [],
+        tools: [],
+        approvals: [],
+        confirmations: [],
+        status: [],
+        terminal: {
+          event_type: 'session_completed',
+          content: '',
+          status: 'COMPLETED',
+        },
+        sources: [],
+        safetyContent: null,
+      },
+    ],
+    activitySteps: [
+      {
+        id: 'complete',
+        timestamp: Date.parse('2026-05-16T10:00:03.000Z') / 1000,
+        group: 'response',
+        label: 'Run complete',
+        detail: 'All steps finished. See the thread below.',
+        state: 'complete',
+      },
+    ],
+  })
+
+  const view = await render(
+    React.createElement(FactoryAgentChatPanel, {
+      useChatState: () => chatState,
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Unable to render final response/))
+  assert.doesNotMatch(view.text(), /Execution completed\./)
+  assert.doesNotMatch(view.text(), /Previous answer that must not be reused/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders stream diagnostics without hiding the chat', async () => {
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
   const chatState = createChatState({
