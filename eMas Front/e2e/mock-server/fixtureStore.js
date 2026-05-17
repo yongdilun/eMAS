@@ -108,6 +108,7 @@ function addUserTurn(session, content, prefix) {
   session.status = 'PLANNING'
   session.completion_scheduled = false
   session.completion_promise = null
+  session.pending_stream_completion = null
   appendTimeline(session, userMessageEvent({ turnId, content }))
   return turnId
 }
@@ -120,8 +121,7 @@ function completeSteps(session) {
   }))
 }
 
-function scheduleCompletion(session, sleep, {
-  delayMs = 450,
+function completeSession(session, {
   turnId,
   planId,
   stepId,
@@ -129,43 +129,61 @@ function scheduleCompletion(session, sleep, {
   answer,
   eventPrefix,
 } = {}) {
+  if (session.status === 'COMPLETED') return
+  session.status = 'COMPLETED'
+  completeSteps(session)
+  appendTimeline(
+    session,
+    toolResultEvent({
+      turnId,
+      eventId: `${eventPrefix}-tool-result`,
+      stepId,
+      planId,
+      toolName,
+      content: answer,
+      details: {
+        args: { machine_id: 'M-CNC-01' },
+        result: {
+          machine_id: 'M-CNC-01',
+          status: 'RUNNING',
+          alarms: [],
+          _summary: answer,
+        },
+      },
+    }),
+  )
+  appendTimeline(
+    session,
+    sessionCompletedEvent({
+      turnId,
+      eventId: `${eventPrefix}-completed`,
+      planId,
+      content: answer,
+      reason: 'sse_fixture',
+    }),
+  )
+}
+
+function scheduleCompletion(session, sleep, { delayMs = 450, ...completion } = {}) {
   if (session.completion_scheduled) return
   session.completion_scheduled = true
   session.completion_promise = (async () => {
     await sleep(delayMs)
-    session.status = 'COMPLETED'
-    completeSteps(session)
-    appendTimeline(
-      session,
-      toolResultEvent({
-        turnId,
-        eventId: `${eventPrefix}-tool-result`,
-        stepId,
-        planId,
-        toolName,
-        content: answer,
-        details: {
-          args: { machine_id: 'M-CNC-01' },
-          result: {
-            machine_id: 'M-CNC-01',
-            status: 'RUNNING',
-            alarms: [],
-            _summary: answer,
-          },
-        },
-      }),
-    )
-    appendTimeline(
-      session,
-      sessionCompletedEvent({
-        turnId,
-        eventId: `${eventPrefix}-completed`,
-        planId,
-        content: answer,
-        reason: 'sse_fixture',
-      }),
-    )
+    completeSession(session, completion)
   })()
+}
+
+function completeAfterStream(session, completion) {
+  if (session.completion_scheduled) return
+  session.completion_scheduled = true
+  session.pending_stream_completion = completion
+}
+
+function completePendingStream(session) {
+  if (!session.pending_stream_completion) return
+  const completion = session.pending_stream_completion
+  session.pending_stream_completion = null
+  completeSession(session, completion)
 }
 
 function defaultIdleSnapshot(session) {
@@ -1227,7 +1245,7 @@ export const scenarioCatalog = {
       )
       return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse' } }
     },
-    async onExecute(session, sleep) {
+    async onExecute(session) {
       const turnId = session.current_turn_id || 'pw-turn-activity-sse'
       session.execute_count += 1
       session.status = 'EXECUTING'
@@ -1239,8 +1257,7 @@ export const scenarioCatalog = {
           planId: 'pw-plan-activity-sse',
         }),
       )
-      scheduleCompletion(session, sleep, {
-        delayMs: 3200,
+      completeAfterStream(session, {
         turnId,
         planId: 'pw-plan-activity-sse',
         stepId: 'pw-step-activity-sse',
@@ -1259,7 +1276,13 @@ export const scenarioCatalog = {
       return notificationCompletionStream({ invalidationDelayMs: 3400 })
     },
     activityStream() {
-      return orderedActivityStream()
+      const frames = orderedActivityStream()
+      const lastActivityId = [...frames].reverse().find((frame) => frame.event === 'activity')?.id
+      return frames.map((frame) => (
+        frame.id === lastActivityId
+          ? { ...frame, afterSent: (session) => completePendingStream(session) }
+          : frame
+      ))
     },
   },
 

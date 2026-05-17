@@ -275,6 +275,49 @@ Rules:
 - Critical failures block release or require rollback. High failures block operational signoff. Medium gaps require owner, risk, target, reason, and workaround. Low gaps are tracked.
 - Phase 17 proves operational readiness gates only. Phase 19 remains the final prompt/workflow robustness signoff.
 
+## Phase 18 Reliability, Runtime, and Flake Policy
+
+Phase 18 keeps the existing scenario set reliable for repeated CI use. It does not add new functional chatbot scenarios.
+
+Lane summary:
+
+| Lane | Command | Scope | Blocking |
+|---|---|---|---|
+| PR backend oracle | `npm run test:backend-oracles` | Fast pytest schema, manual bank, state machine, snapshot/final response, API/UI alignment, prompt workflow, summary, and SSE contracts. | Blocks PR and release. |
+| PR frontend unit/component | `npm test` | Chat projection/components and fake-data guards. | Blocks PR and release. |
+| PR mocked Chromium | `npm run test:e2e:mocked` | Deterministic browser smoke, normal-use, prompt, and SSE coverage using the mock Factory Agent. | Blocks PR and release. |
+| Seeded release oracle | `npm run test:e2e:seeded-oracles` | Mutating seeded DB/audit/approval/timeline/final/UI oracles. | Blocks release/pre-merge. |
+| Real LangGraph | `npm run test:e2e:real-langgraph` | Targeted real planner/route/graph browser proofs. | Blocks release/pre-merge when selected. |
+| Release validation | `npm run test:e2e:release` | Production-like build/proxy/auth/polling/accessibility/resilience smoke. | Blocks release/pre-merge. |
+| Security/privacy | `npm run test:e2e -- --project=chromium --grep "@security\|@privacy"` and release grep | Session isolation, auth, redaction, inert rendering, dangerous action no-mutation. | Opt-in; blocks operational/release signoff when selected. |
+| Reliability | `npm run test:e2e:reliability` and `npm run test:e2e:reliability:seeded` | Concurrency, long stream, large result, slow timeout, soak cleanup. | Scheduled/dispatch; blocks operational signoff. |
+| Synthetic | `npm run test:e2e:synthetic` | Read-only local or live synthetic canaries. | Does not block PR; live critical alert can block rollout or trigger rollback. |
+
+Artifact policy:
+
+- Default Playwright lanes retain traces on failure, screenshots only on failure, and videos on failure.
+- CI uploads `playwright-report/` and `test-results/` for PR mocked Chromium failures for 7 days.
+- Seeded, real LangGraph, release, reliability, and operational lanes upload Playwright artifacts and stack logs for 14 days.
+- Release captures trace, screenshot, and video on every run because proxy/build failures need richer evidence.
+- Synthetic keeps failure traces but disables automatic screenshot/video for privacy; use its redacted result files and masked screenshots where available.
+
+Slow and duplicate-test policy:
+
+- Keep scenario 95 repeated soak cleanup in the reliability workflow only.
+- Keep seeded reliability large-result checks as nightly/supporting evidence when SO-031 already owns release oracle closure.
+- Treat release tests that repeat seeded state outcomes as deployment smoke unless they add auth, proxy, polling, build, or rollback evidence.
+- Do not delete or merge tests unless Phase 13 marks the duplicate candidate and the tracker records the replacement command.
+- If mocked PR runtime grows past the agreed budget, move broad smoke such as long normal-use transcripts or browser wording matrices behind a separate grep before removing canonical state or privacy oracles.
+
+Flake triage:
+
+| Classification | Action |
+|---|---|
+| One-off infra failure | Rerun once only for clear host/install/browser/port/process startup evidence. Record command, artifact, owner, and date. A second repeat within 7 days becomes a test or environment bug. |
+| Deterministic product bug | Reproduce with a focused command, block the owning lane, fix product behavior, and rerun the focused command plus the lane. |
+| Test bug | Fix the harness or assertion with event-driven synchronization, stable data, or lower-layer oracle evidence. Do not hide races with timeout bumps unless tied to a documented latency budget. |
+| Accepted temporary quarantine | Requires owner, issue/link, reason, replacement coverage, affected command, target date, and blocking decision in the tracker. Critical/high mutating or privacy failures need release-owner approval. |
+
 ## Seeded Full-Stack L3
 
 Phase 8 adds an opt-in seeded project:

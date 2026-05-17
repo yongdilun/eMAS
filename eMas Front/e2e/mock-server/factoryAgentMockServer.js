@@ -524,6 +524,7 @@ async function runSseScript({ req, res, url, sessionId, stream, frames }) {
     }
     logSseFrame({ req, url, connectionId, sessionId, scenarioName, stream, frame })
     sendSseEvent(res, frame.event, frame.data, frame.id)
+    frame.afterSent?.(session)
   }
 }
 

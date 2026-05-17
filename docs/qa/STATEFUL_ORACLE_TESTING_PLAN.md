@@ -1079,6 +1079,67 @@ npm run test:e2e -- --project=chromium --grep "@security|@privacy"
 npm run test:e2e:release -- --grep "@security|@privacy"
 ```
 
+### Phase 18: Test Reliability, Runtime, and Flake Hardening
+
+Goal:
+
+Make the chatbot automation pipeline reliable enough for repeated CI use without adding new functional scenarios first.
+
+Files likely touched:
+
+- `eMas Front/package.json`
+- `eMas Front/playwright.config.js`
+- `.github/workflows/*.yml`
+- `eMas Front/e2e/README.md`
+- `eMas Front/e2e/mock-server/*`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+
+Implementation steps:
+
+- Run the fast PR lane and list the heavier seeded, real LangGraph, release, security/privacy, reliability, and synthetic lanes.
+- Record lane owner, blocking level, runtime evidence, expected artifact retention, and whether the lane is PR, release, scheduled, dispatch-only, or live synthetic.
+- Confirm Playwright failure artifacts: traces, screenshots, and videos for normal browser lanes; privacy-preserving redacted artifacts for synthetic.
+- Identify slow or duplicate candidates that should remain smoke, release, or nightly only.
+- Fix reliability failures only at their long-term synchronization or fixture root cause. Prefer event-driven readiness, stable unique data, lower-layer oracle evidence, and service health checks over timeout bumps.
+- Add a written flake triage policy covering one-off infra failure, deterministic product bug, test bug, and accepted temporary quarantine.
+- Do not delete tests unless Phase 13 marks them as duplicate candidates and this tracker records the replacement command/evidence.
+
+Acceptance criteria:
+
+- PR backend oracle, frontend unit/component, and mocked Chromium lanes pass after any harness hardening.
+- Heavy lanes can be collected with `--list` and have owners, blocking levels, runtime evidence, and artifact policy recorded.
+- A failed browser test produces actionable trace/screenshot/video or an intentional synthetic redacted equivalent.
+- Slow soak, release-smoke, and broad duplicate-support tests stay out of the default PR critical path unless explicitly promoted.
+- Flake triage never closes a repeated failure as "rerun passed" without classification and owner.
+- Temporary quarantines have owner, reason, replacement coverage, target date, and weekly review.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:backend-oracles
+npm test
+npm run test:e2e:mocked
+npm run test:e2e:seeded-oracles -- --list
+npm run test:e2e:real-langgraph -- --list
+npm run test:e2e:release -- --list
+npm run test:e2e -- --project=chromium --grep "@security|@privacy" --list
+npm run test:e2e:release -- --grep "@security|@privacy" --list
+npm run test:e2e:reliability -- --list
+npm run test:e2e:reliability:seeded -- --list
+npm run test:e2e:synthetic -- --list
+node --check "playwright.config.js"
+node --check "e2e/mock-server/factoryAgentMockServer.js"
+node --check "e2e/mock-server/fixtureStore.js"
+```
+
+Risks:
+
+- Blindly increasing timeouts can hide fixture races and make CI slower without increasing confidence.
+- Rerunning failures without classification turns deterministic product bugs into accepted flake.
+- Keeping every broad or overlapping browser test in PR will make developers bypass the gate. Keep canonical oracles in PR/release, and push soak/supporting duplicates to scheduled or explicit lanes.
+
 ## First Critical Scenario Set
 
 Implement these before claiming manual chatbot testing is retired.

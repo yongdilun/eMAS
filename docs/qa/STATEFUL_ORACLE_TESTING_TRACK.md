@@ -35,6 +35,81 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 15 | CI/release enforcement and ownership | Done | Final PR, release, nightly, and synthetic lanes are documented with commands, owners, blocking levels, and triage rules. CI now enforces the full backend oracle PR alias plus seeded, real LangGraph, and release validation on release/pre-merge branches; synthetic remains read-only and opt-in. |
 | 16 | Remaining normal-use breakage scenarios | Done | Added SO-022, SO-023, SO-026, SO-028, and SO-031 with Phase 13 quality-gate metadata, parser/route/backend regressions, seeded browser proof, and SO-026 real LangGraph proof. Fixed missing-machine clarification, multi-turn LOTO context resolution, stale snapshot steps, cancellation terminal evidence, over-broad cancel-command detection, and hidden background completion after cancel. |
 | 17 | Security, privacy, and abuse hardening | Done | Added SO-032, SO-033, SO-042, SO-043, and SO-044 with Phase 13 quality-gate metadata. Strengthened mocked security/privacy browser coverage for session switching/refresh leakage, auth-failure stale-response clearing, inert unsafe rendering/link behavior, large pasted input control, and dangerous action no-mutation evidence. |
+| 18 | Test reliability, runtime, and flake hardening | Done | Ran the PR lane, listed release/seeded/real LangGraph/security/reliability/synthetic lanes, fixed an event-order race in the mocked activity SSE fixture, and documented runtime, artifact, slow-test, duplicate, and flake triage policy. No functional scenarios were added and no tests were deleted. |
+
+## Phase 18 Test Reliability, Runtime, and Flake Hardening
+
+Completed: 2026-05-17
+
+Scope:
+
+- No new functional chatbot scenarios were added.
+- No tests were deleted.
+- The only code change was a mocked SSE fixture hardening fix: `activitySseOrdered` now completes after the activity stream delivers its ordered frames instead of completing on an independent timer.
+
+Lane inventory and runtime evidence:
+
+| Lane | Command | Result | Runtime evidence | Owner | Blocking level | Artifact policy |
+|---|---|---|---|---|---|---|
+| PR backend oracle | `Set-Location "eMas Front"; npm run test:backend-oracles` | Passed: `125 passed, 30 warnings` | pytest 4.18s; wall 7.79s | Factory Agent QA/backend owner | Blocks PR and release | JUnit under `factory-agent/test-results/backend-oracle/` uploaded on failure for 7 days. |
+| PR frontend unit/component | `Set-Location "eMas Front"; npm test` | Passed: `64 passed` | node test 9.04s; wall 9.56s | Frontend chat owner | Blocks PR and release | Console output in CI logs; add focused artifacts only when a future component harness needs them. |
+| PR mocked Chromium | `Set-Location "eMas Front"; npm run test:e2e:mocked` | Initial Phase 18 run failed 1 SSE test; final rerun after harness fix passed: `21 passed` | initial 36.51s; final fixed run 33.99s | Frontend E2E owner | Blocks PR and release | Playwright report and `test-results/` uploaded on failure for 7 days; config keeps trace/screenshot/video for failures. |
+| Seeded release oracle collection | `Set-Location "eMas Front"; npm run test:e2e:seeded-oracles -- --list` | Listed `24 tests in 5 files` | 1.29s collection; last full sweep 24 passed in Phase 16/17 evidence | Seeded L3 owner | Blocks release/pre-merge | Playwright report, traces, screenshots, videos, and seeded stack logs uploaded on failure for 14 days. |
+| Real LangGraph collection | `Set-Location "eMas Front"; npm run test:e2e:real-langgraph -- --list` | Listed `3 tests in 1 file` | 1.01s collection; last full sweep 3 passed across Phase 16/17 evidence | Factory Agent/LangGraph owner | Blocks release/pre-merge | Playwright report, traces, screenshots, videos, and real LangGraph stack logs uploaded on failure for 14 days. |
+| Release validation collection | `Set-Location "eMas Front"; npm run test:e2e:release -- --list` | Listed `21 tests in 3 files` | 0.92s collection; last full Phase 14 sweep 36.24s | Release L4 owner | Blocks release/pre-merge | Release project captures trace, screenshot, and video for every run; CI uploads report and `test-results/` on failure for 14 days. |
+| Security/privacy mocked collection | `Set-Location "eMas Front"; npm run test:e2e -- --project=chromium --grep "@security\|@privacy" --list` | Listed `6 tests in 1 file` | 1.44s collection; latest full Phase 17 run passed 6 tests | Security/privacy owner | Opt-in; blocks release only if promoted by owner or operational gate | Mocked Playwright failure artifacts follow the default failure-only trace/screenshot/video policy. |
+| Security/privacy release collection | `Set-Location "eMas Front"; npm run test:e2e:release -- --grep "@security\|@privacy" --list` | Listed `3 tests in 1 file` | 1.11s collection; latest full Phase 17 run passed 3 tests | Security/privacy owner / release L4 owner | Release cross-check; blocks release when explicitly selected | Release trace/screenshot/video policy applies; sensitive fields must be redacted before retention. |
+| Reliability mocked collection | `Set-Location "eMas Front"; npm run test:e2e:reliability -- --list` | Listed `5 tests in 1 file` | 1.23s collection | Reliability owner | Scheduled/dispatch; blocks operational signoff | Reliability workflow uploads report and `test-results/` on every run for 14 days. |
+| Reliability seeded collection | `Set-Location "eMas Front"; npm run test:e2e:reliability:seeded -- --list` | Listed `2 tests in 1 file` | 1.12s collection | Reliability owner / seeded L3 owner | Scheduled/dispatch; blocks operational signoff | Reliability workflow uploads seeded stack logs and Playwright artifacts on every run for 14 days. |
+| Synthetic collection | `Set-Location "eMas Front"; npm run test:e2e:synthetic -- --list` | Listed `9 tests in 1 file` | 1.08s collection; last full Phase 14 local harness 41.94s | Synthetic L5 owner / `chatbot-oncall` | Does not block PR; live critical alerts can block rollout/trigger rollback | Synthetic keeps trace on failure, disables automatic screenshots/video by project for privacy, and attaches redacted logs/result files plus masked screenshots where feasible. |
+
+Flake found and fixed:
+
+| ID | Classification | Symptom | Root cause | Fix | Verification |
+|---|---|---|---|---|---|
+| F18-001 | Test/harness bug | `chat-sse-activity.spec.js` sometimes saw zero mocked activity EventSource connections while the final UI was already complete. | The mock `activitySseOrdered` scenario completed on a fixed timer. Under parallel load, completion could win before React opened the activity stream, so the UI fell back to terminal snapshot activity and the stream-specific assertion failed. | Completion is now event-driven from the final mocked activity SSE frame via an `afterSent` hook; this preserves the scenario's real oracle without relying on a longer timeout. | Focused activity SSE passed: `1 passed`; full mocked Chromium rerun passed: `21 passed`. |
+
+Slow or duplicate tests to keep out of the PR critical path:
+
+| Test/lane | Classification | Policy |
+|---|---|---|
+| `reliability-soak.spec.js` scenario 95 | Slow soak/nightly | Keep in `npm run test:e2e:reliability` and scheduled reliability workflow only. Do not include in un-grepped PR Chromium. |
+| `full-stack-reliability.spec.js` scenario 93 vs SO-031 seeded prompt workflow | Supporting duplicate of large-result layout risk | Keep scenario 93 as nightly/seeded reliability evidence only; SO-031 remains the seeded oracle closure for release. |
+| Release scenarios that repeat seeded stateful outcomes without auth/proxy/polling evidence | Smoke, not oracle closure | Keep in `chromium-release` for deployment wiring. Do not count them as replacements for seeded DB/audit/approval oracles. |
+| Seeded cascade matrix in `full-stack-prompt-workflow-regression.spec.js` plus focused data-integrity cascades | Intentional cross-layer overlap, possible duplicate candidate for future review | Keep until Phase 13 marks a specific duplicate and the tracker names the replacement command. Future cascades should add parser/graph evidence first before another browser variant. |
+| Mocked `normal-use-hardening.spec.js` scenario 81 and `prompt-workflow-regression.spec.js` scenario 116/124 | Broad PR smoke with slower individual runtime | Keep while the mocked PR lane stays near the current 34s wall time. If mocked PR exceeds 60s median, move these to a separate smoke/nightly grep before removing any canonical oracle. |
+
+Flake triage policy:
+
+| Classification | Rule |
+|---|---|
+| One-off infra failure | Rerun once only when the evidence points to host, install, browser download, port collision, process startup, or transient dependency failure and the focused test passes without code changes. Record command, artifact link, owner, and date. If it repeats twice in 7 days, promote to test bug or environment bug. |
+| Deterministic product bug | If the failure reproduces with a focused command or shows a stable DB/audit/snapshot/final UI mismatch, block the lane. Fix product behavior, add or update the lowest useful regression, then rerun the focused command plus the owning lane. |
+| Test bug | If the product evidence is correct but the assertion is racing, using the wrong selector, relying on fixed sleeps, or the fixture is invalid, fix the harness with event-driven synchronization, stable test data, or a lower-layer oracle. Do not paper over with timeout bumps unless the timeout is tied to a documented latency budget. |
+| Accepted temporary quarantine | Allowed only with owner, issue/link, reason, replacement coverage, affected command, expiry or target date, and blocking decision in the tracker. Critical/high mutating state or privacy leaks cannot be quarantined without release-owner approval. Quarantines are reviewed weekly and removed after the fix. |
+
+Artifact confirmation:
+
+- Default Playwright projects capture `trace: retain-on-failure` locally and `trace: on-first-retry` in CI, `screenshot: only-on-failure`, and `video: retain-on-failure`.
+- `chromium-release` captures trace, screenshot, and video on every run because release failures often need proxy/build evidence.
+- `chromium-synthetic` keeps failure traces but intentionally disables automatic screenshot/video for privacy; redacted synthetic result files and masked screenshots are attached by the synthetic fixture where feasible.
+- CI uploads backend JUnit artifacts, Playwright reports, `test-results/`, seeded/real/release stack logs, reliability soak results, and redacted synthetic output according to lane retention.
+
+Files changed:
+
+- `eMas Front/e2e/mock-server/factoryAgentMockServer.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/README.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+
+Current blockers:
+
+- None.
+
+Next action:
+
+Keep the PR gate on backend oracles, frontend unit/component, and mocked Chromium. Do not add new scenarios until the next batch names a distinct product bug and passes the Phase 13 quality gate.
 
 ## Phase 17 Security, Privacy, and Abuse Hardening
 
