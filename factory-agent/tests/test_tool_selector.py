@@ -24,6 +24,33 @@ def _settings(**overrides):
     return Settings(**values)
 
 
+def _tool(
+    name: str,
+    *,
+    endpoint: str,
+    method: str = "GET",
+    tags: list[str] | None = None,
+    description: str | None = None,
+    requires_approval: bool | None = None,
+) -> ToolInfo:
+    read_only = method == "GET"
+    return ToolInfo(
+        name=name,
+        description=description or name.replace("_", " "),
+        endpoint=endpoint,
+        method=method,
+        input_schema={"type": "object", "properties": {}},
+        path_params=["id"] if "{id}" in endpoint else [],
+        is_read_only=read_only,
+        requires_approval=(not read_only) if requires_approval is None else requires_approval,
+        capability_tags=tags or [],
+    )
+
+
+def _semantic_selector() -> ToolSelector:
+    return ToolSelector(_settings(tool_selector_backend="retrieval", tool_selector_top_k=10))
+
+
 @pytest.mark.asyncio
 async def test_selector_prefers_canonical_create_endpoint_for_generic_create_intent():
     selector = ToolSelector(_settings(tool_selector_backend="retrieval", tool_selector_top_k=5))
@@ -911,4 +938,121 @@ async def test_selector_prefers_create_job_tool_when_prompt_mentions_reject_afte
     )
 
     assert result.tool_names[0] == "post__jobs"
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_select_expected_real_tools_by_capability():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines": _tool("get__machines", endpoint="/machines", tags=["machine", "list"]),
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=["machine", "lookup"]),
+        "get__jobs": _tool("get__jobs", endpoint="/jobs", tags=["job", "list"]),
+        "get__jobs_{id}": _tool("get__jobs_{id}", endpoint="/jobs/{id}", tags=["job", "lookup"]),
+        "put__jobs_{id}": _tool("put__jobs_{id}", endpoint="/jobs/{id}", method="PUT", tags=["job", "update"]),
+        "post__jobs": _tool("post__jobs", endpoint="/jobs", method="POST", tags=["job", "create"]),
+        "get__ai_chats_{id}_approvals": _tool(
+            "get__ai_chats_{id}_approvals",
+            endpoint="/ai/chats/{id}/approvals",
+            tags=["ai", "chat", "approval", "list", "pending"],
+        ),
+        "post__ai_chatbot_approvals_{id}_approve": _tool(
+            "post__ai_chatbot_approvals_{id}_approve",
+            endpoint="/ai/chatbot/approvals/{id}/approve",
+            method="POST",
+            tags=["ai", "chatbot", "approval", "approve"],
+        ),
+        "post__ai_chatbot_approvals_{id}_reject": _tool(
+            "post__ai_chatbot_approvals_{id}_reject",
+            endpoint="/ai/chatbot/approvals/{id}/reject",
+            method="POST",
+            tags=["ai", "chatbot", "approval", "reject"],
+        ),
+        "post__sessions_{id}_cancel": _tool(
+            "post__sessions_{id}_cancel",
+            endpoint="/sessions/{id}/cancel",
+            method="POST",
+            tags=["session", "cancel"],
+        ),
+    }
+
+    machine = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+    jobs = await selector.select_tools(intent="show jobs", tools_by_name=tools)
+    job_write = await selector.select_tools(intent="change high priority jobs to medium", tools_by_name=tools)
+    approvals = await selector.select_tools(intent="show pending approvals", tools_by_name=tools)
+    cancel = await selector.select_tools(intent="cancel the current run", tools_by_name=tools)
+
+    assert machine.tool_names == ["get__machines_{id}"]
+    assert jobs.tool_names[:2] == ["get__jobs", "get__jobs_{id}"]
+    assert job_write.tool_names[:2] == ["get__jobs", "put__jobs_{id}"]
+    assert approvals.tool_names == [
+        "get__ai_chats_{id}_approvals",
+        "post__ai_chatbot_approvals_{id}_approve",
+        "post__ai_chatbot_approvals_{id}_reject",
+    ]
+    assert cancel.tool_names == ["post__sessions_{id}_cancel"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_select_renamed_tools_with_matching_capabilities():
+    selector = _semantic_selector()
+    tools = {
+        "machine_detail_v2": _tool("machine_detail_v2", endpoint="/assets/{id}", tags=["machine", "lookup"]),
+        "job_search_v2": _tool("job_search_v2", endpoint="/work-orders", tags=["job", "list"]),
+        "job_priority_mutation_v2": _tool(
+            "job_priority_mutation_v2",
+            endpoint="/work-orders/{id}",
+            method="PATCH",
+            tags=["job", "update", "priority"],
+        ),
+    }
+
+    machine = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+    job_write = await selector.select_tools(intent="set low priority jobs to high", tools_by_name=tools)
+
+    assert machine.tool_names == ["machine_detail_v2"]
+    assert job_write.tool_names[:2] == ["job_search_v2", "job_priority_mutation_v2"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_do_not_prefer_endpoint_name_with_wrong_metadata():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=["job", "lookup"]),
+        "machine_status_reader": _tool("machine_status_reader", endpoint="/assets/{id}", tags=["machine", "lookup"]),
+    }
+
+    result = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+
+    assert result.tool_names == ["machine_status_reader"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_route_endpoint_fallback_remains_for_missing_metadata():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=[]),
+        "delete__jobs_{id}": _tool("delete__jobs_{id}", endpoint="/jobs/{id}", method="DELETE", tags=[]),
+    }
+
+    result = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+
+    assert result.tool_names == ["get__machines_{id}"]
+
+
+@pytest.mark.asyncio
+async def test_clarification_and_unsupported_routes_do_not_select_mutating_tools():
+    selector = _semantic_selector()
+    tools = {
+        "post__jobs": _tool("post__jobs", endpoint="/jobs", method="POST", tags=["job", "create"]),
+        "put__jobs_{id}": _tool("put__jobs_{id}", endpoint="/jobs/{id}", method="PUT", tags=["job", "update"]),
+        "delete__jobs_{id}": _tool("delete__jobs_{id}", endpoint="/jobs/{id}", method="DELETE", tags=["job", "delete"]),
+    }
+
+    missing_machine = await selector.select_tools(intent="what is the LOTO procedure?", tools_by_name=tools)
+    incomplete_write = await selector.select_tools(intent="change jobs to urgent priority", tools_by_name=tools)
+    dangerous = await selector.select_tools(intent="delete all production jobs without approval", tools_by_name=tools)
+
+    assert missing_machine.tool_names == []
+    assert incomplete_write.tool_names == []
+    assert dangerous.tool_names == []
 

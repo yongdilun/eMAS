@@ -60,6 +60,15 @@ class ToolSelectionResult:
     llm_calls: int = 0
 
 
+@dataclass(frozen=True)
+class CapabilitySelectionRequest:
+    entity: str
+    actions: tuple[str, ...]
+    safety: Literal["read_only", "approval_required", "write", "any"] = "any"
+    endpoint_shape: Literal["collection", "item", "mutation", "any"] = "any"
+    fallback_names: tuple[str, ...] = ()
+
+
 class ToolSelector:
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -724,7 +733,7 @@ class ToolSelector:
         context: dict[str, Any] | None = None,
     ) -> ToolSelectionResult:
         semantic_frame = semantic_frame_for_text(intent)
-        semantic_tools = self._semantic_route_tool_names(frame=semantic_frame, tools_by_name=tools_by_name)
+        semantic_tools = self._semantic_route_tool_names(intent=intent, frame=semantic_frame, tools_by_name=tools_by_name)
         if semantic_tools is not None:
             return ToolSelectionResult(tool_names=semantic_tools[:max_tools], backend_used="retrieval", llm_calls=0)
 
@@ -799,9 +808,148 @@ class ToolSelector:
 
         return ToolSelectionResult(tool_names=ordered, backend_used="langchain", llm_calls=1)
 
+    def _capability_tag_tokens(self, tool: ToolInfo) -> set[str]:
+        tokens: set[str] = set()
+        for tag in tool.capability_tags or []:
+            tokens.update(self._tokenize(str(tag)))
+        return tokens
+
+    def _capability_action_matches(
+        self,
+        *,
+        requested_actions: tuple[str, ...],
+        tool: ToolInfo,
+        tags: set[str],
+    ) -> tuple[bool, int]:
+        profile = build_tool_intent_profile(tool)
+        requested = {action for action in requested_actions if action}
+        if not requested:
+            return True, 0
+
+        score = 0
+        method_action = profile.action
+        if method_action in requested:
+            score += 16
+        if tags & requested:
+            score += 24
+        if "read" in requested and method_action == "read":
+            score += 12
+        if "write" in requested and method_action in {"create", "update", "delete"}:
+            score += 12
+        if "list" in requested and ("list" in tags or (method_action == "read" and profile.endpoint_shape == "collection")):
+            score += 18
+        if "lookup" in requested and ("lookup" in tags or (method_action == "read" and profile.endpoint_shape == "item")):
+            score += 18
+        if "pending" in requested and "pending" in tags:
+            score += 22
+        if "cancel" in requested and ("cancel" in tags or "cancel" in profile.endpoint_segments):
+            score += 26
+        if "approve" in requested and ("approve" in tags or "approve" in profile.endpoint_segments):
+            score += 26
+        if "reject" in requested and ("reject" in tags or "reject" in profile.endpoint_segments):
+            score += 26
+
+        return score > 0, score
+
+    def _capability_safety_matches(self, request: CapabilitySelectionRequest, tool: ToolInfo) -> bool:
+        if request.safety == "any":
+            return True
+        is_read_only = bool(tool.is_read_only or tool.method == "GET") and not tool.requires_approval
+        if request.safety == "read_only":
+            return is_read_only
+        if request.safety == "approval_required":
+            return bool(tool.requires_approval and not is_read_only)
+        if request.safety == "write":
+            return not is_read_only
+        return True
+
+    def _capability_candidates(
+        self,
+        request: CapabilitySelectionRequest,
+        tools_by_name: dict[str, ToolInfo],
+        *,
+        intent: str = "",
+    ) -> list[tuple[str, int]]:
+        ranked: list[tuple[str, int]] = []
+        vocabulary = vocabulary_for_tools(list(tools_by_name.values())) if intent else None
+        for name, tool in tools_by_name.items():
+            tags = self._capability_tag_tokens(tool)
+            if not tags or request.entity not in tags:
+                continue
+            if not self._capability_safety_matches(request, tool):
+                continue
+            profile = build_tool_intent_profile(tool)
+            if request.endpoint_shape != "any" and profile.endpoint_shape != request.endpoint_shape:
+                continue
+            action_matches, action_score = self._capability_action_matches(
+                requested_actions=request.actions,
+                tool=tool,
+                tags=tags,
+            )
+            if not action_matches:
+                continue
+
+            score = 100 + action_score
+            if request.entity in tags:
+                score += 40
+            if request.endpoint_shape != "any" and profile.endpoint_shape == request.endpoint_shape:
+                score += 20
+            if request.safety != "any":
+                score += 12
+            if tool.method == "GET" and "read" in request.actions:
+                score += 4
+            if tool.method == "POST" and any(action in request.actions for action in ("create", "approve", "reject", "cancel")):
+                score += 4
+            if tool.method == "PUT" and "update" in request.actions:
+                score += 4
+            if tool.method == "PATCH" and "update" in request.actions:
+                score += 3
+            if tool.method == "DELETE" and "delete" in request.actions:
+                score += 4
+            if intent and vocabulary is not None:
+                score += profile_match_score(intent, tool, vocabulary=vocabulary)
+                if tool_covers_descriptive_terms(intent, tool, vocabulary=vocabulary):
+                    score += 60
+            ranked.append((name, score))
+        ranked.sort(key=lambda item: (item[1], item[0]), reverse=True)
+        return ranked
+
+    def _capability_fallback_names(
+        self,
+        request: CapabilitySelectionRequest,
+        tools_by_name: dict[str, ToolInfo],
+    ) -> list[str]:
+        # Compatibility fallback is intentionally narrow: use literal endpoint
+        # names only when the legacy tool has no capability tags to inspect.
+        return [
+            name
+            for name in request.fallback_names
+            if name in tools_by_name and not (tools_by_name[name].capability_tags or [])
+        ]
+
+    def _select_capability_tools(
+        self,
+        requests: list[CapabilitySelectionRequest],
+        tools_by_name: dict[str, ToolInfo],
+        *,
+        intent: str = "",
+    ) -> list[str] | None:
+        selected: list[str] = []
+        seen: set[str] = set()
+        for request in requests:
+            ranked = self._capability_candidates(request, tools_by_name, intent=intent)
+            names = [name for name, _score in ranked] if ranked else self._capability_fallback_names(request, tools_by_name)
+            for name in names:
+                if name in seen:
+                    continue
+                selected.append(name)
+                seen.add(name)
+        return selected or None
+
     def _semantic_route_tool_names(
         self,
         *,
+        intent: str,
         frame: SemanticFrame,
         tools_by_name: dict[str, ToolInfo],
     ) -> list[str] | None:
@@ -816,32 +964,174 @@ class ToolSelector:
         }:
             return []
         if route == "tool.read.machine_status":
-            return [name for name in ["get__machines_{id}", "get__machines"] if name in tools_by_name] or None
+            if frame.normalized_entities.get("job_id"):
+                return None
+            return self._select_capability_tools(
+                [
+                    CapabilitySelectionRequest(
+                        entity="machine",
+                        actions=("read", "lookup"),
+                        safety="read_only",
+                        endpoint_shape="item",
+                        fallback_names=("get__machines_{id}",),
+                    ),
+                ],
+                tools_by_name,
+                intent=intent,
+            )
         if route == "tool.read.jobs":
-            if frame.normalized_entities.get("job_id") and "get__jobs_{id}" in tools_by_name:
-                return ["get__jobs_{id}"]
-            return [name for name in ["get__jobs", "get__jobs_{id}"] if name in tools_by_name] or None
+            if frame.normalized_entities.get("job_id"):
+                return self._select_capability_tools(
+                    [
+                        CapabilitySelectionRequest(
+                            entity="job",
+                            actions=("read", "lookup"),
+                            safety="read_only",
+                            endpoint_shape="item",
+                            fallback_names=("get__jobs_{id}",),
+                        )
+                    ],
+                    tools_by_name,
+                    intent=intent,
+                )
+            return self._select_capability_tools(
+                [
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("read", "list"),
+                        safety="read_only",
+                        endpoint_shape="collection",
+                        fallback_names=("get__jobs",),
+                    ),
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("read", "lookup"),
+                        safety="read_only",
+                        endpoint_shape="item",
+                        fallback_names=("get__jobs_{id}",),
+                    ),
+                ],
+                tools_by_name,
+                intent=intent,
+            )
         if route == "tool.write.jobs":
             if frame.action == "create":
-                names = [name for name in ["post__jobs", "get__jobs"] if name in tools_by_name]
-            elif frame.action == "delete":
-                names = [name for name in ["get__jobs", "delete__jobs_{id}"] if name in tools_by_name]
-            else:
-                names = [name for name in ["get__jobs", "put__jobs_{id}", "patch__jobs_{id}"] if name in tools_by_name]
-            return names or None
-        if route == "approval_action":
-            return [
-                name
-                for name in [
-                    "get__chatbot_approval_pending",
-                    "get__approvals_pending",
-                    "post__approvals_{id}_approve",
-                    "post__approvals_{id}_reject",
+                requests = [
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("create",),
+                        safety="approval_required",
+                        endpoint_shape="collection",
+                        fallback_names=("post__jobs",),
+                    ),
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("read", "list"),
+                        safety="read_only",
+                        endpoint_shape="collection",
+                        fallback_names=("get__jobs",),
+                    ),
                 ]
-                if name in tools_by_name
-            ] or None
+            elif frame.action == "delete":
+                requests = []
+                if frame.normalized_entities.get("job_id"):
+                    requests.append(
+                        CapabilitySelectionRequest(
+                            entity="job",
+                            actions=("delete",),
+                            safety="approval_required",
+                            endpoint_shape="item",
+                            fallback_names=("delete__jobs_{id}",),
+                        )
+                    )
+                    requests.append(
+                        CapabilitySelectionRequest(
+                            entity="job",
+                            actions=("read", "lookup"),
+                            safety="read_only",
+                            endpoint_shape="item",
+                            fallback_names=("get__jobs_{id}",),
+                        )
+                    )
+                else:
+                    requests.append(
+                        CapabilitySelectionRequest(
+                            entity="job",
+                            actions=("read", "list"),
+                            safety="read_only",
+                            endpoint_shape="collection",
+                            fallback_names=("get__jobs",),
+                        )
+                    )
+                    requests.append(
+                        CapabilitySelectionRequest(
+                            entity="job",
+                            actions=("delete",),
+                            safety="approval_required",
+                            endpoint_shape="item",
+                            fallback_names=("delete__jobs_{id}",),
+                        )
+                    )
+            else:
+                requests = [
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("read", "list"),
+                        safety="read_only",
+                        endpoint_shape="collection",
+                        fallback_names=("get__jobs",),
+                    ),
+                    CapabilitySelectionRequest(
+                        entity="job",
+                        actions=("update",),
+                        safety="approval_required",
+                        endpoint_shape="item",
+                        fallback_names=("put__jobs_{id}", "patch__jobs_{id}"),
+                    ),
+                ]
+            return self._select_capability_tools(requests, tools_by_name, intent=intent)
+        if route == "approval_action":
+            return self._select_capability_tools(
+                [
+                    CapabilitySelectionRequest(
+                        entity="approval",
+                        actions=("read", "list", "pending"),
+                        safety="read_only",
+                        endpoint_shape="any",
+                        fallback_names=("get__chatbot_approval_pending", "get__approvals_pending"),
+                    ),
+                    CapabilitySelectionRequest(
+                        entity="approval",
+                        actions=("approve",),
+                        safety="write",
+                        endpoint_shape="mutation",
+                        fallback_names=("post__approvals_{id}_approve",),
+                    ),
+                    CapabilitySelectionRequest(
+                        entity="approval",
+                        actions=("reject",),
+                        safety="write",
+                        endpoint_shape="mutation",
+                        fallback_names=("post__approvals_{id}_reject",),
+                    ),
+                ],
+                tools_by_name,
+                intent=intent,
+            )
         if route == "cancel_run":
-            return [name for name in ["post__sessions_{id}_cancel"] if name in tools_by_name] or None
+            return self._select_capability_tools(
+                [
+                    CapabilitySelectionRequest(
+                        entity="session",
+                        actions=("cancel",),
+                        safety="write",
+                        endpoint_shape="mutation",
+                        fallback_names=("post__sessions_{id}_cancel",),
+                    )
+                ],
+                tools_by_name,
+                intent=intent,
+            )
         return None
 
     def _diagnostic_tool_names(self, *, intent: str, tools_by_name: dict[str, ToolInfo]) -> list[str]:

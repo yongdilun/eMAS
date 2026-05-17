@@ -43,7 +43,7 @@ _JOB_TOKEN_RE = re.compile(
     r"\b(?:job|work\s*orders?|wo|task)\b\s*(?:id|#)?\s*((?:[A-Z]{1,6}-)?\d{2,}|[A-Z]{1,6}-[A-Z0-9-]*\d[A-Z0-9-]*)\b",
     re.IGNORECASE,
 )
-_BARE_JOB_ID_RE = re.compile(r"\b(JOB-[A-Z0-9-]*\d[A-Z0-9-]*)\b", re.IGNORECASE)
+_BARE_JOB_ID_RE = re.compile(r"\b(JOB-[A-Z0-9-]+)\b", re.IGNORECASE)
 _USE_MACHINE_RE = re.compile(
     rf"\b(?:use|with|for|on|at)\s+(?:machine\s+|equipment\s+|asset\s+)?({_MACHINE_ID_PATTERN})\b",
     re.IGNORECASE,
@@ -143,6 +143,10 @@ _JOB_PRIORITY_CHANGE_RE = re.compile(
     r"\b(?:to|into|as)\s+(low|medium|high|urgent)\b",
     re.IGNORECASE | re.DOTALL,
 )
+_JOB_UPDATE_MUTATION_RE = re.compile(
+    r"\b(?:update|set|change|assign|record|apply|run|reschedule|move)\b",
+    re.IGNORECASE,
+)
 _JOB_STATUS_WORD_RE = re.compile(r"\b(delayed|overdue|late|planned|ready|running|active|completed|cancelled)\b", re.IGNORECASE)
 _APPROVAL_ACTION_RE = re.compile(
     r"\b(?:approve|reject|decline|show|list|view|get|check)\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,80}\b(?:approval|approvals|request|requests)\b|\bpending\s+approvals?\b",
@@ -153,7 +157,7 @@ _CANCEL_RUN_RE = re.compile(
     re.IGNORECASE,
 )
 _DANGEROUS_UNSUPPORTED_RE = re.compile(
-    r"\b(?:delete|remove|purge|drop|wipe|destroy)\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,120}\b(?:all\s+)?(?:production\s+)?jobs?\b|"
+    r"\b(?:delete|remove|purge|drop|wipe|destroy)\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,120}\b(?:all\s+(?:production\s+)?jobs?|production\s+jobs?)\b|"
     r"\b(?:bypass|without|skip)\s+approvals?\b|"
     r"\bapply\b(?:(?!\b(?:and then|then|next|after that|afterwards|finally)\b).){0,80}\bdirectly\b",
     re.IGNORECASE | re.DOTALL,
@@ -312,6 +316,16 @@ def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
         if re.match(r"^P-\d+$", raw_val) and _JOB_CREATE_RE.search(clause):
             left = clause[max(0, m.start() - 48) : m.start()].lower()
             if "product" not in left:
+                out.append(
+                    ExplicitConstraint(
+                        field="product_id",
+                        operator="=",
+                        value=raw_val,
+                        source_text=m.group(0),
+                        strength=_constraint_strength(clause, m),
+                        mutable=False,
+                    )
+                )
                 continue
         out.append(
             ExplicitConstraint(
@@ -574,10 +588,13 @@ def _semantic_action_entity(raw: str, intents: Sequence[Intent], normalized: dic
         action = "update"
     elif matched_actions:
         if {"create", "update", "delete"} & matched_actions:
-            for candidate in ("create", "update", "delete", "read"):
-                if candidate in matched_actions:
-                    action = candidate
-                    break
+            if matched_actions == {"update", "read"} and not _JOB_UPDATE_MUTATION_RE.search(raw):
+                action = "read"
+            else:
+                for candidate in ("create", "update", "delete", "read"):
+                    if candidate in matched_actions:
+                        action = candidate
+                        break
         else:
             for candidate in ("approval", "read"):
                 if candidate in matched_actions:
@@ -642,7 +659,11 @@ def _is_job_mutation_request(raw: str, action: str | None) -> bool:
         return False
     if _DANGEROUS_UNSUPPORTED_RE.search(raw):
         return False
-    return action in {"create", "update", "delete"} or bool(_JOB_PRIORITY_CHANGE_RE.search(raw))
+    if action in {"create", "delete"}:
+        return True
+    if action == "update":
+        return bool(_JOB_UPDATE_MUTATION_RE.search(raw) or _JOB_PRIORITY_CHANGE_RE.search(raw))
+    return bool(_JOB_PRIORITY_CHANGE_RE.search(raw))
 
 
 def _job_mutation_missing_entities(normalized: dict[str, list[str]], *, action: str | None) -> list[str]:

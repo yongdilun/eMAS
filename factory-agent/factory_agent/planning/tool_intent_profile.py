@@ -5,6 +5,7 @@ from functools import lru_cache
 import json
 from pathlib import Path
 import re
+from typing import Literal
 
 from ..schemas import ToolInfo
 
@@ -14,12 +15,15 @@ _PATH_PARAM_RE = re.compile(r"^\{[^}]+\}$")
 _ID_LIKE_RE = re.compile(r"\b[A-Z]{1,10}[-_][A-Z0-9]+(?:[-_][A-Z0-9]+)*\b|\b\d+\b", re.IGNORECASE)
 _GENERATED_VOCAB_PATH = Path(__file__).resolve().parents[1] / "generated" / "tool_intent_vocabulary.json"
 
+EndpointShape = Literal["collection", "item", "mutation"]
+
 
 @dataclass(frozen=True)
 class ToolIntentProfile:
     name: str
     endpoint_root: str
     endpoint_segments: tuple[str, ...]
+    endpoint_shape: EndpointShape
     action: str
     identity_tokens: frozenset[str]
     feature_tokens: frozenset[str]
@@ -263,6 +267,21 @@ def _action_for_method(method: str) -> str:
     return ""
 
 
+def _endpoint_shape(endpoint: str, method: str) -> EndpointShape:
+    parts = [part for part in (endpoint or "").strip("/").split("/") if part]
+    if not parts:
+        return "collection"
+    param_indexes = [idx for idx, part in enumerate(parts) if _PATH_PARAM_RE.match(part)]
+    if not param_indexes:
+        return "collection"
+    if param_indexes[-1] == len(parts) - 1:
+        return "item"
+    if (method or "").upper() != "GET":
+        return "mutation"
+    tail = (parts[-1] or "").strip().lower()
+    return "collection" if tail.endswith("s") and not tail.endswith("ss") else "item"
+
+
 def _parent_endpoint(endpoint: str) -> str | None:
     parts = [part for part in (endpoint or "").strip("/").split("/") if part]
     if len(parts) <= 2:
@@ -310,6 +329,7 @@ def build_tool_intent_profile(tool: ToolInfo, *, vocabulary: ToolIntentVocabular
         name=tool.name,
         endpoint_root=_endpoint_root(tool.endpoint),
         endpoint_segments=endpoint_segments,
+        endpoint_shape=_endpoint_shape(tool.endpoint, tool.method),
         action=_action_for_method(tool.method),
         identity_tokens=identity_tokens,
         feature_tokens=feature_tokens,
