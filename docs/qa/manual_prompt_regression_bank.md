@@ -124,6 +124,21 @@ Phase 14 did not add a new manual prompt scenario. The release sweep did expose 
 |---|---|---|---|
 | `phase14-cancel-active-run-terminal-copy` | Start an active cancellable run, click `Cancel current run`, then restore the cancelled session. | The current and restored cancelled session show `Run cancelled by operator request.`, no busy spinner, no cancel button, no `Run complete`, and no stale active-plan final copy. | `turnAssembler.test.mjs`, `chat-cancel-navigation.spec.js`, `normal-use-hardening.spec.js` mocked Chromium |
 
+## Phase 15 Release Enforcement Note
+
+Phase 15 does not add new prompt scenarios. It assigns every fixed or newly found prompt/workflow miss to a blocking lane:
+
+| Failure source | Required lane | Owner | Closure rule |
+|---|---|---|---|
+| Parser, route, state machine, snapshot, final-response, or manual-bank schema miss | `npm run test:backend-oracles` | Factory Agent QA/backend owner | Blocks PR and release until the focused regression and full backend oracle alias pass. |
+| Frontend turn, activity, approval, or component rendering miss | `npm test`; add mocked Chromium when DOM behavior can diverge | Frontend chat owner | Blocks PR and release until unit/component evidence and any required browser proof pass. |
+| Seeded DB/audit/approval/SSE/final-response mismatch | `npm run test:e2e:seeded-oracles` | Seeded L3 owner | Blocks release/pre-merge until persisted state and visible UI agree. |
+| Real LangGraph planner/routing/tool-selection miss hidden by seeded adapters | `npm run test:e2e:real-langgraph` | Factory Agent/LangGraph owner | Blocks release/pre-merge until seeded vs real evidence is reconciled. |
+| Read-only synthetic monitor miss | `npm run test:e2e:synthetic` | Synthetic L5 owner / `chatbot-oncall` | Does not block PR; live critical alerts can block rollout or trigger rollback. Prompts must remain read-only. |
+| Deferred automation | Accepted-gap entry in tracker | QA governance owner | Critical/high mutating gaps block release unless an explicit approved exception is recorded. |
+
+Routine manual chatbot release regression remains retired. Manual work is limited to nuanced answer quality, compliance/sign-off, exploratory discovery, and emergency incident diagnosis, and those become release blockers only when an owner records an accepted gap or release exception.
+
 ## Future Scenario Quality Gate
 
 Before adding a new prompt or SO scenario, answer these questions in the bank entry, oracle file, or tracker:

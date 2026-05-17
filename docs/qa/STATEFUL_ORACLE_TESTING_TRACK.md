@@ -32,6 +32,7 @@ Purpose: living execution tracker for the stateful oracle hardening plan. Future
 | 12 | Executable enforcement closure | Done | Every current SO oracle now has executable enforcement metadata, a backend contract mapping, and browser-visible proof where UI can diverge. SO-005 has a dedicated browser rejection proof. |
 | 13 | Test quality gate and redundancy control | Done | Added coverage categories, current SO risk-group map, duplicate-candidate review, future scenario authoring gate, and lean PR/release/nightly lane split. No tests were deleted. |
 | 14 | Release gate validation | Done | Full automated release sweep is green after fixes. One product bug and two release-smoke test bugs were found and fixed; no routine manual release checks remain as blockers. |
+| 15 | CI/release enforcement and ownership | Done | Final PR, release, nightly, and synthetic lanes are documented with commands, owners, blocking levels, and triage rules. CI now enforces the full backend oracle PR alias plus seeded, real LangGraph, and release validation on release/pre-merge branches; synthetic remains read-only and opt-in. |
 
 ## Phase 14 Release Gate Validation
 
@@ -118,10 +119,8 @@ These are not routine release blockers unless an owner explicitly promotes one t
 PR / fast blocking:
 
 ```powershell
-Set-Location "factory-agent"
-python -m pytest tests/test_stateful_oracle_schema.py tests/test_phase18_manual_prompt_bank.py tests/test_stateful_oracle_harness.py tests/test_langgraph_state_machine_oracles.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_phase19_prompt_workflow_regression.py tests/test_summary_bundle.py tests/test_event_stream_runtime.py -q
-
-Set-Location "..\eMas Front"
+Set-Location "eMas Front"
+npm run test:backend-oracles
 npm test
 npm run test:e2e:mocked
 ```
@@ -132,7 +131,7 @@ Release / pre-merge blocking:
 Set-Location "eMas Front"
 npm run test:e2e:seeded-oracles
 npm run test:e2e:real-langgraph
-npm run test:e2e -- --project=chromium-release
+npm run test:e2e:release
 ```
 
 Nightly / post-deploy / opt-in:
@@ -141,9 +140,123 @@ Nightly / post-deploy / opt-in:
 Set-Location "eMas Front"
 npm run test:e2e:synthetic
 npm run test:e2e:operational
-npm run test:e2e -- --project=chromium --grep "@reliability"
-npm run test:e2e -- --project=chromium-seeded --grep "@reliability"
+npm run test:e2e:reliability
+npm run test:e2e:reliability:seeded
 ```
+
+## Phase 15 CI/Release Enforcement and Ownership
+
+Completed: 2026-05-17
+
+Decision:
+
+The chatbot automation stack is now treated as an operating model, not only a test suite. PR, release/pre-merge, nightly/operational, and synthetic lanes have explicit commands, owners, blocking levels, and failure triage rules. No new product scenarios were added in this phase.
+
+### Current CI and Script Findings
+
+| Area inspected | Finding | Action |
+|---|---|---|
+| `eMas Front/package.json` | Existing aliases covered mocked, seeded, real LangGraph, synthetic, and operational lanes. `test:backend-oracles` still pointed at the older two-file subset, and release/reliability aliases were missing. | Expanded `test:backend-oracles` to the full Phase 14 fast backend gate. Added `test:e2e:release`, `test:e2e:reliability`, and `test:e2e:reliability:seeded` because they follow the existing `test:e2e:*` convention. |
+| `.github/workflows/playwright-e2e.yml` | PR CI ran only the older two-file backend oracle subset. Seeded release/pre-merge was enforced, but real LangGraph and release validation were dispatch-only. | Updated PR backend pytest to the full oracle/schema/manual-bank command. Added release validation dispatch input and release validation job. Promoted real LangGraph and release validation to run on `main`, `release/**`, and `pre-merge/**` pushes. |
+| `.github/workflows/playwright-reliability-soak.yml` | Reliability workflow used raw Playwright project/grep commands. | Switched to the new reliability aliases. |
+| `eMas Front/playwright.config.js` | Projects already exist for `chromium`, `chromium-seeded`, `chromium-real-langgraph`, `chromium-release`, and `chromium-synthetic`; mocked default excludes slow/release/synthetic specs unless explicitly grepped. | No config change required. |
+| `pytest.ini` and `factory-agent/pyproject.toml` | Pytest config is minimal; no marker or addopts change was needed for the final backend lane. | No config change required. |
+
+### Final Command Lanes
+
+| Lane | Exact command | CI enforcement | Blocking level | Owner | Runtime |
+|---|---|---|---|---|---:|
+| Backend oracle/schema/manual-bank | `Set-Location "eMas Front"; npm run test:backend-oracles` | Pull requests and protected branch pushes through `pr-fast-oracle-gate` | Blocks PR and release | Factory Agent QA/backend owner | Phase 14: 4.76s |
+| Frontend unit/component | `Set-Location "eMas Front"; npm test` | Pull requests and protected branch pushes through `pr-fast-oracle-gate` | Blocks PR and release | Frontend chat owner | Phase 14 final: 15.77s |
+| Mocked Chromium PR smoke | `Set-Location "eMas Front"; npm run test:e2e:mocked` | Pull requests and protected branch pushes through `pr-fast-oracle-gate` | Blocks PR and release | Frontend E2E owner | Phase 14 final: 31.69s |
+| Seeded Playwright oracles | `Set-Location "eMas Front"; npm run test:e2e:seeded-oracles` | Push to `main`, `release/**`, `pre-merge/**`, or workflow dispatch | Blocks release/pre-merge | Seeded L3 owner | Phase 14 final: 179.66s |
+| Real LangGraph critical proof | `Set-Location "eMas Front"; npm run test:e2e:real-langgraph` | Push to `main`, `release/**`, `pre-merge/**`, or workflow dispatch | Blocks release/pre-merge | Factory Agent/LangGraph owner | Phase 14 final: 18.29s |
+| Release validation | `Set-Location "eMas Front"; npm run test:e2e:release` | Push to `main`, `release/**`, `pre-merge/**`, or workflow dispatch | Blocks release/pre-merge | Release L4 owner | Phase 14 final: 36.24s |
+| Nightly mocked reliability | `Set-Location "eMas Front"; npm run test:e2e:reliability` | Scheduled/dispatch reliability workflow | Blocks operational signoff; release-blocking only if promoted by owner | Reliability owner | Runtime not captured in Phase 14 release sweep |
+| Nightly seeded reliability | `Set-Location "eMas Front"; npm run test:e2e:reliability:seeded` | Scheduled/dispatch reliability workflow | Blocks operational signoff; release-blocking only if promoted by owner | Reliability owner / seeded L3 owner | Runtime not captured in Phase 14 release sweep |
+| Operational readiness | `Set-Location "eMas Front"; npm run test:e2e:operational`; `npm run operational:gate` | Manual `Playwright Operational Readiness` dispatch | Critical/high failures block operational signoff | Operational readiness owner / QA governance owner | Runtime depends on selected matrix |
+| Synthetic read-only monitor | `Set-Location "eMas Front"; npm run test:e2e:synthetic` | Explicit dispatch or post-deploy/live synthetic schedule | Does not block PR. Local harness failure blocks synthetic lane; live critical failure pages `chatbot-oncall` and may block rollout or trigger rollback. | Synthetic L5 owner / `chatbot-oncall` | Phase 14 final: 41.94s |
+
+### Ownership and Blocking Rules
+
+| Failure class | Blocking level | Owner | Failure triage rule |
+|---|---|---|---|
+| Backend oracle failures | PR and release blocker. | Factory Agent QA/backend owner. | Reproduce with the focused pytest or SO id, classify product vs test bug, fix before merge, and rerun `npm run test:backend-oracles` plus any touched focused command. |
+| Frontend unit/component failures | PR and release blocker. | Frontend chat owner. | Reproduce with `npm test` or a focused `node --test` command, identify projection/turn/activity/component ownership, and rerun mocked Chromium if visible DOM can diverge. |
+| Seeded Playwright failures | Release/pre-merge blocker. | Seeded full-stack L3 owner. | Inspect Playwright trace, seeded stack logs, DB rows, audit rows, approvals, snapshot, timeline, SSE, final response, and UI. Treat visible-success/persisted-state mismatch as product bug unless proven otherwise. |
+| Real LangGraph failures | Release/pre-merge blocker. | Factory Agent/LangGraph owner. | Compare seeded and real-LangGraph evidence. If seeded passes but real fails, triage planner/routing/tool-selection/checkpoint behavior before changing browser assertions. |
+| Synthetic read-only monitor failures | Synthetic-lane blocker; live critical alerts can block rollout or trigger rollback but do not block PR. | Synthetic L5 owner / `chatbot-oncall`. | Confirm the canary is read-only, inspect redacted artifacts and alert code, classify dependency outage vs product regression, and never add mutating synthetic prompts. |
+| Accepted gaps | Critical/high mutating gaps block release unless an approved exception is recorded. Medium/low gaps require owner, severity, risk, target, reason, and workaround. | QA governance owner. | Review weekly until closed or until two clean release cycles prove the gap is obsolete. |
+
+### Remaining Manual-Only Checks
+
+Routine manual chatbot release regression remains retired. The only manual-only checks left are:
+
+- Nuanced answer quality, tone, and domain usefulness beyond structural assertions.
+- Compliance or regulated wording sign-off.
+- Exploratory discovery for brand-new workflows or unmodeled operational risks.
+- Emergency incident diagnosis when automation, harnesses, or telemetry are unavailable.
+
+These do not block routine release unless an owner promotes one to an accepted gap or release exception.
+
+### Phase 15 Verification Commands
+
+```powershell
+Set-Location "eMas Front"
+npm run test:backend-oracles
+npm test
+npm run test:e2e:mocked -- --list
+npm run test:e2e:seeded-oracles -- --list
+npm run test:e2e:real-langgraph -- --list
+npm run test:e2e:release -- --list
+npm run test:e2e:synthetic -- --list
+npm run test:e2e:reliability -- --list
+npm run test:e2e:reliability:seeded -- --list
+node --check "playwright.config.js"
+node --check "e2e/support/operationalGate.js"
+```
+
+Phase 15 verification results:
+
+```text
+npm run test:backend-oracles: 112 passed, 24 warnings in 3.69s.
+npm test: 64 passed in 8129.721ms.
+node --check playwright.config.js: passed.
+node --check e2e/support/operationalGate.js: passed.
+package.json JSON parse: passed.
+workflow YAML parse: passed.
+npm run test:e2e:mocked -- --list: 21 tests in 10 files.
+npm run test:e2e:seeded-oracles -- --list: 20 tests in 3 files.
+npm run test:e2e:real-langgraph -- --list: 2 tests in 1 file.
+npm run test:e2e:release -- --list: 21 tests in 3 files.
+npm run test:e2e:synthetic -- --list: 9 tests in 1 file.
+npm run test:e2e:reliability -- --list: 5 tests in 1 file.
+npm run test:e2e:reliability:seeded -- --list: 2 tests in 1 file.
+npm run test:e2e:operational -- --list: 5 tests in 1 file.
+npm run operational:gate -- --dry-run: printed the full operational matrix with critical/high severities.
+git diff --check: passed with LF-to-CRLF warnings only.
+```
+
+Warnings observed:
+
+- Existing LangGraph, SQLAlchemy, datetime, telemetry, and pytest-asyncio deprecation warnings in the backend oracle suite.
+
+Files changed in this phase:
+
+- `.github/workflows/playwright-e2e.yml`
+- `.github/workflows/playwright-reliability-soak.yml`
+- `docs/operations/chatbot_release_runbook.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+- `eMas Front/e2e/README.md`
+- `eMas Front/package.json`
+
+Release-blocking gaps:
+
+- None open.
+- No accepted gaps were added.
+- No tests or product scenarios were deleted or added.
 
 ## Phase 0 Checklist: Test Reality Audit
 

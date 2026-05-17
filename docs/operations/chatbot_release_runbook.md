@@ -14,7 +14,7 @@ npm test
 npm run test:e2e:mocked
 ```
 
-This is the default pull-request gate. It blocks broken fast Factory Agent state-machine/snapshot oracles, frontend unit regressions, and deterministic mocked Chromium browser regressions without starting seeded full-stack services, real LangGraph browser proof, live synthetic monitoring, or an LLM provider.
+This is the default pull-request gate. It blocks broken fast Factory Agent oracle/schema/manual-bank coverage, frontend unit regressions, and deterministic mocked Chromium browser regressions without starting seeded full-stack services, real LangGraph browser proof, live synthetic monitoring, or an LLM provider.
 
 GitHub Actions equivalent: `Chatbot Oracle Gates` runs this gate on pull requests and pushes.
 
@@ -30,6 +30,12 @@ Run the real LangGraph browser proof only when explicitly requested or as part o
 
 ```powershell
 npm run test:e2e:real-langgraph
+```
+
+Run production-like release validation before release signoff:
+
+```powershell
+npm run test:e2e:release
 ```
 
 Run synthetic monitoring as a read-only gate. The default command uses the local release harness; live production/staging mode requires explicit read-only synthetic credentials and read-only prompts.
@@ -66,7 +72,7 @@ Use a dry run to print the matrix without executing child checks:
 npm run operational:gate -- --dry-run
 ```
 
-GitHub Actions equivalent: manually dispatch `Playwright Operational Readiness`. For narrower release lanes, manually dispatch `Chatbot Oracle Gates` with the seeded, real LangGraph, or read-only synthetic input selected.
+GitHub Actions equivalent: manually dispatch `Playwright Operational Readiness`. For narrower release lanes, manually dispatch `Chatbot Oracle Gates` with the seeded, real LangGraph, release validation, or read-only synthetic input selected.
 
 ## Rollback Validation
 
@@ -74,7 +80,7 @@ Set the previous known-good build URL, then run the release rollback smoke:
 
 ```powershell
 $env:PLAYWRIGHT_RELEASE_ROLLBACK_BASE_URL = "https://previous-known-good.example.com"
-npm run test:e2e -- --project=chromium-release --grep "scenario 68"
+npm run test:e2e:release -- --grep "scenario 68"
 ```
 
 The rollback URL must answer `/__release/precheck` with a successful release precheck before the candidate can be used as the rollback target.
@@ -104,8 +110,8 @@ $env:PLAYWRIGHT_SYNTHETIC_OWNER = "chatbot-oncall"
 Then rerun release and synthetic gates from scratch:
 
 ```powershell
-npm run test:e2e -- --project=chromium-release
-npm run test:e2e -- --project=chromium-synthetic
+npm run test:e2e:release
+npm run test:e2e:synthetic
 ```
 
 Record any non-automated recovery item as an accepted gap in `TRACK.md` with owner, severity, risk, target date/phase, reason, and temporary workaround.

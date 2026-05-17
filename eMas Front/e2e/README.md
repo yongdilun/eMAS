@@ -87,7 +87,7 @@ npm test
 npm run test:e2e:mocked
 ```
 
-The backend oracle command runs the fast Factory Agent state-machine and snapshot/final-response pytest contracts without live services. The seeded, real LangGraph, release, and synthetic projects remain outside the default PR gate:
+The backend oracle command runs the fast Factory Agent schema, manual-bank, state-machine, snapshot/final-response, API/UI-alignment, prompt-regression, summary, and SSE pytest contracts without live services. The seeded, real LangGraph, release, and synthetic projects remain outside the default PR gate:
 
 ```powershell
 Set-Location "eMas Front"
@@ -95,8 +95,8 @@ npm run test:e2e -- --project=chromium-seeded --grep "@l3-foundation"
 npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"
 npm run test:e2e:seeded-oracles
 npm run test:e2e:real-langgraph
-npm run test:e2e -- --project=chromium-release
-npm run test:e2e -- --project=chromium-synthetic
+npm run test:e2e:release
+npm run test:e2e:synthetic
 ```
 
 ## Phase 13 Normal-Use Hardening
@@ -216,7 +216,7 @@ Phase 16 adds opt-in `@security` and `@privacy` checks for session isolation, au
 Set-Location "eMas Front"
 npm test
 npm run test:e2e -- --project=chromium --grep "@security|@privacy"
-npm run test:e2e -- --project=chromium-release --grep "@security|@privacy"
+npm run test:e2e:release -- --grep "@security|@privacy"
 ```
 
 Coverage:
@@ -317,7 +317,7 @@ Phase 10 adds an opt-in production-like release gate:
 
 ```powershell
 Set-Location "eMas Front"
-npm run test:e2e -- --project=chromium-release
+npm run test:e2e:release
 ```
 
 `chromium-release` builds the frontend with release-style paths, then starts a local nginx-style proxy in front of the seeded Go API and Factory Agent:
@@ -367,7 +367,7 @@ Phase 11 adds an opt-in synthetic monitor project:
 
 ```powershell
 Set-Location "eMas Front"
-npm run test:e2e -- --project=chromium-synthetic
+npm run test:e2e:synthetic
 ```
 
 By default, this runs against the local release-style harness so the command is safe to verify without real production/staging credentials. It still behaves like a production monitor: it opens the production-built app, uses `/agent` and `/api/v1` proxy paths, emits machine-readable results, and stores failure-only redacted artifacts.
@@ -379,7 +379,7 @@ $env:PLAYWRIGHT_SYNTHETIC_LIVE = "1"
 $env:PLAYWRIGHT_SYNTHETIC_BASE_URL = "https://staging.example.com"
 $env:PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN = "<synthetic read-only token>"
 $env:PLAYWRIGHT_SYNTHETIC_OWNER = "chatbot-oncall"
-npm run test:e2e -- --project=chromium-synthetic
+npm run test:e2e:synthetic
 ```
 
 Synthetic env vars:
@@ -436,7 +436,7 @@ npm test
 npm run test:e2e:mocked
 ```
 
-The PR gate does not start the real Go API, real Factory Agent service, Docker, Promptfoo, real LangGraph browser stack, production synthetic live mode, or an LLM provider. That separation keeps PR feedback deterministic while still blocking broken state-machine and snapshot/final-response invariants.
+The PR gate does not start the real Go API, real Factory Agent service, Docker, Promptfoo, real LangGraph browser stack, production synthetic live mode, or an LLM provider. That separation keeps PR feedback deterministic while still blocking broken backend oracle, schema, manual-bank, state-machine, snapshot/final-response, prompt-regression, summary, and SSE invariants.
 
 Seeded full-stack oracles are release/pre-merge or explicit opt-in gates:
 

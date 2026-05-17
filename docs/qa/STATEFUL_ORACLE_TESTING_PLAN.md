@@ -916,6 +916,82 @@ Phase 14 result on 2026-05-17:
 - Two release-smoke test bugs were fixed: stale mobile approval-copy assertion and hidden long-stream summary assertion.
 - No release-blocking automated coverage gaps remain for routine chatbot release regression.
 
+### Phase 15: CI/Release Enforcement and Ownership
+
+Goal:
+
+Turn the completed chatbot testing pipeline into a release operating model with explicit command lanes, blocking levels, owners, and failure triage rules. This phase does not add new product scenarios.
+
+Files likely touched:
+
+- `.github/workflows/playwright-e2e.yml`
+- `.github/workflows/playwright-reliability-soak.yml`
+- `eMas Front/package.json`
+- `docs/qa/STATEFUL_ORACLE_TESTING_PLAN.md`
+- `docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+Implementation steps:
+
+- Inspect existing package scripts, CI workflows, Playwright projects, and pytest config.
+- Make the default backend oracle alias match the full Phase 14 fast backend gate.
+- Add only command aliases that follow the existing `test:e2e:*` convention.
+- Promote seeded, real LangGraph, and release validation to blocking release/pre-merge CI lanes.
+- Keep synthetic checks read-only and separate from mutating release gates.
+- Document owners, blocking level, triage rule, runtime evidence, and manual-only checks.
+
+Final command lanes:
+
+| Lane | CI trigger | Local command | Blocking level | Owner | Runtime evidence |
+|---|---|---|---|---|---|
+| PR fast deterministic | Pull request and protected branch push in `Chatbot Oracle Gates` | `npm run test:backend-oracles`; `npm test`; `npm run test:e2e:mocked` | Blocks PR merge | Factory Agent QA/backend owner, frontend chat owner, frontend E2E owner | Phase 14: backend 4.76s, frontend unit 15.77s, mocked Chromium 31.69s |
+| Release/pre-merge deterministic | Push to `main`, `release/**`, or `pre-merge/**`; explicit dispatch | `npm run test:e2e:seeded-oracles`; `npm run test:e2e:real-langgraph`; `npm run test:e2e:release` | Blocks release/pre-merge signoff | Seeded L3 owner, Factory Agent/LangGraph owner, release L4 owner | Phase 14: seeded 179.66s, real LangGraph 18.29s, release 36.24s |
+| Nightly/operational | Scheduled reliability workflow or manual operational readiness dispatch | `npm run test:e2e:reliability`; `npm run test:e2e:reliability:seeded`; `npm run test:e2e:operational`; `npm run operational:gate` | Blocks operational signoff; blocks release only when the owner promotes the failure to a release exception | Reliability owner, operational readiness owner, QA governance owner | Runtime varies by scheduled matrix; use workflow artifacts and `operational-gate-results.json` |
+| Synthetic read-only | Explicit synthetic dispatch, post-deploy monitor, or live read-only canary schedule | `npm run test:e2e:synthetic` | Does not block PR; local harness failure blocks synthetic lane; live critical alert pages `chatbot-oncall` and can block rollout/rollback decision | Synthetic L5 owner / `chatbot-oncall` | Phase 14 local harness: 41.94s |
+
+Ownership and blocking rules:
+
+| Failure class | Blocking rule | Owner | Failure triage rule |
+|---|---|---|---|
+| Backend oracle/schema/manual-bank failure | Blocks PR and release. | Factory Agent QA/backend owner. | Reproduce with the focused pytest file or SO id, classify product vs test bug, fix before merge, and rerun `npm run test:backend-oracles` plus any touched focused command. Critical/high mutating gaps are not accepted without an explicit release exception. |
+| Frontend unit/component failure | Blocks PR and release. | Frontend chat owner. | Reproduce with `npm test` or the focused `node --test` command, identify stale UI/projection/interaction risk, and rerun `npm test` plus mocked Chromium when visible behavior can diverge. |
+| Seeded Playwright oracle failure | Blocks release/pre-merge. | Seeded full-stack L3 owner. | Inspect seeded stack artifacts, DB rows, audit rows, approvals, snapshot, timeline, and final UI. A mismatch between visible success and persisted state is a product bug unless proven to be a harness/test bug. |
+| Real LangGraph failure | Blocks release/pre-merge. | Factory Agent/LangGraph owner. | Compare seeded and real-LangGraph evidence. If seeded passes but real fails, triage planner/tool-selection/routing/checkpoint behavior before changing browser assertions. |
+| Synthetic read-only monitor failure | Does not block PR. Local harness failures block the synthetic lane; live critical failures page `chatbot-oncall` and can block rollout or trigger rollback. | Synthetic L5 owner / `chatbot-oncall`. | Confirm the prompt is read-only, inspect redacted synthetic artifacts and alert code, classify dependency outage vs product regression, and never add mutating synthetic coverage. |
+| Accepted gap | Critical/high mutating gaps block release unless the tracker records an approved exception. Medium/low gaps need owner, risk, target, reason, and workaround. | QA governance owner. | Review weekly until closed or until two clean release cycles prove the gap no longer applies. |
+
+Remaining manual-only checks:
+
+- Nuanced answer quality, tone, and domain usefulness beyond structural assertions.
+- Compliance or regulated wording sign-off.
+- Exploratory discovery for brand-new workflows or unmodeled operational risk.
+- Emergency incident diagnosis when automation, harnesses, or telemetry are unavailable.
+
+Acceptance criteria:
+
+- PR failures in backend oracles, frontend unit/component tests, or mocked Chromium block merge.
+- Release/pre-merge failures in seeded Playwright, real LangGraph, or release validation block signoff.
+- Synthetic live failures stay read-only, alert the owner, and never mutate production data.
+- Accepted gaps have owner, severity, risk, workaround, target, and blocking status.
+- Routine manual chatbot regression is not a release gate.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:backend-oracles
+npm test
+npm run test:e2e:mocked -- --list
+npm run test:e2e:seeded-oracles -- --list
+npm run test:e2e:real-langgraph -- --list
+npm run test:e2e:release -- --list
+npm run test:e2e:synthetic -- --list
+npm run test:e2e:reliability -- --list
+npm run test:e2e:reliability:seeded -- --list
+node --check "playwright.config.js"
+node --check "e2e/support/operationalGate.js"
+```
+
 ## First Critical Scenario Set
 
 Implement these before claiming manual chatbot testing is retired.

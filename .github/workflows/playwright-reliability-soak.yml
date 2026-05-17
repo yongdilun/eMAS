@@ -61,10 +61,10 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run mocked reliability scenarios
-        run: npm run test:e2e -- --project=chromium --grep "@reliability"
+        run: npm run test:e2e:reliability
 
       - name: Run seeded reliability scenarios
-        run: npm run test:e2e -- --project=chromium-seeded --grep "@reliability"
+        run: npm run test:e2e:reliability:seeded
 
       - name: Upload reliability artifacts
         if: always()
