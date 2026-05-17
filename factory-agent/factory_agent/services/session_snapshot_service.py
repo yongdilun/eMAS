@@ -146,6 +146,27 @@ def _is_operator_result_text(value: str | None) -> bool:
     return not _looks_like_raw_json_text(text) and not _is_plan_like_completion_text(text)
 
 
+def _operator_result_content_for_completion(event: TimelineEventResponse | None) -> str | None:
+    if event is None:
+        return None
+    details = event.details if isinstance(event.details, dict) else {}
+    presentation = details.get("presentation") if isinstance(details.get("presentation"), dict) else {}
+    presentation_message = str(presentation.get("message") or "").strip()
+    if _is_operator_result_text(presentation_message):
+        return presentation_message
+    content = str(event.content or "").strip()
+    return content if _is_operator_result_text(content) else None
+
+
+def _tool_result_completion_sort_key(event: TimelineEventResponse) -> tuple[datetime, int]:
+    step_context = event.step_context if isinstance(event.step_context, dict) else {}
+    try:
+        step_index = int(step_context.get("step_index"))
+    except (TypeError, ValueError):
+        step_index = -1
+    return event.created_at, step_index
+
+
 def _is_success_like_plan_text(value: str | None) -> bool:
     text = (value or "").strip().lower()
     if not text:
@@ -1370,13 +1391,15 @@ class SessionSnapshotService:
                 (msg for msg in reversed(assistant_messages) if "Execution completed successfully" in msg.content),
                 None,
             )
-            useful_tool_result_event = next(
-                (
-                    event
-                    for event in sorted(events, key=lambda item: item.created_at, reverse=True)
-                    if event.event_type == "tool_result" and _is_operator_result_text(event.content)
-                ),
-                None,
+            useful_tool_result_events = [
+                event
+                for event in events
+                if event.event_type == "tool_result" and _is_operator_result_text(event.content)
+            ]
+            useful_tool_result_event = (
+                max(useful_tool_result_events, key=_tool_result_completion_sort_key)
+                if useful_tool_result_events
+                else None
             )
             completed_at = (
                 sess.completed_at
@@ -1394,10 +1417,11 @@ class SessionSnapshotService:
             if useful_tool_result_event and (
                 not useful_completion_message
                 or _is_plan_like_completion_text(useful_completion_message.content)
+                or _is_success_like_plan_text(useful_completion_message.content)
                 or _is_approval_wait_text(useful_completion_message.content)
                 or _looks_like_raw_json_text(useful_completion_message.content)
             ):
-                completion_content = useful_tool_result_event.content
+                completion_content = _operator_result_content_for_completion(useful_tool_result_event) or useful_tool_result_event.content
             events.append(
                 _timeline_event(
                     event_id=f"completed:{session_id}",

@@ -454,7 +454,22 @@ function getLatestToolPresentation(turn) {
       if (bundle && completed && tableContradictsSummary(presentation, summary)) {
         continue
       }
-      return presentation
+      const answerFields = Array.isArray(tools[index]?.details?.answer_model?.fields)
+        ? tools[index].details.answer_model.fields
+        : []
+      const tableColumns = new Set((presentation.table.columns || []).map((column) => String(column.key || column.label || '').toLowerCase()))
+      const facts = answerFields
+        .filter((field) => field?.label && field?.value != null)
+        .filter((field) => !tableColumns.has(String(field.key || field.label || '').toLowerCase()))
+        .map((field) => `${field.label}: ${field.value}`)
+      if (!facts.length) return presentation
+      return {
+        ...presentation,
+        analysis: {
+          ...(presentation.analysis || {}),
+          facts: [...(Array.isArray(presentation.analysis?.facts) ? presentation.analysis.facts : []), ...facts],
+        },
+      }
     }
   }
   return null

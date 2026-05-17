@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 import json
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -16,45 +15,10 @@ from factory_agent.api.dependencies import require_session_owner
 from factory_agent.observability.metrics import metrics
 from factory_agent.persistence.database import get_db
 from factory_agent.schemas import ActivityStepResponse, SessionSnapshotResponse, TimelineEventResponse
+from factory_agent.testing.fault_injection import SseFaultInjectionAdapter, build_sse_fault_injection_adapter
 
 
 LoadSessionSnapshot = Callable[..., Awaitable[SessionSnapshotResponse | None]]
-
-
-def _seeded_playwright_mode() -> bool:
-    return os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
-
-
-def _snapshot_intent_contains(snapshot: SessionSnapshotResponse | None, text: str) -> bool:
-    if snapshot is None or snapshot.session is None:
-        return False
-    return text.lower() in str(getattr(snapshot.session, "current_intent", "") or "").lower()
-
-
-def _record_seeded_sse_connection(
-    request: Request,
-    *,
-    stream: str,
-    session_id: str,
-    last_event_id: str | None,
-    event: str = "open",
-) -> None:
-    if not _seeded_playwright_mode():
-        return
-    rows = getattr(request.app.state, "playwright_seeded_sse_connections", None)
-    if rows is None:
-        rows = []
-        setattr(request.app.state, "playwright_seeded_sse_connections", rows)
-    rows.append(
-        {
-            "stream": stream,
-            "session_id": session_id,
-            "last_event_id": last_event_id,
-            "event": event,
-            "at": datetime.utcnow().isoformat() + "Z",
-        }
-    )
-    del rows[:-100]
 
 
 def build_events_router(
@@ -64,15 +28,16 @@ def build_events_router(
     semantic_payload_for_timeline_event: Callable[..., dict[str, Any]],
     should_skip_semantic_timeline_event: Callable[[TimelineEventResponse], bool],
     require_jwt: Callable[..., dict[str, Any]],
+    sse_fault_injection: SseFaultInjectionAdapter | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    fault_injection = sse_fault_injection or build_sse_fault_injection_adapter()
 
-    @router.get("/_playwright/sse-connections")
-    async def seeded_sse_connections(request: Request):
-        if not _seeded_playwright_mode():
-            return {"connections": []}
-        rows = getattr(request.app.state, "playwright_seeded_sse_connections", [])
-        return {"connections": list(rows)}
+    if fault_injection.exposes_playwright_diagnostics:
+
+        @router.get("/_playwright/sse-connections")
+        async def seeded_sse_connections(request: Request):
+            return {"connections": fault_injection.connection_rows(request)}
 
     @router.get("/sessions/{session_id}/events/semantic")
     async def stream_semantic_events(
@@ -89,7 +54,7 @@ def build_events_router(
         events derived from snapshot timeline diffs. EventSource reconnects can
         resume after Last-Event-ID.
         """
-        _record_seeded_sse_connection(
+        fault_injection.record_connection(
             request,
             stream="semantic",
             session_id=session_id,
@@ -217,7 +182,7 @@ def build_events_router(
         the chat UI. Intra-poll changes are emitted together, then paced before
         the next poll cycle.
         """
-        _record_seeded_sse_connection(
+        fault_injection.record_connection(
             request,
             stream="activity",
             session_id=session_id,
@@ -280,13 +245,12 @@ def build_events_router(
                     seen_steps[step.id] = payload_signature
                     emitted = True
                     pending_frames.append((step.id, payload))
-                frames_to_emit = pending_frames
-                if (
-                    _seeded_playwright_mode()
-                    and _snapshot_intent_contains(snapshot, "phase 9 out-of-order duplicate sse")
-                    and len(pending_frames) >= 2
-                ):
-                    frames_to_emit = [pending_frames[-1], pending_frames[0], pending_frames[-1], *pending_frames[1:-1]]
+                frames_to_emit = fault_injection.activity_frames(
+                    request,
+                    session_id=session_id,
+                    snapshot=snapshot,
+                    pending_frames=pending_frames,
+                )
                 for step_id, payload in frames_to_emit:
                     yield f"id: {step_id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if emitted:
@@ -324,7 +288,7 @@ def build_events_router(
         Emits lightweight frames: hello, snapshot_invalidated, phase_changed,
         and heartbeat. Clients re-fetch snapshots when invalidated.
         """
-        _record_seeded_sse_connection(
+        fault_injection.record_connection(
             request,
             stream="notification",
             session_id=session_id,
@@ -354,32 +318,6 @@ def build_events_router(
                 async with session_factory() as poll_db:
                     return await load_session_snapshot(db=poll_db, session_id=session_id)
 
-            def _claim_seeded_drop(snapshot: SessionSnapshotResponse | None) -> bool:
-                if last_event_id or not _seeded_playwright_mode():
-                    return False
-                if not (
-                    _snapshot_intent_contains(snapshot, "phase 9 last-event-id reconnect")
-                    or _snapshot_intent_contains(snapshot, "phase 9 stream drop recovery")
-                    or _snapshot_intent_contains(snapshot, "phase 14 stream drop commit recovery")
-                ):
-                    return False
-                faults = getattr(request.app.state, "playwright_seeded_sse_faults", None)
-                if faults is None:
-                    faults = set()
-                    setattr(request.app.state, "playwright_seeded_sse_faults", faults)
-                key = f"notification-drop:{session_id}"
-                if key in faults:
-                    return False
-                faults.add(key)
-                _record_seeded_sse_connection(
-                    request,
-                    stream="notification",
-                    session_id=session_id,
-                    last_event_id=last_event_id,
-                    event="seeded_drop",
-                )
-                return True
-
             initial = await _fresh_snapshot()
             if initial is None:
                 gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
@@ -396,7 +334,12 @@ def build_events_router(
             }
             yield f"id: {initial.cursor}\nretry: 500\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
 
-            if _claim_seeded_drop(initial):
+            if fault_injection.should_drop_notification_stream(
+                request,
+                session_id=session_id,
+                last_event_id=last_event_id,
+                snapshot=initial,
+            ):
                 return
 
             if client_cursor < initial.cursor:
@@ -418,7 +361,12 @@ def build_events_router(
                     yield f"event: notification\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
                     return
 
-                if _claim_seeded_drop(snapshot):
+                if fault_injection.should_drop_notification_stream(
+                    request,
+                    session_id=session_id,
+                    last_event_id=last_event_id,
+                    snapshot=snapshot,
+                ):
                     return
 
                 emitted = False

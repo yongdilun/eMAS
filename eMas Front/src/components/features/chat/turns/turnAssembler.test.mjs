@@ -87,6 +87,94 @@ test('generic completion terminal prefers plan summary over generic tool result'
   assert.equal(computeFactoryAgentTurnSummary(turns[0]), 'Machine 5 was not found.')
 })
 
+test('generic completion terminal keeps completed plan summary even when a tool card is available', () => {
+  const turns = assembleFactoryAgentTurns([
+    userEvent,
+    {
+      event_id: 'plan:1',
+      event_type: 'plan_created',
+      content: 'Plan created.',
+      created_at: '2026-05-13T09:36:21',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'PLANNING',
+      details: {
+        status: 'COMPLETED',
+        plan_explanation: 'Stream drop recovered by snapshot polling.',
+      },
+    },
+    {
+      event_id: 'step:1',
+      event_type: 'tool_result',
+      content: 'Machine M-CNC-01 is currently RUNNING.',
+      created_at: '2026-05-13T09:36:21',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      step_id: 'step-1',
+      tool_name: 'get__machines_{id}',
+      status: 'DONE',
+      details: {
+        result: { data: { machine_id: 'M-CNC-01', status: 'RUNNING' } },
+      },
+    },
+    {
+      event_id: 'completed:1',
+      event_type: 'session_completed',
+      content: 'Execution completed successfully.',
+      created_at: '2026-05-13T09:36:22',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+    },
+  ])
+
+  assert.equal(computeFactoryAgentTurnSummary(turns[0]), 'Stream drop recovered by snapshot polling.')
+})
+
+test('tool results with identical timestamps are ordered by step index', () => {
+  const createdAt = '2026-05-13T09:36:21'
+  const turns = assembleFactoryAgentTurns([
+    userEvent,
+    {
+      event_id: 'step:final',
+      event_type: 'tool_result',
+      content: 'final rule summary',
+      created_at: createdAt,
+      role: 'assistant',
+      turn_id: 'turn-1',
+      step_id: 'step-final',
+      tool_name: 'get__jobs',
+      status: 'DONE',
+      step_context: { step_index: 2 },
+      details: { result: { data: [{ job_id: 'JOB-SEED-005', rule: 'expedite' }] } },
+    },
+    {
+      event_id: 'step:first',
+      event_type: 'tool_result',
+      content: 'first read summary',
+      created_at: createdAt,
+      role: 'assistant',
+      turn_id: 'turn-1',
+      step_id: 'step-first',
+      tool_name: 'get__jobs',
+      status: 'DONE',
+      step_context: { step_index: 0 },
+      details: { result: { data: [{ job_id: 'JOB-SEED-005', priority: 'low' }] } },
+    },
+    {
+      event_id: 'completed:1',
+      event_type: 'session_completed',
+      content: 'Execution completed successfully.',
+      created_at: '2026-05-13T09:36:22',
+      role: 'assistant',
+      turn_id: 'turn-1',
+      status: 'COMPLETED',
+    },
+  ])
+
+  assert.equal(turns[0].tools.at(-1).content, 'final rule summary')
+})
+
 test('failed commit terminal prefers safe diagnostic over stale success plan text', () => {
   const turns = assembleFactoryAgentTurns([
     {

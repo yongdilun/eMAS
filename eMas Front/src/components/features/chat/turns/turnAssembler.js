@@ -189,6 +189,15 @@ function latestToolSummary(turn) {
   return null
 }
 
+function latestToolHasResultRows(turn) {
+  const tools = Array.isArray(turn?.tools) ? turn.tools : []
+  for (let i = tools.length - 1; i >= 0; i -= 1) {
+    const result = toolResultObject(tools[i])
+    if (resultRows(result).length > 0) return true
+  }
+  return false
+}
+
 function latestPlanForAnswer(turn) {
   const thinking = Array.isArray(turn?.thinking) ? turn.thinking : []
   if (!thinking.length) return null
@@ -243,6 +252,13 @@ function pickLatestTurnIdByTime(userEvents, atIso) {
   }
   const fallback = selected || userEvents[userEvents.length - 1]
   return fallback.turn_id || fallback.event_id || null
+}
+
+function timelineOrderKey(item) {
+  const createdAt = new Date(item?.created_at || 0).getTime()
+  const safeTime = Number.isFinite(createdAt) ? createdAt : 0
+  const stepIndex = Number(item?.step_context?.step_index ?? item?.details?.step_index ?? -1)
+  return [safeTime, Number.isFinite(stepIndex) ? stepIndex : -1]
 }
 
 export function assembleFactoryAgentTurns(timeline = []) {
@@ -325,6 +341,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
         status: e.status || 'IN_PROGRESS',
         content: e.content,
         created_at: e.created_at,
+        step_context: e.step_context || null,
         details: e.details || null,
       })
       continue
@@ -339,6 +356,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
         status: e.status || null,
         content: e.content,
         created_at: e.created_at,
+        step_context: e.step_context || null,
         details: e.details || null,
       })
       continue
@@ -403,6 +421,11 @@ export function assembleFactoryAgentTurns(timeline = []) {
   }
 
   const turns = Array.from(turnsById.values()).map(turn => {
+    turn.tools.sort((a, b) => {
+      const [aTime, aStep] = timelineOrderKey(a)
+      const [bTime, bStep] = timelineOrderKey(b)
+      return aTime - bTime || aStep - bStep
+    })
     // Inject legacy-compatible structure for older assistant turn renderers.
     const lastThinking = turn.thinking?.[turn.thinking.length - 1]
     const content = turn.terminal?.content || lastThinking?.content || ""
@@ -488,6 +511,7 @@ export function computeFactoryAgentTurnSummary(turn) {
   }
   if (terminal?.event_type === 'session_completed') {
     const lastPlan = latestPlanForAnswer(turn)
+    const planText = visiblePlanText(lastPlan)
     const terminalContent = String(terminal.content || '').trim()
 
     if (!terminalContent) {
@@ -504,13 +528,14 @@ export function computeFactoryAgentTurnSummary(turn) {
     const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
     const terminalIsApprovalWait = isApprovalWaitText(terminal.content)
     if (isGenericComplete || terminalIsPlanLike || terminalIsApprovalWait) {
+      if (toolSummary && latestToolHasResultRows(turn)) return stripApprovalWaitPhrases(toolSummary)
+      if (planText && !isPlanLikeAnswer(planText)) {
+        return stripApprovalWaitPhrases(planText)
+      }
       if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
       const deduped = nonGenericToolLines(turn)
       if (deduped.length >= 2) return stripApprovalWaitPhrases(deduped.join('\n'))
       if (deduped.length === 1) return stripApprovalWaitPhrases(deduped[0])
-      if (lastPlan?.content && !isPlanLikeAnswer(lastPlan.content)) {
-        return stripApprovalWaitPhrases(lastPlan.content)
-      }
       if (lastTool?.content) return stripApprovalWaitPhrases(lastTool.content)
     }
     return stripApprovalWaitPhrases(terminalContent)

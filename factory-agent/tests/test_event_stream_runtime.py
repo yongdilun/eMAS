@@ -5,6 +5,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -14,6 +15,7 @@ from fastapi import FastAPI
 import factory_agent.api.routers.events as events_router
 from factory_agent.persistence import database as persistence_database
 from factory_agent.schemas import ActivityStepResponse, SessionResponse, SessionSnapshotResponse, TimelineEventResponse
+from factory_agent.testing.fault_injection import NoopSseFaultInjectionAdapter, SeededPlaywrightSseFaultInjectionAdapter
 
 
 LoadSnapshot = Callable[..., Awaitable[SessionSnapshotResponse | None]]
@@ -29,6 +31,7 @@ def _events_app(
     activity_steps_for_snapshot: Callable[[SessionSnapshotResponse], list[ActivityStepResponse]] | None = None,
     semantic_payload_for_timeline_event: Callable[..., dict[str, Any]] | None = None,
     should_skip_semantic_timeline_event: Callable[[TimelineEventResponse], bool] | None = None,
+    sse_fault_injection=None,
 ) -> FastAPI:
     app = FastAPI()
 
@@ -51,18 +54,23 @@ def _events_app(
             or (lambda event, **kwargs: {"type": event.event_type, "event_id": event.event_id, **kwargs}),
             should_skip_semantic_timeline_event=should_skip_semantic_timeline_event or (lambda event: False),
             require_jwt=lambda: {"sub": "u1"},
+            sse_fault_injection=sse_fault_injection,
         )
     )
     return app
 
 
-def _session_response(session_id: str = "s1", status: str = "EXECUTING") -> SessionResponse:
+def _session_response(
+    session_id: str = "s1",
+    status: str = "EXECUTING",
+    current_intent: str = "Phase 5 SSE oracle stream",
+) -> SessionResponse:
     return SessionResponse(
         session_id=session_id,
         user_id="u1",
         name="Phase 5 SSE oracle",
         status=status,
-        current_intent="Phase 5 SSE oracle stream",
+        current_intent=current_intent,
         plan_id="plan-phase5-sse",
         operation_id="plan-phase5-sse",
         plan_version=1,
@@ -81,11 +89,12 @@ def _snapshot(
     session_id: str = "s1",
     status: str = "EXECUTING",
     cursor: int = 1,
+    current_intent: str = "Phase 5 SSE oracle stream",
     activity_steps: list[ActivityStepResponse] | None = None,
     timeline: list[TimelineEventResponse] | None = None,
 ) -> SessionSnapshotResponse:
     return SessionSnapshotResponse(
-        session=_session_response(session_id=session_id, status=status),
+        session=_session_response(session_id=session_id, status=status, current_intent=current_intent),
         cursor=cursor,
         phase=status,
         activity_steps=activity_steps or [],
@@ -331,6 +340,84 @@ async def test_activity_stream_stale_last_event_id_replays_current_snapshot_inst
 
 
 @pytest.mark.asyncio
+async def test_noop_fault_adapter_does_not_inject_activity_faults_for_seeded_prompt(
+    sessionmaker_override,
+    monkeypatch,
+):
+    monkeypatch.setattr(events_router.asyncio, "sleep", _fast_sleep)
+    steps = [
+        _activity_step("act:001", 1, "Understanding request"),
+        _activity_step("act:002", 2, "Reading machine telemetry"),
+    ]
+    snap = _snapshot(
+        cursor=2,
+        current_intent="Run Phase 9 out-of-order duplicate SSE seeded jobs workflow",
+        activity_steps=steps,
+    )
+    loader, _calls = _snapshot_sequence(snap, snap, None)
+    app = _events_app(
+        sessionmaker_override,
+        [],
+        [],
+        load_session_snapshot=loader,
+        activity_steps_for_snapshot=lambda snapshot: snapshot.activity_steps,
+        sse_fault_injection=NoopSseFaultInjectionAdapter(),
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with client.stream("GET", "/sessions/s1/events/activity") as response:
+            body = await response.aread()
+
+        diagnostics = await client.get("/_playwright/sse-connections")
+
+    assert response.status_code == 200
+    assert diagnostics.status_code == 404
+    _assert_activity_oracle(
+        _sse_frames(body),
+        expected_ids=["act:001", "act:002"],
+        expected_labels=["Understanding request", "Reading machine telemetry"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_seeded_fault_adapter_injects_duplicate_out_of_order_activity_frames(
+    sessionmaker_override,
+    monkeypatch,
+):
+    monkeypatch.setattr(events_router.asyncio, "sleep", _fast_sleep)
+    steps = [
+        _activity_step("act:001", 1, "Understanding request"),
+        _activity_step("act:002", 2, "Reading machine telemetry"),
+    ]
+    snap = _snapshot(
+        cursor=2,
+        current_intent="Run Phase 9 out-of-order duplicate SSE seeded jobs workflow",
+        activity_steps=steps,
+    )
+    loader, _calls = _snapshot_sequence(snap, snap, None)
+    app = _events_app(
+        sessionmaker_override,
+        [],
+        [],
+        load_session_snapshot=loader,
+        activity_steps_for_snapshot=lambda snapshot: snapshot.activity_steps,
+        sse_fault_injection=SeededPlaywrightSseFaultInjectionAdapter(),
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with client.stream("GET", "/sessions/s1/events/activity") as response:
+            body = await response.aread()
+
+        diagnostics = await client.get("/_playwright/sse-connections")
+
+    assert response.status_code == 200
+    assert diagnostics.status_code == 200
+    frames = [frame for frame in _sse_frames(body) if frame.get("event") == "activity"]
+    assert [frame["id"] for frame in frames] == ["act:002", "act:001", "act:002"]
+    assert diagnostics.json()["connections"][0]["stream"] == "activity"
+
+
+@pytest.mark.asyncio
 async def test_notification_stream_reconnect_invalidates_snapshot_for_stale_cursor(
     sessionmaker_override,
     monkeypatch,
@@ -352,7 +439,43 @@ async def test_notification_stream_reconnect_invalidates_snapshot_for_stale_curs
         _assert_notification_invalidates_snapshot(
             [{"event": "notification", "id": "2", "data": {"type": "heartbeat", "cursor": 2}}],
             expected_cursor=4,
-        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_seeded_notification_drop_happens_once_and_last_event_id_reconnect_continues(
+    sessionmaker_override,
+    monkeypatch,
+):
+    monkeypatch.setattr(events_router.asyncio, "sleep", _fast_sleep)
+    first_snap = _snapshot(cursor=1, current_intent="Run Phase 9 Last-Event-ID reconnect seeded machine workflow")
+    reconnect_snap = _snapshot(cursor=2, current_intent="Run Phase 9 Last-Event-ID reconnect seeded machine workflow")
+    loader, _calls = _snapshot_sequence(first_snap, first_snap, reconnect_snap, reconnect_snap, None)
+    app = _events_app(
+        sessionmaker_override,
+        [],
+        [],
+        load_session_snapshot=loader,
+        sse_fault_injection=SeededPlaywrightSseFaultInjectionAdapter(),
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with client.stream("GET", "/sessions/s1/events") as response:
+            first_body = await response.aread()
+
+        async with client.stream("GET", "/sessions/s1/events", headers={"Last-Event-ID": "1"}) as response:
+            reconnect_body = await response.aread()
+
+        diagnostics = await client.get("/_playwright/sse-connections")
+
+    assert response.status_code == 200
+    first_frames = _sse_frames(first_body)
+    assert [frame.get("data", {}).get("type") for frame in first_frames] == ["hello"]
+    reconnect_frames = _sse_frames(reconnect_body)
+    _assert_notification_invalidates_snapshot(reconnect_frames, expected_cursor=2)
+    connections = diagnostics.json()["connections"]
+    assert any(entry["event"] == "seeded_drop" for entry in connections)
+    assert any(entry["stream"] == "notification" and entry["last_event_id"] == "1" for entry in connections)
 
 
 @pytest.mark.asyncio
@@ -394,3 +517,15 @@ async def test_semantic_stream_reconnect_matches_snapshot_timeline_without_repla
     assert [frame["id"] for frame in semantic_frames] == ["tl:002", "tl:003"]
     assert [frame["data"]["type"] for frame in semantic_frames] == ["tool_result", "session_completed"]
     assert semantic_frames[-1]["data"]["content"] == "Run complete"
+
+
+def test_events_router_does_not_contain_seeded_phase_prompt_branches():
+    source = Path(events_router.__file__).read_text(encoding="utf-8").lower()
+    forbidden = [
+        "phase 9 out-of-order duplicate sse",
+        "phase 9 last-event-id reconnect",
+        "phase 9 stream drop recovery",
+        "phase 14 stream drop commit recovery",
+    ]
+    for phrase in forbidden:
+        assert phrase not in source

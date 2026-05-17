@@ -11,7 +11,7 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 | 1 | Guard semantic routing against overfitting | Complete | Codex | Added route-family semantic contract matrix, production hardcode guard, and fixed job-id fragment entity leakage. |
 | 2 | Capability-based tool selection | Complete | Codex | Semantic route tool selection now uses capability metadata before legacy endpoint-name fallback. |
 | 3 | Knowledge policy registry | Complete | Codex | Moved OSHA/LOTO fallback answer, sources, and safety content into a route-scoped RAG knowledge policy registry. |
-| 4 | SSE fault injection Adapter | Not Started | Next agent | Move Playwright seeded fault hooks out of production SSE route logic. |
+| 4 | SSE fault injection Adapter | Complete | Codex | Seeded duplicate/out-of-order/drop/reconnect hooks now live behind `factory_agent.testing.fault_injection`; production router uses the no-op adapter by default. |
 | 5 | Data-driven seeded scenario engine | Not Started | Next agent | Highest effort. Migrate scenario branches incrementally. |
 | 6 | Typed snapshot presentation contract | Not Started | Next agent | Backend contract needed before frontend cleanup. |
 | 7 | Frontend typed presentation rendering | Not Started | Next agent | Remove primary dependence on text phrase inference. |
@@ -43,6 +43,8 @@ Baseline commit observed: `3e50209 test: add semantic routing contract`
 - Phase 1 found and fixed a product routing bug where a hyphenated job id such as `JOB-ABC-123` could leak an inner `ABC-123` machine id into `normalized_entities`.
 - Phase 2 found and fixed product routing bugs where individual job deletes were classified as dangerous bulk deletes, `JOB-*` IDs without digits were not normalized, create-job shorthand such as `create job P-005` did not preserve the product id, and read-style schedule explanation prompts were treated as incomplete job mutations.
 - Phase 3 keeps curated OSHA/LOTO fallback knowledge product-owned behind `factory_agent.rag.knowledge_policy`; the first policy is route-scoped to LOTO/safety RAG routes and does not apply to unrelated procedure prompts.
+- Phase 4 keeps normal SSE stream semantics in `factory_agent.api.routers.events`; seeded Playwright SSE diagnostics and fault behavior are isolated behind `factory_agent.testing.fault_injection`.
+- Phase 4 exposed and fixed related product bugs: bare `run` wording no longer implies a job mutation without a write verb; synthetic completion projection now preserves operator-facing tool result messages, uses step index as a tie-breaker for same-timestamp tool results, and the frontend sorts same-timestamp tool rows plus surfaces extra answer-model fields beside tables.
 
 ## Phase 0 Inventory
 
@@ -133,12 +135,12 @@ Inventory command families used:
 
 ### Phase 4: SSE Fault Injection Adapter
 
-- [ ] Define production no-op fault Adapter.
-- [ ] Define seeded Playwright fault Adapter.
-- [ ] Move duplicate/out-of-order/drop logic out of main event stream loops.
-- [ ] Keep test-only connection recording behind seeded mode.
-- [ ] Run backend SSE runtime tests.
-- [ ] Run focused seeded Playwright SSE tests.
+- [x] Define production no-op fault Adapter.
+- [x] Define seeded Playwright fault Adapter.
+- [x] Move duplicate/out-of-order/drop logic out of main event stream loops.
+- [x] Keep test-only connection recording behind seeded mode.
+- [x] Run backend SSE runtime tests.
+- [x] Run focused seeded Playwright SSE tests.
 
 ### Phase 5: Data-Driven Seeded Scenario Engine
 
@@ -202,6 +204,10 @@ python -m pytest tests/test_api_endpoints.py::test_create_plan_answers_osha_loto
 python -m pytest tests/test_phase19_prompt_workflow_regression.py -q
 python -m pytest tests/test_rag_* -q
 python -m pytest tests/test_rag_generation.py tests/test_rag_ingestion.py tests/test_rag_live_llm.py tests/test_rag_retrieval.py tests/test_rag_reranking.py tests/test_rag_knowledge_policy.py -q
+python -m pytest tests/test_event_stream_runtime.py -q
+python -m pytest tests/test_event_stream_runtime.py tests/test_intent_splitter.py tests/test_snapshot_timeline_final_response_contract.py -q
+npm test -- --runInBand
+npm run test:e2e -- --project=chromium-seeded --grep "@sse|stream drop|Last-Event-ID|out-of-order"
 git status --short --branch
 git diff --check
 ```
@@ -226,6 +232,12 @@ git diff --check
   - `python -m pytest tests/test_rag_generation.py tests/test_rag_ingestion.py tests/test_rag_live_llm.py tests/test_rag_retrieval.py tests/test_rag_reranking.py tests/test_rag_knowledge_policy.py -q`: first run hit `WinError 5` creating pytest temp dirs under the user temp path; rerun with `TMP`/`TEMP` pointed at a workspace temp dir passed with 29 passed, 1 skipped, 3 warnings.
   - `git diff --check`: passed with CRLF normalization warnings only.
   - No Phase 3 product bug was found.
+- Phase 4 focused verification:
+  - `python -m pytest tests/test_event_stream_runtime.py -q`: 10 passed, 3 warnings.
+  - `python -m pytest tests/test_event_stream_runtime.py tests/test_intent_splitter.py tests/test_snapshot_timeline_final_response_contract.py -q`: 90 passed, 3 warnings.
+  - `npm test -- --runInBand`: 66 passed.
+  - `npm run test:e2e -- --project=chromium-seeded --grep "@sse|stream drop|Last-Event-ID|out-of-order"`: 5 passed.
+  - New coverage proves the production/no-op adapter does not inject seeded activity faults, the seeded Playwright adapter injects duplicate/out-of-order activity frames, notification stream drop happens once, Last-Event-ID reconnect continues with snapshot invalidation, and `events.py` no longer contains seeded phase prompt branches.
 - Baseline reported by user for semantic routing commit:
   - `python -m pytest tests/test_intent_splitter.py tests/test_phase19_prompt_workflow_regression.py -q`: 63 passed
   - Compatibility checks: 20 passed
@@ -242,11 +254,20 @@ git diff --check
 - `factory-agent/factory_agent/planning/tool_intent_profile.py`
 - `factory-agent/factory_agent/planning/tool_selector.py`
 - `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/factory_agent/api/routers/events.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/testing/__init__.py`
+- `factory-agent/factory_agent/testing/fault_injection.py`
+- `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx`
+- `eMas Front/src/components/features/chat/turns/turnAssembler.js`
+- `eMas Front/src/components/features/chat/turns/turnAssembler.test.mjs`
 - `factory-agent/tests/test_intent_splitter.py`
 - `factory-agent/tests/test_api_endpoints.py`
+- `factory-agent/tests/test_event_stream_runtime.py`
 - `factory-agent/tests/test_rag_knowledge_policy.py`
+- `factory-agent/tests/test_snapshot_timeline_final_response_contract.py`
 - `factory-agent/tests/test_tool_selector.py`
 
 ## Next Action
 
-Start Phase 4. Move Playwright seeded SSE fault hooks out of production SSE router logic.
+Start Phase 5. Migrate seeded planner scenario branches into data-driven scenario definitions.

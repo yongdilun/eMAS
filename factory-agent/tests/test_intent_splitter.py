@@ -374,6 +374,22 @@ def test_missing_machine_id_prompts_clarify_without_seeded_default(prompt):
     assert "M-CNC-01" not in frame.entities.get("machine_id", [])
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Run the duplicate SSE jobs workflow",
+        "Start a cancel jobs run and keep it executing",
+        "Stream drop recovery for original high jobs to medium",
+    ],
+)
+def test_job_run_workflow_wording_does_not_imply_mutation_without_write_verb(prompt):
+    frame = semantic_frame_for_text(prompt)
+
+    assert frame.route != "clarification.job_mutation_incomplete"
+    assert frame.domain_intent != "job_mutation"
+    assert frame.requires_approval is False
+
+
 def test_production_semantic_routing_code_has_no_phase_prompt_branches():
     intent_path = FACTORY_AGENT_ROOT / "factory_agent" / "planning" / "intent.py"
     intent_text = intent_path.read_text(encoding="utf-8")

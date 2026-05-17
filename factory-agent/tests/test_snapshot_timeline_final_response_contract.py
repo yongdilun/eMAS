@@ -3,10 +3,14 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 
+from factory_agent.schemas import TimelineEventResponse
+from factory_agent.services.session_snapshot_service import _operator_result_content_for_completion
+from factory_agent.services.session_snapshot_service import _tool_result_completion_sort_key
 from tests.support.operation_assertions import assert_audit_rows_match
 from tests.support.operation_assertions import assert_final_state_matches_oracle
 from tests.support.operation_assertions import assert_no_timeline_event
@@ -24,6 +28,44 @@ _FULL_SUCCESS_PHRASES = (
     "run complete with no errors",
     "all jobs succeeded",
 )
+
+
+def test_completion_projection_prefers_tool_presentation_message_over_entity_card_text():
+    event = TimelineEventResponse(
+        event_id="tool:1",
+        event_type="tool_result",
+        content="**Success**\n\nMachine **M-CNC-01** is currently **RUNNING**.",
+        created_at=datetime(2026, 5, 17, tzinfo=timezone.utc),
+        status="DONE",
+        details={
+            "presentation": {
+                "render_hint": "entity",
+                "message": "Phase 9 stream drop recovered by snapshot polling.",
+            }
+        },
+    )
+
+    assert _operator_result_content_for_completion(event) == "Phase 9 stream drop recovered by snapshot polling."
+
+
+def test_completion_projection_uses_step_index_as_tool_result_tie_breaker():
+    created_at = datetime(2026, 5, 17, tzinfo=timezone.utc)
+    first = TimelineEventResponse(
+        event_id="tool:1",
+        event_type="tool_result",
+        content="first",
+        created_at=created_at,
+        step_context={"step_index": 0},
+    )
+    final = TimelineEventResponse(
+        event_id="tool:3",
+        event_type="tool_result",
+        content="final",
+        created_at=created_at,
+        step_context={"step_index": 2},
+    )
+
+    assert max([first, final], key=_tool_result_completion_sort_key) is final
 
 
 @dataclass(frozen=True)

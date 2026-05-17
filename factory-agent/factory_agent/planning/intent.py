@@ -73,7 +73,7 @@ _SOFT_CONSTRAINT_HINT_RE = re.compile(r"\b(?:prefer|preferably|ideally|if possib
 _ACTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("approval", re.compile(r"\b(?:approve|reject|approval|approvals|pending approval|pending approvals)\b", re.IGNORECASE)),
     ("create", re.compile(r"\b(?:create|new|add|open)\b", re.IGNORECASE)),
-    ("update", re.compile(r"\b(?:update|set|change|assign|record|apply|run|reschedule|move|schedule)\b", re.IGNORECASE)),
+    ("update", re.compile(r"\b(?:update|set|change|assign|record|apply|reschedule|move|schedule)\b", re.IGNORECASE)),
     ("delete", re.compile(r"\b(?:delete|remove)\b", re.IGNORECASE)),
     (
         "read",
@@ -144,7 +144,7 @@ _JOB_PRIORITY_CHANGE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _JOB_UPDATE_MUTATION_RE = re.compile(
-    r"\b(?:update|set|change|assign|record|apply|run|reschedule|move)\b",
+    r"\b(?:update|set|change|assign|record|apply|reschedule|move)\b",
     re.IGNORECASE,
 )
 _JOB_STATUS_WORD_RE = re.compile(r"\b(delayed|overdue|late|planned|ready|running|active|completed|cancelled)\b", re.IGNORECASE)
