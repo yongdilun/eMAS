@@ -18,6 +18,8 @@ export const typedKnowledgeSourcePrompt = 'Render typed knowledge answer with so
 
 export const responseDocumentRendererPrompt = 'Render response document approval 2 pending fixture'
 
+export const responseDocumentTrafficPrompt = 'Run response_document revision event storm busy traffic fixture'
+
 export const notificationSsePrompt = 'Validate notification SSE refresh for M-CNC-01'
 
 export const notificationSseAnswer =
@@ -241,6 +243,7 @@ export function snapshotFromSession(session, activitySteps = []) {
     activity_steps: activitySteps,
     pending_approval: session.pending_approval || null,
     resume_hint: null,
+    ...(session.response_document?.revision != null ? { snapshot_revision: session.response_document.revision } : {}),
     ...(session.presentation ? { presentation: session.presentation } : {}),
     ...(session.response_document ? { response_document: session.response_document } : {}),
   }

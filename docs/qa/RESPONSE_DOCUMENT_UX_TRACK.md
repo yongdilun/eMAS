@@ -12,7 +12,7 @@ Created: 2026-05-18
 | 2 | Deterministic composer and run steps | Done | Codex | Added backend-owned deterministic composer, run-step evidence, completed-step preservation, read/RAG/no-result blocks, and Phase 2 contract tests. |
 | 3 | Failure recovery response documents | Done | Codex | Added typed failure taxonomy, operator-friendly diagnostic cards, sanitized technical details, impact/retry policies, and failure-focused backend tests. |
 | 4 | Frontend response document renderer | Done | Codex | Added frontend response-document normalizer/renderer, direct block rendering, compact approvals, invalid-document diagnostic, fallback only when missing, unit/component coverage, and a focused mocked Playwright proof. |
-| 5 | Response document reducer and busy-traffic ordering | Not Started | Next agent | Centralize revision ordering, validation, SSE/polling conflict handling, coalescing, and collapse preservation. |
+| 5 | Response document reducer and busy-traffic ordering | Done | Codex | Added centralized frontend response-document reducer, shared SSE/polling snapshot ordering path, stale/invalid revision guards, focused reducer tests, and mocked busy-traffic Playwright coverage. |
 | 6 | Final response quality E2E gate | Not Started | Next agent | Add typed and visible browser checks for multi-step response quality. |
 | 7 | Compact approval and progressive disclosure hardening | Not Started | Next agent | Make approval cards compact, stable, expandable, and usable across multi-step workflows. |
 | 8 | Mandatory compatibility cleanup | Not Started | Next agent | Retire old frontend decision-making from `presentation` when `response_document` exists. |
@@ -547,22 +547,71 @@ npm test
 
 ## Phase 5 Checklist
 
-- [ ] Add centralized frontend `responseDocumentReducer` or equivalent store update function.
-- [ ] Add frontend response-document validation before rendering.
-- [ ] Apply `snapshot_revision`, `document_id`, `turn_id`, and `response_document.revision` ordering rules.
-- [ ] Ignore stale lower revisions from SSE.
-- [ ] Ignore stale lower revisions from polling.
-- [ ] Detect same-revision conflicting content and show/log a contract violation diagnostic.
-- [ ] Coalesce fast update bursts without forcing fake progress delays.
-- [ ] Preserve expanded/collapsed state by stable block id.
-- [ ] Prevent old turns/documents from updating active turn UI.
-- [ ] Add reducer tests for stale, duplicate, conflicting, invalid, and cross-turn documents.
-- [ ] Add reducer tests for collapse-state preservation.
-- [ ] Add Playwright event-storm tests for fast progress to approval pending.
-- [ ] Add Playwright event-storm tests for final complete followed by stale pending.
-- [ ] Add Playwright event-storm tests for SSE/polling disagreement where highest revision wins.
-- [ ] Add Playwright event-storm tests for approval 1 complete then approval 2 pending.
-- [ ] Record trace/video/screenshot artifact policy for failures.
+- [x] Add centralized frontend `responseDocumentReducer` or equivalent store update function.
+- [x] Add frontend response-document validation before rendering.
+- [x] Apply `snapshot_revision`, `document_id`, `turn_id`, and `response_document.revision` ordering rules.
+- [x] Ignore stale lower revisions from SSE.
+- [x] Ignore stale lower revisions from polling.
+- [x] Detect same-revision conflicting content and keep the existing stable document as the safe contract-violation behavior.
+- [x] Coalesce fast update bursts by reducing every snapshot to one current winning document without forcing fake progress delays.
+- [x] Preserve expanded/collapsed state by rendering only stable block ids from the accepted winning document.
+- [x] Prevent old turns/documents from updating active response-document UI.
+- [x] Add reducer tests for stale, duplicate, conflicting, invalid, and cross-turn documents.
+- [x] Add reducer tests proving same-revision idempotence and no stale history merge.
+- [x] Add Playwright event-storm tests for fast progress to approval pending.
+- [x] Add Playwright event-storm tests for final complete followed by stale pending.
+- [x] Add Playwright event-storm tests for SSE/polling disagreement where highest revision wins.
+- [x] Add Playwright event-storm tests for approval 1 complete then approval 2 pending.
+- [x] Record trace/video/screenshot artifact policy for failures.
+
+## Phase 5 Implementation Notes
+
+Date: 2026-05-18
+
+Phase 5 is complete. No product bug was found while implementing or verifying this phase.
+
+### Files Changed
+
+- `eMas Front/src/components/features/chat/factory-agent/responseDocumentReducer.js`
+- `eMas Front/src/components/features/chat/factory-agent/responseDocumentReducer.test.mjs`
+- `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js`
+- `eMas Front/e2e/fixtures/factoryAgentFixtures.js`
+- `eMas Front/e2e/mock-server/fixtureStore.js`
+- `eMas Front/e2e/specs/response-document-traffic.spec.js`
+- `eMas Front/package.json`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+
+### Decisions Made
+
+- Add a pure frontend reducer/update helper in `responseDocumentReducer.js`; snapshot application is now gated by the reducer before React state is updated.
+- Route SSE-triggered snapshot refreshes and polling/manual snapshot refreshes through the same reducer path with transport metadata.
+- Use normalized frontend validation before accepting a document. Invalid documents render the existing safe diagnostic only when their revision is the current winning revision.
+- Accept newer valid revisions, ignore older revisions, treat duplicate equal revisions as idempotent, let valid same-revision documents repair invalid current documents, and keep the stable current document on same-revision conflicts.
+- Do not merge `run_steps` or blocks across revisions. The winning response document replaces the previous document wholesale.
+- Keep legacy `presentation` fallback only for snapshots where no winning response document exists.
+- Add a mocked busy-traffic fixture that sends pending, completed, stale failure, stale pending, invalid, duplicate, and final completed response-document snapshots.
+- Do not introduce LLM final-response generation.
+- Do not remove the old presentation fallback.
+
+### Commands Run
+
+```powershell
+Set-Location "eMas Front"
+node --test --test-concurrency=1 "src/components/features/chat/factory-agent/responseDocumentReducer.test.mjs"
+npm test
+npm run test:e2e -- --project=chromium --grep "response_document revision|event storm|busy traffic|stale revision"
+```
+
+### Test Results
+
+- Focused reducer tests: 11 passed.
+- Full `npm test`: 97 passed.
+- Focused mocked Playwright busy-traffic test: 1 passed.
+
+### Remaining Phase 6 Work
+
+- Add seeded browser final-response quality gates for the flagship multi-step scenarios.
+- Add visible final-response assertions for progress order, compact cards, completed evidence, stale text absence, and collapse stability.
 
 ## Phase 6 Checklist
 

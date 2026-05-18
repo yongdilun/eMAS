@@ -12,6 +12,10 @@ import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
 import { useActivityStream } from './useActivityStream.js'
 import { useFactoryAgentClientProgress } from './useFactoryAgentClientProgress.js'
 import { useSessionEvents } from './useSessionEvents.js'
+import {
+  applyResponseDocumentSnapshotUpdate,
+  createResponseDocumentReducerState,
+} from './responseDocumentReducer.js'
 
 const DEFAULT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend-operator'
 const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
@@ -139,6 +143,7 @@ export function useFactoryAgentChat() {
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
+  const responseDocumentStateRef = useRef(createResponseDocumentReducerState())
   const {
     clientProgress,
     clearClientProgress,
@@ -194,6 +199,17 @@ export function useFactoryAgentChat() {
     if (switchedSession) {
       bundleTableByApprovalIdRef.current.clear()
     }
+
+    const responseDocumentUpdate = applyResponseDocumentSnapshotUpdate(responseDocumentStateRef.current, snapshot, {
+      requestedSessionId,
+      sessionId: sid,
+      transport: meta?.transport || 'snapshot',
+    })
+    responseDocumentStateRef.current = responseDocumentUpdate.state
+    if (!responseDocumentUpdate.accepted) {
+      return null
+    }
+
     lastSnapshotSessionIdRef.current = sid
 
     setSession(nextSession)
@@ -202,7 +218,7 @@ export function useFactoryAgentChat() {
     const nextTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
     setTimeline(nextTimeline)
     setPresentation(snapshot?.presentation || null)
-    setResponseDocument(Object.prototype.hasOwnProperty.call(snapshot || {}, 'response_document') ? snapshot.response_document : null)
+    setResponseDocument(responseDocumentUpdate.state.document)
 
     if (ACTIVITY_TIMELINE_ENABLED) {
       setActivitySteps((prev) => {
@@ -310,6 +326,7 @@ export function useFactoryAgentChat() {
     setTimeline([])
     setPresentation(null)
     setResponseDocument(null)
+    responseDocumentStateRef.current = createResponseDocumentReducerState()
     setActivitySteps([])
     setPendingApproval(null)
     setResumeHint(null)
@@ -328,16 +345,16 @@ export function useFactoryAgentChat() {
     return rows
   }, [])
 
-  const refreshSnapshot = useCallback(async (sessionId) => {
+  const refreshSnapshot = useCallback(async (sessionId, meta = {}) => {
     if (!sessionId) return null
     const snapshot = await factoryAgentApi.getSnapshot(sessionId)
-    applySnapshot(snapshot, { requestedSessionId: sessionId })
+    applySnapshot(snapshot, { requestedSessionId: sessionId, transport: meta.transport || 'polling' })
     return snapshot
   }, [applySnapshot])
 
-  const safelyRefreshSnapshot = useCallback(async (sessionId) => {
+  const safelyRefreshSnapshot = useCallback(async (sessionId, meta = {}) => {
     try {
-      return await refreshSnapshot(sessionId)
+      return await refreshSnapshot(sessionId, meta)
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
       if (kind === 'not_found' || kind === 'auth') {
@@ -435,10 +452,10 @@ export function useFactoryAgentChat() {
     setIsPollingSession(false)
   }, [])
 
-  const pollSnapshot = useCallback(async () => {
+  const pollSnapshot = useCallback(async (meta = {}) => {
     if (!session?.session_id) return
     try {
-      await safelyRefreshSnapshot(session.session_id)
+      await safelyRefreshSnapshot(session.session_id, { transport: meta.transport || 'polling' })
     } catch (err) {
       setError(normalizeFactoryAgentError(err, 'Failed to refresh session'))
     }
@@ -471,7 +488,7 @@ export function useFactoryAgentChat() {
   useSessionEvents(
     session?.session_id || null,
     useCallback(() => {
-      if (session?.session_id) pollSnapshot()
+      if (session?.session_id) pollSnapshot({ transport: 'sse' })
     }, [pollSnapshot, session?.session_id]),
     { enabled: sessionEventsEnabled, fallbackMs: 4000, onDiagnostic: updateStreamDiagnostic },
   )

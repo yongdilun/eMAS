@@ -22,6 +22,7 @@ import {
   notificationSsePrompt,
   orderedSseActivitySteps,
   responseDocumentRendererPrompt,
+  responseDocumentTrafficPrompt,
   planCreatedEvent,
   retryExecuteAnswer,
   retryExecutePrompt,
@@ -188,6 +189,238 @@ function completePendingStream(session) {
   const completion = session.pending_stream_completion
   session.pending_stream_completion = null
   completeSession(session, completion)
+}
+
+function responseDocumentTrafficRows(kind) {
+  if (kind === 'high-to-low') {
+    return [
+      { job_id: 'JOB-SEED-001', previous_priority: 'high', new_priority: 'low' },
+      { job_id: 'JOB-SEED-003', previous_priority: 'high', new_priority: 'low' },
+      { job_id: 'JOB-SEED-006', previous_priority: 'high', new_priority: 'low' },
+      { job_id: 'JOB-SEED-008', previous_priority: 'high', new_priority: 'low' },
+    ]
+  }
+  return [
+    { job_id: 'JOB-SEED-002', previous_priority: 'medium', new_priority: 'high' },
+    { job_id: 'JOB-SEED-004', previous_priority: 'medium', new_priority: 'high' },
+    { job_id: 'JOB-SEED-007', previous_priority: 'medium', new_priority: 'high' },
+  ]
+}
+
+function responseDocumentTrafficPendingApproval(session) {
+  const rows = responseDocumentTrafficRows('high-to-low')
+  return {
+    approval_id: 'pw-approval-response-document-traffic-2',
+    session_id: session.session_id,
+    subject_type: 'tool',
+    tool_name: 'typed_priority_update',
+    side_effect_level: 'HIGH',
+    risk_summary: 'Update 11 jobs from high to low.',
+    args: { bundle_ui: { rows } },
+    status: 'PENDING',
+    created_at: fixtureTime(4),
+    expires_at: fixtureTime(300),
+  }
+}
+
+function responseDocumentTrafficDocument(session, {
+  revision,
+  state = 'completed',
+  message = 'Updated 21 jobs across 2 approved steps.',
+  kind = 'completed',
+} = {}) {
+  const turnId = session.response_document_turn_id || session.current_turn_id || 'pw-turn-response-document-traffic'
+  const documentId = `rd:${session.session_id}:${turnId}`
+  const firstRows = responseDocumentTrafficRows('medium-to-high')
+  const secondRows = responseDocumentTrafficRows('high-to-low')
+  const waiting = state === 'waiting_approval'
+  const failed = state === 'failed'
+  const runSteps = waiting
+    ? [
+        { step_id: 'analysis-1', kind: 'analysis', state: 'completed', title: 'Understood request', summary: 'Parsed the two-step priority update.' },
+        { step_id: 'mutation-1', kind: 'mutation', state: 'completed', title: 'Updated 10 jobs: medium to high', summary: 'First step remains complete.' },
+        { step_id: 'approval-2', kind: 'approval', state: 'waiting', title: 'Waiting for approval 2', summary: '11 original high-priority jobs are ready for review.', current: true },
+      ]
+    : failed
+      ? [
+          { step_id: 'diagnostic-stale-failure', kind: 'diagnostic', state: 'failed', title: 'Stale failure', summary: message, current: true },
+        ]
+      : [
+          { step_id: 'analysis-1', kind: 'analysis', state: 'completed', title: 'Understood request', summary: 'Parsed the two-step priority update.' },
+          { step_id: 'approval-1', kind: 'approval', state: 'completed', title: 'Approval 1 received', summary: 'First approval was accepted.' },
+          { step_id: 'mutation-1', kind: 'mutation', state: 'completed', title: 'Updated 10 jobs: medium to high', summary: 'Step 1: Updated 10 jobs from medium to high.' },
+          { step_id: 'approval-2', kind: 'approval', state: 'completed', title: 'Approval 2 received', summary: 'Second approval was accepted.' },
+          { step_id: 'mutation-2', kind: 'mutation', state: 'completed', title: 'Updated 11 jobs: high to low', summary: 'Step 2: Updated 11 jobs from high to low.' },
+          { step_id: 'completed-1', kind: 'completed', state: 'completed', title: 'Run complete', summary: message },
+        ]
+  const blocks = waiting
+    ? [
+        { id: `activity:${documentId}`, type: 'run_activity', step_ids: runSteps.map((step) => step.step_id) },
+        { id: 'message:traffic:waiting', type: 'short_message', message: 'Waiting for approval 2 before changing original high-priority jobs.', status: 'waiting_approval' },
+        { id: 'completed-step:traffic:approval-1', type: 'completed_step', title: 'Completed step', summary: 'Updated 10 jobs from medium to high.', rows: firstRows },
+        { id: 'approval:traffic:approval-2', type: 'approval_required', approval_id: 'pw-approval-response-document-traffic-2', title: 'Approval required', summary: 'Update 11 jobs from high to low', rows: secondRows },
+      ]
+    : failed
+      ? [
+          { id: `activity:${documentId}`, type: 'run_activity', step_ids: runSteps.map((step) => step.step_id) },
+          { id: 'message:traffic:stale-failure', type: 'short_message', message, status: 'failed' },
+          {
+            id: 'diagnostic:traffic:stale-failure',
+            type: 'diagnostic',
+            severity: 'error',
+            reason: 'stale_failure_fixture',
+            title: 'Stale failure',
+            user_message: message,
+            technical_details: { fixture: 'stale_failure' },
+          },
+        ]
+      : [
+          { id: `activity:${documentId}`, type: 'run_activity', step_ids: runSteps.map((step) => step.step_id) },
+          { id: 'message:traffic:completed', type: 'short_message', message, status: 'completed' },
+          {
+            id: 'result-summary:traffic',
+            type: 'result_summary',
+            summary: message,
+            steps: [
+              { step_number: 1, summary: 'Updated 10 jobs from medium to high.', record_count: 10, status: 'completed' },
+              { step_number: 2, summary: 'Updated 11 jobs from high to low.', record_count: 11, status: 'completed' },
+            ],
+            total_count: 21,
+            status: 'completed',
+          },
+          {
+            id: 'mutation:traffic',
+            type: 'mutation_result',
+            summary: message,
+            rows: [...firstRows, ...secondRows],
+            status: 'completed',
+          },
+        ]
+
+  return {
+    version: 1,
+    id: documentId,
+    document_id: documentId,
+    turn_id: turnId,
+    operation_id: 'pw-plan-response-document-traffic',
+    revision,
+    revision_source: kind === 'duplicate' ? 'mock_duplicate' : 'mock_event_storm',
+    state,
+    status: state,
+    summary: message,
+    message,
+    current_step_id: waiting ? 'approval-2' : failed ? 'diagnostic-stale-failure' : 'completed-1',
+    run_steps: runSteps,
+    blocks,
+    invariants: { fixture: 'response_document_revision_event_storm' },
+    diagnostics: {},
+  }
+}
+
+function responseDocumentTrafficInvalidDocument(session) {
+  const turnId = session.response_document_turn_id || session.current_turn_id || 'pw-turn-response-document-traffic'
+  return {
+    version: 1,
+    id: `rd:${session.session_id}:${turnId}`,
+    document_id: `rd:${session.session_id}:${turnId}`,
+    turn_id: turnId,
+    operation_id: 'pw-plan-response-document-traffic',
+    revision: 4,
+    revision_source: 'mock_invalid_after_valid',
+    state: 'completed',
+    status: 'completed',
+    run_steps: [],
+  }
+}
+
+function responseDocumentTrafficSnapshot(session) {
+  const count = Number(session.response_document_snapshot_count || 0) + 1
+  session.response_document_snapshot_count = count
+  const pendingApproval = responseDocumentTrafficPendingApproval(session)
+  const completedRevisionFive = responseDocumentTrafficDocument(session, { revision: 5 })
+  const variants = {
+    1: {
+      status: 'WAITING_APPROVAL',
+      pending_approval: pendingApproval,
+      response_document: responseDocumentTrafficDocument(session, {
+        revision: 1,
+        state: 'waiting_approval',
+        message: 'Waiting for approval 2 before changing original high-priority jobs.',
+      }),
+    },
+    2: {
+      status: 'EXECUTING',
+      pending_approval: null,
+      response_document: completedRevisionFive,
+    },
+    3: {
+      status: 'FAILED',
+      pending_approval: null,
+      response_document: responseDocumentTrafficDocument(session, {
+        revision: 4,
+        state: 'failed',
+        message: 'Stale failure: database unavailable.',
+      }),
+    },
+    4: {
+      status: 'WAITING_APPROVAL',
+      pending_approval: pendingApproval,
+      response_document: responseDocumentTrafficDocument(session, {
+        revision: 3,
+        state: 'waiting_approval',
+        message: 'Waiting for approval 2 before changing original high-priority jobs.',
+      }),
+    },
+    5: {
+      status: 'EXECUTING',
+      pending_approval: null,
+      response_document: responseDocumentTrafficInvalidDocument(session),
+    },
+    6: {
+      status: 'EXECUTING',
+      pending_approval: null,
+      response_document: responseDocumentTrafficDocument(session, { revision: 5, kind: 'duplicate' }),
+    },
+  }
+  const selected = variants[count] || {
+    status: 'COMPLETED',
+    pending_approval: null,
+    response_document: responseDocumentTrafficDocument(session, { revision: 6 }),
+  }
+  if (selected.status === 'COMPLETED') {
+    session.status = 'COMPLETED'
+    session.pending_approval = null
+  }
+  const snapSession = {
+    ...session,
+    status: selected.status,
+    updated_at: fixtureTime(20 + count),
+    pending_approval: selected.pending_approval,
+    response_document: selected.response_document,
+  }
+  return {
+    ...snapshotFromSession(snapSession),
+    snapshot_revision: selected.response_document?.revision ?? count,
+    pending_approval: selected.pending_approval,
+    response_document: selected.response_document,
+  }
+}
+
+function responseDocumentTrafficNotificationStream() {
+  return [
+    { id: 1, event: 'notification', data: { type: 'hello', cursor: 1 } },
+    ...[2, 3, 4, 5, 6, 7].map((id) => ({
+      id,
+      event: 'notification',
+      delayMs: 120,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: id,
+        reason: 'response_document_revision_event_storm',
+        session_status: id >= 7 ? 'COMPLETED' : 'EXECUTING',
+      },
+    })),
+  ]
 }
 
 function defaultIdleSnapshot(session) {
@@ -1004,6 +1237,60 @@ export const scenarioCatalog = {
     },
     snapshot(session) {
       return snapshotFromSession(session)
+    },
+  },
+
+  responseDocumentRevisionEventStorm: {
+    name: 'responseDocumentRevisionEventStorm',
+    description: 'Phase 5 response_document revision event storm with stale, invalid, duplicate, SSE, and polling snapshots.',
+    prompts: [responseDocumentTrafficPrompt],
+    onMessage(session, content) {
+      const turnId = addUserTurn(session, content || responseDocumentTrafficPrompt, 'pw-turn-response-document-traffic')
+      session.response_document_turn_id = turnId
+      session.response_document_snapshot_count = 0
+    },
+    onPlan(session) {
+      const turnId = session.response_document_turn_id || session.current_turn_id || 'pw-turn-response-document-traffic'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-response-document-traffic'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-response-document-traffic',
+        objective: 'Exercise response_document revision ordering under busy traffic.',
+        stepId: 'pw-step-response-document-traffic',
+        toolName: 'typed_priority_update',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-response-document-traffic-plan-created',
+          planId: 'pw-plan-response-document-traffic',
+          content: 'Starting response_document revision event storm fixture.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-response-document-traffic' } }
+    },
+    async onExecute(session, sleep) {
+      const turnId = session.response_document_turn_id || session.current_turn_id || 'pw-turn-response-document-traffic'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-response-document-traffic-execution-started',
+          planId: 'pw-plan-response-document-traffic',
+        }),
+      )
+      await sleep(40)
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      return responseDocumentTrafficSnapshot(session)
+    },
+    notificationStream() {
+      return responseDocumentTrafficNotificationStream()
     },
   },
 
