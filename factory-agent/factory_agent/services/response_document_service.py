@@ -721,6 +721,22 @@ def _row_identifier(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _business_record_identifier(row: dict[str, Any]) -> str | None:
+    for key in (
+        "job_id",
+        "machine_id",
+        "product_id",
+        "material_id",
+        "record_id",
+        "id",
+        "row_id",
+    ):
+        value = _trimmed(row.get(key))
+        if value:
+            return value
+    return None
+
+
 def _normalize_row_status(status: Any, *, default: str) -> str:
     normalized = _trimmed(status).lower()
     if normalized in _SUCCESS_ROW_STATES:
@@ -926,7 +942,7 @@ def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for row in rows:
-        key = json.dumps(row, sort_keys=True, default=str)
+        key = _business_row_dedupe_key(row) or json.dumps(row, sort_keys=True, default=str)
         if key in seen:
             continue
         seen.add(key)
@@ -1257,6 +1273,7 @@ def _source_priority(row: dict[str, Any]) -> str:
         row.get("previous_priority")
         or row.get("original_priority")
         or row.get("from_priority")
+        or row.get("source_priority")
         or row.get("before_priority")
     ).lower()
 
@@ -1266,8 +1283,25 @@ def _target_priority(row: dict[str, Any]) -> str:
         row.get("new_priority")
         or row.get("priority")
         or row.get("requested_priority")
+        or row.get("to_priority")
+        or row.get("target_priority")
         or row.get("after_priority")
     ).lower()
+
+
+def _business_row_dedupe_key(row: dict[str, Any]) -> str | None:
+    record_id = _business_record_identifier(row)
+    if not record_id:
+        return None
+    source = _source_priority(row)
+    target = _target_priority(row)
+    status = _normalize_row_status(row.get("status"), default="")
+    if source or target:
+        return json.dumps(["mutation", record_id, source, target, status], sort_keys=True)
+    write_set = _trimmed(row.get("write_set"))
+    if write_set:
+        return json.dumps(["write_set", record_id, write_set, status], sort_keys=True)
+    return None
 
 
 def _rows_use_original_state(rows: list[dict[str, Any]]) -> bool:
@@ -1279,6 +1313,76 @@ def _rows_use_original_state(rows: list[dict[str, Any]]) -> bool:
         if write_set.startswith("original_") or "cascade" in bundle_kind:
             return True
     return False
+
+
+def _priority_label(value: str) -> str:
+    text = _trimmed(value).lower()
+    return text.capitalize() if text else "Unknown"
+
+
+def _business_change_label(group: MutationGroup, *, index: int) -> str:
+    sources = {_source_priority(row) for row in group.rows if _source_priority(row)}
+    targets = {_target_priority(row) for row in group.rows if _target_priority(row)}
+    if len(sources) == 1 and len(targets) == 1:
+        source = next(iter(sources))
+        target = next(iter(targets))
+        original_prefix = "Original " if index > 1 and _rows_use_original_state(group.rows) else ""
+        return f"{original_prefix}{_priority_label(source)} -> {_priority_label(target)}"
+    return f"Business change {index}"
+
+
+def _business_change_summary(group: MutationGroup, *, index: int) -> str:
+    label = _business_change_label(group, index=index)
+    count = len(group.rows)
+    noun = "jobs" if _mutation_total_noun([group]) == "jobs" else _plural(count, "record")
+    return f"{label}: {count} {noun}"
+
+
+def _clean_business_mutation_row(row: dict[str, Any], *, business_change: str) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    record_id = _business_record_identifier(row)
+    if record_id:
+        if record_id.upper().startswith("JOB-"):
+            clean["job_id"] = record_id
+        else:
+            clean["record_id"] = record_id
+    source = _source_priority(row)
+    target = _target_priority(row)
+    if source:
+        clean["from_priority"] = source
+    if target:
+        clean["to_priority"] = target
+    if source and target:
+        clean["change"] = f"{source} -> {target}"
+    clean["business_change"] = business_change
+    status = _normalize_row_status(row.get("status"), default="")
+    if status:
+        clean["status"] = status
+    error = _trimmed(row.get("error"))
+    if error and status == "failed":
+        clean["error"] = _redact_sensitive_text(error)
+    return clean
+
+
+def _mutation_business_payloads(groups: list[MutationGroup]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    group_payloads: list[dict[str, Any]] = []
+    all_rows: list[dict[str, Any]] = []
+    for index, group in enumerate(groups, start=1):
+        label = _business_change_label(group, index=index)
+        rows = _dedupe_rows(
+            [_clean_business_mutation_row(row, business_change=label) for row in group.rows]
+        )
+        summary = _business_change_summary(group, index=index)
+        group_payloads.append(
+            {
+                "business_change": label,
+                "summary": summary,
+                "record_count": len(rows),
+                "rows": rows,
+            }
+        )
+        all_rows.extend(rows)
+    return group_payloads, all_rows
 
 
 def _priority_change_summary(rows: list[dict[str, Any]], *, approval_id: str | None = None) -> str | None:
@@ -1602,13 +1706,18 @@ def _compose_run_steps(
         )
 
     if state == "completed" and not latest_pending:
+        completion_summary = (
+            _aggregate_mutation_summary(mutation_groups)
+            if mutation_groups
+            else _trimmed(presentation.summary) or None
+        )
         run_steps.append(
             RunStep(
                 step_id=f"completed:{operation_id or document_id}",
                 kind="completed",
                 state="completed",
                 title="Run complete",
-                summary=_trimmed(presentation.summary) or None,
+                summary=completion_summary,
                 operation_id=operation_id,
             )
         )
@@ -1643,9 +1752,23 @@ def _current_response_step_id(run_steps: list[RunStep]) -> str | None:
 
 def _aggregate_mutation_summary(groups: list[MutationGroup]) -> str:
     total = sum(len(group.rows) for group in groups)
-    step_count = len(groups)
+    change_count = len(groups)
     noun = _mutation_total_noun(groups)
-    return f"Updated {total} {noun} across {step_count} approved {_plural(step_count, 'step')}."
+    if all(group.status == "completed" for group in groups):
+        return (
+            f"Done. I updated {total} {noun} across {change_count} "
+            f"{_plural(change_count, 'approved business change')}."
+        )
+    succeeded = sum(_row_status_counts(group.rows).get("succeeded", 0) for group in groups)
+    failed = sum(_row_status_counts(group.rows).get("failed", 0) for group in groups)
+    if succeeded and failed:
+        return (
+            f"{succeeded} of {total} {noun} updated across {change_count} "
+            f"{_plural(change_count, 'approved business change')}; {failed} failed."
+        )
+    if failed and not succeeded:
+        return f"{total} {noun} failed across {change_count} {_plural(change_count, 'approved business change')}."
+    return f"Updated {total} {noun} across {change_count} {_plural(change_count, 'approved business change')}."
 
 
 def _aggregate_step_payloads(groups: list[MutationGroup]) -> list[dict[str, Any]]:
@@ -1654,9 +1777,8 @@ def _aggregate_step_payloads(groups: list[MutationGroup]) -> list[dict[str, Any]
         payloads.append(
             {
                 "step_number": index,
-                "approval_id": group.approval_id,
-                "operation_id": group.operation_id,
-                "summary": _mutation_group_summary(group),
+                "business_change": _business_change_label(group, index=index),
+                "summary": _business_change_summary(group, index=index),
                 "record_count": len(group.rows),
                 "status": group.status,
             }
@@ -1795,18 +1917,22 @@ def _compose_blocks(
             )
         )
 
-    for group in mutation_groups:
-        blocks.append(
-            CompletedStepBlock(
-                id=f"completed-step:{group.approval_id or group.key}",
-                step_id=group.step_ids[0] if group.step_ids else None,
-                operation_id=group.operation_id or operation_id,
-                approval_id=group.approval_id,
-                title="Completed step",
-                summary=_mutation_group_summary(group),
-                rows=group.rows,
+    show_completed_step_blocks = latest_pending is not None or state != "completed" or any(
+        group.status != "completed" for group in mutation_groups
+    )
+    if show_completed_step_blocks:
+        for group in mutation_groups:
+            blocks.append(
+                CompletedStepBlock(
+                    id=f"completed-step:{group.approval_id or group.key}",
+                    step_id=group.step_ids[0] if group.step_ids else None,
+                    operation_id=group.operation_id or operation_id,
+                    approval_id=group.approval_id,
+                    title="Completed step",
+                    summary=_mutation_group_summary(group),
+                    rows=group.rows,
+                )
             )
-        )
 
     if latest_pending is not None:
         pending_rows = _approval_rows(latest_pending, operation_id=operation_id, default_status="pending")
@@ -1847,13 +1973,16 @@ def _compose_blocks(
         status = "partial_failure" if any(group.status == "partial_failure" for group in mutation_groups) else "completed"
         if any(group.status == "failed" for group in mutation_groups) and not any(group.status == "completed" for group in mutation_groups):
             status = "failed"
+        business_groups, business_rows = _mutation_business_payloads(mutation_groups)
+        result_rows = business_rows if status == "completed" else all_rows
         blocks.append(
             ResultSummaryBlock(
                 id=f"result-summary:{operation_id or document_id}",
                 operation_id=operation_id,
+                title="Changes completed" if status == "completed" else "Result summary",
                 summary=summary,
                 steps=_aggregate_step_payloads(mutation_groups),
-                total_count=len(all_rows),
+                total_count=len(result_rows),
                 status=status,  # type: ignore[arg-type]
             )
         )
@@ -1862,12 +1991,16 @@ def _compose_blocks(
                 id=f"mutation:{operation_id or anchor}",
                 operation_id=operation_id,
                 approval_id=presentation.approval_id,
+                title="Affected records" if status == "completed" else "Mutation result",
                 summary=summary,
-                rows=all_rows,
+                rows=result_rows,
+                groups=business_groups if status == "completed" else [],
+                preview_limit=5,
+                details_collapsed=True,
                 status=status,  # type: ignore[arg-type]
             )
         )
-        if all_rows:
+        if all_rows and status != "completed":
             blocks.append(
                 ResultTableBlock(
                     id=f"table:{operation_id or anchor}:affected-records",
@@ -2031,6 +2164,10 @@ def compose_response_document(
         "latest_pending_approval_id": latest_pending.approval_id if latest_pending else None,
         "completed_approval_ids": [group.approval_id for group in mutation_groups if group.approval_id],
         "mutation_group_count": len(mutation_groups),
+        "mutation_business_contract": "business_level_v1" if mutation_groups and state == "completed" and not latest_pending else None,
+        "affected_record_count": sum(len(group.rows) for group in mutation_groups) if mutation_groups else None,
+        "approved_business_change_count": len(mutation_groups) if mutation_groups and not latest_pending else None,
+        "affected_record_preview_limit": 5 if mutation_groups else None,
         "read_result_shape": read_shape,
         "failure_reason": failure_profile.reason if failure_profile else None,
         "orphan_turn_state": (

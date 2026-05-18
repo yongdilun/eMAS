@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -608,14 +609,58 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
     plan_id = "rd-two-step-completed-plan"
     approval_1 = "approval-rd-completed-1"
     approval_2 = "approval-rd-completed-2"
+    medium_job_ids = [
+        "JOB-SEED-002",
+        "JOB-SEED-004",
+        "JOB-SEED-007",
+        "JOB-SEED-010",
+        "JOB-SEED-014",
+        "JOB-SEED-016",
+        "JOB-SEED-018",
+        "JOB-SEED-020",
+        "JOB-SEED-022",
+        "JOB-SEED-024",
+    ]
+    high_job_ids = [
+        "JOB-SEED-001",
+        "JOB-SEED-003",
+        "JOB-SEED-006",
+        "JOB-SEED-008",
+        "JOB-SEED-011",
+        "JOB-SEED-013",
+        "JOB-SEED-015",
+        "JOB-SEED-017",
+        "JOB-SEED-019",
+        "JOB-SEED-021",
+        "JOB-SEED-023",
+    ]
     first_rows = [
-        {"job_id": "JOB-RD-MED-001", "original_priority": "medium", "priority": "high"},
-        {"job_id": "JOB-RD-MED-002", "original_priority": "medium", "priority": "high"},
+        {
+            "job_id": job_id,
+            "original_priority": "medium",
+            "priority": "high",
+            "audit_row_id": f"audit-medium-{index}",
+        }
+        for index, job_id in enumerate(medium_job_ids, start=1)
+    ]
+    first_rows_with_duplicate_audit = [
+        *first_rows,
+        {
+            "job_id": "JOB-SEED-002",
+            "original_priority": "medium",
+            "priority": "high",
+            "audit_row_id": "audit-medium-duplicate",
+            "operation_id": "internal-operation-duplicate",
+        },
     ]
     second_rows = [
-        {"job_id": "JOB-RD-HIGH-001", "original_priority": "high", "priority": "low"},
-        {"job_id": "JOB-RD-HIGH-002", "original_priority": "high", "priority": "low"},
-        {"job_id": "JOB-RD-HIGH-003", "original_priority": "high", "priority": "low"},
+        {
+            "job_id": job_id,
+            "original_priority": "high",
+            "priority": "low",
+            "audit_row_id": f"audit-high-{index}",
+        }
+        for index, job_id in enumerate(high_job_ids, start=1)
     ]
     db_session.add_all(
         [
@@ -647,7 +692,7 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
                 step_index=0,
                 completed_at=created_at + timedelta(seconds=4),
                 approval_id=approval_1,
-                outcomes=first_rows,
+                outcomes=first_rows_with_duplicate_audit,
             ),
             _approval(
                 session_id=session_id,
@@ -676,7 +721,12 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
             ),
             _assistant_message(
                 session_id=session_id,
-                content="Execution completed successfully.",
+                content=(
+                    "done_all\n\n"
+                    "**Success**\n\n"
+                    "Updated 63 jobs across 22 approved steps.\n\n"
+                    "Operation ID: internal-op\nStep ID: internal-step\nRow ID: internal-row"
+                ),
                 step_id=plan_id,
                 created_at=created_at + timedelta(seconds=8),
             ),
@@ -688,20 +738,78 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
     document = body["response_document"]
 
     assert document["state"] == "completed"
-    assert document["message"] == "Updated 5 jobs across 2 approved steps."
+    assert document["message"] == "Done. I updated 21 jobs across 2 approved business changes."
+    assert document["invariants"]["mutation_business_contract"] == "business_level_v1"
+    assert document["invariants"]["affected_record_count"] == 21
+    assert document["invariants"]["approved_business_change_count"] == 2
+    assert document["invariants"]["affected_record_preview_limit"] == 5
+
+    block_types = [block["type"] for block in document["blocks"]]
+    assert block_types.count("result_summary") == 1
+    assert block_types.count("mutation_result") == 1
+    assert "completed_step" not in block_types
+    assert "result_table" not in block_types
+
     result_summary = next(block for block in document["blocks"] if block["type"] == "result_summary")
-    assert result_summary["total_count"] == 5
-    assert [step["approval_id"] for step in result_summary["steps"]] == [approval_1, approval_2]
+    assert result_summary["title"] == "Changes completed"
+    assert result_summary["total_count"] == 21
+    assert result_summary["steps"] == [
+        {
+            "step_number": 1,
+            "business_change": "Medium -> High",
+            "summary": "Medium -> High: 10 jobs",
+            "record_count": 10,
+            "status": "completed",
+        },
+        {
+            "step_number": 2,
+            "business_change": "Original High -> Low",
+            "summary": "Original High -> Low: 11 jobs",
+            "record_count": 11,
+            "status": "completed",
+        },
+    ]
+
     mutation = next(block for block in document["blocks"] if block["type"] == "mutation_result")
-    assert {row["row_id"] for row in mutation["rows"]} == {
-        "JOB-RD-MED-001",
-        "JOB-RD-MED-002",
-        "JOB-RD-HIGH-001",
-        "JOB-RD-HIGH-002",
-        "JOB-RD-HIGH-003",
-    }
+    assert mutation["title"] == "Affected records"
+    assert mutation["preview_limit"] == 5
+    assert mutation["details_collapsed"] is True
+    assert len(mutation["rows"]) == 21
+    assert len({row["job_id"] for row in mutation["rows"]}) == 21
+    assert [row["job_id"] for row in mutation["rows"][:5]] == medium_job_ids[:5]
+    assert mutation["groups"] == [
+        {
+            "business_change": "Medium -> High",
+            "summary": "Medium -> High: 10 jobs",
+            "record_count": 10,
+            "rows": mutation["rows"][:10],
+        },
+        {
+            "business_change": "Original High -> Low",
+            "summary": "Original High -> Low: 11 jobs",
+            "record_count": 11,
+            "rows": mutation["rows"][10:],
+        },
+    ]
+    assert {row["business_change"] for row in mutation["rows"][:10]} == {"Medium -> High"}
+    assert {row["business_change"] for row in mutation["rows"][10:]} == {"Original High -> Low"}
+    assert {row["change"] for row in mutation["rows"][:10]} == {"medium -> high"}
+    assert {row["change"] for row in mutation["rows"][10:]} == {"high -> low"}
+    forbidden_row_keys = {"operation_id", "step_id", "row_id", "approval_id", "tool_name", "audit_row_id"}
+    assert all(forbidden_row_keys.isdisjoint(row) for row in mutation["rows"])
+
     assert document["invariants"]["completed_approval_ids"] == [approval_1, approval_2]
     assert not any(step["state"] == "waiting" for step in document["run_steps"])
+    serialized_document = json.dumps(document)
+    for forbidden in [
+        "done_all",
+        "**Success**",
+        "Updated 63 jobs across 22 approved steps",
+        "Operation ID",
+        "Step ID",
+        "Row ID",
+    ]:
+        assert forbidden not in serialized_document
 
 
 @pytest.mark.asyncio

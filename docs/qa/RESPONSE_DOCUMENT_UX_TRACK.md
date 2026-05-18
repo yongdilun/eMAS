@@ -21,13 +21,13 @@ Created: 2026-05-18
 | 11 | Real flow browser state-transition oracle | Done | Codex | Added reusable browser transition oracle, mocked RD-001/RD-002 coverage, and real LangGraph SO-041 proof; fixed stale revision/session and completed-approval copy bugs found by the oracle. |
 | 12 | Semantic snapshot probe and artifact quality | Done | Codex | Added compact semantic probe helper, oracle failure attachments, diagnosis classification, redaction/size tests, and a browser artifact proof. |
 | 13 | Manual screenshot regression intake | Done | Codex | Added strict screenshot intake template, structured Chat 514 regression entry, and a bank gate that rejects vague/manual-only screenshot issues. |
-| 14 | Final response business contract | Not Started | Codex | Backend `response_document` must emit clean business-level mutation results: grouped changes, deduped affected records, compact preview, and no raw assistant/internal-id noise. |
+| 14 | Final response business contract | Done | Codex | Backend `response_document` now emits clean business-level completed mutation results: grouped changes, deduped affected records, compact preview contract, and no raw assistant/internal-id noise in final mutation blocks. |
 | 15 | Final response visual quality oracle | Not Started | Codex | Browser semantic oracle must prove the rendered final response is compact, grouped, expandable, and free of raw/internal noise. |
 
 ## Current Blockers
 
 - Chat 514 style orphan state is fixed and covered by Phase 10 backend plus mocked browser regressions. Normal prompts must not settle as `IDLE/non_terminal_snapshot` with generic `Needs attention`.
-- RD-001 final mutation result can still render noisy raw/internal response content: `done_all`, giant duplicate tables, wrong aggregate counts such as `Updated 63 jobs across 22 approved steps`, and internal fields such as `Operation ID`, `Step ID`, or `Row ID`.
+- RD-001 noisy final mutation output is fixed in Phase 14 at the backend response-document contract: final completed mutation blocks now summarize 21 jobs across 2 approved business changes and omit raw assistant/internal-id noise.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -861,22 +861,35 @@ git status --short --branch
 
 ## Phase 14 Checklist
 
-- [ ] Reproduce the noisy RD-001 final mutation result as a backend response-document contract failure where possible.
-- [ ] Compose completed mutation results from typed business facts, not raw assistant markdown.
-- [ ] Aggregate completed mutations by approved business write set.
-- [ ] Deduplicate affected records within each business change group.
-- [ ] Limit default affected-record preview to 5 rows.
-- [ ] Provide expandable clean audit grouped by business change.
-- [ ] Forbid raw assistant markers such as `done_all` in visible mutation blocks.
-- [ ] Forbid `Operation ID`, `Step ID`, `Row ID`, and raw internal ids in normal response-document blocks.
-- [ ] Enforce RD-001 as 21 jobs across 2 approved business changes: 10 medium -> high and 11 original high -> low.
-- [ ] Update manual regression bank and tracker with the product bug/fix evidence.
-- [ ] Run backend response-document contract/failure verification.
-- [ ] Commit Phase 14.
+- [x] Reproduce the noisy RD-001 final mutation result as a backend response-document contract failure where possible.
+- [x] Compose completed mutation results from typed business facts, not raw assistant markdown.
+- [x] Aggregate completed mutations by approved business write set.
+- [x] Deduplicate affected records within each business change group.
+- [x] Limit default affected-record preview to 5 rows.
+- [x] Provide expandable clean audit grouped by business change.
+- [x] Forbid raw assistant markers such as `done_all` in visible mutation blocks.
+- [x] Forbid `Operation ID`, `Step ID`, `Row ID`, and raw internal ids in normal response-document blocks.
+- [x] Enforce RD-001 as 21 jobs across 2 approved business changes: 10 medium -> high and 11 original high -> low.
+- [x] Update manual regression bank and tracker with the product bug/fix evidence.
+- [x] Run backend response-document contract/failure verification.
+- [x] Commit Phase 14.
 
 ## Phase 14 Implementation Notes
 
-Status: Not Started
+Status: Done
+
+Date: 2026-05-18
+
+Product bug found: yes. The completed RD-001 response document could aggregate backend/audit artifacts instead of business write sets, leak raw assistant final text through completion evidence, duplicate affected-record sections, and expose internal row metadata.
+
+### Contract Added
+
+- Completed mutation response documents now use a business-level mutation contract, recorded as `mutation_business_contract = business_level_v1`.
+- Final mutation summaries use approved business changes, not backend operation/step/audit counts.
+- Final mutation rows are deduplicated by business record plus priority change.
+- The `mutation_result` block carries a compact preview contract with `preview_limit = 5`, `details_collapsed = true`, and a `groups` audit payload grouped by business change.
+- Completed final mutation blocks omit per-operation `completed_step` blocks and duplicate `result_table` blocks.
+- Clean final mutation rows omit `operation_id`, `step_id`, `row_id`, `approval_id`, `tool_name`, and raw audit ids.
 
 ### Known Bad Output
 
@@ -894,7 +907,7 @@ Manual verification showed RD-001 final completion rendering:
 The completed RD-001 final response should be readable before expanding details:
 
 ```text
-Done. I updated 21 jobs across 2 approved changes.
+Done. I updated 21 jobs across 2 approved business changes.
 
 Changes completed
 1. Medium -> High: 10 jobs
@@ -910,6 +923,35 @@ JOB-SEED-014 medium -> high
 ```
 
 Expanded details should show a clean audit grouped by business change, without internal ids.
+
+### RD-001 Result After Fix
+
+- `Done. I updated 21 jobs across 2 approved business changes.`
+- `Medium -> High: 10 jobs`
+- `Original High -> Low: 11 jobs`
+- Default affected-record preview limit: 5 rows.
+- Full audit details are grouped under the two business changes and contain only clean business fields.
+- Raw assistant markers, raw `**Success**` markdown, backend operation/step counts, duplicate final tables, and internal row ids are absent from final mutation blocks.
+
+### Regression Coverage Added
+
+- Strengthened `factory-agent/tests/test_response_document_contract.py::test_final_completed_mutation_document_aggregates_all_approved_changes`.
+- The test reproduces raw `done_all` / `**Success**` / `Updated 63 jobs across 22 approved steps` assistant text and duplicate audit evidence, then asserts the clean RD-001 business result.
+
+### Commands Run
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_response_document_contract.py::test_final_completed_mutation_document_aggregates_all_approved_changes -q
+python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py -q
+python -m pytest tests/test_api_endpoints.py::test_graph_approval_returns_before_resume_and_keeps_one_activity_operation -q
+```
+
+### Test Results
+
+- Focused RD-001 business contract regression: failed before the fix with `Updated 22 jobs across 2 approved steps`; passed after the fix.
+- Backend response-document contract/failure lane: 24 passed.
+- Approval-resume API regression: 1 passed.
 
 ### Phase 14 Verification Target
 

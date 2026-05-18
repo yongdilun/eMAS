@@ -181,6 +181,12 @@ How future agents should handle screenshots:
 |---|---|---|---|
 | `phase12-so005-medium-high-high-low-reject-approval-2` | Same prompt, approve approval 1, reject approval 2. | Original medium jobs commit to high, original high jobs remain high instead of changing to low, approval 2 is `REJECTED`, visible UI says the second approval was rejected or stopped, no stale full-success text is shown, and no approval-2 audit rows exist. | SO-005 oracle, backend graph/snapshot contracts, dedicated seeded browser DOM/data-integrity proof |
 
+## Phase 14 Response Document Business Contract Regression
+
+| ID | Prompt / flow | Expected deterministic behavior | Coverage |
+|---|---|---|---|
+| `phase14-rd001-clean-final-business-contract` | `change all medium priority job to high then change all high priority job to low` after both approvals complete. | The backend `response_document` final mutation result is composed from typed business facts, not raw assistant markdown. It summarizes 21 jobs across 2 approved business changes, groups `Medium -> High: 10 jobs` and `Original High -> Low: 11 jobs`, dedupes affected records, exposes a 5-row default preview plus grouped clean audit details, and forbids `done_all`, raw `**Success**`, `Updated 63 jobs across 22 approved steps`, `Operation ID`, `Step ID`, and `Row ID` in final mutation blocks. | `factory-agent/tests/test_response_document_contract.py::test_final_completed_mutation_document_aggregates_all_approved_changes` |
+
 ## Phase 13 Next Risk Group
 
 This batch does not add new LOTO wording variants. SO-021 and SO-025 stay at parser/route plus seeded browser because the current bugs are extraction, route selection, source projection, and visible stale route evidence. A new real LangGraph browser proof is reserved for a future miss where seeded adapters hide planner route, RAG retrieval, tool selection, or live integration behavior.

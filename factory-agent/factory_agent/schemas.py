@@ -433,6 +433,9 @@ class MutationResultBlock(ResponseBlockBase):
     title: str = "Mutation result"
     summary: str = Field(min_length=1)
     rows: list[dict[str, Any]] = Field(default_factory=list)
+    groups: list[dict[str, Any]] = Field(default_factory=list)
+    preview_limit: int = Field(default=5, ge=1)
+    details_collapsed: bool = True
     status: Literal["completed", "partial_failure", "failed"] = "completed"
 
 
