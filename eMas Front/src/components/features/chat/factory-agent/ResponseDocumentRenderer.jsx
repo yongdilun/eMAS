@@ -16,7 +16,7 @@ function safeText(value) {
 }
 
 function rowLabel(row, index) {
-  const keys = ['job_id', 'machine_id', 'id', 'record_id', 'name']
+  const keys = ['display_id', 'display_name', 'record_id', 'job_id', 'machine_id', 'id', 'name']
   for (const key of keys) {
     if (row?.[key] != null && row[key] !== '') return String(row[key])
   }
@@ -41,7 +41,31 @@ function businessChangeCount(group) {
 function businessChangeSummary(group, fallback) {
   const label = businessChangeLabel(group?.business_change, fallback)
   const count = businessChangeCount(group)
-  return safeText(group?.summary) || `${label}: ${count} ${count === 1 ? 'job' : 'jobs'}`
+  const entity = safeText(group?.entity_type) || 'record'
+  const singular = entity.endsWith('s') ? entity.slice(0, -1) || entity : entity
+  return safeText(group?.summary) || `${label}: ${count} ${count === 1 ? singular : `${singular}s`}`
+}
+
+function hasSupportedMutationContract(block) {
+  if (safeText(block?.contract) === 'business_change_v1') return true
+  const groups = Array.isArray(block?.groups) ? block.groups : []
+  return groups.some((group) => ['business_change_v1', 'entity_agnostic_no_matching_records_v1'].includes(safeText(group?.contract)))
+}
+
+function fieldChangeSummary(changes) {
+  if (!Array.isArray(changes) || !changes.length) return ''
+  return changes
+    .map((change) => {
+      const label = safeText(change?.label || change?.field) || 'Value'
+      const before = safeText(change?.from)
+      const after = safeText(change?.to)
+      if (before && after) return `${label}: ${before} -> ${after}`
+      if (after) return `${label}: ${after}`
+      if (before) return `${label}: ${before}`
+      return label
+    })
+    .filter(Boolean)
+    .join('; ')
 }
 
 function RowPreview({ rows = [], limit = PREVIEW_LIMIT }) {
@@ -84,6 +108,11 @@ function BusinessChangeList({ groups = [] }) {
             data-business-change-group=""
             data-business-change-label={label}
             data-business-change-count={count}
+            data-response-contract={safeText(group.contract) || undefined}
+            data-entity-type={safeText(group.entity_type) || undefined}
+            data-change-type={safeText(group.change_type) || undefined}
+            data-source-state-basis={safeText(group.source_state_basis) || undefined}
+            data-field-change-count={Array.isArray(group.field_changes) ? group.field_changes.length : undefined}
           >
             <span className="font-semibold text-ink-muted">{summary}</span>
           </div>
@@ -101,6 +130,7 @@ function CleanAuditRows({ rows = [] }) {
       {safeRows.map((row, index) => {
         const recordId = rowRecordId(row, index)
         const change = safeText(row.change)
+          || fieldChangeSummary(row.field_changes)
           || [row.previous_priority, row.new_priority || row.current_priority]
             .filter((value) => value != null && value !== '')
             .join(' -> ')
@@ -144,6 +174,11 @@ function CleanAuditDisclosure({ groups = [], totalCount = 0, defaultCollapsed = 
               data-clean-audit-group=""
               data-business-change-label={label}
               data-business-change-count={count}
+              data-response-contract={safeText(group.contract) || undefined}
+              data-entity-type={safeText(group.entity_type) || undefined}
+              data-change-type={safeText(group.change_type) || undefined}
+              data-source-state-basis={safeText(group.source_state_basis) || undefined}
+              data-field-change-count={Array.isArray(group.field_changes) ? group.field_changes.length : undefined}
             >
               <div className="text-xs font-semibold text-ink">{businessChangeSummary(group, label)}</div>
               <CleanAuditRows rows={group.rows} />
@@ -177,7 +212,7 @@ function formatDiagnosticValue(value) {
   return redactTechnicalText(value)
 }
 
-function CompactCard({ title, children, tone = 'default', blockType = null, blockId = null }) {
+function CompactCard({ title, children, tone = 'default', blockType = null, blockId = null, contract = null, entityType = null }) {
   const toneClass = tone === 'error'
     ? 'border-hairline bg-surface-1'
     : tone === 'warning'
@@ -188,6 +223,8 @@ function CompactCard({ title, children, tone = 'default', blockType = null, bloc
       className={`mt-3 min-w-0 max-w-full rounded-md border px-3 py-3 text-sm ${toneClass}`}
       data-response-block-type={blockType || undefined}
       data-response-block-id={blockId || undefined}
+      data-response-contract={safeText(contract) || undefined}
+      data-entity-type={safeText(entityType) || undefined}
     >
       {title ? <div className="text-sm font-semibold text-ink">{title}</div> : null}
       {children}
@@ -306,7 +343,12 @@ function ResultSummaryBlock({ block }) {
 function MutationResultBlock({ block }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
   return (
-    <CompactCard title={block.title || 'Mutation result'} blockType="mutation_result" blockId={block.id}>
+    <CompactCard
+      title={block.title || 'Mutation result'}
+      blockType="mutation_result"
+      blockId={block.id}
+      contract={block.contract}
+    >
       <div className="mt-1 text-sm text-ink" data-final-summary="">{block.summary}</div>
       <RowPreview rows={rows} limit={block.preview_limit || PREVIEW_LIMIT} />
       {rows.length > 5 ? <ExpandableTable title="Affected records" rows={rows} blockId={block.id} /> : null}
@@ -333,8 +375,14 @@ function FinalBusinessResultBlock({ summaryBlock, mutationBlock }) {
       title={summaryBlock?.title || 'Changes completed'}
       blockType="result_summary"
       blockId={summaryBlock?.id}
+      contract={mutationBlock?.contract}
     >
-      <div data-final-result-card="" data-response-block-type="mutation_result" data-response-block-id={mutationBlock?.id}>
+      <div
+        data-final-result-card=""
+        data-response-block-type="mutation_result"
+        data-response-block-id={mutationBlock?.id}
+        data-response-contract={safeText(mutationBlock?.contract) || undefined}
+      >
         <div className="mt-1 text-sm text-ink" data-final-summary="">
           {summaryBlock?.summary || mutationBlock?.summary}
         </div>
@@ -391,7 +439,13 @@ function StatusResultBlock({ block, documentMessage }) {
   const summary = safeText(block.summary)
   const shouldShowSummary = summary && summary !== safeText(documentMessage)
   return (
-    <CompactCard title={block.title || 'Status'} blockType="status_result" blockId={block.id}>
+    <CompactCard
+      title={block.title || 'Status'}
+      blockType="status_result"
+      blockId={block.id}
+      contract={block.contract}
+      entityType={block.entity_type}
+    >
       {shouldShowSummary ? <div className="mt-1 text-sm text-ink">{summary}</div> : null}
       {fields.length ? (
         <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
@@ -508,7 +562,8 @@ export default function ResponseDocumentRenderer({
     block?.type === 'mutation_result' &&
     block.status === 'completed' &&
     Array.isArray(block.groups) &&
-    block.groups.length > 0,
+    block.groups.length > 0 &&
+    hasSupportedMutationContract(block),
   )
   const shouldRenderFinalBusinessResult = Boolean(finalSummaryBlock && finalMutationBlock)
   const duplicateTableOwners = useMemo(() => {

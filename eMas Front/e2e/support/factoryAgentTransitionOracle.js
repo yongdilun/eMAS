@@ -51,6 +51,13 @@ function labelForPattern(pattern) {
 function backendSummary(snapshot) {
   const document = snapshot?.response_document || {}
   const blocks = Array.isArray(document.blocks) ? document.blocks : []
+  const contracts = uniq([
+    ...blocks.map((block) => block?.contract),
+    ...blocks.flatMap((block) => Array.isArray(block?.groups) ? block.groups.map((group) => group?.contract) : []),
+    document.invariants?.read_status_contract,
+    document.invariants?.mutation_business_contract,
+    document.invariants?.no_op_mutation_contract,
+  ])
   return {
     sessionStatus: snapshot?.session?.status || null,
     phase: snapshot?.phase || null,
@@ -60,6 +67,7 @@ function backendSummary(snapshot) {
     responseDocumentCurrentStepId: document.current_step_id || null,
     responseBlockTypes: blocks.map((block) => block?.type).filter(Boolean),
     responseApprovalIds: blocks.map((block) => block?.approval_id).filter(Boolean),
+    responseContracts: contracts,
   }
 }
 
@@ -180,6 +188,8 @@ export function evaluateTransitionProbe(probe, expected = {}) {
   addAbsentListExpectationViolations(violations, ui.visibleBlockIds, expected.hiddenBlockIds, 'visible block ids')
   addListExpectationViolations(violations, backend.responseBlockTypes, expected.backendBlockTypes, 'response_document block types')
   addAbsentListExpectationViolations(violations, backend.responseBlockTypes, expected.hiddenBackendBlockTypes, 'response_document block types')
+  addListExpectationViolations(violations, backend.responseContracts, expected.responseContracts, 'response_document contracts')
+  addListExpectationViolations(violations, ui.visibleContracts, expected.responseContracts, 'visible response contracts')
 
   if (Object.hasOwn(expected, 'approvalActionCount')) {
     const count = ui.approvalActionLabels.length

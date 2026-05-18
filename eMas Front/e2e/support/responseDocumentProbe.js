@@ -166,6 +166,8 @@ function summarizeBlocks(blocks = []) {
   return blocks.slice(-8).map((block) => compactObject({
     type: block?.type || null,
     id: block?.id || null,
+    contract: block?.contract || null,
+    entityType: block?.entity_type || null,
     approvalId: block?.approval_id || blockApprovalIdFromId(block?.id) || null,
     title: compactText(block?.title || '', 80) || null,
     summary: compactText(block?.summary || block?.message || block?.user_message || block?.answer || '', 140) || null,
@@ -191,6 +193,13 @@ export function summarizeBackendSnapshot(snapshot) {
   const sessionName = session.name || session.title || session.current_intent || snapshot?.name || null
   const blockSummaries = summarizeBlocks(blocks)
   const blockTypes = blocks.map((block) => block?.type).filter(Boolean)
+  const contracts = compactArray([
+    ...blocks.map((block) => block?.contract),
+    ...blocks.flatMap((block) => Array.isArray(block?.groups) ? block.groups.map((group) => group?.contract) : []),
+    document.invariants?.read_status_contract,
+    document.invariants?.mutation_business_contract,
+    document.invariants?.no_op_mutation_contract,
+  ])
   const approvalIds = compactArray([
     ...blocks.map((block) => block?.approval_id),
     ...blockSummaries.map((block) => block.approvalId),
@@ -207,12 +216,14 @@ export function summarizeBackendSnapshot(snapshot) {
     responseDocumentCurrentStepId: document.current_step_id || null,
     responseBlockTypes: blockTypes,
     responseApprovalIds: approvalIds,
+    responseContracts: contracts,
     responseDocument: {
       state: document.state || null,
       revision: document.revision ?? null,
       currentStepId: document.current_step_id || null,
       blockTypes,
       blockIds: compactArray(blocks.map((block) => block?.id)),
+      contracts,
       approvalIds,
       runSteps: summarizeRunSteps(runSteps),
       blocks: blockSummaries,
@@ -224,6 +235,8 @@ function summarizeVisibleBlocks(blocks = []) {
   return blocks.slice(-8).map((block) => compactObject({
     type: block?.type || null,
     id: block?.id || null,
+    contract: block?.contract || null,
+    entityType: block?.entityType || null,
     approvalId: block?.approvalId || blockApprovalIdFromId(block?.id) || null,
     title: compactText(block?.title || '', 80) || null,
     text: compactText(block?.text || '', 180) || null,
@@ -235,6 +248,13 @@ function summarizeBusinessGroups(groups = []) {
   return asArray(groups).slice(0, 8).map((group) => compactObject({
     label: compactText(group?.label || group?.businessChange || group?.business_change || '', 80) || null,
     count: Number.isFinite(Number(group?.count ?? group?.record_count)) ? Number(group?.count ?? group?.record_count) : null,
+    contract: group?.contract || null,
+    entityType: group?.entityType || group?.entity_type || null,
+    changeType: group?.changeType || group?.change_type || null,
+    sourceStateBasis: group?.sourceStateBasis || group?.source_state_basis || null,
+    fieldChangeCount: Number.isFinite(Number(group?.fieldChangeCount ?? group?.field_change_count))
+      ? Number(group?.fieldChangeCount ?? group?.field_change_count)
+      : null,
     text: compactText(group?.text || group?.summary || '', 120) || null,
   }))
 }
@@ -284,6 +304,12 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
     ...asArray(ui.visibleApprovalIds),
     ...blockSummaries.map((block) => block.approvalId),
   ])
+  const visibleContracts = compactArray([
+    ...asArray(ui.visibleContracts),
+    ...blockSummaries.map((block) => block.contract),
+    ...asArray(ui.finalResponseQuality?.businessGroups).map((group) => group?.contract),
+    ...asArray(ui.finalResponseQuality?.expandedAuditGroups).map((group) => group?.contract),
+  ])
   const assistantTitle = ui.latestAssistantTitle || blockSummaries.find((block) => block.title)?.title || null
   const assistantMessage = ui.latestAssistantMessage || ui.latestAssistantText || ''
 
@@ -299,6 +325,7 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
     },
     visibleBlockTypes: compactArray(ui.visibleBlockTypes || blocks.map((block) => block.type)),
     visibleBlockIds: compactArray(ui.visibleBlockIds || blocks.map((block) => block.id)),
+    visibleContracts,
     visibleBlocks: blockSummaries,
     visibleRunSteps: summarizeRunSteps(ui.visibleRunSteps || []),
     visibleApprovalIds: approvalIds,
@@ -317,6 +344,7 @@ function compactExpected(expected = {}) {
     hiddenBlockTypes: expected.hiddenBlockTypes || undefined,
     backendBlockTypes: expected.backendBlockTypes || undefined,
     hiddenBackendBlockTypes: expected.hiddenBackendBlockTypes || undefined,
+    responseContracts: expected.responseContracts || undefined,
     finalResponseQuality: expected.finalResponseQuality || undefined,
     textIncludes: asArray(expected.textIncludes).map(labelForPattern),
     textExcludes: asArray(expected.textExcludes).map(labelForPattern),
@@ -411,6 +439,14 @@ function expectedGroupMatches(actualGroup, expectedGroup) {
   const expectedLabel = expectedGroup?.label || expectedGroup?.businessChange || ''
   if (expectedLabel && label !== expectedLabel) return false
   if (Object.hasOwn(expectedGroup || {}, 'count') && Number(actualGroup?.count) !== Number(expectedGroup.count)) return false
+  if (expectedGroup?.contract && actualGroup?.contract !== expectedGroup.contract) return false
+  if (expectedGroup?.entityType && actualGroup?.entityType !== expectedGroup.entityType) return false
+  if (expectedGroup?.changeType && actualGroup?.changeType !== expectedGroup.changeType) return false
+  if (expectedGroup?.sourceStateBasis && actualGroup?.sourceStateBasis !== expectedGroup.sourceStateBasis) return false
+  if (
+    Object.hasOwn(expectedGroup || {}, 'fieldChangeCountMin') &&
+    Number(actualGroup?.fieldChangeCount || 0) < Number(expectedGroup.fieldChangeCountMin)
+  ) return false
   return true
 }
 
@@ -624,6 +660,11 @@ export async function collectVisibleResponseDocumentUi(page) {
     const groupFromNode = (node) => ({
       label: node.getAttribute('data-business-change-label') || '',
       count: Number(node.getAttribute('data-business-change-count') || 0),
+      contract: node.getAttribute('data-response-contract') || null,
+      entityType: node.getAttribute('data-entity-type') || null,
+      changeType: node.getAttribute('data-change-type') || null,
+      sourceStateBasis: node.getAttribute('data-source-state-basis') || null,
+      fieldChangeCount: Number(node.getAttribute('data-field-change-count') || 0),
       text: compact(node.innerText || node.textContent || '', 140),
     })
     const duplicateRowsInSection = (section, sectionName) => {
@@ -673,10 +714,14 @@ export async function collectVisibleResponseDocumentUi(page) {
         .filter(Boolean)
       const type = node.getAttribute('data-response-block-type') || null
       const id = node.getAttribute('data-response-block-id') || null
+      const contract = node.getAttribute('data-response-contract') || null
+      const entityType = node.getAttribute('data-entity-type') || null
       const blockLines = lines(node)
       return {
         type,
         id,
+        contract,
+        entityType,
         approvalId: blockApprovalId(id),
         title: blockLines[0] || null,
         text: node.innerText || node.textContent || '',
@@ -738,6 +783,9 @@ export async function collectVisibleResponseDocumentUi(page) {
         .map(([label]) => label),
       duplicateAffectedRecordEvidence: duplicateEvidence,
     }
+    const visibleContracts = Array.from(latestRoot.querySelectorAll('[data-response-contract]'))
+      .map((node) => node.getAttribute('data-response-contract'))
+      .filter(Boolean)
 
     return {
       activeSessionId,
@@ -749,6 +797,7 @@ export async function collectVisibleResponseDocumentUi(page) {
       latestAssistantMessage: latestAssistantContainer ? messageText(latestAssistantContainer, 'eMAS AI Assistant') : null,
       visibleBlockTypes: visibleBlocks.map((block) => block.type).filter(Boolean),
       visibleBlockIds: visibleBlocks.map((block) => block.id).filter(Boolean),
+      visibleContracts,
       visibleBlocks,
       visibleRunSteps,
       visibleApprovalIds: visibleBlocks.map((block) => block.approvalId).filter(Boolean),

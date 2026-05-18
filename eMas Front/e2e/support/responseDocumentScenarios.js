@@ -64,6 +64,52 @@ export const lowPriorityRows = Object.freeze([
   'JOB-SEED-024',
 ].map((jobId) => ({ job_id: jobId, previous_priority: 'low', new_priority: 'medium' })))
 
+const BUSINESS_CHANGE_CONTRACT = 'business_change_v1'
+const NO_OP_MUTATION_CONTRACT = 'entity_agnostic_no_matching_records_v1'
+const ENTITY_STATUS_CONTRACT = 'entity_status_v1'
+
+function priorityBusinessChangeId(source, target) {
+  return `job-priority-original-${source}-to-${target}`
+}
+
+function priorityFieldChanges(source, target) {
+  return [{ field: 'priority', label: 'Priority', from: source, to: target }]
+}
+
+function typedPriorityRows(rows, { label, source, target }) {
+  return rows.map((row) => ({
+    business_change: label,
+    contract: BUSINESS_CHANGE_CONTRACT,
+    business_change_id: priorityBusinessChangeId(source, target),
+    entity_type: 'job',
+    record_id: row.job_id,
+    display_id: row.job_id,
+    change_type: 'update',
+    selector_summary: `priority = ${source}`,
+    source_state_basis: 'original',
+    field_changes: priorityFieldChanges(source, target),
+    change: `Priority: ${source} -> ${target}`,
+    status: 'succeeded',
+    outcome: 'succeeded',
+  }))
+}
+
+function typedPriorityGroup({ label, source, target, rows }) {
+  return {
+    contract: BUSINESS_CHANGE_CONTRACT,
+    business_change: label,
+    business_change_id: priorityBusinessChangeId(source, target),
+    entity_type: 'job',
+    change_type: 'update',
+    selector_summary: `priority = ${source}`,
+    source_state_basis: 'original',
+    field_changes: priorityFieldChanges(source, target),
+    summary: `${label}: ${rows.length} jobs`,
+    record_count: rows.length,
+    rows,
+  }
+}
+
 function docId(session) {
   const turnId = session.response_document_turn_id || session.current_turn_id || 'pw-response-document-turn'
   return {
@@ -277,19 +323,29 @@ export function cascadeWaitingDocument(session, definition, approvalNumber = 1) 
 export function cascadeFinalDocument(session, definition) {
   const firstLabel = `${definition.first.source[0].toUpperCase()}${definition.first.source.slice(1)} -> ${definition.first.target[0].toUpperCase()}${definition.first.target.slice(1)}`
   const secondLabel = `Original ${definition.second.source[0].toUpperCase()}${definition.second.source.slice(1)} -> ${definition.second.target[0].toUpperCase()}${definition.second.target.slice(1)}`
-  const firstRows = definition.first.rows.map((row) => ({
-    ...row,
-    business_change: firstLabel,
-    change: `${definition.first.source} -> ${definition.first.target}`,
-    status: 'updated',
-  }))
-  const secondRows = definition.second.rows.map((row) => ({
-    ...row,
-    business_change: secondLabel,
-    change: `${definition.second.source} -> ${definition.second.target}`,
-    status: 'updated',
-  }))
+  const firstRows = typedPriorityRows(definition.first.rows, {
+    label: firstLabel,
+    source: definition.first.source,
+    target: definition.first.target,
+  })
+  const secondRows = typedPriorityRows(definition.second.rows, {
+    label: secondLabel,
+    source: definition.second.source,
+    target: definition.second.target,
+  })
   const rows = [...firstRows, ...secondRows]
+  const firstGroup = typedPriorityGroup({
+    label: firstLabel,
+    source: definition.first.source,
+    target: definition.first.target,
+    rows: firstRows,
+  })
+  const secondGroup = typedPriorityGroup({
+    label: secondLabel,
+    source: definition.second.source,
+    target: definition.second.target,
+    rows: secondRows,
+  })
   return baseDocument(session, {
     operationId: definition.operationId,
     revision: 8,
@@ -312,8 +368,8 @@ export function cascadeFinalDocument(session, definition) {
         title: 'Changes completed',
         summary: definition.finalMessage,
         steps: [
-          { step_number: 1, business_change: firstLabel, summary: `${firstLabel}: ${definition.first.rows.length} jobs`, record_count: definition.first.rows.length, status: 'completed' },
-          { step_number: 2, business_change: secondLabel, summary: `${secondLabel}: ${definition.second.rows.length} jobs`, record_count: definition.second.rows.length, status: 'completed' },
+          { step_number: 1, ...firstGroup, rows: undefined, status: 'completed' },
+          { step_number: 2, ...secondGroup, rows: undefined, status: 'completed' },
         ],
         total_count: rows.length,
         status: 'completed',
@@ -321,24 +377,12 @@ export function cascadeFinalDocument(session, definition) {
       {
         id: `mutation:${definition.operationId}`,
         type: 'mutation_result',
+        contract: BUSINESS_CHANGE_CONTRACT,
         operation_id: definition.operationId,
         title: 'Affected records',
         summary: definition.finalMessage,
         rows,
-        groups: [
-          {
-            business_change: firstLabel,
-            summary: `${firstLabel}: ${definition.first.rows.length} jobs`,
-            record_count: definition.first.rows.length,
-            rows: firstRows,
-          },
-          {
-            business_change: secondLabel,
-            summary: `${secondLabel}: ${definition.second.rows.length} jobs`,
-            record_count: definition.second.rows.length,
-            rows: secondRows,
-          },
-        ],
+        groups: [firstGroup, secondGroup],
         preview_limit: 5,
         details_collapsed: true,
         status: 'completed',
@@ -348,7 +392,7 @@ export function cascadeFinalDocument(session, definition) {
       latest_pending_approval_id: null,
       completed_approval_ids: [definition.first.approvalId, definition.second.approvalId],
       mutation_group_count: 2,
-      mutation_business_contract: 'business_level_v1',
+      mutation_business_contract: BUSINESS_CHANGE_CONTRACT,
       affected_record_count: rows.length,
       approved_business_change_count: 2,
       affected_record_preview_limit: 5,
@@ -362,6 +406,7 @@ export function partialNoOpDefinition() {
     operationId: 'pw-plan-rd-partial-noop',
     approvalId: 'pw-rd-partial-noop-approval',
     noOp: {
+      contract: NO_OP_MUTATION_CONTRACT,
       entity_type: 'job',
       selector_summary: 'priority = archived',
       change_summary: 'priority -> high',
@@ -441,12 +486,11 @@ export function partialNoOpWaitingDocument(session, definition = partialNoOpDefi
 
 export function partialNoOpFinalDocument(session, definition = partialNoOpDefinition()) {
   const changedLabel = 'High -> Low'
-  const changedRows = definition.rows.map((row) => ({
-    ...row,
-    business_change: changedLabel,
-    change: 'high -> low',
-    status: 'updated',
-  }))
+  const changedRows = typedPriorityRows(definition.rows, {
+    label: changedLabel,
+    source: 'high',
+    target: 'low',
+  })
   const noopGroup = {
     business_change: 'Not changed',
     summary: 'Not changed: no matching jobs for priority = archived; priority -> high.',
@@ -454,12 +498,7 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
     rows: [],
     ...definition.noOp,
   }
-  const changedGroup = {
-    business_change: changedLabel,
-    summary: `${changedLabel}: ${changedRows.length} jobs`,
-    record_count: changedRows.length,
-    rows: changedRows,
-  }
+  const changedGroup = typedPriorityGroup({ label: changedLabel, source: 'high', target: 'low', rows: changedRows })
   return baseDocument(session, {
     operationId: definition.operationId,
     revision: 5,
@@ -481,8 +520,8 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
         title: 'Changes completed',
         summary: definition.finalMessage,
         steps: [
-          { step_number: 1, business_change: 'Not changed', summary: noopGroup.summary, record_count: 0, status: 'not_changed' },
-          { step_number: 2, business_change: changedLabel, summary: changedGroup.summary, record_count: changedRows.length, status: 'completed' },
+          { step_number: 1, business_change: 'Not changed', summary: noopGroup.summary, record_count: 0, status: 'not_changed', ...definition.noOp },
+          { step_number: 2, ...changedGroup, rows: undefined, status: 'completed' },
         ],
         total_count: changedRows.length,
         status: 'completed',
@@ -490,6 +529,7 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
       {
         id: `mutation:${definition.operationId}`,
         type: 'mutation_result',
+        contract: BUSINESS_CHANGE_CONTRACT,
         operation_id: definition.operationId,
         title: 'Affected records',
         summary: definition.finalMessage,
@@ -507,7 +547,7 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
       not_changed_group_count: 1,
       no_op_mutation_count: 1,
       no_op_mutation_contract: 'entity_agnostic_no_matching_records_v1',
-      mutation_business_contract: 'business_level_v1',
+      mutation_business_contract: BUSINESS_CHANGE_CONTRACT,
       affected_record_count: changedRows.length,
       approved_business_change_count: 1,
       affected_record_preview_limit: 5,
@@ -518,6 +558,7 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
 export function allNoOpDocument(session) {
   const summary = 'No changes were made.'
   const noopGroup = {
+    contract: NO_OP_MUTATION_CONTRACT,
     business_change: 'Not changed',
     summary: 'Not changed: no matching jobs for priority = archived; priority -> high.',
     record_count: 0,
@@ -548,7 +589,7 @@ export function allNoOpDocument(session) {
         operation_id: 'pw-plan-rd-all-noop',
         title: 'No changes made',
         summary,
-        steps: [{ step_number: 1, business_change: 'Not changed', summary: noopGroup.summary, record_count: 0, status: 'not_changed' }],
+        steps: [{ step_number: 1, business_change: 'Not changed', summary: noopGroup.summary, record_count: 0, status: 'not_changed', ...noopGroup, rows: undefined }],
         total_count: 0,
         status: 'completed',
       },
@@ -595,6 +636,7 @@ export function readStatusDocument(session) {
       {
         id: 'status:machine-status',
         type: 'status_result',
+        contract: ENTITY_STATUS_CONTRACT,
         operation_id: 'pw-plan-rd-read-status',
         title: 'Machine status',
         summary,

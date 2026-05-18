@@ -985,6 +985,7 @@ test('FactoryAgentChatPanel renders read-only machine status from typed status_r
       {
         id: 'status:machine-status',
         type: 'status_result',
+        contract: 'entity_status_v1',
         title: 'Machine status',
         summary: 'Machine M-CNC-01 is running.',
         entity_type: 'machine',
@@ -1023,6 +1024,7 @@ test('FactoryAgentChatPanel renders read-only machine status from typed status_r
   await waitFor(() => assert.match(view.text(), /Machine M-CNC-01 is running\./))
   assert.equal((view.text().match(/Machine M-CNC-01 is running\./g) || []).length, 1)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="status_result"]').length, 1)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="status_result"][data-response-contract="entity_status_v1"]').length, 1)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"]').length, 0)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="mutation_result"]').length, 0)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"]').length, 0)
@@ -1040,20 +1042,24 @@ test('FactoryAgentChatPanel renders read-only machine status from typed status_r
 
 test('FactoryAgentChatPanel renders completed mutation response_document as one grouped business result', async () => {
   const mediumRows = Array.from({ length: 10 }, (_, index) => ({
-    job_id: `JOB-MED-${String(index + 1).padStart(3, '0')}`,
+    record_id: `JOB-MED-${String(index + 1).padStart(3, '0')}`,
+    display_id: `JOB-MED-${String(index + 1).padStart(3, '0')}`,
     business_change: 'Medium -> High',
-    change: 'medium -> high',
-    previous_priority: 'medium',
-    new_priority: 'high',
-    status: 'updated',
+    business_change_id: 'job-priority-original-medium-to-high',
+    entity_type: 'job',
+    field_changes: [{ field: 'priority', label: 'Priority', from: 'medium', to: 'high' }],
+    change: 'Priority: medium -> high',
+    status: 'succeeded',
   }))
   const highRows = Array.from({ length: 11 }, (_, index) => ({
-    job_id: `JOB-HIGH-${String(index + 1).padStart(3, '0')}`,
+    record_id: `JOB-HIGH-${String(index + 1).padStart(3, '0')}`,
+    display_id: `JOB-HIGH-${String(index + 1).padStart(3, '0')}`,
     business_change: 'Original High -> Low',
-    change: 'high -> low',
-    previous_priority: 'high',
-    new_priority: 'low',
-    status: 'updated',
+    business_change_id: 'job-priority-original-high-to-low',
+    entity_type: 'job',
+    field_changes: [{ field: 'priority', label: 'Priority', from: 'high', to: 'low' }],
+    change: 'Priority: high -> low',
+    status: 'succeeded',
   }))
   const rows = [...mediumRows, ...highRows]
   const document = baseResponseDocument({
@@ -1074,12 +1080,37 @@ test('FactoryAgentChatPanel renders completed mutation response_document as one 
       {
         id: 'mutation:business-result',
         type: 'mutation_result',
+        contract: 'business_change_v1',
         title: 'Affected records',
         summary: 'Done. I updated 21 jobs across 2 approved business changes.',
         rows,
         groups: [
-          { business_change: 'Medium -> High', summary: 'Medium -> High: 10 jobs', record_count: 10, rows: mediumRows },
-          { business_change: 'Original High -> Low', summary: 'Original High -> Low: 11 jobs', record_count: 11, rows: highRows },
+          {
+            contract: 'business_change_v1',
+            business_change: 'Medium -> High',
+            business_change_id: 'job-priority-original-medium-to-high',
+            entity_type: 'job',
+            change_type: 'update',
+            selector_summary: 'priority = medium',
+            source_state_basis: 'original',
+            field_changes: [{ field: 'priority', label: 'Priority', from: 'medium', to: 'high' }],
+            summary: 'Medium -> High: 10 jobs',
+            record_count: 10,
+            rows: mediumRows,
+          },
+          {
+            contract: 'business_change_v1',
+            business_change: 'Original High -> Low',
+            business_change_id: 'job-priority-original-high-to-low',
+            entity_type: 'job',
+            change_type: 'update',
+            selector_summary: 'priority = high',
+            source_state_basis: 'original',
+            field_changes: [{ field: 'priority', label: 'Priority', from: 'high', to: 'low' }],
+            summary: 'Original High -> Low: 11 jobs',
+            record_count: 11,
+            rows: highRows,
+          },
         ],
         preview_limit: 5,
         details_collapsed: true,
@@ -1100,6 +1131,8 @@ test('FactoryAgentChatPanel renders completed mutation response_document as one 
   assert.equal(view.container.querySelectorAll('[data-final-result-card]').length, 1)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="result_summary"]').length, 1)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="mutation_result"]').length, 1)
+  assert.ok(view.container.querySelectorAll('[data-response-contract="business_change_v1"]').length >= 3)
+  assert.equal(view.container.querySelectorAll('[data-business-change-group][data-response-contract="business_change_v1"][data-entity-type="job"]').length, 2)
   assert.match(view.text(), /Medium -> High: 10 jobs/)
   assert.match(view.text(), /Original High -> Low: 11 jobs/)
   assert.equal(view.container.querySelectorAll('[data-affected-record-preview] [data-affected-record-row]').length, 5)

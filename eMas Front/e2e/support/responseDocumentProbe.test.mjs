@@ -209,7 +209,7 @@ test('semantic probe summarizes final response visual quality evidence', () => {
         run_steps: [{ step_id: 'completed-1', kind: 'completed', state: 'completed', title: 'Run complete' }],
         blocks: [
           { id: 'result-summary:rd-001', type: 'result_summary', title: 'Changes completed', summary: 'Done. I updated 21 jobs across 2 approved business changes.' },
-          { id: 'mutation:rd-001', type: 'mutation_result', title: 'Affected records', summary: 'Done. I updated 21 jobs across 2 approved business changes.' },
+          { id: 'mutation:rd-001', type: 'mutation_result', contract: 'business_change_v1', title: 'Affected records', summary: 'Done. I updated 21 jobs across 2 approved business changes.' },
         ],
       },
     }),
@@ -220,8 +220,9 @@ test('semantic probe summarizes final response visual quality evidence', () => {
       visibleBlockIds: ['result-summary:rd-001', 'mutation:rd-001'],
       visibleBlocks: [
         { type: 'result_summary', id: 'result-summary:rd-001', title: 'Changes completed', text: 'Done. I updated 21 jobs across 2 approved business changes.', buttons: [] },
-        { type: 'mutation_result', id: 'mutation:rd-001', title: 'Affected records', text: 'Medium -> High: 10 jobs Original High -> Low: 11 jobs', buttons: [] },
+        { type: 'mutation_result', id: 'mutation:rd-001', contract: 'business_change_v1', title: 'Affected records', text: 'Medium -> High: 10 jobs Original High -> Low: 11 jobs', buttons: [] },
       ],
+      visibleContracts: ['business_change_v1'],
       approvalActionLabels: [],
       visibleApprovalIds: [],
       visibleText: 'Done. I updated 21 jobs across 2 approved business changes. Medium -> High: 10 jobs Original High -> Low: 11 jobs',
@@ -229,8 +230,8 @@ test('semantic probe summarizes final response visual quality evidence', () => {
         finalResultCardCount: 1,
         finalSummaryText: 'Done. I updated 21 jobs across 2 approved business changes.',
         businessGroups: [
-          { label: 'Medium -> High', count: 10, text: 'Medium -> High: 10 jobs' },
-          { label: 'Original High -> Low', count: 11, text: 'Original High -> Low: 11 jobs' },
+          { label: 'Medium -> High', count: 10, contract: 'business_change_v1', entityType: 'job', fieldChangeCount: 1, text: 'Medium -> High: 10 jobs' },
+          { label: 'Original High -> Low', count: 11, contract: 'business_change_v1', entityType: 'job', fieldChangeCount: 1, text: 'Original High -> Low: 11 jobs' },
         ],
         affectedRecordPreviewCount: 5,
         expandableAuditPresent: true,
@@ -248,8 +249,8 @@ test('semantic probe summarizes final response visual quality evidence', () => {
         finalResultCardCount: 1,
         finalSummaryText: /21 jobs across 2 approved business changes/,
         businessGroups: [
-          { label: 'Medium -> High', count: 10 },
-          { label: 'Original High -> Low', count: 11 },
+          { label: 'Medium -> High', count: 10, contract: 'business_change_v1', entityType: 'job', fieldChangeCountMin: 1 },
+          { label: 'Original High -> Low', count: 11, contract: 'business_change_v1', entityType: 'job', fieldChangeCountMin: 1 },
         ],
         affectedRecordPreviewMax: 5,
         expandableAuditPresent: true,
@@ -259,9 +260,11 @@ test('semantic probe summarizes final response visual quality evidence', () => {
 
   assert.equal(probe.diagnosis.classification, 'unknown')
   assert.equal(probe.visible.finalResponseQuality.finalResultCardCount, 1)
+  assert.deepEqual(probe.visible.visibleContracts, ['business_change_v1'])
+  assert.deepEqual(probe.backend.responseContracts, ['business_change_v1'])
   assert.deepEqual(
-    probe.visible.finalResponseQuality.businessGroups.map((group) => [group.label, group.count]),
-    [['Medium -> High', 10], ['Original High -> Low', 11]],
+    probe.visible.finalResponseQuality.businessGroups.map((group) => [group.label, group.count, group.contract]),
+    [['Medium -> High', 10, 'business_change_v1'], ['Original High -> Low', 11, 'business_change_v1']],
   )
 })
 

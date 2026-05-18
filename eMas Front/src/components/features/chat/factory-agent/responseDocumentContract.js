@@ -65,6 +65,12 @@ function cleanRows(value) {
     : []
 }
 
+function cleanGroups(value) {
+  return Array.isArray(value)
+    ? value.filter((group) => group && typeof group === 'object' && !Array.isArray(group))
+    : []
+}
+
 function cleanSources(value) {
   return Array.isArray(value)
     ? value.filter((source) => source && typeof source === 'object' && !Array.isArray(source))
@@ -102,9 +108,13 @@ export function humanizeResponseDocumentKey(key) {
 
 function orderedRowKeys(rows) {
   const preferred = [
+    'display_id',
+    'record_id',
     'job_id',
     'machine_id',
     'id',
+    'entity_type',
+    'change',
     'status',
     'outcome',
     'previous_priority',
@@ -192,6 +202,7 @@ function normalizeBlock(block, index, violations) {
   }
   const normalizedType = type === 'approval_card' ? 'approval_required' : type
   const rows = cleanRows(block.rows)
+  const groups = cleanGroups(block.groups)
   const sources = cleanSources(block.sources)
   return {
     ...block,
@@ -204,7 +215,9 @@ function normalizeBlock(block, index, violations) {
     answer: cleanString(block.answer),
     approval_id: cleanString(block.approval_id || block.approvalId) || null,
     operation_id: cleanString(block.operation_id || block.operationId) || null,
+    contract: cleanString(block.contract) || null,
     rows,
+    groups,
     sources,
     fields: cleanStatusFields(block.fields),
     secondary_fields: cleanStatusFields(block.secondary_fields || block.secondaryFields),

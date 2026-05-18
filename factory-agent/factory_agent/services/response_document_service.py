@@ -1276,6 +1276,22 @@ def _priority_business_key(source: str, target: str) -> str:
 
 
 def _business_group_key(row: dict[str, Any], *, fallback: str) -> str:
+    if _row_has_business_change_contract(row):
+        business_change_id = _row_business_change_id(row)
+        if business_change_id:
+            return json.dumps([BUSINESS_CHANGE_CONTRACT, business_change_id], sort_keys=True)
+        changes = _row_field_changes(row)
+        if changes:
+            return json.dumps(
+                [
+                    BUSINESS_CHANGE_CONTRACT,
+                    _row_entity_type(row),
+                    _row_selector_summary(row),
+                    changes,
+                ],
+                sort_keys=True,
+                default=str,
+            )
     source = _source_priority(row)
     target = _target_priority(row)
     if source or target:
@@ -1310,9 +1326,7 @@ def _business_group_sort_key(
     if _is_no_op_group(group):
         return -1, group.first_seen, group.first_seen, group.completed_at or datetime.min, group.key
     approval_rank = approval_positions.get(group.approval_id or "", 10_000)
-    sources = {_source_priority(row) for row in group.rows if _source_priority(row)}
-    targets = {_target_priority(row) for row in group.rows if _target_priority(row)}
-    business_key = _priority_business_key(next(iter(sources)), next(iter(targets))) if len(sources) == 1 and len(targets) == 1 else group.key
+    business_key = _typed_business_group_key(group) or group.key
     business_rank = business_order.get(business_key, 10_000 + group.first_seen)
     return approval_rank, business_rank, group.first_seen, group.completed_at or datetime.min, group.key
 
@@ -1647,8 +1661,14 @@ def _business_contract_value(row: dict[str, Any]) -> str:
     return ""
 
 
+def _row_is_job_priority_business_change(row: dict[str, Any]) -> bool:
+    if _row_entity_type(row) != "job":
+        return False
+    return bool(_source_priority(row) and _target_priority(row))
+
+
 def _row_has_business_change_contract(row: dict[str, Any]) -> bool:
-    return _business_contract_value(row) == BUSINESS_CHANGE_CONTRACT
+    return _business_contract_value(row) == BUSINESS_CHANGE_CONTRACT or _row_is_job_priority_business_change(row)
 
 
 def _row_entity_type(row: dict[str, Any]) -> str:
@@ -1669,6 +1689,14 @@ def _row_entity_type(row: dict[str, Any]) -> str:
     if record_id.upper().startswith("M-"):
         return "machine"
     return "record"
+
+
+def _priority_field_change(row: dict[str, Any]) -> dict[str, Any] | None:
+    source = _source_priority(row)
+    target = _target_priority(row)
+    if not (source and target):
+        return None
+    return {"field": "priority", "label": "Priority", "from": source, "to": target}
 
 
 def _normalized_field_change(value: Any) -> dict[str, Any] | None:
@@ -1711,14 +1739,52 @@ def _row_field_changes(row: dict[str, Any]) -> list[dict[str, Any]]:
     raw = row.get("field_changes")
     if raw is None:
         raw = row.get("changes")
-    if not isinstance(raw, list):
-        return []
     changes: list[dict[str, Any]] = []
-    for value in raw:
-        change = _normalized_field_change(value)
-        if change is not None:
-            changes.append(change)
+    if isinstance(raw, list):
+        for value in raw:
+            change = _normalized_field_change(value)
+            if change is not None:
+                changes.append(change)
+    if not changes and _row_is_job_priority_business_change(row):
+        priority_change = _priority_field_change(row)
+        if priority_change is not None:
+            changes.append(priority_change)
     return changes
+
+
+def _row_source_state_basis(row: dict[str, Any]) -> str:
+    explicit = _first_text(row, ("source_state_basis", "basis", "state_basis"))
+    if explicit:
+        return explicit
+    write_set = _trimmed(row.get("write_set")).lower()
+    bundle_kind = _trimmed(row.get("bundle_kind")).lower()
+    if row.get("original_priority") or write_set.startswith("original_") or "cascade" in bundle_kind:
+        return "original"
+    return "current"
+
+
+def _row_selector_summary(row: dict[str, Any]) -> str:
+    explicit = _first_text(row, ("selector_summary", "selector", "filter_summary"))
+    if explicit:
+        return explicit
+    source = _source_priority(row)
+    if source:
+        return f"priority = {source}"
+    record_id = _business_record_identifier(row)
+    entity_type = _row_entity_type(row)
+    if record_id:
+        return f"{entity_type}_id = {record_id}"
+    return ""
+
+
+def _row_business_change_id(row: dict[str, Any]) -> str:
+    explicit = _first_text(row, ("business_change_id", "change_id", "business_id"))
+    if explicit:
+        return explicit
+    if _row_is_job_priority_business_change(row):
+        basis = _row_source_state_basis(row).replace(" ", "_").lower()
+        return f"job-priority-{basis}-{_source_priority(row)}-to-{_target_priority(row)}"
+    return ""
 
 
 def _group_common_text(group: MutationGroup, keys: tuple[str, ...]) -> str:
@@ -1727,6 +1793,34 @@ def _group_common_text(group: MutationGroup, keys: tuple[str, ...]) -> str:
         if value:
             return value
     return ""
+
+
+def _group_common_source_state_basis(group: MutationGroup) -> str:
+    for row in group.rows:
+        basis = _row_source_state_basis(row)
+        if basis:
+            return basis
+    return "current"
+
+
+def _group_common_selector_summary(group: MutationGroup) -> str:
+    for row in group.rows:
+        selector = _row_selector_summary(row)
+        if selector:
+            return selector
+    return ""
+
+
+def _typed_business_group_key(group: MutationGroup) -> str | None:
+    for row in group.rows:
+        if not _row_has_business_change_contract(row):
+            continue
+        return _business_group_key(row, fallback=group.key)
+    sources = {_source_priority(row) for row in group.rows if _source_priority(row)}
+    targets = {_target_priority(row) for row in group.rows if _target_priority(row)}
+    if len(sources) == 1 and len(targets) == 1:
+        return _priority_business_key(next(iter(sources)), next(iter(targets)))
+    return None
 
 
 def _group_entity_type(group: MutationGroup) -> str:
@@ -1783,7 +1877,7 @@ def _business_row_dedupe_key(row: dict[str, Any]) -> str | None:
             [
                 BUSINESS_CHANGE_CONTRACT,
                 record_id,
-                _first_text(row, ("business_change_id", "change_id", "business_id")),
+                _row_business_change_id(row),
                 _row_field_changes(row),
                 _normalize_row_status(row.get("status"), default=""),
             ],
@@ -1857,7 +1951,7 @@ def _clean_business_mutation_row(row: dict[str, Any], *, business_change: str) -
         entity_type = _row_entity_type(row)
         if entity_type:
             clean["entity_type"] = entity_type
-        business_change_id = _first_text(row, ("business_change_id", "change_id", "business_id"))
+        business_change_id = _row_business_change_id(row)
         if business_change_id:
             clean["business_change_id"] = business_change_id
         changes = _row_field_changes(row)
@@ -1907,11 +2001,14 @@ def _business_change_contract_payload(group: MutationGroup, *, index: int) -> di
     return {
         "contract": BUSINESS_CHANGE_CONTRACT,
         "business_change_id": _group_common_text(group, ("business_change_id", "change_id", "business_id"))
+        or next((_row_business_change_id(row) for row in group.rows if _row_business_change_id(row)), "")
         or f"business-change-{index}",
         "entity_type": _group_entity_type(group),
         "change_type": _group_common_text(group, ("change_type", "mutation_type", "operation_type")) or "update",
-        "selector_summary": _group_common_text(group, ("selector_summary", "selector", "filter_summary")),
-        "source_state_basis": _group_common_text(group, ("source_state_basis", "basis", "state_basis")) or "current",
+        "selector_summary": _group_common_text(group, ("selector_summary", "selector", "filter_summary"))
+        or _group_common_selector_summary(group),
+        "source_state_basis": _group_common_text(group, ("source_state_basis", "basis", "state_basis"))
+        or _group_common_source_state_basis(group),
         "field_changes": field_changes,
     }
 
@@ -2614,15 +2711,27 @@ def _aggregate_mutation_summary(groups: list[MutationGroup]) -> str:
 def _aggregate_step_payloads(groups: list[MutationGroup]) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for index, group in enumerate(groups, start=1):
-        payloads.append(
-            {
-                "step_number": index,
-                "business_change": _business_change_label(group, index=index),
-                "summary": _business_change_summary(group, index=index),
-                "record_count": _mutation_group_record_count(group),
-                "status": group.status,
-            }
-        )
+        payload = {
+            "step_number": index,
+            "business_change": _business_change_label(group, index=index),
+            "summary": _business_change_summary(group, index=index),
+            "record_count": _mutation_group_record_count(group),
+            "status": group.status,
+        }
+        payload.update(_business_change_contract_payload(group, index=index))
+        if _is_no_op_group(group):
+            payload.update(
+                {
+                    "contract": NO_OP_MUTATION_CONTRACT,
+                    "entity_type": group.entity_type,
+                    "selector_summary": group.selector_summary,
+                    "change_summary": group.change_summary,
+                    "matched_count": int(group.matched_count or 0),
+                    "changed_count": int(group.changed_count or 0),
+                    "reason": group.reason or NO_OP_MUTATION_REASON,
+                }
+            )
+        payloads.append(payload)
     return payloads
 
 
@@ -2975,7 +3084,13 @@ def compose_response_document(
     no_op_groups = _no_op_mutation_groups(session=session, approvals=approvals, operation_id=operation_id)
     if no_op_groups:
         approval_positions = _approval_position_by_id(approvals)
-        business_order = _business_change_order_from_text(presentation.summary)
+        # Typed business-change groups already carry their own field/basis evidence. Text order
+        # parsing remains only as compatibility for older untyped mutation summaries.
+        business_order = (
+            {}
+            if any(_group_has_business_change_contract(group) for group in mutation_groups)
+            else _business_change_order_from_text(presentation.summary)
+        )
         mutation_groups = sorted(
             _merge_mutation_groups_by_business_change([*no_op_groups, *mutation_groups]),
             key=lambda group: _business_group_sort_key(group, approval_positions, business_order),

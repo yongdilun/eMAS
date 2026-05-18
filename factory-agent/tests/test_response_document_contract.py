@@ -992,7 +992,7 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
 
     assert document["state"] == "completed"
     assert document["message"] == "Done. I updated 21 jobs across 2 approved business changes."
-    assert document["invariants"]["mutation_business_contract"] == "business_level_v1"
+    assert document["invariants"]["mutation_business_contract"] == BUSINESS_CHANGE_CONTRACT
     assert document["invariants"]["affected_record_count"] == 21
     assert document["invariants"]["approved_business_change_count"] == 2
     assert document["invariants"]["affected_record_preview_limit"] == 5
@@ -1013,6 +1013,13 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
             "summary": "Medium -> High: 10 jobs",
             "record_count": 10,
             "status": "completed",
+            "contract": BUSINESS_CHANGE_CONTRACT,
+            "business_change_id": "job-priority-original-medium-to-high",
+            "entity_type": "job",
+            "change_type": "update",
+            "selector_summary": "priority = medium",
+            "source_state_basis": "original",
+            "field_changes": [{"field": "priority", "label": "Priority", "from": "medium", "to": "high"}],
         },
         {
             "step_number": 2,
@@ -1020,35 +1027,93 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
             "summary": "Original High -> Low: 11 jobs",
             "record_count": 11,
             "status": "completed",
+            "contract": BUSINESS_CHANGE_CONTRACT,
+            "business_change_id": "job-priority-original-high-to-low",
+            "entity_type": "job",
+            "change_type": "update",
+            "selector_summary": "priority = high",
+            "source_state_basis": "original",
+            "field_changes": [{"field": "priority", "label": "Priority", "from": "high", "to": "low"}],
         },
     ]
 
     mutation = next(block for block in document["blocks"] if block["type"] == "mutation_result")
+    assert mutation["contract"] == BUSINESS_CHANGE_CONTRACT
     assert mutation["title"] == "Affected records"
     assert mutation["preview_limit"] == 5
     assert mutation["details_collapsed"] is True
     assert len(mutation["rows"]) == 21
-    assert len({row["job_id"] for row in mutation["rows"]}) == 21
-    assert [row["job_id"] for row in mutation["rows"][:5]] == medium_job_ids[:5]
-    assert mutation["groups"] == [
-        {
-            "business_change": "Medium -> High",
-            "summary": "Medium -> High: 10 jobs",
-            "record_count": 10,
-            "rows": mutation["rows"][:10],
-        },
-        {
-            "business_change": "Original High -> Low",
-            "summary": "Original High -> Low: 11 jobs",
-            "record_count": 11,
-            "rows": mutation["rows"][10:],
-        },
-    ]
+    assert len({row["record_id"] for row in mutation["rows"]}) == 21
+    assert [row["display_id"] for row in mutation["rows"][:5]] == medium_job_ids[:5]
+    assert len(mutation["groups"]) == 2
+    first_group, second_group = mutation["groups"]
+    assert {
+        "contract": first_group["contract"],
+        "business_change": first_group["business_change"],
+        "business_change_id": first_group["business_change_id"],
+        "entity_type": first_group["entity_type"],
+        "change_type": first_group["change_type"],
+        "selector_summary": first_group["selector_summary"],
+        "source_state_basis": first_group["source_state_basis"],
+        "field_changes": first_group["field_changes"],
+        "summary": first_group["summary"],
+        "record_count": first_group["record_count"],
+    } == {
+        "contract": BUSINESS_CHANGE_CONTRACT,
+        "business_change": "Medium -> High",
+        "business_change_id": "job-priority-original-medium-to-high",
+        "entity_type": "job",
+        "change_type": "update",
+        "selector_summary": "priority = medium",
+        "source_state_basis": "original",
+        "field_changes": [{"field": "priority", "label": "Priority", "from": "medium", "to": "high"}],
+        "summary": "Medium -> High: 10 jobs",
+        "record_count": 10,
+    }
+    assert {
+        "contract": second_group["contract"],
+        "business_change": second_group["business_change"],
+        "business_change_id": second_group["business_change_id"],
+        "entity_type": second_group["entity_type"],
+        "change_type": second_group["change_type"],
+        "selector_summary": second_group["selector_summary"],
+        "source_state_basis": second_group["source_state_basis"],
+        "field_changes": second_group["field_changes"],
+        "summary": second_group["summary"],
+        "record_count": second_group["record_count"],
+    } == {
+        "contract": BUSINESS_CHANGE_CONTRACT,
+        "business_change": "Original High -> Low",
+        "business_change_id": "job-priority-original-high-to-low",
+        "entity_type": "job",
+        "change_type": "update",
+        "selector_summary": "priority = high",
+        "source_state_basis": "original",
+        "field_changes": [{"field": "priority", "label": "Priority", "from": "high", "to": "low"}],
+        "summary": "Original High -> Low: 11 jobs",
+        "record_count": 11,
+    }
+    assert first_group["rows"] == mutation["rows"][:10]
+    assert second_group["rows"] == mutation["rows"][10:]
     assert {row["business_change"] for row in mutation["rows"][:10]} == {"Medium -> High"}
     assert {row["business_change"] for row in mutation["rows"][10:]} == {"Original High -> Low"}
-    assert {row["change"] for row in mutation["rows"][:10]} == {"medium -> high"}
-    assert {row["change"] for row in mutation["rows"][10:]} == {"high -> low"}
-    forbidden_row_keys = {"operation_id", "step_id", "row_id", "approval_id", "tool_name", "audit_row_id"}
+    assert {row["change"] for row in mutation["rows"][:10]} == {"Priority: medium -> high"}
+    assert {row["change"] for row in mutation["rows"][10:]} == {"Priority: high -> low"}
+    assert {row["entity_type"] for row in mutation["rows"]} == {"job"}
+    assert all(row["field_changes"] for row in mutation["rows"])
+    forbidden_row_keys = {
+        "operation_id",
+        "step_id",
+        "row_id",
+        "approval_id",
+        "tool_name",
+        "audit_row_id",
+        "job_id",
+        "from_priority",
+        "to_priority",
+        "previous_priority",
+        "new_priority",
+    }
     assert all(forbidden_row_keys.isdisjoint(row) for row in mutation["rows"])
 
     assert document["invariants"]["completed_approval_ids"] == [approval_1, approval_2]
@@ -1270,17 +1335,47 @@ async def test_partial_noop_plus_valid_mutation_is_visible_before_approval_and_f
     assert not any(block["type"] == "approval_required" for block in final["blocks"])
     result_summary = next(block for block in final["blocks"] if block["type"] == "result_summary")
     assert [step["business_change"] for step in result_summary["steps"]] == ["Not changed", "Original High -> Low"]
-    assert result_summary["steps"][0] == {
+    assert {
+        key: result_summary["steps"][0][key]
+        for key in (
+            "step_number",
+            "business_change",
+            "summary",
+            "record_count",
+            "status",
+            "contract",
+            "entity_type",
+            "selector_summary",
+            "change_summary",
+            "matched_count",
+            "changed_count",
+            "reason",
+        )
+    } == {
         "step_number": 1,
         "business_change": "Not changed",
         "summary": "Not changed: no matching jobs for priority = medium; priority -> high.",
         "record_count": 0,
         "status": "not_changed",
+        "contract": NO_OP_MUTATION_CONTRACT,
+        "entity_type": "job",
+        "selector_summary": "priority = medium",
+        "change_summary": "priority -> high",
+        "matched_count": 0,
+        "changed_count": 0,
+        "reason": "no_matching_records",
     }
+    assert result_summary["steps"][1]["contract"] == BUSINESS_CHANGE_CONTRACT
+    assert result_summary["steps"][1]["entity_type"] == "job"
+    assert result_summary["steps"][1]["field_changes"] == [
+        {"field": "priority", "label": "Priority", "from": "high", "to": "low"}
+    ]
     mutation = next(block for block in final["blocks"] if block["type"] == "mutation_result")
+    assert mutation["contract"] == BUSINESS_CHANGE_CONTRACT
     assert [group["business_change"] for group in mutation["groups"]] == ["Not changed", "Original High -> Low"]
     not_changed_group = mutation["groups"][0]
     assert not_changed_group["rows"] == []
+    assert not_changed_group["contract"] == NO_OP_MUTATION_CONTRACT
     assert not_changed_group["entity_type"] == "job"
     assert not_changed_group["selector_summary"] == "priority = medium"
     assert not_changed_group["change_summary"] == "priority -> high"
@@ -1289,9 +1384,20 @@ async def test_partial_noop_plus_valid_mutation_is_visible_before_approval_and_f
     assert not_changed_group["status"] == "not_changed"
     assert not_changed_group["reason"] == "no_matching_records"
     assert len(mutation["rows"]) == 2
+    changed_group = mutation["groups"][1]
+    assert changed_group["contract"] == BUSINESS_CHANGE_CONTRACT
+    assert changed_group["entity_type"] == "job"
+    assert changed_group["selector_summary"] == "priority = high"
+    assert changed_group["source_state_basis"] == "original"
+    assert changed_group["field_changes"] == [
+        {"field": "priority", "label": "Priority", "from": "high", "to": "low"}
+    ]
+    assert {row["record_id"] for row in mutation["rows"]} == {"JOB-RD-HIGH-001", "JOB-RD-HIGH-002"}
+    assert all("job_id" not in row for row in mutation["rows"])
     assert final["invariants"]["approved_business_change_count"] == 1
     assert final["invariants"]["not_changed_group_count"] == 1
     assert final["invariants"]["no_op_mutation_contract"] == "entity_agnostic_no_matching_records_v1"
+    assert final["invariants"]["mutation_business_contract"] == BUSINESS_CHANGE_CONTRACT
 
     write_steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
     assert len([step for step in write_steps if step.requires_approval]) == 1
@@ -1347,15 +1453,13 @@ async def test_all_noop_mutation_completes_without_approval_or_fake_success(db_s
     mutation = next(block for block in document["blocks"] if block["type"] == "mutation_result")
     assert result_summary["title"] == "No changes made"
     assert result_summary["total_count"] == 0
-    assert result_summary["steps"] == [
-        {
-            "step_number": 1,
-            "business_change": "Not changed",
-            "summary": "Not changed: no matching jobs for priority = medium; priority -> high.",
-            "record_count": 0,
-            "status": "not_changed",
-        }
-    ]
+    assert result_summary["steps"][0]["step_number"] == 1
+    assert result_summary["steps"][0]["business_change"] == "Not changed"
+    assert result_summary["steps"][0]["summary"] == "Not changed: no matching jobs for priority = medium; priority -> high."
+    assert result_summary["steps"][0]["record_count"] == 0
+    assert result_summary["steps"][0]["status"] == "not_changed"
+    assert result_summary["steps"][0]["contract"] == NO_OP_MUTATION_CONTRACT
+    assert result_summary["steps"][0]["reason"] == "no_matching_records"
     assert mutation["title"] == "Not changed"
     assert mutation["rows"] == []
     assert mutation["groups"][0]["status"] == "not_changed"

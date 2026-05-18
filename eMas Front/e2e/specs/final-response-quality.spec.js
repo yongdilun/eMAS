@@ -254,15 +254,29 @@ function finalBusinessQualityExpected({
   ],
   auditExpanded = false,
 } = {}) {
+  const contractGroups = groups.map((group) => {
+    if (group.contract) return group
+    if (group.label === 'Not changed') {
+      return { ...group, contract: 'entity_agnostic_no_matching_records_v1', entityType: 'job' }
+    }
+    return {
+      ...group,
+      contract: 'business_change_v1',
+      entityType: 'job',
+      changeType: 'update',
+      sourceStateBasis: 'original',
+      fieldChangeCountMin: 1,
+    }
+  })
   return {
     finalResultCardCount: 1,
     finalSummaryText: summary,
-    businessGroups: groups,
+    businessGroups: contractGroups,
     affectedRecordPreviewMin: 1,
     affectedRecordPreviewMax: 5,
     expandableAuditPresent: true,
     auditExpanded,
-    expandedAuditGroups: auditExpanded ? groups : [],
+    expandedAuditGroups: auditExpanded ? contractGroups : [],
     forbidDuplicateAffectedRecords: true,
   }
 }
@@ -354,6 +368,7 @@ async function runCascadeStateTransitionOracle(page, testInfo, {
       hiddenBlockTypes: ['approval_required'],
       hiddenBlockIds: [`approval:${firstApprovalId}`, `approval:${secondApprovalId}`],
       hiddenBackendBlockTypes: ['approval_required'],
+      responseContracts: ['business_change_v1'],
       approvalActionCount: 0,
       textIncludes: [definition.finalMessage, 'Run complete', finalGroups[0].label, finalGroups[1].label],
       textExcludes: [/Waiting for approval \d/i, /Approval required/i],
@@ -462,6 +477,7 @@ test.describe('Final response quality response_document gate', () => {
         visibleBlockTypes: ['result_summary', 'mutation_result'],
         hiddenBlockTypes: ['approval_required', 'completed_step'],
         hiddenBackendBlockTypes: ['approval_required', 'completed_step', 'result_table'],
+        responseContracts: ['business_change_v1'],
         approvalActionCount: 0,
         textIncludes: [
           definition.finalMessage,
@@ -501,6 +517,7 @@ test.describe('Final response quality response_document gate', () => {
         pendingApprovalId: null,
         visibleBlockTypes: ['result_summary', 'mutation_result'],
         hiddenBlockTypes: ['approval_required', 'completed_step'],
+        responseContracts: ['business_change_v1'],
         approvalActionCount: 0,
         finalResponseQuality: finalBusinessQualityExpected({
           summary: definition.finalMessage,
@@ -565,6 +582,7 @@ test.describe('Final response quality response_document gate', () => {
         revisionGreaterThan: afterSend.backend.responseDocumentRevision,
         visibleBlockTypes: ['result_summary', 'mutation_result'],
         hiddenBlockTypes: ['approval_required'],
+        responseContracts: ['business_change_v1', 'entity_agnostic_no_matching_records_v1'],
         approvalActionCount: 0,
         textIncludes: [
           'Run complete',
@@ -595,6 +613,7 @@ test.describe('Final response quality response_document gate', () => {
         pendingApprovalId: null,
         visibleBlockTypes: ['result_summary', 'mutation_result'],
         hiddenBlockTypes: ['approval_required'],
+        responseContracts: ['entity_agnostic_no_matching_records_v1'],
         approvalActionCount: 0,
         textIncludes: ['No changes were made', 'Not changed', 'no matching jobs'],
         textExcludes: [/Approval required/i],
@@ -678,12 +697,11 @@ test.describe('Final response quality response_document gate', () => {
   test('RD-008 read-only status response renders one clean machine status contract', async ({ page }, testInfo) => {
     await openChat(page)
     await sendChatPrompt(page, responseDocumentReadStatusPrompt)
-    const statusSummary = page.getByText('Machine M-CNC-01 is running.')
-    await expect(statusSummary).toHaveCount(1)
+    const statusCard = page.locator('[data-response-block-type="status_result"][data-response-contract="entity_status_v1"]').last()
+    await expect(statusCard).toBeVisible()
     await expandActivity(page, 'Run complete')
     await expect(page.getByText('Read machine status').first()).toBeVisible()
     await expect(page.getByText('Run complete').first()).toBeVisible()
-    await expect(page.locator('[data-response-block-type="status_result"]').last()).toBeVisible()
     await expect(page.getByText('Machine ID').first()).toBeVisible()
     await expect(page.getByText('Machine name').first()).toBeVisible()
     await expect(page.getByText('Machine type').first()).toBeVisible()
@@ -704,11 +722,10 @@ test.describe('Final response quality response_document gate', () => {
         backendBlockTypes: ['status_result'],
         hiddenBlockTypes: ['approval_required', 'mutation_result', 'result_table'],
         hiddenBackendBlockTypes: ['approval_required', 'mutation_result', 'result_table', 'record_preview'],
+        responseContracts: ['entity_status_v1'],
         approvalActionCount: 0,
         forbiddenText: readOnlyStatusForbiddenProbeText,
         textIncludes: [
-          responseDocumentReadStatusPrompt,
-          'Machine M-CNC-01 is running.',
           'Machine ID',
           'Machine name',
           'Machine type',

@@ -30,8 +30,8 @@ Created: 2026-05-18
 | 20 | Entity-specific overfitting audit | Done | Codex | Audited backend routing/planning, response-document composition, frontend renderer/probes, seeded fixtures, scenario oracles, and QA docs; generic entity work needs backend metadata readiness first. |
 | 21 | Backend capability metadata readiness | Done | Codex | Prepared OpenAPI/Swagger, RAG mirrors, generated `tools.md`, and generated vocabulary for `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1`; 44 metadata/tool tests passed. |
 | 22 | Generic entity status and mutation business contract | Done | Codex | Added additive backend `entity_status_v1` and `business_change_v1` contract fields, typed business-change payload support, one safe synthetic non-job no-op proof, and a guard that machine status is only one entity-status example. |
-| 23 | Migrate existing machine/job outputs onto generic contracts | Ready To Start | Codex | Phase 22 contracts are ready; move machine status, job priority cascade, and job no-op output onto generic typed contracts without changing existing behavior. |
-| 24 | Entity diversity coverage | Not Started | Codex | Prove generic contracts beyond jobs and machines with at least two safe deterministic non-job/non-machine examples. |
+| 23 | Migrate existing machine/job outputs onto generic contracts | Done | Codex | Existing machine status now renders through `entity_status_v1`; RD-001/RD-002 job priority cascade final groups now emit `business_change_v1`; RD-006/RD-007 no-op output remains on the generic no-match/no-op contract with frontend contract evidence. |
+| 24 | Entity diversity coverage | Ready To Start | Codex | Prove generic contracts beyond jobs and machines with at least two safe deterministic non-job/non-machine examples. |
 | 25 | Hardcode regression guardrails | Not Started | Codex | Add guardrails against product-code branches on fixture ids, exact prompts, entity labels, summary-prose business inference, and weak machine/job-only probes. |
 | 26 | Real flow release proof | Not Started | Codex | Run the post-refactor real/seeded release proof for RD-001, machine status, LOTO RAG, no-op mutation, non-job generic proof if available, and final visual quality. |
 
@@ -44,8 +44,8 @@ Created: 2026-05-18
 - Read-only status response cleanup is complete for Phase 18. `Show status for machine with machine id M-CNC-01` now renders one typed `status_result` answer and forbids raw assistant markers, dump-style API labels, duplicate answer text, approval UI, and mutation UI.
 - LOTO document-content question misclassification is fixed in Phase 19. `According to the LOTO procedure, what notification is required before starting lockout` now routes as document-content RAG/procedure content without requiring `machine_id`.
 - Several recent fixes are still at risk of becoming entity-specific special cases. Phase 20 audited this; Phase 21 prepared backend/OpenAPI/tool/vocabulary metadata before the generic response-document contract starts.
-- Phase 22 is complete at the backend contract layer: generic contract fields and synthetic proofs now exist before existing machine/job flows are migrated in Phase 23.
-- Phases 23-26 are explicit follow-ups: migrate existing machine/job outputs, prove entity diversity beyond jobs/machines, add hardcode guardrails, then run the real/seeded release proof.
+- Phase 23 is complete for existing flows: machine status uses `entity_status_v1`, job priority cascade groups use `business_change_v1`, and job no-op groups continue through `entity_agnostic_no_matching_records_v1` with frontend contract/probe evidence.
+- Phases 24-26 are explicit follow-ups: prove entity diversity beyond jobs/machines, add hardcode guardrails, then run the real/seeded release proof.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -1831,22 +1831,47 @@ Phase 22 does not claim entity diversity. The non-job status/no-op examples are 
 
 ## Phase 23 Checklist
 
-- [ ] Start only after Phase 22 is complete.
-- [ ] Migrate existing machine-status response output onto `entity_status_v1`.
-- [ ] Migrate existing job priority cascade output onto typed `business_change_v1`.
-- [ ] Keep existing job no-op mutation behavior working through the generic no-match/no-op contract.
-- [ ] Prove completed mutation grouping no longer parses job/priority prose when typed business-change fields exist.
-- [ ] Add focused frontend/probe proof that machine status, job business-change, and no-op blocks render from contract type and typed fields instead of entity names.
-- [ ] Preserve RD-001, RD-002, RD-006, RD-007, RD-008, and RD-009 behavior.
-- [ ] Update tracker and manual regression bank.
-- [ ] Run backend, frontend, and focused browser verification.
-- [ ] Commit Phase 23.
+- [x] Start only after Phase 22 is complete.
+- [x] Migrate existing machine-status response output onto `entity_status_v1`.
+- [x] Migrate existing job priority cascade output onto typed `business_change_v1`.
+- [x] Keep existing job no-op mutation behavior working through the generic no-match/no-op contract.
+- [x] Prove completed mutation grouping no longer parses job/priority prose when typed business-change fields exist.
+- [x] Add focused frontend/probe proof that machine status, job business-change, and no-op blocks render from contract type and typed fields instead of entity names.
+- [x] Preserve RD-001, RD-002, RD-006, RD-007, RD-008, and RD-009 behavior.
+- [x] Update tracker and manual regression bank.
+- [x] Run backend, frontend, and focused browser verification.
+- [x] Commit Phase 23.
 
 ## Phase 23 Implementation Notes
 
-Status: Ready To Start
+Status: Done
 
-Phase 23 is the migration phase for existing machine/job behavior. It should not claim generic entity diversity yet. It should prove the current machine status, job priority cascade, and job no-op outputs are now expressed through generic typed contracts and that the frontend renders by contract evidence instead of entity names.
+Date: 2026-05-19
+
+Phase 23 migrated the existing machine/job response-document outputs without claiming Phase 24 diversity:
+
+- Machine status still renders the same clean RD-008 answer, and the `status_result` block now exposes/uses `contract: entity_status_v1` in backend, renderer DOM, and semantic probes.
+- RD-001/RD-002 final job priority cascade output now exposes `business_change_v1` on the mutation block and each changed group, including `business_change_id`, `entity_type`, `change_type`, `selector_summary`, `source_state_basis`, ordered `field_changes`, and row-level `record_id`/`display_id`/`outcome`.
+- Completed mutation grouping now prefers typed row fields and contract payloads; summary/prose order parsing is kept only for older untyped compatibility paths.
+- RD-006/RD-007 no-op groups continue to use `entity_agnostic_no_matching_records_v1`, with no approval for zero-match groups and no fake success.
+- Frontend final-result rendering now requires supported mutation group contracts for the grouped final card, and probes assert backend plus visible `responseContracts` rather than passing only on fixture names or exact labels.
+
+Regression coverage updated:
+
+- `factory-agent/tests/test_response_document_contract.py::test_final_completed_mutation_document_aggregates_all_approved_changes`
+- `factory-agent/tests/test_response_document_contract.py::test_partial_noop_plus_valid_mutation_is_visible_before_approval_and_final`
+- `factory-agent/tests/test_response_document_contract.py::test_all_noop_mutation_completes_without_approval_or_fake_success`
+- `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs`
+- `eMas Front/e2e/support/responseDocumentProbe.test.mjs`
+- `eMas Front/e2e/specs/final-response-quality.spec.js`
+
+Verification:
+
+- `python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py -q` -> 32 passed.
+- `npm test` -> 114 passed.
+- `npm run test:e2e:response-document -- --grep "entity_status_v1|business_change_v1|machine status|RD-001|no-op"` -> 8 passed.
+
+Phase 23 does not claim broader entity diversity. Phase 24 remains responsible for non-job/non-machine examples.
 
 ## Phase 24 Checklist
 
@@ -1862,7 +1887,7 @@ Phase 23 is the migration phase for existing machine/job behavior. It should not
 
 ## Phase 24 Implementation Notes
 
-Status: Blocked Until Phase 23
+Status: Ready To Start
 
 Phase 24 is where the plan earns the word "generic." Passing only `JOB-SEED-*` and `M-CNC-01` examples is not enough. At least two non-job/non-machine examples must pass through the same contract machinery.
 
@@ -2057,7 +2082,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Start Phase 23 machine/job generic-contract migration. Phase 22 has created `entity_status_v1`, `business_change_v1`, one safe synthetic non-job no-op proof, and the guard that machine status is only one entity-status example. After Phase 23, continue in order through Phase 24 entity diversity, Phase 25 hardcode guardrails, and Phase 26 real-flow release proof.
+Start Phase 24 entity diversity coverage. Phase 23 migrated the existing machine/job outputs onto `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1` without claiming broader generic coverage. After Phase 24, continue in order through Phase 25 hardcode guardrails and Phase 26 real-flow release proof.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 
