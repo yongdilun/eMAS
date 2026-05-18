@@ -48,6 +48,13 @@ export const finalResponseForbiddenProbeText = Object.freeze([
   { label: 'legacy approved-step aggregate', pattern: /Updated 21 jobs across 2 approved steps/i },
 ])
 
+export const pendingApprovalGuidanceProbeText = Object.freeze([
+  {
+    label: 'always-visible pending follow-up guidance',
+    pattern: /Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it\./i,
+  },
+])
+
 const DISPLAYABLE_BLOCK_TYPES = new Set([
   'approval_required',
   'approval_card',

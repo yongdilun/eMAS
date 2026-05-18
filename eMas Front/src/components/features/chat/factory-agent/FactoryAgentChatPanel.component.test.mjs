@@ -137,7 +137,7 @@ function responseDocumentTurn(responseDocument, overrides = {}) {
   }
 }
 
-test('FactoryAgentChatPanel renders pending approval card and follow-up guidance', async () => {
+test('FactoryAgentChatPanel renders pending approval card without normal pending guidance', async () => {
   const { factoryAgentApi } = await server.ssrLoadModule('/src/services/factoryAgentApi.js')
   factoryAgentApi.listTools = async () => []
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
@@ -185,7 +185,7 @@ test('FactoryAgentChatPanel renders pending approval card and follow-up guidance
   assert.match(view.text(), /Set JOB-1 priority to high/)
   assert.match(view.text(), /Approval required/)
   assert.match(view.text(), /Priority changes require operator approval/)
-  assert.match(view.text(), /Follow-up messages can revise the plan/)
+  assert.doesNotMatch(view.text(), /Follow-up messages can revise the plan/)
   assert.match(view.container.querySelector('textarea[placeholder="Send a revision; pending approval stays open..."]')?.outerHTML || '', /textarea/)
 
   await view.unmount()
@@ -235,7 +235,7 @@ test('FactoryAgentChatPanel renders pending approval even when the approval time
 
   await waitFor(() => assert.match(view.text(), /Approval required/))
   assert.match(view.text(), /Approval 2 required: original HIGH-priority jobs will become MEDIUM/)
-  assert.match(view.text(), /Follow-up messages can revise the plan/)
+  assert.doesNotMatch(view.text(), /Follow-up messages can revise the plan/)
 
   await view.unmount()
 })
@@ -836,6 +836,7 @@ test('FactoryAgentChatPanel renders pending response_document approval compact b
   assert.match(view.text(), /\+1 more/)
   assert.match(view.text(), /Approve/)
   assert.match(view.text(), /Reject/)
+  assert.doesNotMatch(view.text(), /Follow-up messages can revise the plan/)
   assert.doesNotMatch(view.text(), /Review and edit request/)
   const affectedDetails = Array.from(view.container.querySelectorAll('details')).find((node) =>
     node.textContent.includes('Affected records (6)'),

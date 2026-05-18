@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import { responseDocumentTrafficPrompt } from '../fixtures/factoryAgentFixtures.js'
 import { expectTransitionCheckpoint } from '../support/factoryAgentTransitionOracle.js'
-import { serializeSemanticProbe } from '../support/responseDocumentProbe.js'
+import { pendingApprovalGuidanceProbeText, serializeSemanticProbe } from '../support/responseDocumentProbe.js'
 import {
   cascadeDefinition,
   forbiddenResponseDocumentText,
@@ -297,6 +297,7 @@ async function runCascadeStateTransitionOracle(page, testInfo, {
       visibleBlockIds: [`approval:${firstApprovalId}`],
       backendBlockTypes: ['approval_required'],
       approvalActionCount: 2,
+      forbiddenText: pendingApprovalGuidanceProbeText,
       textIncludes: ['Understood request', firstRowsLabel, 'Waiting for approval 1', firstStep],
       textExcludes: [/Run complete/i, definition.finalMessage],
     },
@@ -319,6 +320,7 @@ async function runCascadeStateTransitionOracle(page, testInfo, {
       backendBlockTypes: ['completed_step', 'approval_required'],
       approvalActionCount: 2,
       forbidWaitingApproval1: true,
+      forbiddenText: pendingApprovalGuidanceProbeText,
       textIncludes: [
         'Approval 1 received',
         secondRowsLabel,
@@ -366,14 +368,14 @@ test.describe('Final response quality response_document gate', () => {
     })
   })
 
-  test('RD-001 response_document semantic probe artifact captures first state transition evidence', async ({ page }, testInfo) => {
+  test('RD-001 approval copy pending guidance stays absent from normal approval display', async ({ page }, testInfo) => {
     const definition = cascadeDefinition('forward')
     await page.setViewportSize({ width: 1280, height: 900 })
     await openChat(page)
     await sendChatPrompt(page, definition.prompt)
 
     const summary = await expectTransitionCheckpoint(page, {
-      checkpoint: 'RD-001 phase 12 semantic probe proof after send',
+      checkpoint: 'RD-001 phase 16 approval copy proof after send',
       snapshotForPage,
       testInfo,
       expected: {
@@ -384,12 +386,13 @@ test.describe('Final response quality response_document gate', () => {
         visibleBlockIds: [`approval:${definition.first.approvalId}`],
         backendBlockTypes: ['approval_required'],
         approvalActionCount: 2,
+        forbiddenText: pendingApprovalGuidanceProbeText,
         textIncludes: ['Waiting for approval 1', 'Update 10 jobs from medium to high'],
         textExcludes: [/Run complete/i],
       },
     })
     const body = serializeSemanticProbe(summary)
-    await testInfo.attach('phase12-semantic-probe-proof.json', {
+    await testInfo.attach('phase16-approval-copy-semantic-probe.json', {
       body,
       contentType: 'application/json',
     })
@@ -417,6 +420,7 @@ test.describe('Final response quality response_document gate', () => {
         visibleBlockTypes: ['approval_required'],
         visibleBlockIds: [`approval:${definition.first.approvalId}`],
         approvalActionCount: 2,
+        forbiddenText: pendingApprovalGuidanceProbeText,
       },
     })
 
@@ -434,6 +438,7 @@ test.describe('Final response quality response_document gate', () => {
         hiddenBlockIds: [`approval:${definition.first.approvalId}`],
         approvalActionCount: 2,
         forbidWaitingApproval1: true,
+        forbiddenText: pendingApprovalGuidanceProbeText,
       },
     })
 

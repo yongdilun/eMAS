@@ -1078,12 +1078,6 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           )}
         </div>
 
-        {effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL && pendingApproval ? (
-          <div className="mx-4 mt-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-xs text-ink-subtle">
-            Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it.
-          </div>
-        ) : null}
-
         <FactoryAgentChatComposer
           input={input}
           onInputChange={setInput}
