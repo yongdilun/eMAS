@@ -492,8 +492,12 @@ class DiagnosticBlock(ResponseBlockBase):
     reason: str = Field(min_length=1)
     title: str = "Needs attention"
     user_message: str = Field(min_length=1)
+    cause: str | None = None
     impact: dict[str, Any] = Field(default_factory=dict)
+    current_state: str | None = None
+    next_action: str | None = None
     next_actions: list[dict[str, Any]] = Field(default_factory=list)
+    retry_safety: dict[str, Any] = Field(default_factory=dict)
     technical_details: dict[str, Any] = Field(default_factory=dict)
     details_collapsed: bool = True
 

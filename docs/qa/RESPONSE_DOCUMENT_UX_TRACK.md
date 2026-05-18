@@ -10,7 +10,7 @@ Created: 2026-05-18
 | 0 | Response gap audit and contract inventory | Completed | Codex | Current backend/frontend response paths, existing coverage, missing gates, blockers, and Phase 1 starting point documented below. |
 | 1 | Backend response document schema | Done | Codex | Added additive backend `response_document.version=1`, `run_steps`, typed blocks, snapshot revision, and backend contract tests. |
 | 2 | Deterministic composer and run steps | Done | Codex | Added backend-owned deterministic composer, run-step evidence, completed-step preservation, read/RAG/no-result blocks, and Phase 2 contract tests. |
-| 3 | Failure recovery response documents | Not Started | Next agent | Add typed failure taxonomy, operator-friendly diagnostic cards, impact summaries, and context-aware next actions. |
+| 3 | Failure recovery response documents | Done | Codex | Added typed failure taxonomy, operator-friendly diagnostic cards, sanitized technical details, impact/retry policies, and failure-focused backend tests. |
 | 4 | Frontend response document renderer | Not Started | Next agent | Render block types directly; keep legacy presentation only as missing-document fallback. |
 | 5 | Response document reducer and busy-traffic ordering | Not Started | Next agent | Centralize revision ordering, validation, SSE/polling conflict handling, coalescing, and collapse preservation. |
 | 6 | Final response quality E2E gate | Not Started | Next agent | Add typed and visible browser checks for multi-step response quality. |
@@ -24,7 +24,7 @@ Created: 2026-05-18
 - Multi-step and multi-approval response quality has historically required manual screenshot inspection.
 - Existing `presentation` and frontend merge/ranking logic can still create old/new source-of-truth confusion until cleanup is complete.
 - Busy traffic can still cause rendering bugs unless response documents include revisions and frontend applies them through one reducer.
-- Broken flows such as timeout, validation-loop exhaustion, interrupted SSE, auth denial, or backend failure do not yet have one operator-friendly failure-card standard.
+- Frontend rendering still needs Phase 4/5 work before typed response-document diagnostics become the primary visible UI contract.
 - Phase 0 audit found no additive `response_document`, no `snapshot_revision`, and no frontend response-document reducer. Existing `cursor` protects notification invalidation only, while `presentation` and activity rows can still be assembled independently.
 - Phase 0 audit found frontend table/detail selection still depends on legacy bundle/table heuristics and phrase checks. This is a blocker for retiring `presentation` as the primary UI contract, but it should be fixed in later implementation phases, not Phase 0.
 
@@ -405,20 +405,74 @@ python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_s
 
 ## Phase 3 Checklist
 
-- [ ] Define typed failure taxonomy.
-- [ ] Define deterministic failure templates.
-- [ ] Add failure card block fields for reason, severity, title, user message, impact, next actions, technical details, and collapsed state.
-- [ ] Map planner timeout and planner validation loop.
-- [ ] Map LLM timeout and answer timeout.
-- [ ] Map tool timeout, tool HTTP error, and tool schema error.
-- [ ] Map approval expired, rejected, and stale.
-- [ ] Map network disconnect and SSE interruption.
-- [ ] Map auth denied and cancelled by user.
-- [ ] Map partial commit failure and unknown failure.
-- [ ] Add safety/retry policy for context-aware actions.
-- [ ] Add tests proving technical details are collapsed and sanitized.
-- [ ] Add tests proving partial-progress failure shows completed and incomplete work together.
-- [ ] Add tests proving no blank/raw/generic failure response for broken flows.
+- [x] Define typed failure taxonomy.
+- [x] Define deterministic failure templates.
+- [x] Add failure card block fields for reason, severity, title, user message, impact, next actions, technical details, and collapsed state.
+- [x] Map planner timeout and planner validation loop.
+- [x] Map LLM timeout and answer timeout.
+- [x] Map tool timeout, tool HTTP error, and tool schema error.
+- [x] Map approval expired, rejected, and stale.
+- [x] Map network disconnect and SSE interruption.
+- [x] Map auth denied and cancelled by user.
+- [x] Map partial commit failure and unknown failure.
+- [x] Add safety/retry policy for context-aware actions.
+- [x] Add tests proving technical details are collapsed and sanitized.
+- [x] Add tests proving partial-progress failure shows completed and incomplete work together.
+- [x] Add tests proving no blank/raw/generic failure response for broken flows.
+
+## Phase 3 Implementation Notes
+
+Date: 2026-05-18
+
+Phase 3 is complete. One product bug was found and fixed: response-document diagnostic blocks were passing through raw legacy `presentation.diagnostics`, which could expose raw session errors, stack traces, or secret-like values in the new response-document path. The response-document composer now emits sanitized structured technical details while leaving legacy `PresentationResponse` behavior compatible.
+
+### Files Changed
+
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/factory_agent/services/response_document_service.py`
+- `factory-agent/tests/test_response_document_contract.py`
+- `factory-agent/tests/test_response_document_failures.py`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+
+### Decisions Made
+
+- Keep frontend rendering unchanged; Phase 3 only enriches backend `response_document`.
+- Keep legacy `PresentationResponse` generation compatible and sanitize diagnostics only in the response-document layer.
+- Add optional diagnostic fields for `cause`, `current_state`, `next_action`, and `retry_safety`.
+- Centralize the failure taxonomy, templates, action policy, retry-safety policy, impact calculation, and sanitizer in `factory_agent.services.response_document_service`.
+- Use typed reason templates for planner timeout, planner validation loop, LLM timeout, tool timeout, tool HTTP error, tool schema error, approval expired, approval rejected, approval stale, network disconnect, SSE stream interruption, snapshot contract invalid, response document invalid, auth denied, cancelled by user, partial commit failure, malformed response payload, no results, and unknown failure.
+- Map empty final responses to a `no_results` diagnostic response document rather than fake success.
+- Preserve completed mutation evidence beside later failure diagnostics.
+- Do not show blind retry actions when retry safety is ambiguous or duplicate mutation risk is present.
+- Continue to avoid LLM final-response generation.
+
+### Commands Run
+
+```powershell
+python -m pytest tests/test_response_document_failures.py tests/test_response_document_contract.py -q
+python -m pytest tests/test_response_document_contract.py -q
+python -m pytest tests/test_response_document_failures.py -q
+python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_response_document_contract.py -q
+python -m pytest tests/test_stateful_oracle_harness.py -q
+python -m pytest tests/test_tool_pipeline.py -q
+python -m pytest tests/test_approval_atomicity.py -q
+```
+
+### Test Results
+
+- `python -m pytest tests/test_response_document_failures.py tests/test_response_document_contract.py -q`: 22 passed.
+- `python -m pytest tests/test_response_document_contract.py -q`: 13 passed.
+- `python -m pytest tests/test_response_document_failures.py -q`: 9 passed.
+- `python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_response_document_contract.py -q`: 81 passed.
+- `python -m pytest tests/test_stateful_oracle_harness.py -q`: 5 passed.
+- `python -m pytest tests/test_tool_pipeline.py -q`: 11 passed.
+- `python -m pytest tests/test_approval_atomicity.py -q`: 8 passed.
+
+### Remaining Phase 4 Work
+
+- Render the typed diagnostic fields in the frontend response-document renderer.
+- Keep legacy `presentation` fallback only when `response_document` is absent.
+- Add UI coverage for collapsed diagnostics and context-aware failure actions.
 
 ## Phase 4 Checklist
 

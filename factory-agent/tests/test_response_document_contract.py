@@ -824,7 +824,9 @@ async def test_partial_failure_response_document_keeps_row_outcomes_and_diagnost
     result_summary = next(block for block in document["blocks"] if block["type"] == "result_summary")
     assert result_summary["status"] == "partial_failure"
     diagnostic = next(block for block in document["blocks"] if block["type"] == "diagnostic")
-    assert diagnostic["reason"] == "partial_failure"
+    assert diagnostic["reason"] == "partial_commit_failure"
+    assert diagnostic["impact"]["succeeded_rows"] == ["JOB-RD-PARTIAL-001"]
+    assert diagnostic["impact"]["failed_rows"] == ["JOB-RD-PARTIAL-002"]
     mutation = next(block for block in document["blocks"] if block["type"] == "mutation_result")
     assert {row["row_id"]: row["status"] for row in mutation["rows"]} == {
         "JOB-RD-PARTIAL-001": "succeeded",
