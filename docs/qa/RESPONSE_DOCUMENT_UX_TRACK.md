@@ -29,10 +29,11 @@ Created: 2026-05-18
 | 19 | RAG question-type routing contract | Done | Codex | Added reusable semantic `question_type` routing before missing-entity checks, covered LOTO notification document-content prompts, preserved machine-specific LOTO/status controls, and added RD-009 browser semantic proof. |
 | 20 | Entity-specific overfitting audit | Done | Codex | Audited backend routing/planning, response-document composition, frontend renderer/probes, seeded fixtures, scenario oracles, and QA docs; generic entity work needs backend metadata readiness first. |
 | 21 | Backend capability metadata readiness | Not Started | Codex | Enhance backend/OpenAPI/tool metadata so entity status, business changes, no-op mutations, vocabulary, `tools.md`, and RAG API references are available before generic response-document implementation. |
-| 22 | Migrate existing machine/job outputs onto generic contracts | Not Started | Codex | After Phase 21 metadata is ready, move machine status, job priority cascade, and job no-op output onto generic typed contracts without changing existing behavior. |
-| 23 | Entity diversity coverage | Not Started | Codex | Prove generic contracts beyond jobs and machines with at least two safe deterministic non-job/non-machine examples. |
-| 24 | Hardcode regression guardrails | Not Started | Codex | Add guardrails against product-code branches on fixture ids, exact prompts, entity labels, summary-prose business inference, and weak machine/job-only probes. |
-| 25 | Real flow release proof | Not Started | Codex | Run the post-refactor real/seeded release proof for RD-001, machine status, LOTO RAG, no-op mutation, non-job generic proof if available, and final visual quality. |
+| 22 | Generic entity status and mutation business contract | Not Started | Codex | Create `entity_status_v1`, `business_change_v1`, one safe non-job no-op contract proof, and a guard that machine status is one entity-status example rather than the model itself. |
+| 23 | Migrate existing machine/job outputs onto generic contracts | Not Started | Codex | After Phase 22 contracts are ready, move machine status, job priority cascade, and job no-op output onto generic typed contracts without changing existing behavior. |
+| 24 | Entity diversity coverage | Not Started | Codex | Prove generic contracts beyond jobs and machines with at least two safe deterministic non-job/non-machine examples. |
+| 25 | Hardcode regression guardrails | Not Started | Codex | Add guardrails against product-code branches on fixture ids, exact prompts, entity labels, summary-prose business inference, and weak machine/job-only probes. |
+| 26 | Real flow release proof | Not Started | Codex | Run the post-refactor real/seeded release proof for RD-001, machine status, LOTO RAG, no-op mutation, non-job generic proof if available, and final visual quality. |
 
 ## Current Blockers
 
@@ -44,7 +45,7 @@ Created: 2026-05-18
 - LOTO document-content question misclassification is fixed in Phase 19. `According to the LOTO procedure, what notification is required before starting lockout` now routes as document-content RAG/procedure content without requiring `machine_id`.
 - Several recent fixes are still at risk of becoming entity-specific special cases. Phase 20 audited this; Phase 21 now prepares backend/OpenAPI/tool/vocabulary metadata before the generic response-document contract starts.
 - Phase 22 must not begin until Phase 21 proves OpenAPI, generated tool metadata, generated vocabulary, and `tools.md` expose enough typed entity/action/capability evidence for generic status and business-change composition.
-- Phases 23-25 are now explicit follow-ups: first prove entity diversity beyond jobs/machines, then add hardcode guardrails, then run the real/seeded release proof.
+- Phases 23-26 are explicit follow-ups: migrate existing machine/job outputs, prove entity diversity beyond jobs/machines, add hardcode guardrails, then run the real/seeded release proof.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -113,10 +114,11 @@ Created: 2026-05-18
 - No-op mutation semantics are entity-agnostic business outcomes, not job-priority-only rendering.
 - Phase 20 is audit-only by default.
 - Phase 21 is backend metadata readiness: OpenAPI/Swagger, RAG OpenAPI mirror, `tools.md`, generated tool vocabulary, and capability metadata must be updated together.
-- Phase 22 migrates existing machine/job outputs onto generic typed contracts and starts only after Phase 21 returns ready evidence.
-- Phase 23 proves the contract beyond jobs and machines before the plan can claim generic coverage.
-- Phase 24 installs hardcode guardrails before real-flow release proof.
-- Phase 25 is the release-confidence proof after contract migration, diversity coverage, and guardrails are green.
+- Phase 22 creates the generic response-document contracts and starts only after Phase 21 returns ready metadata evidence.
+- Phase 23 migrates existing machine/job outputs onto generic typed contracts and starts only after Phase 22 proves the contracts.
+- Phase 24 proves the contract beyond jobs and machines before the plan can claim generic coverage.
+- Phase 25 installs hardcode guardrails before real-flow release proof.
+- Phase 26 is the release-confidence proof after contract creation, migration, diversity coverage, and guardrails are green.
 
 ## Flagship Inputs
 
@@ -133,10 +135,11 @@ Created: 2026-05-18
 | RD-009 | `According to the LOTO procedure, what notification is required before starting lockout` | RAG question-type routing regression. Proves document-content LOTO questions route to RAG/procedure content without machine-ID clarification. |
 | RD-010 | Phase 20 audit only | Finds overfitted entity-specific implementation patterns before backend readiness and generic response-contract phases are created. |
 | RD-011 | Phase 21 backend metadata readiness | Proves OpenAPI/tool/vocabulary metadata exposes generic entity status and mutation business-change semantics before response-document implementation. |
-| RD-012 | Phase 22 machine/job generic-contract migration | Proves machine status, job priority cascade, and job no-op mutations render from typed generic contracts rather than entity-specific display paths. |
-| RD-013 | Phase 23 entity diversity coverage | Proves generic contracts beyond jobs and machines with at least two safe deterministic examples. |
-| RD-014 | Phase 24 hardcode guardrails | Proves product code, composer logic, and frontend probes cannot quietly regress to fixture-specific hardcoding or summary-prose inference. |
-| RD-015 | Phase 25 real flow release proof | Proves the post-refactor real/seeded release-critical flows still agree across backend state, response document, and visible UI. |
+| RD-012 | Phase 22 generic entity status and mutation business contract | Proves `entity_status_v1`, `business_change_v1`, one safe non-job no-op contract proof, and a guard that machine status is only one entity-status example. |
+| RD-013 | Phase 23 machine/job generic-contract migration | Proves machine status, job priority cascade, and job no-op mutations render from typed generic contracts rather than entity-specific display paths. |
+| RD-014 | Phase 24 entity diversity coverage | Proves generic contracts beyond jobs and machines with at least two safe deterministic examples. |
+| RD-015 | Phase 25 hardcode guardrails | Proves product code, composer logic, and frontend probes cannot quietly regress to fixture-specific hardcoding or summary-prose inference. |
+| RD-016 | Phase 26 real flow release proof | Proves the post-refactor real/seeded release-critical flows still agree across backend state, response document, and visible UI. |
 
 ## Additional Required Scenario Groups
 
@@ -161,6 +164,7 @@ Created: 2026-05-18
 | RAG document-content routing | `According to the LOTO procedure, what notification is required before starting lockout` | RAG/procedure answer is attempted without machine-ID clarification; adjacent machine-specific LOTO and machine-status prompts still route correctly. |
 | Entity-specific overfitting audit | Search routing, composition, renderer, fixture, oracle, and docs for job/machine/product/material overfitting | Inventory product-risk and missing-general-contract patterns, then propose Phase 21 based on findings. |
 | Backend metadata readiness | OpenAPI, generated tools, generated vocabulary, `tools.md`, and RAG mirrors | Status/business-change/no-op semantics are present as typed metadata before generic response-document implementation. |
+| Generic entity contract creation | Backend response-document contract fixtures | `entity_status_v1`, `business_change_v1`, safe non-job no-op proof, and machine-status-as-example guard exist before existing flows are migrated. |
 | Machine/job generic-contract migration | Existing RD-001/RD-008/RD-006/RD-007 flows | Existing machine status, job priority cascade, and job no-op output render through generic contract types rather than entity-specific branches. |
 | Entity diversity coverage | Product/material/work-order/non-job no-op fixtures | At least two non-job/non-machine examples prove the contracts are not only job/machine compatible. |
 | Hardcode guardrails | Product-code scan, composer contract tests, frontend probe tests | Fixture ids, exact prompt text, entity-label branches, summary-prose business inference, and weak machine/job-only probes are blocked or explicitly excepted. |
@@ -1486,15 +1490,15 @@ Date: 2026-05-19
 
 | ID | Classification | File/path | Exact pattern | Why it is overfitted | Likely future failure mode | Recommended abstraction or contract | Phase 21/22 handling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| P20-01 | product-risk | `factory-agent/factory_agent/planning/intent.py:658`, `factory-agent/factory_agent/planning/intent.py:864`, `factory-agent/factory_agent/planning/tool_selector.py:966`, `factory-agent/factory_agent/services/response_document_service.py:1815`, `factory-agent/tests/test_response_document_contract.py:1211`, `eMas Front/e2e/specs/final-response-quality.spec.js:678` | Live status routing is machine-only: `_is_live_operational_status_question` returns true only for `entity == "machine"` or machine hints, route emits `tool.read.machine_status`, tool selection asks only for machine lookup, status field order only defines the rich machine schema, and tests/probes cover only `M-CNC-01`. | Phase 18's user-facing contract is named and tested as a clean read-only status answer, but the route/tool/field proof is still machine-centered. | `status for product P-001`, `status for material MAT-002`, inventory availability/status, or work-order state can fall through to unknown/direct lookup/table output instead of a typed `status_result`, or render sparse generic fields with no stable field contract. | Introduce an `entity_status_v1` route family with `entity_type`, `entity_id`, `primary_status`, `fields`, `secondary_fields`, and capability-based tool selection for machine/job/product/material/inventory status reads. Keep machine field order as one schema entry, not the route definition. | Phase 21 should prepare OpenAPI/tool/vocabulary metadata for entity status. Phase 22 should migrate machine status onto `entity_status_v1`. Phase 23 should add product/material/work-order status diversity coverage. |
-| P20-02 | product-risk | `factory-agent/factory_agent/services/response_document_service.py:1270`, `factory-agent/factory_agent/services/response_document_service.py:1285`, `factory-agent/factory_agent/services/response_document_service.py:1316`, `factory-agent/factory_agent/services/response_document_service.py:1589`, `factory-agent/factory_agent/services/response_document_service.py:1641`, `factory-agent/factory_agent/services/response_document_service.py:1663`, `factory-agent/tests/test_response_document_contract.py:280` | Completed mutation grouping, order, row cleanup, labels, and summaries are derived from priority fields and job id shape: `_priority_business_key`, `_business_change_order_from_text`, `_source_priority`, `_target_priority`, `Original High -> Low`, `job_id` when ID starts with `JOB-`, and job/record noun fallback. | Phase 14/15 fixed RD-001 by extracting priority/job facts, but the "business-level mutation" contract still gets its richest behavior only from priority deltas. | A future product/material/inventory/work-order mutation can collapse into `Business change N`, lose before/after field details, sort by approval rather than the user's business clauses, or render as generic records even when typed change facts exist. | Define a typed `business_change_v1` payload with `entity_type`, `change_type`, ordered `field_changes`, `selector_summary`, `source_state_basis`, `business_change_id`, and row-level `record_id`/`display_id`. Composition should prefer these fields over regexing summary text. | Phase 21 should expose business-change metadata through OpenAPI/tool docs where possible. Phase 22 should extract the priority cascade special case into the generic business-change contract while preserving RD-001/RD-002 behavior. |
-| P20-03 | missing-general-contract | `factory-agent/tests/test_response_document_contract.py:948`, `factory-agent/tests/test_response_document_contract.py:1080`, `eMas Front/e2e/support/responseDocumentScenarios.js:359`, `eMas Front/e2e/specs/final-response-quality.spec.js:531`, prior deferral at `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md:1143` | The production no-op payload is entity-agnostic, but backend/browser proof uses `entity_type="job"`, `selector_summary="priority = ..."`, `change_summary="priority -> ..."`, and visible `no matching jobs`. | The contract says no-op mutations are entity-agnostic, yet tests can pass without proving product/material/inventory selectors emit or render the same contract. | A non-job no-op could request approval for zero matched records, disappear from final output, or show fake success while RD-006/RD-007 still pass. | Add table-driven no-op fixtures across at least one non-job entity with `entity_type`, `selector_summary`, `change_summary`, `matched_count=0`, `changed_count=0`, `status=not_changed`, and `reason=no_matching_records`. | Phase 21 should identify safe backend metadata/fixture support for non-job no-op. Phase 22 should keep existing job no-op behavior on the generic contract. Phase 23 should add the smallest safe non-job no-op proof without enabling broad new write behavior. |
+| P20-01 | product-risk | `factory-agent/factory_agent/planning/intent.py:658`, `factory-agent/factory_agent/planning/intent.py:864`, `factory-agent/factory_agent/planning/tool_selector.py:966`, `factory-agent/factory_agent/services/response_document_service.py:1815`, `factory-agent/tests/test_response_document_contract.py:1211`, `eMas Front/e2e/specs/final-response-quality.spec.js:678` | Live status routing is machine-only: `_is_live_operational_status_question` returns true only for `entity == "machine"` or machine hints, route emits `tool.read.machine_status`, tool selection asks only for machine lookup, status field order only defines the rich machine schema, and tests/probes cover only `M-CNC-01`. | Phase 18's user-facing contract is named and tested as a clean read-only status answer, but the route/tool/field proof is still machine-centered. | `status for product P-001`, `status for material MAT-002`, inventory availability/status, or work-order state can fall through to unknown/direct lookup/table output instead of a typed `status_result`, or render sparse generic fields with no stable field contract. | Introduce an `entity_status_v1` route family with `entity_type`, `entity_id`, `primary_status`, `fields`, `secondary_fields`, and capability-based tool selection for machine/job/product/material/inventory status reads. Keep machine field order as one schema entry, not the route definition. | Phase 21 should prepare OpenAPI/tool/vocabulary metadata for entity status. Phase 22 should create `entity_status_v1` and guard machine as only one example. Phase 23 should migrate machine status. Phase 24 should add product/material/work-order status diversity coverage. |
+| P20-02 | product-risk | `factory-agent/factory_agent/services/response_document_service.py:1270`, `factory-agent/factory_agent/services/response_document_service.py:1285`, `factory-agent/factory_agent/services/response_document_service.py:1316`, `factory-agent/factory_agent/services/response_document_service.py:1589`, `factory-agent/factory_agent/services/response_document_service.py:1641`, `factory-agent/factory_agent/services/response_document_service.py:1663`, `factory-agent/tests/test_response_document_contract.py:280` | Completed mutation grouping, order, row cleanup, labels, and summaries are derived from priority fields and job id shape: `_priority_business_key`, `_business_change_order_from_text`, `_source_priority`, `_target_priority`, `Original High -> Low`, `job_id` when ID starts with `JOB-`, and job/record noun fallback. | Phase 14/15 fixed RD-001 by extracting priority/job facts, but the "business-level mutation" contract still gets its richest behavior only from priority deltas. | A future product/material/inventory/work-order mutation can collapse into `Business change N`, lose before/after field details, sort by approval rather than the user's business clauses, or render as generic records even when typed change facts exist. | Define a typed `business_change_v1` payload with `entity_type`, `change_type`, ordered `field_changes`, `selector_summary`, `source_state_basis`, `business_change_id`, and row-level `record_id`/`display_id`. Composition should prefer these fields over regexing summary text. | Phase 21 should expose business-change metadata through OpenAPI/tool docs where possible. Phase 22 should define `business_change_v1`. Phase 23 should migrate RD-001/RD-002 priority cascade onto it without summary-prose inference. |
+| P20-03 | missing-general-contract | `factory-agent/tests/test_response_document_contract.py:948`, `factory-agent/tests/test_response_document_contract.py:1080`, `eMas Front/e2e/support/responseDocumentScenarios.js:359`, `eMas Front/e2e/specs/final-response-quality.spec.js:531`, prior deferral at `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md:1143` | The production no-op payload is entity-agnostic, but backend/browser proof uses `entity_type="job"`, `selector_summary="priority = ..."`, `change_summary="priority -> ..."`, and visible `no matching jobs`. | The contract says no-op mutations are entity-agnostic, yet tests can pass without proving product/material/inventory selectors emit or render the same contract. | A non-job no-op could request approval for zero matched records, disappear from final output, or show fake success while RD-006/RD-007 still pass. | Add table-driven no-op fixtures across at least one non-job entity with `entity_type`, `selector_summary`, `change_summary`, `matched_count=0`, `changed_count=0`, `status=not_changed`, and `reason=no_matching_records`. | Phase 21 should identify safe backend metadata/fixture support for non-job no-op. Phase 22 should add one safe non-job no-op contract proof. Phase 23 should keep existing job no-op behavior on the generic contract. Phase 24 may add broader non-job no-op diversity without enabling broad new write behavior. |
 | P20-04 | planning-risk | `factory-agent/factory_agent/planning/intent.py:13`, `factory-agent/factory_agent/planning/intent.py:731`, `factory-agent/factory_agent/planning/intent.py:923`, `factory-agent/factory_agent/planning/tool_selector.py:1017` | Semantic write routes are `tool.write.jobs` only; mutation detection is `_is_job_mutation_request`; tool selection maps write/create/delete requests only through job endpoints. | This may be acceptable for today's approved write surface, but it means Phase 17's entity-agnostic no-op wording cannot be exercised naturally for product/material/inventory writes. | New safe write tools for non-job entities would not inherit the no-op/approval/business-change response contract without another entity-specific routing branch. | Before adding write routes, define a route/tool capability contract for mutating entity types and their required approval/no-op metadata. | Defer broad write expansion unless product scope requires it. Phase 21 should add metadata readiness checks only; Phase 22 should add only contract fixtures and abstractions needed to prevent future one-off write routes. |
-| P20-05 | product-risk | `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:316`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:337`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:386`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:481` | Legacy no-`response_document` table suppression detects contradictions through priority columns and priority/job wording such as `jobs affected`, `current vs requested priority`, `priority to high`, and `high-priority`. | The valid response-document path bypasses this code, but compatibility sessions still decide stale-table visibility from job-priority prose instead of typed ownership/state. | A legacy or degraded non-priority mutation could keep stale pre-commit tables visible after completion because the contradiction detector only understands priority words. | Make stale-table suppression use typed `presentation.kind`, operation/approval ownership, row outcome/state, and response-document absence rules; leave text parsing as an explicitly allowlisted fallback. | Phase 22 can keep product behavior unchanged but should add a guard/test that non-priority typed presentations do not rely on priority-word contradiction checks. |
-| P20-06 | test_fixture | `eMas Front/e2e/support/responseDocumentScenarios.js:1`, `eMas Front/e2e/support/responseDocumentScenarios.js:32`, `eMas Front/e2e/specs/final-response-quality.spec.js:249`, `eMas Front/e2e/support/responseDocumentProbe.js:41` | Mocked browser fixtures and probes use exact RD prompts, `JOB-SEED-*`, `M-CNC-01`, `Medium -> High`, `Original High -> Low`, `Updated 63 jobs across 22 approved steps`, and dump-style machine labels. | These constants live in test/fixture/probe files and represent deterministic oracle evidence, not product routing/composition logic. | They become risky only if treated as proof of the general contract without adjacent non-job/non-machine rows. | Keep exact fixtures, but pair them with generic contract rows from P20-01/P20-03. | Phase 22 should prove canonical RD fixtures render from generic contract evidence. Phase 23 should add non-job/non-machine variants. Phase 24 should guard generic probes against text-only machine/job assertions. |
+| P20-05 | product-risk | `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:316`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:337`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:386`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:481` | Legacy no-`response_document` table suppression detects contradictions through priority columns and priority/job wording such as `jobs affected`, `current vs requested priority`, `priority to high`, and `high-priority`. | The valid response-document path bypasses this code, but compatibility sessions still decide stale-table visibility from job-priority prose instead of typed ownership/state. | A legacy or degraded non-priority mutation could keep stale pre-commit tables visible after completion because the contradiction detector only understands priority words. | Make stale-table suppression use typed `presentation.kind`, operation/approval ownership, row outcome/state, and response-document absence rules; leave text parsing as an explicitly allowlisted fallback. | Phase 23 can keep legacy compatibility behavior unchanged but should prove valid response-document rendering does not rely on priority-word contradiction checks. Phase 25 should add regression guardrails. |
+| P20-06 | test_fixture | `eMas Front/e2e/support/responseDocumentScenarios.js:1`, `eMas Front/e2e/support/responseDocumentScenarios.js:32`, `eMas Front/e2e/specs/final-response-quality.spec.js:249`, `eMas Front/e2e/support/responseDocumentProbe.js:41` | Mocked browser fixtures and probes use exact RD prompts, `JOB-SEED-*`, `M-CNC-01`, `Medium -> High`, `Original High -> Low`, `Updated 63 jobs across 22 approved steps`, and dump-style machine labels. | These constants live in test/fixture/probe files and represent deterministic oracle evidence, not product routing/composition logic. | They become risky only if treated as proof of the general contract without adjacent non-job/non-machine rows. | Keep exact fixtures, but pair them with generic contract rows from P20-01/P20-03. | Phase 23 should prove canonical RD fixtures render from generic contract evidence. Phase 24 should add non-job/non-machine variants. Phase 25 should guard generic probes against text-only machine/job assertions. |
 | P20-07 | acceptable_fixture | `factory-agent/factory_agent/testing_seeded_scenarios.py:92`, `factory-agent/factory_agent/testing_seeded_scenarios.py:201`, `factory-agent/factory_agent/testing_seeded_adapters.py:26`, `factory-agent/factory_agent/testing_seeded_adapters.py:710`, `tests/e2e/scenarios/manual_prompt_regressions.json:171`, `tests/e2e/scenarios/seed_pipeline.json:241` | Seeded scenarios and adapters contain phase markers, seeded job/machine IDs, controlled LOTO answers, and job-priority cascade interpreters. | They are isolated behind seeded/testing adapters or scenario banks and are intentionally deterministic. The product route/composer no longer branches on these IDs. | Risk is coverage illusion: fixture adapters can duplicate product behavior and hide live planner gaps if promoted as general proof. | Keep these as fixtures; require product contracts to be proven in backend composer/route tests and use real LangGraph only when seeded adapters could hide planner/RAG/tool-selection behavior. | No Phase 21 product behavior change; use as fixtures for new generic status/no-op cases if safe in Phase 22. |
 | P20-08 | defer | `factory-agent/factory_agent/rag/knowledge_policy.py:115`, `factory-agent/factory_agent/services/plan_creation_service.py:325`, `docs/qa/HARDCODE_REDUCTION_PLAN.md:252` | Curated fallback policies currently cover LOTO notification and OSHA LOTO, with route/topic scoping through the knowledge policy registry. | This is LOTO-specific, but it is scoped policy data rather than a response-document rendering shortcut, and non-LOTO document prompts do not borrow the OSHA/LOTO fallback. | Future document domains may need similar data-backed policy entries; adding them as inline code would revive the hardcode risk. | Keep curated fallback content behind a policy registry/data pack and require route/topic evidence before applying a fallback. | Defer to the hardcode-reduction/knowledge-policy track unless Phase 22's status/no-op scope touches RAG fallback data. |
-| P20-09 | test_fixture | `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1187`, `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1326`, `docs/qa/manual_prompt_regression_bank.md:242`, `docs/qa/manual_prompt_regression_bank.md:247` | QA docs explicitly call out general classes for prior prompt fixes: job-priority no-op must become entity-agnostic, and LOTO notification routing must become generic document-content question typing beyond LOTO. | The docs do not say only "fix this prompt"; they mostly define the broader class and coverage level. | The only remaining doc risk is that Phase 22 could pick one new exact prompt instead of the classes identified here. | Use this Phase 20 inventory as the source of truth and add future bank entries for entity-status and non-job no-op prompt classes. | Phase 21 prepares metadata from P20-01 through P20-03. Phase 22 migrates existing machine/job behavior. Phase 23 proves broader entity diversity without another one-off prompt patch. |
+| P20-09 | test_fixture | `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1187`, `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1326`, `docs/qa/manual_prompt_regression_bank.md:242`, `docs/qa/manual_prompt_regression_bank.md:247` | QA docs explicitly call out general classes for prior prompt fixes: job-priority no-op must become entity-agnostic, and LOTO notification routing must become generic document-content question typing beyond LOTO. | The docs do not say only "fix this prompt"; they mostly define the broader class and coverage level. | The only remaining doc risk is that Phase 22 could pick one new exact prompt instead of the classes identified here. | Use this Phase 20 inventory as the source of truth and add future bank entries for entity-status and non-job no-op prompt classes. | Phase 21 prepares metadata from P20-01 through P20-03. Phase 22 creates the contracts. Phase 23 migrates existing machine/job behavior. Phase 24 proves broader entity diversity without another one-off prompt patch. |
 
 ### Top Risks
 
@@ -1510,7 +1514,7 @@ Why this comes first:
 
 - Phase 20 found that the backend route/tool/composition layer still lacks enough generic metadata to support a true entity-generic response contract.
 - Starting generic response-document work before backend metadata is ready would repeat the same mistake: frontend and response-composer code would infer status or business changes from job/machine labels, endpoint names, or summary prose.
-- The backend needs to expose entity/action/change semantics through OpenAPI, generated tools, generated vocabulary, and `tools.md` before Phase 22 implements generic response-document behavior.
+- The backend needs to expose entity/action/change semantics through OpenAPI, generated tools, generated vocabulary, and `tools.md` before Phase 22 creates generic response-document contracts.
 
 Scope:
 
@@ -1548,25 +1552,38 @@ Out of scope:
 
 ### Recommended Phase 22
 
-Phase 22 should be **Migrate Existing Machine/Job Outputs Onto Generic Contracts** after Phase 21 is green.
+Phase 22 should be **Generic Entity Status And Mutation Business Contract** after Phase 21 is green.
 
 Scope:
 
-- Migrate machine status to an `entity_status_v1` route/composition/rendering contract without changing the user-facing answer.
-- Migrate RD-001/RD-002 job priority cascade output to a typed `business_change_v1` contract that can express entity type, selector, field changes, original/current-state basis, display id, ordering, and row outcome without parsing priority prose.
-- Keep RD-006/RD-007 no-op behavior working through the generic no-match/no-op contract.
-- Add a small frontend/probe check that final business groups and status blocks render from contract evidence rather than exact RD-001/RD-008 labels.
+- Add `entity_status_v1` for read-only single-entity status answers.
+- Add `business_change_v1` for mutation result groups.
+- Add one safe non-job no-op contract proof, even if synthetic at the backend contract layer.
+- Add a guard proving machine status is one example of entity status, not the model itself.
+- Touch backend contracts first, with focused frontend rendering only if the renderer cannot display the new typed contract correctly.
 
 Phase 22 out of scope:
 
-- Claiming entity diversity beyond jobs and machines. That is Phase 23.
+- Migrating existing RD-001/RD-008 visible flows. That is Phase 23.
+- Claiming entity diversity beyond jobs and machines. That is Phase 24.
 - Enabling broad product/material/inventory writes.
 - Replacing all seeded fixtures.
 - Adding more LOTO wording volume unless it exercises a generic document-content route contract.
 
 ### Recommended Phase 23
 
-Phase 23 should be **Entity Diversity Coverage**.
+Phase 23 should be **Migrate Existing Machine/Job Outputs Onto Generic Contracts**.
+
+Scope:
+
+- Migrate machine status to the `entity_status_v1` contract without changing the user-facing answer.
+- Migrate RD-001/RD-002 job priority cascade output to `business_change_v1` without parsing priority prose or job id shape.
+- Keep RD-006/RD-007 no-op behavior working through the generic no-match/no-op contract.
+- Add a frontend/probe check that final business groups and status blocks render from contract evidence rather than exact RD-001/RD-008 labels.
+
+### Recommended Phase 24
+
+Phase 24 should be **Entity Diversity Coverage**.
 
 Scope:
 
@@ -1574,9 +1591,9 @@ Scope:
 - Prefer real backend read/status paths where supported.
 - Use backend contract fixtures for non-job write outcomes if no safe real write surface exists.
 
-### Recommended Phase 24
+### Recommended Phase 25
 
-Phase 24 should be **Hardcode Regression Guardrails**.
+Phase 25 should be **Hardcode Regression Guardrails**.
 
 Scope:
 
@@ -1584,9 +1601,9 @@ Scope:
 - Add composer guardrails that fail when typed business fields exist but summary prose is used as the business source of truth.
 - Add frontend/probe guardrails that require contract evidence instead of machine/job text-only checks.
 
-### Recommended Phase 25
+### Recommended Phase 26
 
-Phase 25 should be **Real Flow Release Proof**.
+Phase 26 should be **Real Flow Release Proof**.
 
 Scope:
 
@@ -1712,6 +1729,24 @@ If Swagger/OpenAPI generation requires the Go backend toolchain, run the existin
 ## Phase 22 Checklist
 
 - [ ] Start only after Phase 21 marks backend metadata ready.
+- [ ] Add `entity_status_v1` for read-only single-entity status answers.
+- [ ] Add `business_change_v1` for mutation result groups.
+- [ ] Add one safe non-job no-op contract proof, even if synthetic at the backend contract layer.
+- [ ] Add a guard that machine status is one example of entity status, not the model itself.
+- [ ] Touch backend contracts first; add focused frontend rendering only if needed.
+- [ ] Update tracker and manual regression bank.
+- [ ] Run backend contract verification and focused frontend tests if frontend was touched.
+- [ ] Commit Phase 22.
+
+## Phase 22 Implementation Notes
+
+Status: Blocked Until Phase 21
+
+Phase 22 creates the generic response-document contracts. It should prove `entity_status_v1`, `business_change_v1`, one safe non-job no-op contract proof, and a machine-status-as-example guard before existing RD-001/RD-008 behavior is migrated.
+
+## Phase 23 Checklist
+
+- [ ] Start only after Phase 22 is complete.
 - [ ] Migrate existing machine-status response output onto `entity_status_v1`.
 - [ ] Migrate existing job priority cascade output onto typed `business_change_v1`.
 - [ ] Keep existing job no-op mutation behavior working through the generic no-match/no-op contract.
@@ -1720,17 +1755,17 @@ If Swagger/OpenAPI generation requires the Go backend toolchain, run the existin
 - [ ] Preserve RD-001, RD-002, RD-006, RD-007, RD-008, and RD-009 behavior.
 - [ ] Update tracker and manual regression bank.
 - [ ] Run backend, frontend, and focused browser verification.
-- [ ] Commit Phase 22.
+- [ ] Commit Phase 23.
 
-## Phase 22 Implementation Notes
+## Phase 23 Implementation Notes
 
-Status: Blocked Until Phase 21
+Status: Blocked Until Phase 22
 
-Phase 22 is the migration phase for existing machine/job behavior. It should not claim generic entity diversity yet. It should prove the current machine status, job priority cascade, and job no-op outputs are now expressed through generic typed contracts and that the frontend renders by contract evidence instead of entity names.
+Phase 23 is the migration phase for existing machine/job behavior. It should not claim generic entity diversity yet. It should prove the current machine status, job priority cascade, and job no-op outputs are now expressed through generic typed contracts and that the frontend renders by contract evidence instead of entity names.
 
-## Phase 23 Checklist
+## Phase 24 Checklist
 
-- [ ] Start only after Phase 22 is complete.
+- [ ] Start only after Phase 23 is complete.
 - [ ] Add safe deterministic coverage for at least two of: product status/read result, material/inventory read result, work order status, non-job no-op mutation, or non-job partial/no-op plus valid group.
 - [ ] Prefer real backend-supported read/status paths when available.
 - [ ] If a non-job write path is not safely supported, use backend contract fixtures without enabling broad new writes.
@@ -1738,17 +1773,17 @@ Phase 22 is the migration phase for existing machine/job behavior. It should not
 - [ ] Add frontend/probe coverage only where visible DOM can diverge from backend contract evidence.
 - [ ] Update tracker and manual regression bank.
 - [ ] Run backend, frontend, and focused browser verification.
-- [ ] Commit Phase 23.
+- [ ] Commit Phase 24.
 
-## Phase 23 Implementation Notes
+## Phase 24 Implementation Notes
 
-Status: Blocked Until Phase 22
+Status: Blocked Until Phase 23
 
-Phase 23 is where the plan earns the word "generic." Passing only `JOB-SEED-*` and `M-CNC-01` examples is not enough. At least two non-job/non-machine examples must pass through the same contract machinery.
+Phase 24 is where the plan earns the word "generic." Passing only `JOB-SEED-*` and `M-CNC-01` examples is not enough. At least two non-job/non-machine examples must pass through the same contract machinery.
 
-## Phase 24 Checklist
+## Phase 25 Checklist
 
-- [ ] Start only after Phase 23 is complete.
+- [ ] Start only after Phase 24 is complete.
 - [ ] Add guardrails that fail when product code branches on `M-CNC-01`, `JOB-SEED`, exact prompt text, or specific entity labels outside fixtures/explicit exceptions.
 - [ ] Add composer guardrails that fail when business facts are derived from summary prose while typed fields are available.
 - [ ] Add frontend/probe guardrails that fail when generic checks only inspect machine/job text instead of contract type, block type, entity type, and typed field evidence.
@@ -1756,17 +1791,17 @@ Phase 23 is where the plan earns the word "generic." Passing only `JOB-SEED-*` a
 - [ ] Document any accepted exception with owner, reason, and expiry/revisit condition.
 - [ ] Update tracker and manual regression bank.
 - [ ] Run backend and frontend guardrail verification.
-- [ ] Commit Phase 24.
+- [ ] Commit Phase 25.
 
-## Phase 24 Implementation Notes
+## Phase 25 Implementation Notes
 
-Status: Blocked Until Phase 23
+Status: Blocked Until Phase 24
 
-Phase 24 prevents future one-off prompt/entity fixes from undoing the generic contract work. Guardrails should separate fixture constants from production logic and should be tight enough to fail before a regression reaches browser-only manual review.
+Phase 25 prevents future one-off prompt/entity fixes from undoing the generic contract work. Guardrails should separate fixture constants from production logic and should be tight enough to fail before a regression reaches browser-only manual review.
 
-## Phase 25 Checklist
+## Phase 26 Checklist
 
-- [ ] Start only after Phase 24 is complete.
+- [ ] Start only after Phase 25 is complete.
 - [ ] Run RD-001 cascade real/seeded proof.
 - [ ] Run machine status real/seeded proof.
 - [ ] Run LOTO document-content RAG proof.
@@ -1775,13 +1810,13 @@ Phase 24 prevents future one-off prompt/entity fixes from undoing the generic co
 - [ ] Run final response visual-quality oracle.
 - [ ] Attach compact semantic probes for browser failures; screenshots/traces remain supporting evidence.
 - [ ] Update tracker with real/seeded command results and any accepted gaps.
-- [ ] Commit Phase 25.
+- [ ] Commit Phase 26.
 
-## Phase 25 Implementation Notes
+## Phase 26 Implementation Notes
 
-Status: Blocked Until Phase 24
+Status: Blocked Until Phase 25
 
-Phase 25 is the release-confidence pass after backend metadata readiness, existing-flow migration, entity diversity coverage, and hardcode guardrails are complete. It should prove backend state, response document, and visible UI agree in real or seeded flows.
+Phase 26 is the release-confidence pass after backend metadata readiness, contract creation, existing-flow migration, entity diversity coverage, and hardcode guardrails are complete. It should prove backend state, response document, and visible UI agree in real or seeded flows.
 
 ## Phase 10 Implementation Notes
 
@@ -1937,7 +1972,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Start Phase 21 backend capability metadata readiness. Do not start Phase 22 machine/job generic-contract migration until Phase 21 proves OpenAPI, RAG OpenAPI mirror, generated `tools.md`, RAG `tools.md`, generated vocabulary, and capability metadata are synchronized and sufficient. After Phase 22, continue in order through Phase 23 entity diversity, Phase 24 hardcode guardrails, and Phase 25 real-flow release proof.
+Start Phase 21 backend capability metadata readiness. Do not start Phase 22 generic response-document contract creation until Phase 21 proves OpenAPI, RAG OpenAPI mirror, generated `tools.md`, RAG `tools.md`, generated vocabulary, and capability metadata are synchronized and sufficient. After Phase 22, continue in order through Phase 23 machine/job migration, Phase 24 entity diversity, Phase 25 hardcode guardrails, and Phase 26 real-flow release proof.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

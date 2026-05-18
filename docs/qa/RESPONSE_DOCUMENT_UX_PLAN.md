@@ -1510,9 +1510,62 @@ git diff --check
 git status --short --branch
 ```
 
-### Phase 22: Migrate Existing Machine/Job Outputs Onto Generic Contracts
+### Phase 22: Generic Entity Status And Mutation Business Contract
 
-Goal: Move existing machine status and job priority mutation output onto the generic contracts prepared by Phase 21.
+Goal: Create the generic response-document contracts the audit asked for before migrating existing flows.
+
+Problem this phase targets:
+
+- Phase 20 found that the system needs real generic contracts, not another machine/job-specific implementation.
+- Phase 21 prepares backend metadata, but it does not itself define the response-document block contracts and contract tests.
+- Existing machine status must become one example of entity status, not the model itself.
+
+Prerequisite:
+
+- Phase 21 must be marked Done with OpenAPI, generated tools, generated vocabulary, and `tools.md` synchronized.
+
+Files likely touched:
+
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/factory_agent/services/response_document_service.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/tests/test_response_document_contract.py`
+- `factory-agent/tests/test_response_document_failures.py`
+- `eMas Front/src/components/features/chat/factory-agent/responseDocumentContract.js`
+- `eMas Front/src/components/features/chat/factory-agent/ResponseDocumentRenderer.jsx`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+Implementation steps:
+
+- Add `entity_status_v1` for read-only single-entity status answers.
+- Add `business_change_v1` for mutation result groups.
+- Add one safe non-job no-op contract proof, even if synthetic at the backend contract layer.
+- Add a guard proving machine status is one example of `entity_status_v1`, not the schema/model itself.
+- Touch backend contracts first; add focused frontend rendering only if the current renderer cannot display the new typed contract correctly.
+- Keep broad migration of existing RD-001/RD-008 outputs out of this phase; that is Phase 23.
+
+Acceptance criteria:
+
+- `entity_status_v1` exists and is tested independently from machine-only behavior.
+- `business_change_v1` exists and can represent mutation groups without job/priority prose.
+- At least one safe non-job no-op contract proof exists.
+- A test fails if machine status becomes the only accepted entity-status shape.
+- Frontend changes are focused and contract-driven only where needed.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py -q
+
+Set-Location "..\eMas Front"
+npm test
+```
+
+### Phase 23: Migrate Existing Machine/Job Outputs Onto Generic Contracts
+
+Goal: Move existing machine status and job priority mutation output onto the generic contracts created in Phase 22.
 
 Problem this phase targets:
 
@@ -1522,7 +1575,7 @@ Problem this phase targets:
 
 Prerequisite:
 
-- Phase 21 must be marked Done with OpenAPI, generated tools, generated vocabulary, and `tools.md` synchronized.
+- Phase 22 must be marked Done with `entity_status_v1`, `business_change_v1`, and safe non-job no-op contract proof in place.
 
 Files likely touched:
 
@@ -1567,18 +1620,18 @@ npm test
 npm run test:e2e:response-document -- --grep "entity_status_v1|business_change_v1|machine status|RD-001|no-op"
 ```
 
-### Phase 23: Add Entity Diversity Coverage
+### Phase 24: Add Entity Diversity Coverage
 
 Goal: Prove the generic contracts work beyond jobs and machines.
 
 Problem this phase targets:
 
 - A contract is not truly generic if the only visible proofs are `JOB-SEED-*` and `M-CNC-01`.
-- Phase 22 intentionally migrates existing outputs first; Phase 23 adds deterministic non-job/non-machine coverage so future entities do not need one-off rendering branches.
+- Phase 23 intentionally migrates existing outputs first; Phase 24 adds deterministic non-job/non-machine coverage so future entities do not need one-off rendering branches.
 
 Prerequisite:
 
-- Phase 22 must be marked Done.
+- Phase 23 must be marked Done.
 
 Implementation steps:
 
@@ -1610,7 +1663,7 @@ npm test
 npm run test:e2e:response-document -- --grep "product status|material|inventory|work order|non-job|entity diversity"
 ```
 
-### Phase 24: Hardcode Regression Guardrails
+### Phase 25: Hardcode Regression Guardrails
 
 Goal: Prevent the generic contract work from sliding back into fixture-specific or entity-specific implementations.
 
@@ -1622,7 +1675,7 @@ Problem this phase targets:
 
 Prerequisite:
 
-- Phase 23 must be marked Done.
+- Phase 24 must be marked Done.
 
 Implementation steps:
 
@@ -1651,18 +1704,18 @@ npm test
 node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
 ```
 
-### Phase 25: Real Flow Release Proof
+### Phase 26: Real Flow Release Proof
 
 Goal: Run the real pipeline after the generic contract refactor and prove the release-critical flows still work end to end.
 
 Problem this phase targets:
 
 - Mocked and contract tests can prove shape, but the release gate must prove planner, routing, tool selection, approval sequencing, snapshots, response documents, and visible UI agree in real or seeded flows.
-- Phase 25 is the release-confidence pass after the backend metadata, migration, diversity, and guardrail phases.
+- Phase 26 is the release-confidence pass after the backend metadata, contract, migration, diversity, and guardrail phases.
 
 Prerequisite:
 
-- Phase 24 must be marked Done.
+- Phase 25 must be marked Done.
 
 Implementation steps:
 
@@ -1680,7 +1733,7 @@ Acceptance criteria:
 - Machine status completes as one typed status answer.
 - LOTO document-content question reaches RAG/procedure content without machine-ID clarification.
 - No-op mutation completes without approval or fake success.
-- At least one non-job generic proof passes, or the tracker records why no safe real backend surface exists yet and points to Phase 23 contract coverage.
+- At least one non-job generic proof passes, or the tracker records why no safe real backend surface exists yet and points to Phase 24 contract coverage.
 - Final response visual-quality oracle passes.
 
 Verification command:
@@ -1737,11 +1790,12 @@ Stop and fix before continuing when:
 - New status response formatting is hardcoded only to `M-CNC-01` or one machine route.
 - Phase 20 finds product-risk overfitting without a tracker entry and Phase 21 recommendation.
 - Phase 22 starts before Phase 21 proves backend/OpenAPI/tool/vocabulary readiness.
+- Phase 23 starts before Phase 22 proves `entity_status_v1`, `business_change_v1`, and a safe non-job no-op contract proof.
 - OpenAPI, RAG OpenAPI mirror, generated `tools.md`, RAG `tools.md`, or generated vocabulary are updated inconsistently.
 - Generated tool metadata cannot express the entity/action/capability semantics required by the generic response-document contract.
-- Phase 23 claims generic coverage with only job and machine examples.
-- Phase 24 starts after new product-code branches on seeded ids, exact prompt text, or entity labels are accepted without a guardrail or explicit exception.
-- Phase 25 starts before hardcode guardrails pass.
+- Phase 24 claims generic coverage with only job and machine examples.
+- Phase 25 starts after new product-code branches on seeded ids, exact prompt text, or entity labels are accepted without a guardrail or explicit exception.
+- Phase 26 starts before hardcode guardrails pass.
 - Completed mutation composition derives business facts from assistant summary prose when typed `business_change_v1` fields are available.
 - Frontend generic response-document tests pass by checking only machine/job text instead of contract type, block type, entity type, and typed field evidence.
 
