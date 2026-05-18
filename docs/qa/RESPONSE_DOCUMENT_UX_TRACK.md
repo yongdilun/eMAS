@@ -9,7 +9,7 @@ Created: 2026-05-18
 | --- | --- | --- | --- | --- |
 | 0 | Response gap audit and contract inventory | Completed | Codex | Current backend/frontend response paths, existing coverage, missing gates, blockers, and Phase 1 starting point documented below. |
 | 1 | Backend response document schema | Done | Codex | Added additive backend `response_document.version=1`, `run_steps`, typed blocks, snapshot revision, and backend contract tests. |
-| 2 | Deterministic composer and run steps | Not Started | Next agent | Build backend-owned deterministic response composer with progressive disclosure rules. |
+| 2 | Deterministic composer and run steps | Done | Codex | Added backend-owned deterministic composer, run-step evidence, completed-step preservation, read/RAG/no-result blocks, and Phase 2 contract tests. |
 | 3 | Failure recovery response documents | Not Started | Next agent | Add typed failure taxonomy, operator-friendly diagnostic cards, impact summaries, and context-aware next actions. |
 | 4 | Frontend response document renderer | Not Started | Next agent | Render block types directly; keep legacy presentation only as missing-document fallback. |
 | 5 | Response document reducer and busy-traffic ordering | Not Started | Next agent | Centralize revision ordering, validation, SSE/polling conflict handling, coalescing, and collapse preservation. |
@@ -349,15 +349,59 @@ python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_s
 
 ## Phase 2 Checklist
 
-- [ ] Implement deterministic response composer.
-- [ ] Build `run_steps` from execution/timeline/approval/audit evidence.
-- [ ] Implement block-order rules.
-- [ ] Implement compact preview/list/table rules.
-- [ ] Implement multi-step aggregation rules.
-- [ ] Implement pending-approval rules preserving completed steps.
-- [ ] Implement final completion rules aggregating all completed steps.
-- [ ] Add backend tests for RD-001 and RD-002.
-- [ ] Add backend tests for partial failure, rejected, expired, cancelled, RAG/source, read-only, long table, and diagnostic states.
+- [x] Implement deterministic response composer.
+- [x] Build `run_steps` from execution/timeline/approval/audit evidence.
+- [x] Implement block-order rules.
+- [x] Implement compact preview/list/table rules.
+- [x] Implement multi-step aggregation rules.
+- [x] Implement pending-approval rules preserving completed steps.
+- [x] Implement final completion rules aggregating all completed steps.
+- [x] Add backend tests for RD-001 and RD-002.
+- [x] Add backend tests for partial failure, rejected, expired, cancelled, RAG/source, read-only, long table, and diagnostic states.
+
+## Phase 2 Implementation Notes
+
+Date: 2026-05-18
+
+Phase 2 is complete. One product bug was found and fixed: empty read results shaped as `{"data": []}` were being treated as successful row evidence in the new response document path. The composer now classifies those as informational `no_results` diagnostics instead of fake success/result rows.
+
+### Files Changed
+
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/factory_agent/services/response_document_service.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/tests/test_response_document_contract.py`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+
+### Decisions Made
+
+- Move response-document composition into `factory_agent.services.response_document_service` so snapshot assembly can delegate typed document decisions to a dedicated deterministic composer.
+- Keep `PresentationResponse` generation and frontend rendering behavior unchanged.
+- Compose `run_steps` from approvals, mutation steps/tool evidence, read evidence, sources, diagnostics, and activity fallback rather than prose phrases.
+- Preserve completed mutation groups as `completed_step` blocks while a later approval is pending.
+- Treat the latest pending approval as primary and keep earlier completed approval/mutation steps visible in `run_steps`.
+- Add additive block schemas for completed steps, result summaries, and record previews while preserving existing Phase 1 block types.
+- Use deterministic block ids derived from document, operation, approval, read-result, and source identity.
+- Keep final response generation deterministic and backend-owned; no LLM final-response generation was introduced.
+
+### Commands Run
+
+```powershell
+git status --short --branch
+python -m pytest tests/test_response_document_contract.py -q
+python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_response_document_contract.py -q
+```
+
+### Test Results
+
+- `python -m pytest tests/test_response_document_contract.py -q`: 13 passed.
+- `python -m pytest tests/test_typed_snapshot_presentation_contract.py tests/test_snapshot_timeline_final_response_contract.py tests/test_phase7_api_ui_alignment.py tests/test_response_document_contract.py -q`: 81 passed.
+
+### Remaining Phase 3 Work
+
+- Add the full typed failure taxonomy and deterministic failure templates.
+- Add operator-safe failure card actions and retry policy.
+- Add partial-progress failure response documents that combine completed work and incomplete impact.
 
 ## Phase 3 Checklist
 

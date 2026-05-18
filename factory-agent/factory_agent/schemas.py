@@ -436,12 +436,42 @@ class MutationResultBlock(ResponseBlockBase):
     status: Literal["completed", "partial_failure", "failed"] = "completed"
 
 
+class CompletedStepBlock(ResponseBlockBase):
+    type: Literal["completed_step"] = "completed_step"
+    step_id: str | None = None
+    operation_id: str | None = None
+    approval_id: str | None = None
+    title: str = Field(default="Completed step", min_length=1)
+    summary: str = Field(min_length=1)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    details_collapsed: bool = True
+
+
+class ResultSummaryBlock(ResponseBlockBase):
+    type: Literal["result_summary"] = "result_summary"
+    operation_id: str | None = None
+    title: str = Field(default="Result summary", min_length=1)
+    summary: str = Field(min_length=1)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    total_count: int | None = Field(default=None, ge=0)
+    status: Literal["completed", "partial_failure", "failed", "empty"] = "completed"
+
+
 class ResultTableBlock(ResponseBlockBase):
     type: Literal["result_table"] = "result_table"
     title: str = "Affected records"
     rows: list[dict[str, Any]] = Field(min_length=1)
     operation_id: str | None = None
     approval_id: str | None = None
+
+
+class RecordPreviewBlock(ResponseBlockBase):
+    type: Literal["record_preview"] = "record_preview"
+    title: str = Field(default="Records", min_length=1)
+    rows: list[dict[str, Any]] = Field(min_length=1)
+    operation_id: str | None = None
+    approval_id: str | None = None
+    details_collapsed: bool = True
 
 
 class KnowledgeAnswerBlock(ResponseBlockBase):
@@ -473,7 +503,10 @@ ResponseBlock = Annotated[
     | ShortMessageBlock
     | ApprovalRequiredBlock
     | MutationResultBlock
+    | CompletedStepBlock
+    | ResultSummaryBlock
     | ResultTableBlock
+    | RecordPreviewBlock
     | KnowledgeAnswerBlock
     | SourceListBlock
     | DiagnosticBlock,

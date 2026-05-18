@@ -42,6 +42,7 @@ from factory_agent.schemas import (
     ToolInfo,
     SourceListBlock,
 )
+from factory_agent.services.response_document_service import compose_response_document
 from factory_agent.session_state import (
     USER_CANCELLED_ACTIVITY_DETAIL,
     USER_CANCELLED_ACTIVITY_LABEL,
@@ -2746,10 +2747,12 @@ class SessionSnapshotService:
         )
         _activity_steps = _activity_steps_for_snapshot(_snapshot_for_activity)
         _cursor = int(getattr(sess, "event_seq", None) or 0)
-        _response_document = _build_response_document(
+        _response_document = compose_response_document(
             session=_session_response,
             plan=_plan_response,
+            steps=_step_responses,
             pending_approval=_pending_approval_response,
+            approvals=_approval_responses,
             timeline=events,
             activity_steps=_activity_steps,
             presentation=_presentation,
