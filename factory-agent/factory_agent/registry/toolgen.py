@@ -125,6 +125,16 @@ def _resolve_parameter(spec: dict[str, Any], param: dict[str, Any] | None) -> di
     return dict(param)
 
 
+def _copy_parameter_metadata_to_schema(param: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(schema or {})
+    for key, value in param.items():
+        if key.startswith("x-ai-") or key in {"pattern", "format"}:
+            enriched.setdefault(key, value)
+    if isinstance(param.get("enum"), list) and "enum" not in enriched:
+        enriched["enum"] = list(param.get("enum") or [])
+    return enriched
+
+
 def _merge_body_schema(
     input_schema: dict[str, Any],
     param_sources: dict[str, str],
@@ -173,6 +183,7 @@ def _infer_input_schema(
             if isinstance(param.get("enum"), list):
                 schema["enum"] = list(param.get("enum") or [])
         resolved = _resolve_schema(spec, schema)
+        resolved = _copy_parameter_metadata_to_schema(param, resolved)
         param_name = str(param.get("name", "param"))
         location = str(param.get("in", "")).lower()
 
@@ -296,6 +307,8 @@ _LOW_SIGNAL_OPERATION_TOKENS = {
 
 def _normalize_token(token: str) -> str:
     lowered = (token or "").strip().lower()
+    if lowered == "status":
+        return lowered
     if lowered.endswith("ies") and len(lowered) > 3:
         return lowered[:-3] + "y"
     if lowered.endswith("sses") and len(lowered) > 5:
@@ -361,18 +374,30 @@ def _schema_tokens(schema: dict[str, Any] | None) -> list[str]:
     return tokens
 
 
+def _extension_tokens(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _split_tokens(value)
+    if isinstance(value, (int, float, bool)):
+        return _split_tokens(str(value))
+    if isinstance(value, list):
+        tokens: list[str] = []
+        for item in value:
+            tokens.extend(_extension_tokens(item))
+        return tokens
+    if isinstance(value, dict):
+        tokens: list[str] = []
+        for key, item in value.items():
+            tokens.extend(_split_tokens(str(key)))
+            tokens.extend(_extension_tokens(item))
+        return tokens
+    return []
+
+
 def _ai_extension_tokens(operation: dict[str, Any]) -> list[str]:
     tokens: list[str] = []
-    for key in ("x-ai-entity", "x-ai-intent", "x-ai-action"):
-        value = operation.get(key)
-        if isinstance(value, str) and value.strip():
-            tokens.extend(_split_tokens(value))
-    for key in ("x-ai-aliases", "x-ai-capability-tags", "x-ai-tags"):
-        values = operation.get(key)
-        if isinstance(values, list):
-            for value in values:
-                if str(value).strip():
-                    tokens.extend(_split_tokens(str(value)))
+    for key, value in operation.items():
+        if isinstance(key, str) and key.startswith("x-ai-"):
+            tokens.extend(_extension_tokens(value))
     return tokens
 
 

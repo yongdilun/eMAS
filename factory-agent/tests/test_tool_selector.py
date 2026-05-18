@@ -2,7 +2,7 @@ import pytest
 
 from factory_agent.config import Settings
 from factory_agent.schemas import ToolInfo
-from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.tool_selector import CapabilitySelectionRequest, ToolSelector
 
 
 def _settings(**overrides):
@@ -1037,6 +1037,87 @@ async def test_semantic_route_endpoint_fallback_remains_for_missing_metadata():
     result = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
 
     assert result.tool_names == ["get__machines_{id}"]
+
+
+def test_capability_metadata_selects_generic_response_contract_tools():
+    selector = _semantic_selector()
+    tools = {
+        "product_status_reader_v2": _tool(
+            "product_status_reader_v2",
+            endpoint="/assets/products/{id}",
+            tags=["product", "read", "lookup", "status", "entity_status_v1"],
+        ),
+        "material_status_reader_v2": _tool(
+            "material_status_reader_v2",
+            endpoint="/assets/materials/{id}",
+            tags=["inventory", "material", "read", "lookup", "status", "entity_status_v1"],
+        ),
+        "job_business_change_writer_v2": _tool(
+            "job_business_change_writer_v2",
+            endpoint="/work-orders/{id}",
+            method="PUT",
+            tags=["job", "update", "business_change_v1", "field_change", "approval_required"],
+        ),
+        "product_no_match_reader_v2": _tool(
+            "product_no_match_reader_v2",
+            endpoint="/assets/products",
+            tags=["product", "read", "list", "filter", "entity_agnostic_no_matching_records_v1"],
+        ),
+    }
+
+    product_status = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="product",
+                actions=("read", "lookup", "status"),
+                safety="read_only",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="status for product P-001",
+    )
+    material_status = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="inventory",
+                actions=("read", "lookup", "status"),
+                safety="read_only",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="status for material MAT-002",
+    )
+    business_change = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="job",
+                actions=("update", "business_change_v1"),
+                safety="approval_required",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="change high priority jobs to medium",
+    )
+    no_match = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="product",
+                actions=("read", "list", "entity_agnostic_no_matching_records_v1"),
+                safety="read_only",
+                endpoint_shape="collection",
+            )
+        ],
+        tools,
+        intent="show products matching an impossible status",
+    )
+
+    assert product_status == ["product_status_reader_v2"]
+    assert material_status == ["material_status_reader_v2"]
+    assert business_change == ["job_business_change_writer_v2"]
+    assert no_match == ["product_no_match_reader_v2"]
 
 
 @pytest.mark.asyncio

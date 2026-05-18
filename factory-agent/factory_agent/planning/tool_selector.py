@@ -360,6 +360,8 @@ class ToolSelector:
 
     def _normalize_token(self, token: str) -> str:
         lowered = token.lower().strip("_- ")
+        if lowered == "status":
+            return lowered
         if lowered.endswith("ing") and len(lowered) > 5:
             lowered = lowered[:-3]
         elif lowered.endswith("ed") and len(lowered) > 4:

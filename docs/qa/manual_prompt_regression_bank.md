@@ -262,7 +262,7 @@ Phase 21 is a backend-readiness phase, not a prompt-volume phase. It prepares Op
 
 | ID | Prompt / flow | Expected deterministic behavior | Coverage |
 |---|---|---|---|
-| `response-document-phase21-backend-metadata-readiness` | OpenAPI/tool/vocabulary metadata for supported entity status, business-change, and no-op outcomes. | `emas/docs/swagger.json`, `emas/docs/swagger.yaml`, `rag_sources/01_emas_internal_docs/api_reference/openapi.json`, `factory-agent/factory_agent/tools.md`, `rag_sources/01_emas_internal_docs/api_reference/tools.md`, and `factory-agent/factory_agent/generated/tool_intent_vocabulary.json` are synchronized and expose enough typed entity/action/capability metadata for Phase 22. | Planned: toolgen/vocabulary/tool-selector tests plus generated artifact diff review |
+| `response-document-phase21-backend-metadata-readiness` | OpenAPI/tool/vocabulary metadata for supported entity status, business-change, and no-op outcomes. | `emas/docs/swagger.json`, `emas/docs/swagger.yaml`, `rag_sources/01_emas_internal_docs/api_reference/openapi.json`, `factory-agent/factory_agent/tools.md`, `rag_sources/01_emas_internal_docs/api_reference/tools.md`, and `factory-agent/factory_agent/generated/tool_intent_vocabulary.json` are synchronized and expose enough typed entity/action/capability metadata for Phase 22. | Passed: `factory-agent/tests/test_toolgen.py`, `factory-agent/tests/test_tool_intent_profile.py`, and `factory-agent/tests/test_tool_selector.py` prove `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1` metadata readiness without broad renderer changes. |
 
 ## Response Document Phase 22 Generic Contract Prompt Classes
 

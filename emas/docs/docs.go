@@ -82,7 +82,46 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "agent_transaction",
+                "x-ai-action": "validate",
+                "x-ai-commit-mode": "dry_run",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "staged_writes_path": "staged_writes",
+                    "operation_results_path": "data.operations",
+                    "tool_name_field": "tool_name",
+                    "record_id_field": "primary_id",
+                    "row_status_field": "status",
+                    "row_data_field": "data",
+                    "idempotency_field": "idempotency_key",
+                    "source_state_basis": [
+                        "staged_write_args",
+                        "tool_output_ref"
+                    ]
+                },
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "source": "planner no-op groups before staged writes",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1",
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "agent_transaction",
+                    "staged_write",
+                    "business_change",
+                    "business_change_v1",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1",
+                    "validate",
+                    "dry_run",
+                    "approval_required",
+                    "row_outcome"
+                ]
             }
         },
         "/agent/transaction/commit": {
@@ -164,7 +203,45 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "agent_transaction",
+                "x-ai-action": "commit",
+                "x-ai-commit-mode": "commit",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "staged_writes_path": "staged_writes",
+                    "operation_results_path": "data.operations",
+                    "tool_name_field": "tool_name",
+                    "record_id_field": "primary_id",
+                    "row_status_field": "status",
+                    "row_data_field": "data",
+                    "idempotency_field": "idempotency_key",
+                    "source_state_basis": [
+                        "staged_write_args",
+                        "tool_output_ref"
+                    ]
+                },
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "source": "planner no-op groups before staged writes",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1",
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "agent_transaction",
+                    "staged_write",
+                    "business_change",
+                    "business_change_v1",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1",
+                    "commit",
+                    "approval_required",
+                    "row_outcome"
+                ]
             }
         },
         "/ai/chatbot/approvals": {
@@ -234,7 +311,11 @@ const docTemplate = `{
                         "description": "Approval ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "approval",
+                        "x-ai-id-prefix": "CHAPPR-",
+                        "x-ai-id-field": "approval_id"
                     },
                     {
                         "type": "string",
@@ -284,7 +365,11 @@ const docTemplate = `{
                         "description": "Approval ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "approval",
+                        "x-ai-id-prefix": "CHAPPR-",
+                        "x-ai-id-field": "approval_id"
                     }
                 ],
                 "responses": {
@@ -341,7 +426,11 @@ const docTemplate = `{
                         "description": "Approval ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "approval",
+                        "x-ai-id-prefix": "CHAPPR-",
+                        "x-ai-id-field": "approval_id"
                     }
                 ],
                 "responses": {
@@ -547,7 +636,11 @@ const docTemplate = `{
                         "description": "Chat ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "approval",
+                        "x-ai-id-prefix": "CHAPPR-",
+                        "x-ai-id-field": "approval_id"
                     }
                 ],
                 "responses": {
@@ -937,7 +1030,11 @@ const docTemplate = `{
                         "description": "Job Step ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -994,7 +1091,11 @@ const docTemplate = `{
                         "description": "Job Step ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -1057,7 +1158,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1114,7 +1219,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -1177,7 +1286,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1234,7 +1347,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1291,7 +1408,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -1354,7 +1475,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -1415,7 +1540,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1472,7 +1601,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1529,7 +1662,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1586,7 +1723,11 @@ const docTemplate = `{
                         "description": "Proposal ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "proposal",
+                        "x-ai-id-prefix": "AIPROP-",
+                        "x-ai-id-field": "proposal_id"
                     },
                     {
                         "type": "string",
@@ -1649,7 +1790,11 @@ const docTemplate = `{
                         "description": "Proposal ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "proposal",
+                        "x-ai-id-prefix": "AIPROP-",
+                        "x-ai-id-field": "proposal_id"
                     }
                 ],
                 "responses": {
@@ -1706,7 +1851,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -1763,7 +1912,11 @@ const docTemplate = `{
                         "description": "Proposal ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "proposal",
+                        "x-ai-id-prefix": "AIPROP-",
+                        "x-ai-id-field": "proposal_id"
                     }
                 ],
                 "responses": {
@@ -1820,7 +1973,11 @@ const docTemplate = `{
                         "description": "Proposal ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "proposal",
+                        "x-ai-id-prefix": "AIPROP-",
+                        "x-ai-id-field": "proposal_id"
                     }
                 ],
                 "responses": {
@@ -2280,7 +2437,11 @@ const docTemplate = `{
                         "description": "Formula ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^F-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "formula",
+                        "x-ai-id-prefix": "F-",
+                        "x-ai-id-field": "formula_id"
                     },
                     {
                         "type": "string",
@@ -2340,7 +2501,11 @@ const docTemplate = `{
                         "description": "Formula ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^F-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "formula",
+                        "x-ai-id-prefix": "F-",
+                        "x-ai-id-field": "formula_id"
                     }
                 ],
                 "responses": {
@@ -2397,7 +2562,11 @@ const docTemplate = `{
                         "description": "Formula ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^F-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "formula",
+                        "x-ai-id-prefix": "F-",
+                        "x-ai-id-field": "formula_id"
                     }
                 ],
                 "responses": {
@@ -2454,7 +2623,11 @@ const docTemplate = `{
                         "description": "Formula ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^F-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "formula",
+                        "x-ai-id-prefix": "F-",
+                        "x-ai-id-field": "formula_id"
                     },
                     {
                         "description": "Add Formula Ingredient Request",
@@ -2589,7 +2762,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by material ID",
                         "name": "material_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^MAT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "inventory",
+                        "x-ai-id-prefix": "MAT-",
+                        "x-ai-id-field": "material_id"
                     },
                     {
                         "enum": [
@@ -2807,7 +2984,28 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "inventory",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "material_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "inventory",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a material. material_id is generated with the MAT- prefix when omitted.",
@@ -2885,7 +3083,11 @@ const docTemplate = `{
                         "description": "Material ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^MAT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "inventory",
+                        "x-ai-id-prefix": "MAT-",
+                        "x-ai-id-field": "material_id"
                     },
                     {
                         "type": "string",
@@ -2925,7 +3127,35 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "inventory",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "material_id",
+                "x-ai-display-id-field": "materialID",
+                "x-ai-display-name-field": "materialName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "materialName",
+                    "currentStock",
+                    "minStock",
+                    "reorderLevel",
+                    "unit",
+                    "storageLocation",
+                    "lastUpdated"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "inventory",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             }
         },
         "/inventory/product-stock": {
@@ -2946,7 +3176,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by product ID",
                         "name": "product_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "enum": [
@@ -3179,7 +3413,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by material ID",
                         "name": "material_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^MAT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "inventory",
+                        "x-ai-id-prefix": "MAT-",
+                        "x-ai-id-field": "material_id"
                     },
                     {
                         "enum": [
@@ -3428,7 +3666,11 @@ const docTemplate = `{
                         "description": "Job Step ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -3486,7 +3728,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by product",
                         "name": "product_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "enum": [
@@ -3519,7 +3765,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by machine",
                         "name": "machine_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     },
                     {
                         "type": "string",
@@ -3603,7 +3853,28 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "job_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a job",
@@ -3681,7 +3952,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -3721,7 +3996,34 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "job_id",
+                "x-ai-display-id-field": "job_id",
+                "x-ai-display-name-field": "product_id",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "priority",
+                    "deadline",
+                    "deadline_status",
+                    "quantity_total",
+                    "quantity_completed",
+                    "product_id"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             },
             "put": {
                 "description": "Update mutable job fields",
@@ -3741,7 +4043,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "description": "Update Job Request",
@@ -3784,7 +4090,53 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "update",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "entity_type": "job",
+                    "entity_id_field": "job_id",
+                    "display_id_field": "job_id",
+                    "changed_fields": [
+                        "deadline",
+                        "notes",
+                        "priority",
+                        "quantity_total",
+                        "status"
+                    ],
+                    "selector_fields": [
+                        "id",
+                        "job_id",
+                        "status",
+                        "priority",
+                        "product_id",
+                        "machine_id"
+                    ],
+                    "source_state_basis": [
+                        "read_collection_before_mutation",
+                        "read_entity_before_mutation"
+                    ],
+                    "row_outcome_fields": [
+                        "status",
+                        "primary_id",
+                        "data"
+                    ]
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "update",
+                    "write",
+                    "mutation",
+                    "approval_required",
+                    "business_change",
+                    "business_change_v1",
+                    "field_change",
+                    "row_outcome"
+                ]
             },
             "delete": {
                 "description": "Delete a job and clear all slot assignments tied to this job",
@@ -3804,7 +4156,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -3848,7 +4204,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "description": "Duplicate job request",
@@ -3912,7 +4272,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -3971,7 +4335,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -4129,7 +4497,28 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "machine",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "machine_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "machine",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Creates a new machine in the factory. machine_id is generated with the M- prefix when omitted.",
@@ -4321,7 +4710,11 @@ const docTemplate = `{
                         "description": "Machine ID",
                         "name": "machine_id",
                         "in": "query",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     }
                 ],
                 "responses": {
@@ -4431,7 +4824,11 @@ const docTemplate = `{
                         "description": "Machine ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     },
                     {
                         "type": "string",
@@ -4465,7 +4862,34 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "machine",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "machine_id",
+                "x-ai-display-id-field": "machineID",
+                "x-ai-display-name-field": "machineName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "machineName",
+                    "machineType",
+                    "location",
+                    "capacityPerHour",
+                    "utilizationRate",
+                    "lastMaintenanceDate"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "machine",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             },
             "put": {
                 "description": "Updates an existing machine's details",
@@ -4485,7 +4909,11 @@ const docTemplate = `{
                         "description": "Machine ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     },
                     {
                         "description": "Machine Update Request",
@@ -4550,7 +4978,11 @@ const docTemplate = `{
                         "description": "Machine ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     },
                     {
                         "description": "Assign Capability Request",
@@ -4874,7 +5306,11 @@ const docTemplate = `{
                         "description": "Step ID",
                         "name": "step_id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^STP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "step",
+                        "x-ai-id-prefix": "STP-",
+                        "x-ai-id-field": "step_id"
                     },
                     {
                         "type": "string",
@@ -4938,7 +5374,11 @@ const docTemplate = `{
                         "description": "Step ID",
                         "name": "step_id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^STP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "step",
+                        "x-ai-id-prefix": "STP-",
+                        "x-ai-id-field": "step_id"
                     },
                     {
                         "description": "Add Process Step Material Request",
@@ -5003,14 +5443,22 @@ const docTemplate = `{
                         "description": "Step ID",
                         "name": "step_id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^STP-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "step",
+                        "x-ai-id-prefix": "STP-",
+                        "x-ai-id-field": "step_id"
                     },
                     {
                         "type": "string",
                         "description": "Material ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^MAT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "inventory",
+                        "x-ai-id-prefix": "MAT-",
+                        "x-ai-id-field": "material_id"
                     }
                 ],
                 "responses": {
@@ -5053,7 +5501,11 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by product ID",
                         "name": "product_id",
-                        "in": "query"
+                        "in": "query",
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "type": "string",
@@ -5198,7 +5650,11 @@ const docTemplate = `{
                         "description": "Process ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^PRC-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "process",
+                        "x-ai-id-prefix": "PRC-",
+                        "x-ai-id-field": "process_id"
                     },
                     {
                         "type": "string",
@@ -5258,7 +5714,11 @@ const docTemplate = `{
                         "description": "Process ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^PRC-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "process",
+                        "x-ai-id-prefix": "PRC-",
+                        "x-ai-id-field": "process_id"
                     }
                 ],
                 "responses": {
@@ -5302,7 +5762,11 @@ const docTemplate = `{
                         "description": "Process ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^PRC-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "process",
+                        "x-ai-id-prefix": "PRC-",
+                        "x-ai-id-field": "process_id"
                     },
                     {
                         "type": "string",
@@ -5365,7 +5829,11 @@ const docTemplate = `{
                         "description": "Process ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^PRC-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "process",
+                        "x-ai-id-prefix": "PRC-",
+                        "x-ai-id-field": "process_id"
                     },
                     {
                         "description": "Create Process Step Request",
@@ -5573,7 +6041,28 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "product",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "product_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "product",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a new product with the provided details. product_id is generated with the P- prefix when omitted.",
@@ -5651,7 +6140,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "type": "string",
@@ -5691,7 +6184,33 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "product",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "product_id",
+                "x-ai-display-id-field": "productID",
+                "x-ai-display-name-field": "productName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "productName",
+                    "productType",
+                    "unitOfMeasure",
+                    "formulaID",
+                    "processID"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "product",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             }
         },
         "/products/{id}/bom": {
@@ -5713,7 +6232,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "description": "Link Product Request",
@@ -5766,7 +6289,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "type": "string",
@@ -5828,7 +6355,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     }
                 ],
                 "responses": {
@@ -6274,7 +6805,11 @@ const docTemplate = `{
                         "description": "Machine Type ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     },
                     {
                         "description": "Update Machine Type Request",
@@ -6337,7 +6872,11 @@ const docTemplate = `{
                         "description": "Machine Type ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^M-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "machine",
+                        "x-ai-id-prefix": "M-",
+                        "x-ai-id-field": "machine_id"
                     }
                 ],
                 "responses": {
@@ -6525,7 +7064,11 @@ const docTemplate = `{
                         "description": "Product Type ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     }
                 ],
                 "responses": {
@@ -6713,7 +7256,11 @@ const docTemplate = `{
                         "description": "Step Type ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JS-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "step",
+                        "x-ai-id-prefix": "JS-",
+                        "x-ai-id-field": "job_step_id"
                     }
                 ],
                 "responses": {
@@ -7290,7 +7837,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -7335,7 +7886,11 @@ const docTemplate = `{
                         "description": "Job ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     }
                 ],
                 "responses": {
@@ -7380,7 +7935,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "type": "number",
@@ -7431,7 +7990,11 @@ const docTemplate = `{
                         "description": "Product ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^P-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "product",
+                        "x-ai-id-prefix": "P-",
+                        "x-ai-id-field": "product_id"
                     },
                     {
                         "type": "number",
@@ -7665,7 +8228,11 @@ const docTemplate = `{
                         "description": "Job Step ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^JOB-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "job",
+                        "x-ai-id-prefix": "JOB-",
+                        "x-ai-id-field": "job_id"
                     },
                     {
                         "type": "string",
@@ -7936,7 +8503,11 @@ const docTemplate = `{
                         "description": "Slot ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "slot",
+                        "x-ai-id-prefix": "SLOT-",
+                        "x-ai-id-field": "slot_id"
                     },
                     {
                         "type": "string",
@@ -7996,7 +8567,11 @@ const docTemplate = `{
                         "description": "Slot ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "slot",
+                        "x-ai-id-prefix": "SLOT-",
+                        "x-ai-id-field": "slot_id"
                     },
                     {
                         "description": "Update Slot Request",
@@ -8059,7 +8634,11 @@ const docTemplate = `{
                         "description": "Slot ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "slot",
+                        "x-ai-id-prefix": "SLOT-",
+                        "x-ai-id-field": "slot_id"
                     }
                 ],
                 "responses": {
@@ -8101,7 +8680,11 @@ const docTemplate = `{
                         "description": "Slot ID",
                         "name": "id",
                         "in": "path",
-                        "required": true
+                        "required": true,
+                        "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                        "x-ai-entity": "slot",
+                        "x-ai-id-prefix": "SLOT-",
+                        "x-ai-id-field": "slot_id"
                     },
                     {
                         "description": "Update Slot Request",
@@ -8204,7 +8787,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "formulaID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "formulaName": {
                     "type": "string"
@@ -8227,7 +8814,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "formula_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "ingredient_id": {
                     "type": "string"
@@ -8237,13 +8828,21 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "percentage": {
                     "type": "number"
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_per_unit": {
                     "type": "number"
@@ -8264,7 +8863,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "arrivalID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^ARR-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "arrival",
+                    "x-ai-id-prefix": "ARR-",
+                    "x-ai-id-field": "arrival_id"
                 },
                 "createdAt": {
                     "type": "string"
@@ -8273,7 +8876,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "notes": {
                     "type": "string"
@@ -8307,7 +8914,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "materialName": {
                     "type": "string"
@@ -8341,13 +8952,25 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "jobID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "jobStepID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "neededAt": {
                     "type": "string"
@@ -8384,7 +9007,11 @@ const docTemplate = `{
                     "$ref": "#/definitions/domain.JobDeadlineStatus"
                 },
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "notes": {
                     "type": "string"
@@ -8399,7 +9026,11 @@ const docTemplate = `{
                     ]
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_completed": {
                     "type": "integer"
@@ -8464,10 +9095,18 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "preparation_time_minutes": {
                     "type": "integer"
@@ -8476,7 +9115,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "proposal_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "proposal",
+                    "x-ai-id-prefix": "AIPROP-",
+                    "x-ai-id-field": "proposal_id"
                 },
                 "quantity_planned": {
                     "type": "integer"
@@ -8488,7 +9131,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "slot_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "slot",
+                    "x-ai-id-prefix": "SLOT-",
+                    "x-ai-id-field": "slot_id"
                 },
                 "split_group_id": {
                     "type": "string"
@@ -8509,10 +9156,18 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "quantity_completed": {
                     "type": "integer"
@@ -8531,7 +9186,11 @@ const docTemplate = `{
                     ]
                 },
                 "step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^STP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "STP-",
+                    "x-ai-id-field": "step_id"
                 },
                 "step_sequence": {
                     "type": "integer"
@@ -8560,7 +9219,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "machineName": {
                     "type": "string"
@@ -8597,7 +9260,11 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "stepID": {
                     "type": "string"
@@ -8623,7 +9290,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "startTime": {
                     "type": "string"
@@ -8640,7 +9311,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "maintenanceID": {
                     "type": "string"
@@ -8663,10 +9338,18 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityPerUnit": {
                     "type": "number"
@@ -8738,13 +9421,21 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "process_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "quality_check_required": {
                     "type": "boolean"
                 },
                 "step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^STP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "STP-",
+                    "x-ai-id-field": "step_id"
                 },
                 "step_name": {
                     "type": "string"
@@ -8776,14 +9467,26 @@ const docTemplate = `{
                 },
                 "formulaID": {
                     "description": "linked formula for BOM/recipe",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "processID": {
                     "description": "active routing for scheduling",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "productName": {
                     "type": "string"
@@ -8815,14 +9518,22 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "productComponentID": {
                     "description": "sub-product",
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityRequired": {
                     "description": "qty per 1 unit of parent",
@@ -8849,7 +9560,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityOnHand": {
                     "type": "number"
@@ -8888,13 +9603,21 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "processID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "processName": {
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "sequence": {
                     "description": "order when multiple (0=primary)",
@@ -8928,7 +9651,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "slotID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "slot",
+                    "x-ai-id-prefix": "SLOT-",
+                    "x-ai-id-field": "slot_id"
                 },
                 "startTime": {
                     "type": "string"
@@ -8951,7 +9678,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "jobStepID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "notes": {
                     "type": "string"
@@ -9275,14 +10006,22 @@ const docTemplate = `{
             "properties": {
                 "material_id": {
                     "description": "required if product_id not set",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "percentage": {
                     "type": "number"
                 },
                 "product_id": {
                     "description": "required if material_id not set (sub-product)",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity": {
                     "description": "backward compat, maps to quantity_per_unit",
@@ -9306,11 +10045,19 @@ const docTemplate = `{
             "properties": {
                 "material_id": {
                     "description": "required if product_id not set",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "product_id": {
                     "description": "required if material_id not set",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_per_unit": {
                     "description": "required",
@@ -9352,7 +10099,11 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^STP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "STP-",
+                    "x-ai-id-field": "step_id"
                 }
             }
         },
@@ -9433,11 +10184,19 @@ const docTemplate = `{
             "properties": {
                 "material_id": {
                     "description": "required if product_id not set",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "product_id": {
                     "description": "sub-product, required if material_id not set",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_per_unit": {
                     "description": "required; qty per 1 unit of parent",
@@ -9486,7 +10245,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "quantity": {
                     "type": "number"
@@ -9495,7 +10258,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "slot_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "slot",
+                    "x-ai-id-prefix": "SLOT-",
+                    "x-ai-id-field": "slot_id"
                 }
             }
         },
@@ -9507,7 +10274,12 @@ const docTemplate = `{
             "properties": {
                 "formula_id": {
                     "description": "Optional; generated with F- prefix when omitted.",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id",
+                    "x-ai-generated": true
                 },
                 "formula_name": {
                     "type": "string"
@@ -9531,13 +10303,25 @@ const docTemplate = `{
             ],
             "properties": {
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "needed_at": {
                     "type": "string"
@@ -9571,7 +10355,11 @@ const docTemplate = `{
                     ]
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_total": {
                     "type": "integer"
@@ -9592,7 +10380,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 }
             }
         },
@@ -9634,7 +10426,12 @@ const docTemplate = `{
                 },
                 "machine_id": {
                     "description": "Optional; generated with M- prefix when omitted.",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id",
+                    "x-ai-generated": true
                 },
                 "machine_name": {
                     "type": "string"
@@ -9672,7 +10469,12 @@ const docTemplate = `{
                 },
                 "material_id": {
                     "description": "Optional; generated with MAT- prefix when omitted.",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id",
+                    "x-ai-generated": true
                 },
                 "material_name": {
                     "type": "string"
@@ -9703,13 +10505,22 @@ const docTemplate = `{
                 },
                 "process_id": {
                     "description": "Optional; generated with PRC- prefix when omitted.",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id",
+                    "x-ai-generated": true
                 },
                 "process_name": {
                     "type": "string"
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "version": {
                     "type": "integer"
@@ -9753,7 +10564,11 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^STP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "STP-",
+                    "x-ai-id-field": "step_id"
                 },
                 "step_name": {
                     "type": "string"
@@ -9780,7 +10595,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantity_on_hand": {
                     "type": "number",
@@ -9813,14 +10632,27 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "formula_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "process_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "product_id": {
                     "description": "Optional; generated with P- prefix when omitted.",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id",
+                    "x-ai-generated": true
                 },
                 "product_name": {
                     "type": "string"
@@ -9873,10 +10705,18 @@ const docTemplate = `{
                 },
                 "job_step_id": {
                     "description": "optional, for split",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "prep_mins": {
                     "type": "integer"
@@ -9885,7 +10725,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "proposal_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "proposal",
+                    "x-ai-id-prefix": "AIPROP-",
+                    "x-ai-id-field": "proposal_id"
                 },
                 "quantity": {
                     "type": "integer"
@@ -9938,7 +10782,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "version": {
                     "type": "string"
@@ -9955,10 +10803,18 @@ const docTemplate = `{
                     }
                 },
                 "formula_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "process_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 }
             }
         },
@@ -9985,7 +10841,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "slot_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "slot",
+                    "x-ai-id-prefix": "SLOT-",
+                    "x-ai-id-field": "slot_id"
                 },
                 "start_time": {
                     "type": "string"
@@ -10000,7 +10860,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "quantity": {
                     "type": "number"
@@ -10023,7 +10887,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "start_time": {
                     "type": "string"
@@ -10043,7 +10911,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "notes": {
                     "type": "string"
@@ -10067,7 +10939,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "maintenance_type": {
                     "type": "string"
@@ -10095,7 +10971,11 @@ const docTemplate = `{
                     "$ref": "#/definitions/dto.InventorySnapshotInput"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "notes": {
                     "type": "string"
@@ -10146,7 +11026,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "notes": {
                     "type": "string"
@@ -10185,10 +11069,18 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "quantity": {
                     "type": "integer"
@@ -10209,7 +11101,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "splits": {
                     "type": "array",
@@ -10323,7 +11219,11 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "quantity_planned": {
                     "type": "integer"
@@ -10350,10 +11250,18 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "proposal_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^AIPROP-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "proposal",
+                    "x-ai-id-prefix": "AIPROP-",
+                    "x-ai-id-field": "proposal_id"
                 },
                 "proposed_slots": {
                     "type": "array",
@@ -10397,10 +11305,18 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "job_step_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "scheduled_end": {
                     "type": "string"
@@ -10431,7 +11347,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "machine_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "time": {
                     "type": "string"
@@ -10613,19 +11533,31 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "formula_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "ingredient_id": {
                     "type": "string"
                 },
                 "material_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "material_name": {
                     "type": "string"
                 },
                 "product_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "product_name": {
                     "type": "string"
@@ -10773,7 +11705,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "job_id": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "machine_name": {
                     "type": "string"

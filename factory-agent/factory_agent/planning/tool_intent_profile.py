@@ -50,6 +50,8 @@ EMPTY_VOCABULARY = ToolIntentVocabulary(
 
 def normalize_token(token: str) -> str:
     lowered = (token or "").strip().lower()
+    if lowered == "status":
+        return lowered
     if lowered.endswith("ing") and len(lowered) > 5:
         lowered = lowered[:-3]
     elif lowered.endswith("ed") and len(lowered) > 4:
@@ -116,6 +118,37 @@ def _collection_entity_tokens(tools: list[ToolInfo]) -> set[str]:
     return entities
 
 
+def _schema_ai_entity_tokens(schema: dict | None) -> set[str]:
+    if not isinstance(schema, dict):
+        return set()
+    entities: set[str] = set()
+    entity = schema.get("x-ai-entity")
+    if isinstance(entity, str) and entity.strip():
+        entities.update(tokenize(entity))
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for child in properties.values():
+            entities.update(_schema_ai_entity_tokens(child if isinstance(child, dict) else None))
+    items = schema.get("items")
+    if isinstance(items, dict):
+        entities.update(_schema_ai_entity_tokens(items))
+    for key in ("allOf", "oneOf", "anyOf"):
+        parts = schema.get(key)
+        if isinstance(parts, list):
+            for part in parts:
+                entities.update(_schema_ai_entity_tokens(part if isinstance(part, dict) else None))
+    return entities
+
+
+def _explicit_ai_entity_tokens(tools: list[ToolInfo]) -> set[str]:
+    entities: set[str] = set()
+    for tool in tools:
+        entities.update(_schema_ai_entity_tokens(tool.input_schema))
+        entities.update(_schema_ai_entity_tokens(tool.output_schema))
+        entities.update(_schema_ai_entity_tokens(tool.body_schema))
+    return entities
+
+
 def build_tool_intent_vocabulary(
     tools: list[ToolInfo],
     *,
@@ -140,7 +173,7 @@ def build_tool_intent_vocabulary(
         for token, count in document_frequency.items()
         if count >= min_count and count / tool_count >= generic_threshold
     }
-    entity_tokens = _collection_entity_tokens(tools)
+    entity_tokens = _collection_entity_tokens(tools) | _explicit_ai_entity_tokens(tools)
     normalized_operator_tokens = {
         token
         for token in tokenize(" ".join(operator_tokens or set()))

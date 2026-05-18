@@ -1668,25 +1668,34 @@ git diff --check
 
 ## Phase 21 Checklist
 
-- [ ] Confirm branch is `codex/playwright-e2e-plan` and inspect current OpenAPI/tool/vocabulary metadata.
-- [ ] Identify backend/OpenAPI metadata gaps for generic entity status, mutation business changes, and no-op mutation outcomes.
-- [ ] Update the backend/OpenAPI source of truth where needed so supported routes expose typed entity/action/capability semantics.
-- [ ] Regenerate `emas/docs/swagger.json` and `emas/docs/swagger.yaml` when backend Swagger changes.
-- [ ] Sync `rag_sources/01_emas_internal_docs/api_reference/openapi.json` from the current Swagger/OpenAPI.
-- [ ] Regenerate `factory-agent/factory_agent/tools.md` using the existing tool generation pipeline.
-- [ ] Sync `rag_sources/01_emas_internal_docs/api_reference/tools.md` from the regenerated Factory Agent tools reference.
-- [ ] Regenerate `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`.
-- [ ] Add or update tests proving generated tools/vocabulary preserve generic entity tokens and capability tags beyond machine/job.
-- [ ] Add or update tests proving metadata is sufficient for `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1`.
-- [ ] Update tracker and manual regression bank.
-- [ ] Run backend metadata/tool generation verification.
-- [ ] Commit Phase 21.
+- [x] Confirm branch is `codex/playwright-e2e-plan` and inspect current OpenAPI/tool/vocabulary metadata.
+- [x] Identify backend/OpenAPI metadata gaps for generic entity status, mutation business changes, and no-op mutation outcomes.
+- [x] Update the backend/OpenAPI source of truth where needed so supported routes expose typed entity/action/capability semantics.
+- [x] Regenerate `emas/docs/swagger.json` and `emas/docs/swagger.yaml` when backend Swagger changes.
+- [x] Sync `rag_sources/01_emas_internal_docs/api_reference/openapi.json` from the current Swagger/OpenAPI.
+- [x] Regenerate `factory-agent/factory_agent/tools.md` using the existing tool generation pipeline.
+- [x] Sync `rag_sources/01_emas_internal_docs/api_reference/tools.md` from the regenerated Factory Agent tools reference.
+- [x] Regenerate `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`.
+- [x] Add or update tests proving generated tools/vocabulary preserve generic entity tokens and capability tags beyond machine/job.
+- [x] Add or update tests proving metadata is sufficient for `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1`.
+- [x] Update tracker and manual regression bank.
+- [x] Run backend metadata/tool generation verification.
+- [x] Commit Phase 21.
 
 ## Phase 21 Implementation Notes
 
-Status: Not Started
+Status: Complete
 
 Phase 21 is backend readiness for generic response-document work. It should improve the backend metadata supply chain, not implement broad frontend rendering or generic response-document composition.
+
+Phase 21 added Swagger enrichment metadata for the generic response-document contract inputs without implementing broad response-document rendering. The enriched OpenAPI now exposes:
+
+- `entity_status_v1` metadata for read-only single-entity status tools: machine, job, product, and inventory material.
+- `business_change_v1` metadata for job update and agent transaction dry-run/commit operation-result evidence.
+- `entity_agnostic_no_matching_records_v1` metadata for no-match collection reads and agent transaction no-op support.
+- Stable entity identifier/display/status fields, approval/no-op hints, business changed fields, selector fields, source-state basis, and operation row outcome fields.
+
+The Swagger enrichment pipeline now also updates `emas/docs/docs.go`, so served Swagger stays aligned with `emas/docs/swagger.json` and `emas/docs/swagger.yaml`. Tool generation now preserves parameter-level `x-ai-*` metadata and keeps `status` as a first-class token instead of singularizing it to `statu`. The generated vocabulary now derives entity tokens from explicit `x-ai-entity` metadata as well as collection shapes, so `inventory`, `job`, `machine`, and `product` are all available to Phase 22.
 
 ### Required Metadata Artifacts
 
@@ -1725,6 +1734,68 @@ git status --short --branch
 ```
 
 If Swagger/OpenAPI generation requires the Go backend toolchain, run the existing project command for Swagger regeneration and document it in this tracker. Do not hand-edit generated `tools.md` or generated vocabulary output.
+
+### Phase 21 Commands Run
+
+```powershell
+git status --short --branch
+```
+
+Result: branch `codex/playwright-e2e-plan`; working tree was clean before Phase 21 edits.
+
+```powershell
+python emas\scripts\enrich_swagger_id_patterns.py
+```
+
+Result: regenerated/enriched `emas/docs/docs.go`, `emas/docs/swagger.json`, and `emas/docs/swagger.yaml` with Phase 21 contract metadata.
+
+```powershell
+python scripts\generate_tools.py --local --no-db
+python scripts\generate_tool_intent_vocabulary.py
+```
+
+Result: regenerated `factory-agent/factory_agent/tools.md`, `factory-agent/factory_agent/generated/id_patterns.json`, and `factory-agent/factory_agent/generated/tool_intent_vocabulary.json` from local Swagger. Tool count remained 138.
+
+```powershell
+Copy-Item -LiteralPath emas\docs\swagger.json -Destination rag_sources\01_emas_internal_docs\api_reference\openapi.json
+Copy-Item -LiteralPath factory-agent\factory_agent\tools.md -Destination rag_sources\01_emas_internal_docs\api_reference\tools.md
+```
+
+Result: synchronized RAG OpenAPI and tool-reference mirrors.
+
+```powershell
+python -m pytest tests/test_toolgen.py tests/test_tool_intent_profile.py tests/test_tool_selector.py -q
+```
+
+Result: passed, 44 tests with 12 warnings.
+
+```powershell
+git diff --check
+```
+
+Result: passed; only existing line-ending normalization warnings were reported by Git.
+
+### Phase 21 Files Changed
+
+- `emas/docs/docs.go`
+- `emas/docs/swagger.json`
+- `emas/docs/swagger.yaml`
+- `emas/scripts/enrich_swagger_id_patterns.py`
+- `factory-agent/factory_agent/generated/id_patterns.json`
+- `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`
+- `factory-agent/factory_agent/planning/tool_intent_profile.py`
+- `factory-agent/factory_agent/planning/tool_selector.py`
+- `factory-agent/factory_agent/registry/toolgen.py`
+- `factory-agent/factory_agent/tools.md`
+- `factory-agent/tests/test_tool_intent_profile.py`
+- `factory-agent/tests/test_tool_selector.py`
+- `factory-agent/tests/test_toolgen.py`
+- `rag_sources/01_emas_internal_docs/api_reference/openapi.json`
+- `rag_sources/01_emas_internal_docs/api_reference/tools.md`
+
+### Phase 21 Product Behavior
+
+No broad response-document rendering or generic composer migration was implemented. Phase 21 only prepared backend/OpenAPI/tool metadata and tests so Phase 22 can define the generic contracts safely.
 
 ## Phase 22 Checklist
 

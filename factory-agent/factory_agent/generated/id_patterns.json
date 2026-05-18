@@ -1,5 +1,15 @@
 {
   "fields": {
+    "approval_id": {
+      "entity": "approval",
+      "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+      "prefix": "CHAPPR-"
+    },
+    "arrival_id": {
+      "entity": "arrival",
+      "pattern": "^ARR-[A-Za-z0-9-]+$",
+      "prefix": "ARR-"
+    },
     "formula_id": {
       "entity": "formula",
       "pattern": "^F-[A-Za-z0-9-]+$",
@@ -53,6 +63,12 @@
   },
   "prefixes": [
     {
+      "entity": "approval",
+      "field": "approval_id",
+      "pattern": "^CHAPPR-[A-Za-z0-9-]+$",
+      "prefix": "CHAPPR-"
+    },
+    {
       "entity": "proposal",
       "field": "proposal_id",
       "pattern": "^AIPROP-[A-Za-z0-9-]+$",
@@ -75,6 +91,12 @@
       "field": "job_id",
       "pattern": "^JOB-[A-Za-z0-9-]+$",
       "prefix": "JOB-"
+    },
+    {
+      "entity": "arrival",
+      "field": "arrival_id",
+      "pattern": "^ARR-[A-Za-z0-9-]+$",
+      "prefix": "ARR-"
     },
     {
       "entity": "step",

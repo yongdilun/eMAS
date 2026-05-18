@@ -76,7 +76,46 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "agent_transaction",
+                "x-ai-action": "validate",
+                "x-ai-commit-mode": "dry_run",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "staged_writes_path": "staged_writes",
+                    "operation_results_path": "data.operations",
+                    "tool_name_field": "tool_name",
+                    "record_id_field": "primary_id",
+                    "row_status_field": "status",
+                    "row_data_field": "data",
+                    "idempotency_field": "idempotency_key",
+                    "source_state_basis": [
+                        "staged_write_args",
+                        "tool_output_ref"
+                    ]
+                },
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "source": "planner no-op groups before staged writes",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1",
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "agent_transaction",
+                    "staged_write",
+                    "business_change",
+                    "business_change_v1",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1",
+                    "validate",
+                    "dry_run",
+                    "approval_required",
+                    "row_outcome"
+                ]
             }
         },
         "/agent/transaction/commit": {
@@ -158,7 +197,45 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "agent_transaction",
+                "x-ai-action": "commit",
+                "x-ai-commit-mode": "commit",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "staged_writes_path": "staged_writes",
+                    "operation_results_path": "data.operations",
+                    "tool_name_field": "tool_name",
+                    "record_id_field": "primary_id",
+                    "row_status_field": "status",
+                    "row_data_field": "data",
+                    "idempotency_field": "idempotency_key",
+                    "source_state_basis": [
+                        "staged_write_args",
+                        "tool_output_ref"
+                    ]
+                },
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "source": "planner no-op groups before staged writes",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1",
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "agent_transaction",
+                    "staged_write",
+                    "business_change",
+                    "business_change_v1",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1",
+                    "commit",
+                    "approval_required",
+                    "row_outcome"
+                ]
             }
         },
         "/ai/chatbot/approvals": {
@@ -2901,7 +2978,28 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "inventory",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "material_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "inventory",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a material. material_id is generated with the MAT- prefix when omitted.",
@@ -3023,7 +3121,35 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "inventory",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "material_id",
+                "x-ai-display-id-field": "materialID",
+                "x-ai-display-name-field": "materialName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "materialName",
+                    "currentStock",
+                    "minStock",
+                    "reorderLevel",
+                    "unit",
+                    "storageLocation",
+                    "lastUpdated"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "inventory",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             }
         },
         "/inventory/product-stock": {
@@ -3721,7 +3847,28 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "job_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a job",
@@ -3843,7 +3990,34 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "job_id",
+                "x-ai-display-id-field": "job_id",
+                "x-ai-display-name-field": "product_id",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "priority",
+                    "deadline",
+                    "deadline_status",
+                    "quantity_total",
+                    "quantity_completed",
+                    "product_id"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             },
             "put": {
                 "description": "Update mutable job fields",
@@ -3910,7 +4084,53 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "job",
+                "x-ai-action": "update",
+                "x-ai-business-change-fields": {
+                    "contract": "business_change_v1",
+                    "entity_type": "job",
+                    "entity_id_field": "job_id",
+                    "display_id_field": "job_id",
+                    "changed_fields": [
+                        "deadline",
+                        "notes",
+                        "priority",
+                        "quantity_total",
+                        "status"
+                    ],
+                    "selector_fields": [
+                        "id",
+                        "job_id",
+                        "status",
+                        "priority",
+                        "product_id",
+                        "machine_id"
+                    ],
+                    "source_state_basis": [
+                        "read_collection_before_mutation",
+                        "read_entity_before_mutation"
+                    ],
+                    "row_outcome_fields": [
+                        "status",
+                        "primary_id",
+                        "data"
+                    ]
+                },
+                "x-ai-response-contracts": [
+                    "business_change_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "job",
+                    "update",
+                    "write",
+                    "mutation",
+                    "approval_required",
+                    "business_change",
+                    "business_change_v1",
+                    "field_change",
+                    "row_outcome"
+                ]
             },
             "delete": {
                 "description": "Delete a job and clear all slot assignments tied to this job",
@@ -4271,7 +4491,28 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "machine",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "machine_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "machine",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Creates a new machine in the factory. machine_id is generated with the M- prefix when omitted.",
@@ -4615,7 +4856,34 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "machine",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "machine_id",
+                "x-ai-display-id-field": "machineID",
+                "x-ai-display-name-field": "machineName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "machineName",
+                    "machineType",
+                    "location",
+                    "capacityPerHour",
+                    "utilizationRate",
+                    "lastMaintenanceDate"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "machine",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             },
             "put": {
                 "description": "Updates an existing machine's details",
@@ -5767,7 +6035,28 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "product",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "product_id",
+                "x-ai-no-match-contract": {
+                    "contract": "entity_agnostic_no_matching_records_v1",
+                    "data_path": "data",
+                    "empty_when": "array length is zero",
+                    "approval_required": false
+                },
+                "x-ai-response-contracts": [
+                    "entity_agnostic_no_matching_records_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "product",
+                    "read",
+                    "list",
+                    "filter",
+                    "no_match",
+                    "no_matching_records",
+                    "entity_agnostic_no_matching_records_v1"
+                ]
             },
             "post": {
                 "description": "Create a new product with the provided details. product_id is generated with the P- prefix when omitted.",
@@ -5889,7 +6178,33 @@
                             "$ref": "#/definitions/dto.Response"
                         }
                     }
-                }
+                },
+                "x-ai-entity": "product",
+                "x-ai-action": "read",
+                "x-ai-entity-id-field": "product_id",
+                "x-ai-display-id-field": "productID",
+                "x-ai-display-name-field": "productName",
+                "x-ai-primary-status-field": "status",
+                "x-ai-status-fields": [
+                    "status",
+                    "productName",
+                    "productType",
+                    "unitOfMeasure",
+                    "formulaID",
+                    "processID"
+                ],
+                "x-ai-response-contracts": [
+                    "entity_status_v1"
+                ],
+                "x-ai-capability-tags": [
+                    "product",
+                    "read",
+                    "lookup",
+                    "status",
+                    "entity_status",
+                    "entity_status_v1",
+                    "single_entity"
+                ]
             }
         },
         "/products/{id}/bom": {
@@ -8466,7 +8781,11 @@
                     "type": "string"
                 },
                 "formulaID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "formulaName": {
                     "type": "string"
@@ -8538,7 +8857,11 @@
             "type": "object",
             "properties": {
                 "arrivalID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^ARR-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "arrival",
+                    "x-ai-id-prefix": "ARR-",
+                    "x-ai-id-field": "arrival_id"
                 },
                 "createdAt": {
                     "type": "string"
@@ -8547,7 +8870,11 @@
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "notes": {
                     "type": "string"
@@ -8581,7 +8908,11 @@
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "materialName": {
                     "type": "string"
@@ -8615,13 +8946,25 @@
                     "type": "string"
                 },
                 "jobID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JOB-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "job",
+                    "x-ai-id-prefix": "JOB-",
+                    "x-ai-id-field": "job_id"
                 },
                 "jobStepID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "neededAt": {
                     "type": "string"
@@ -8870,7 +9213,11 @@
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "machineName": {
                     "type": "string"
@@ -8907,7 +9254,11 @@
                     "type": "number"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "stepID": {
                     "type": "string"
@@ -8933,7 +9284,11 @@
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "startTime": {
                     "type": "string"
@@ -8950,7 +9305,11 @@
                     "type": "string"
                 },
                 "machineID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^M-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "machine",
+                    "x-ai-id-prefix": "M-",
+                    "x-ai-id-field": "machine_id"
                 },
                 "maintenanceID": {
                     "type": "string"
@@ -8973,10 +9332,18 @@
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityPerUnit": {
                     "type": "number"
@@ -9094,14 +9461,26 @@
                 },
                 "formulaID": {
                     "description": "linked formula for BOM/recipe",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^F-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "formula",
+                    "x-ai-id-prefix": "F-",
+                    "x-ai-id-field": "formula_id"
                 },
                 "processID": {
                     "description": "active routing for scheduling",
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "productName": {
                     "type": "string"
@@ -9133,14 +9512,22 @@
                     "type": "string"
                 },
                 "materialID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^MAT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "inventory",
+                    "x-ai-id-prefix": "MAT-",
+                    "x-ai-id-field": "material_id"
                 },
                 "productComponentID": {
                     "description": "sub-product",
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityRequired": {
                     "description": "qty per 1 unit of parent",
@@ -9167,7 +9554,11 @@
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "quantityOnHand": {
                     "type": "number"
@@ -9206,13 +9597,21 @@
                     "type": "boolean"
                 },
                 "processID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^PRC-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "process",
+                    "x-ai-id-prefix": "PRC-",
+                    "x-ai-id-field": "process_id"
                 },
                 "processName": {
                     "type": "string"
                 },
                 "productID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^P-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "product",
+                    "x-ai-id-prefix": "P-",
+                    "x-ai-id-field": "product_id"
                 },
                 "sequence": {
                     "description": "order when multiple (0=primary)",
@@ -9246,7 +9645,11 @@
                     "type": "integer"
                 },
                 "slotID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^SLOT-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "slot",
+                    "x-ai-id-prefix": "SLOT-",
+                    "x-ai-id-field": "slot_id"
                 },
                 "startTime": {
                     "type": "string"
@@ -9269,7 +9672,11 @@
                     "type": "string"
                 },
                 "jobStepID": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^JS-[A-Za-z0-9-]+$",
+                    "x-ai-entity": "step",
+                    "x-ai-id-prefix": "JS-",
+                    "x-ai-id-field": "job_step_id"
                 },
                 "notes": {
                     "type": "string"
