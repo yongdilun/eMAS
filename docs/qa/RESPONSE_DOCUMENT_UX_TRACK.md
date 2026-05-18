@@ -25,7 +25,7 @@ Created: 2026-05-18
 | 15 | Final response visual quality oracle | Done | Codex | Added browser semantic oracle coverage for RD-001 final visual quality, compact grouped rendering, expandable clean audit, forbidden-text detection, and duplicate affected-record evidence. |
 | 16 | Approval copy and pending guidance cleanup | Done | Codex | Removed always-visible pending-approval helper copy from normal approval cards and added component plus RD-001 semantic-probe assertions forbidding it. |
 | 17 | Entity-agnostic no-op mutation result contract | Done | Codex | Added typed no-op mutation groups with entity/selector/change/count fields, approval-safe partial and all-no-op backend contracts, and mocked browser semantic proof. |
-| 18 | Read-only status response contract | Not Started | Codex | Make machine/status read-only answers typed and clean: no raw assistant markers, no dump-style API labels, no duplicate answer blocks, and no approval/mutation UI. |
+| 18 | Read-only status response contract | Done | Codex | Added generic typed `status_result` response-document blocks for read-only status answers, clean machine labels, frontend rendering/probes, and RD-008 browser proof. |
 | 19 | RAG question-type routing contract | Not Started | Codex | Separate document-content RAG questions from entity-specific procedure selection so LOTO/procedure questions do not wrongly require machine IDs. |
 | 20 | Entity-specific overfitting audit | Not Started | Codex | Audit code, tests, fixtures, and docs for job/machine/product/material-specific fixes that should become generic contracts before Phase 21. |
 
@@ -35,7 +35,7 @@ Created: 2026-05-18
 - RD-001 noisy final mutation output is fixed in Phase 14/15 at the backend response-document contract and browser visual oracle: final completed mutation blocks summarize 21 jobs across 2 approved business changes and omit raw assistant/internal-id noise.
 - Phase 16 removed the always-visible helper sentence `Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it.` from normal approval display.
 - No-data mutation steps now have an explicit Phase 17 no-op contract with visible `Not changed` groups, approval exclusion, and no mutation attempt for zero-match groups.
-- Read-only status responses can still leak raw assistant markdown and API-dump labels. Example: `Show status for machine with machine id M-CNC-01` renders `done_all`, raw `**Success**`, duplicated answer text, `Machineid`, `Machinename`, `Capacityperhour`, and a weak generic `Results` block. Phase 18 fixes this class.
+- Read-only status response cleanup is complete for Phase 18. `Show status for machine with machine id M-CNC-01` now renders one typed `status_result` answer and forbids raw assistant markers, dump-style API labels, duplicate answer text, approval UI, and mutation UI.
 - LOTO document-content questions can still be misclassified as machine-specific procedure selection. Example: `According to the LOTO procedure, what notification is required before starting lockout` can ask for a machine ID instead of answering from RAG. Phase 19 fixes this class.
 - Several recent fixes are still at risk of becoming entity-specific special cases. Phase 20 audits job/machine/product/material-specific implementation, tests, and docs before Phase 21 is planned.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
@@ -1220,20 +1220,20 @@ npm run test:e2e:response-document -- --grep "no-op|Not changed|No changes were 
 
 ## Phase 18 Checklist
 
-- [ ] Add backend response-document contract coverage for machine-status read-only answers.
-- [ ] Compose machine-status answers from typed tool facts, not raw assistant markdown.
-- [ ] Render one concise status summary plus meaningful key facts.
-- [ ] Use human labels such as `Machine ID`, `Machine name`, `Machine type`, `Location`, `Status`, `Capacity per hour`, `Last maintenance`, and `Maintenance interval`.
-- [ ] Suppress low-value zero/default fields from the default visible answer.
-- [ ] Forbid raw `done_all`, raw `**Success**`, dump-style labels, duplicate answer blocks, approval UI, and mutation UI.
-- [ ] Add frontend component/probe/browser assertions for RD-008.
-- [ ] Update manual regression bank and tracker.
-- [ ] Run backend and frontend verification.
-- [ ] Commit Phase 18.
+- [x] Add backend response-document contract coverage for machine-status read-only answers.
+- [x] Compose machine-status answers from typed tool facts, not raw assistant markdown.
+- [x] Render one concise status summary plus meaningful key facts.
+- [x] Use human labels such as `Machine ID`, `Machine name`, `Machine type`, `Location`, `Status`, `Capacity per hour`, `Last maintenance`, and `Maintenance interval`.
+- [x] Suppress low-value zero/default fields from the default visible answer.
+- [x] Forbid raw `done_all`, raw `**Success**`, dump-style labels, duplicate answer blocks, approval UI, and mutation UI.
+- [x] Add frontend component/probe/browser assertions for RD-008.
+- [x] Update manual regression bank and tracker.
+- [x] Run backend and frontend verification.
+- [x] Commit Phase 18.
 
 ## Phase 18 Implementation Notes
 
-Status: Not Started
+Status: Done
 
 ### Known Bad Output
 
@@ -1268,6 +1268,53 @@ Machine details
 ```
 
 No approval card, mutation result, raw assistant marker, or dump-style API label should appear.
+
+### Product Bugs Found And Fixed
+
+- Backend read-only completion still trusted terminal assistant markdown for the visible short answer, so raw `done_all` and `**Success**` could become the rendered response even when typed tool data was available.
+- Read-only machine details were projected through generic result rows/tables, exposing camelCase API labels such as `Machineid`, `Capacityperhour`, and default zero setup/cleaning/changeover fields.
+- The frontend activity icon rendered the Material Symbol ligature text `done_all` into DOM text for completed runs. Activity icons now render through `data-icon` CSS content so icon names do not appear in visible/probe text.
+
+### Product Fix
+
+- Added a backend typed `status_result` response-document block for single-entity read/status facts.
+- The contract is generic beyond `M-CNC-01`: status composition is driven by a status-like read intent plus typed row facts (`entity_type`, `entity_id`, `primary_status`, human-labeled fields), not by one prompt or fixture id.
+- Machine status labels are normalized to `Machine ID`, `Machine name`, `Machine type`, `Location`, `Status`, `Capacity per hour`, `Last maintenance`, and `Maintenance interval`.
+- Default/zero technical fields such as setup, cleaning, changeover, and utilization defaults are not shown in the default visible answer. Full technical detail requests can use collapsed secondary fields.
+- Frontend response-document validation and rendering now support `status_result`, render one short answer plus typed facts, and suppress duplicate generic result tables for status reads.
+
+### Files Changed
+
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/factory_agent/services/response_document_service.py`
+- `factory-agent/tests/test_response_document_contract.py`
+- `eMas Front/src/components/features/chat/factory-agent/ActivityTimeline.jsx`
+- `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs`
+- `eMas Front/src/components/features/chat/factory-agent/ResponseDocumentRenderer.jsx`
+- `eMas Front/src/components/features/chat/factory-agent/responseDocumentContract.js`
+- `eMas Front/src/styles/index.css`
+- `eMas Front/e2e/specs/final-response-quality.spec.js`
+- `eMas Front/e2e/support/responseDocumentProbe.js`
+- `eMas Front/e2e/support/responseDocumentScenarios.js`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+### Commands Run
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py -q
+
+Set-Location "..\eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "machine status|read-only status|M-CNC-01|status response"
+```
+
+### Test Results
+
+- Backend response-document contract/failure lane: 28 passed.
+- Frontend unit/component/probe lane: 114 passed.
+- Focused response-document browser grep: 2 passed, including RD-008 read-only status and the machine-status happy path.
 
 ### Phase 18 Verification Target
 
@@ -1530,7 +1577,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Continue the queued implementation sequence with Phase 17, then Phase 18 and Phase 19. Phase 20 must run before Phase 21 is defined so the next phase is based on the entity-specific overfitting audit rather than another guessed special case.
+Continue the queued implementation sequence with Phase 19, then Phase 20. Phase 20 must run before Phase 21 is defined so the next phase is based on the entity-specific overfitting audit rather than another guessed special case.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

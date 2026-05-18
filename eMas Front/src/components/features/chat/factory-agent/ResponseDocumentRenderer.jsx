@@ -385,6 +385,45 @@ function SourceListBlock({ block }) {
   )
 }
 
+function StatusResultBlock({ block, documentMessage }) {
+  const fields = Array.isArray(block.fields) ? block.fields : []
+  const secondaryFields = Array.isArray(block.secondary_fields) ? block.secondary_fields : []
+  const summary = safeText(block.summary)
+  const shouldShowSummary = summary && summary !== safeText(documentMessage)
+  return (
+    <CompactCard title={block.title || 'Status'} blockType="status_result" blockId={block.id}>
+      {shouldShowSummary ? <div className="mt-1 text-sm text-ink">{summary}</div> : null}
+      {fields.length ? (
+        <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+          {fields.map((field, index) => (
+            <div key={`${field.key || field.label}-${index}`} className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2">
+              <dt className="font-semibold text-ink-muted">{field.label}</dt>
+              <dd className="mt-0.5 break-words text-ink">{String(field.value)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {secondaryFields.length ? (
+        <Disclosure
+          className="mt-3 rounded-md border border-hairline bg-surface-2"
+          summaryClassName="cursor-pointer px-3 py-2 text-xs font-medium text-ink-subtle"
+          title="Technical details"
+          defaultCollapsed={block.details_collapsed !== false}
+        >
+          <dl className="grid gap-2 border-t border-hairline px-3 py-3 text-xs sm:grid-cols-2">
+            {secondaryFields.map((field, index) => (
+              <div key={`${field.key || field.label}-${index}`} className="min-w-0">
+                <dt className="font-semibold text-ink-muted">{field.label}</dt>
+                <dd className="mt-0.5 break-words text-ink">{String(field.value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </Disclosure>
+      ) : null}
+    </CompactCard>
+  )
+}
+
 function DiagnosticBlock({ block }) {
   const technicalDetails = block.technical_details && typeof block.technical_details === 'object'
     ? block.technical_details
@@ -443,6 +482,7 @@ function renderBlock(block, props) {
   if (block.type === 'result_summary') return <ResultSummaryBlock key={block.id} block={block} />
   if (block.type === 'mutation_result') return <MutationResultBlock key={block.id} block={block} />
   if (block.type === 'result_table') return <ExpandableTable key={block.id} title={block.title || 'Affected records'} rows={block.rows} defaultCollapsed blockId={block.id} />
+  if (block.type === 'status_result') return <StatusResultBlock key={block.id} block={block} documentMessage={props.documentMessage} />
   if (block.type === 'record_preview') return <RecordPreviewBlock key={block.id} block={block} />
   if (block.type === 'knowledge_answer') return <div key={block.id} className="mt-3 whitespace-pre-wrap break-words text-sm text-ink">{block.answer}</div>
   if (block.type === 'source_list') return <SourceListBlock key={block.id} block={block} />
@@ -513,6 +553,7 @@ export default function ResponseDocumentRenderer({
         showApprovalActions,
         decideApproval,
         isDecidingApproval,
+        documentMessage: message,
       })]
     })
     .filter(Boolean)

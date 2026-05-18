@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import { responseDocumentTrafficPrompt } from '../fixtures/factoryAgentFixtures.js'
 import { expectTransitionCheckpoint } from '../support/factoryAgentTransitionOracle.js'
-import { pendingApprovalGuidanceProbeText, serializeSemanticProbe } from '../support/responseDocumentProbe.js'
+import { pendingApprovalGuidanceProbeText, readOnlyStatusForbiddenProbeText, serializeSemanticProbe } from '../support/responseDocumentProbe.js'
 import {
   cascadeDefinition,
   forbiddenResponseDocumentText,
@@ -669,15 +669,67 @@ test.describe('Final response quality response_document gate', () => {
     })
   })
 
-  test('read-only machine status and RAG source blocks render from typed documents', async ({ page }) => {
+  test('RD-008 read-only status response renders one clean machine status contract', async ({ page }, testInfo) => {
     await openChat(page)
     await sendChatPrompt(page, responseDocumentReadStatusPrompt)
-    await expect(page.getByText('Machine M-CNC-01 is running normally at 87% utilization with no active alarms.').first()).toBeVisible()
+    const statusSummary = page.getByText('Machine M-CNC-01 is running.')
+    await expect(statusSummary).toHaveCount(1)
     await expandActivity(page, 'Run complete')
     await expect(page.getByText('Read machine status').first()).toBeVisible()
     await expect(page.getByText('Run complete').first()).toBeVisible()
-    await expect(page.locator('details').filter({ hasText: 'Machine status (1)' }).first()).toBeVisible()
+    await expect(page.locator('[data-response-block-type="status_result"]').last()).toBeVisible()
+    await expect(page.getByText('Machine ID').first()).toBeVisible()
+    await expect(page.getByText('Machine name').first()).toBeVisible()
+    await expect(page.getByText('Machine type').first()).toBeVisible()
+    await expect(page.getByText('Location').first()).toBeVisible()
+    await expect(page.getByText('Status').first()).toBeVisible()
+    await expect(page.getByText('Capacity per hour').first()).toBeVisible()
+    await expect(page.getByText('Last maintenance').first()).toBeVisible()
+    await expect(page.getByText('Maintenance interval').first()).toBeVisible()
+    const summary = await expectTransitionCheckpoint(page, {
+      checkpoint: 'RD-008 read-only status response contract',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['status_result'],
+        backendBlockTypes: ['status_result'],
+        hiddenBlockTypes: ['approval_required', 'mutation_result', 'result_table'],
+        hiddenBackendBlockTypes: ['approval_required', 'mutation_result', 'result_table', 'record_preview'],
+        approvalActionCount: 0,
+        forbiddenText: readOnlyStatusForbiddenProbeText,
+        textIncludes: [
+          responseDocumentReadStatusPrompt,
+          'Machine M-CNC-01 is running.',
+          'Machine ID',
+          'Machine name',
+          'Machine type',
+          'Location',
+          'Status',
+          'Capacity per hour',
+          'Last maintenance',
+          'Maintenance interval',
+        ],
+        textExcludes: [
+          /Approval required/i,
+          /Mutation result/i,
+          /Machine status \(1\)/i,
+          /Default setup/i,
+          /Default cleaning/i,
+          /Default changeover/i,
+          /Utilization rate/i,
+        ],
+      },
+    })
+    await testInfo.attach('rd-008-read-only-status-semantic-probe.json', {
+      body: serializeSemanticProbe(summary),
+      contentType: 'application/json',
+    })
     await expect(page.getByText('Approval required')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: exactAction('Approve') })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: exactAction('Reject') })).toHaveCount(0)
 
     await sendChatPrompt(page, responseDocumentLotoPrompt)
     await expect(page.getByText(/Use the M-CNC-01 lockout\/tagout procedure/i).first()).toBeVisible()

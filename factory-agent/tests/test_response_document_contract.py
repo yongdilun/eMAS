@@ -108,12 +108,12 @@ def _plan(*, session_id: str, plan_id: str, created_at: datetime) -> Plan:
     )
 
 
-def _user_message(*, session_id: str, created_at: datetime) -> Message:
+def _user_message(*, session_id: str, created_at: datetime, content: str = "Change one job priority") -> Message:
     return Message(
         message_id=f"{session_id}-user",
         session_id=session_id,
         role="user",
-        content="Change one job priority",
+        content=content,
         created_at=created_at,
     )
 
@@ -213,14 +213,17 @@ def _read_step(
     completed_at: datetime,
     rows: list[dict[str, Any]],
     summary: str,
+    tool_name: str = "get__jobs",
+    args: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
 ) -> PlanStep:
     return PlanStep(
         step_id=step_id,
         plan_id=plan_id,
         session_id=session_id,
         step_index=0,
-        tool_name="get__jobs",
-        args={"fields": "job_id,priority,status"},
+        tool_name=tool_name,
+        args=args if args is not None else {"fields": "job_id,priority,status"},
         bindings=[],
         status="DONE",
         idempotency_key=f"{step_id}-key",
@@ -228,7 +231,7 @@ def _read_step(
         retry_count=0,
         max_retries=0,
         completed_at=completed_at,
-        result={"success": True, "data": rows},
+        result=result if result is not None else {"success": True, "data": rows},
         result_summary=summary,
     )
 
@@ -421,6 +424,20 @@ def test_response_document_schema_validates_phase_1_block_types():
                     "rows": [{"row_id": "JOB-RD-001", "status": "succeeded"}],
                 },
                 {
+                    "id": "status:op-1",
+                    "type": "status_result",
+                    "operation_id": "op-1",
+                    "title": "Machine status",
+                    "summary": "Machine M-CNC-01 is running.",
+                    "entity_type": "machine",
+                    "entity_id": "M-CNC-01",
+                    "primary_status": "running",
+                    "fields": [
+                        {"key": "machine_id", "label": "Machine ID", "value": "M-CNC-01"},
+                        {"key": "status", "label": "Status", "value": "running", "primary": True},
+                    ],
+                },
+                {
                     "id": "knowledge:op-1",
                     "type": "knowledge_answer",
                     "operation_id": "op-1",
@@ -454,6 +471,7 @@ def test_response_document_schema_validates_phase_1_block_types():
         "approval_required",
         "mutation_result",
         "result_table",
+        "status_result",
         "knowledge_answer",
         "source_list",
         "diagnostic",
@@ -1187,6 +1205,117 @@ async def test_read_only_result_shape_is_deterministic_for_table_and_list(db_ses
     assert list_body["response_document"]["invariants"]["read_result_shape"] == "list"
     assert any(block["type"] == "record_preview" and block["title"] == "Results" for block in list_body["response_document"]["blocks"])
     assert not any(block["type"] == "approval_required" for block in table_body["response_document"]["blocks"])
+
+
+@pytest.mark.asyncio
+async def test_machine_status_read_only_response_uses_typed_status_contract(db_session):
+    created_at = datetime(2026, 5, 18, 14, 30, 0)
+    session_id = "rd-machine-status"
+    plan_id = "rd-machine-status-plan"
+    raw_assistant_markdown = (
+        "done_all\n\n"
+        "**Success**\n\n"
+        "Machine **M-CNC-01** is currently **RUNNING**.\n\n"
+        "- **Machineid:** M-CNC-01\n"
+        "- **Machinename:** CNC Mill 01\n"
+        "- **Capacityperhour:** 40\n"
+        "- **Defaultsetuptime:** 0\n"
+        "- **Defaultcleaningtime:** 0\n"
+        "- **Defaultchangeovertime:** 0\n"
+        "- **Utilizationrate:** 0"
+    )
+    machine_payload = {
+        "machineID": "M-CNC-01",
+        "machineName": "CNC Mill 01",
+        "machineType": "CNC mill",
+        "location": "Line 1",
+        "status": "RUNNING",
+        "capacityPerHour": 40,
+        "lastMaintenanceDate": "2026-05-01",
+        "maintenanceIntervalDays": 30,
+        "defaultSetupTime": 0,
+        "defaultCleaningTime": 0,
+        "defaultChangeoverTime": 0,
+        "utilizationRate": 0,
+    }
+    prompt = "Show status for machine with machine id M-CNC-01"
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=8,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-machine-status-step",
+                completed_at=created_at + timedelta(seconds=2),
+                rows=[],
+                summary=raw_assistant_markdown,
+                tool_name="get__machines_{id}",
+                args={"id": "M-CNC-01"},
+                result={"success": True, "data": machine_payload},
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content=raw_assistant_markdown,
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=3),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    serialized = json.dumps(document)
+
+    assert document["state"] == "completed"
+    assert document["message"] == "Machine M-CNC-01 is running."
+    assert document["summary"] == "Machine M-CNC-01 is running."
+    assert document["invariants"]["read_result_shape"] == "status"
+    assert document["invariants"]["read_status_contract"] == "entity_status_v1"
+    assert document["invariants"]["read_status_entity_type"] == "machine"
+    assert [block["type"] for block in document["blocks"]].count("short_message") == 1
+    assert [block["type"] for block in document["blocks"]].count("status_result") == 1
+    assert not any(block["type"] in {"approval_required", "mutation_result", "result_table", "record_preview"} for block in document["blocks"])
+
+    status_block = next(block for block in document["blocks"] if block["type"] == "status_result")
+    assert status_block["title"] == "Machine status"
+    assert status_block["summary"] == "Machine M-CNC-01 is running."
+    assert status_block["entity_type"] == "machine"
+    assert status_block["entity_id"] == "M-CNC-01"
+    assert status_block["primary_status"] == "running"
+    assert [(field["label"], field["value"]) for field in status_block["fields"]] == [
+        ("Machine ID", "M-CNC-01"),
+        ("Machine name", "CNC Mill 01"),
+        ("Machine type", "CNC mill"),
+        ("Location", "Line 1"),
+        ("Status", "running"),
+        ("Capacity per hour", "40"),
+        ("Last maintenance", "2026-05-01"),
+        ("Maintenance interval", "30 days"),
+    ]
+    assert status_block["secondary_fields"] == []
+    assert any(step["kind"] == "read" and step["title"] == "Read machine status" for step in document["run_steps"])
+
+    for forbidden in [
+        "done_all",
+        "**Success**",
+        "Machineid",
+        "Machinename",
+        "Capacityperhour",
+        "Defaultsetuptime",
+        "Defaultcleaningtime",
+        "Defaultchangeovertime",
+        "Utilizationrate",
+    ]:
+        assert forbidden not in serialized
 
 
 @pytest.mark.asyncio

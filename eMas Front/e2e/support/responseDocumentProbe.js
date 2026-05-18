@@ -55,6 +55,18 @@ export const pendingApprovalGuidanceProbeText = Object.freeze([
   },
 ])
 
+export const readOnlyStatusForbiddenProbeText = Object.freeze([
+  { label: 'raw assistant done_all marker', pattern: /(?:^|\s)done_all(?:\s|$)/i },
+  { label: 'raw assistant success markdown', pattern: /\*\*Success\*\*/i },
+  { label: 'dump-style Machineid label', pattern: /\bMachineid\b/i },
+  { label: 'dump-style Machinename label', pattern: /\bMachinename\b/i },
+  { label: 'dump-style Capacityperhour label', pattern: /\bCapacityperhour\b/i },
+  { label: 'dump-style Defaultsetuptime label', pattern: /\bDefaultsetuptime\b/i },
+  { label: 'dump-style Defaultcleaningtime label', pattern: /\bDefaultcleaningtime\b/i },
+  { label: 'dump-style Defaultchangeovertime label', pattern: /\bDefaultchangeovertime\b/i },
+  { label: 'dump-style Utilizationrate label', pattern: /\bUtilizationrate\b/i },
+])
+
 const DISPLAYABLE_BLOCK_TYPES = new Set([
   'approval_required',
   'approval_card',
@@ -62,6 +74,7 @@ const DISPLAYABLE_BLOCK_TYPES = new Set([
   'result_summary',
   'mutation_result',
   'result_table',
+  'status_result',
   'record_preview',
   'knowledge_answer',
   'source_list',

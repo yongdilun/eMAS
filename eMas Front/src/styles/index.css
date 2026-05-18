@@ -136,6 +136,10 @@
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
+.material-symbols-outlined[data-icon]::before {
+  content: attr(data-icon);
+}
+
 .gantt-grid-day {
   border-color: color-mix(in srgb, var(--color-hairline) 86%, transparent);
 }

@@ -2,7 +2,7 @@ export const responseDocumentCascadePrompt =
   'change all medium priority job to high then change all high priority job to low'
 export const responseDocumentReverseCascadePrompt =
   'change all high priority job to low then change all low priority job to medium'
-export const responseDocumentReadStatusPrompt = 'What is the status of M-CNC-01?'
+export const responseDocumentReadStatusPrompt = 'Show status for machine with machine id M-CNC-01'
 export const responseDocumentLotoPrompt = 'What LOTO procedure applies before working on M-CNC-01?'
 export const responseDocumentNoResultsPrompt = 'Find response_document jobs that do not exist'
 export const responseDocumentPartialFailurePrompt = 'Run response_document partial failure fixture'
@@ -578,11 +578,12 @@ export function allNoOpDocument(session) {
 }
 
 export function readStatusDocument(session) {
+  const summary = 'Machine M-CNC-01 is running.'
   return baseDocument(session, {
     operationId: 'pw-plan-rd-read-status',
     revision: 3,
     state: 'completed',
-    message: 'Machine M-CNC-01 is running normally at 87% utilization with no active alarms.',
+    message: summary,
     currentStepId: 'completed-read',
     runSteps: [
       { step_id: 'read-machine-status', kind: 'read', state: 'completed', title: 'Read machine status', summary: 'M-CNC-01 status was retrieved.' },
@@ -590,13 +591,33 @@ export function readStatusDocument(session) {
     ],
     blocks: [
       {
-        id: 'table:machine-status',
-        type: 'result_table',
+        id: 'status:machine-status',
+        type: 'status_result',
         operation_id: 'pw-plan-rd-read-status',
         title: 'Machine status',
-        rows: [{ machine_id: 'M-CNC-01', status: 'RUNNING', utilization: '87%', alarms: 'none' }],
+        summary,
+        entity_type: 'machine',
+        entity_id: 'M-CNC-01',
+        primary_status: 'running',
+        fields: [
+          { key: 'machine_id', label: 'Machine ID', value: 'M-CNC-01' },
+          { key: 'machine_name', label: 'Machine name', value: 'CNC Mill 01' },
+          { key: 'machine_type', label: 'Machine type', value: 'CNC mill' },
+          { key: 'location', label: 'Location', value: 'Line 1' },
+          { key: 'status', label: 'Status', value: 'running', primary: true },
+          { key: 'capacity_per_hour', label: 'Capacity per hour', value: '40' },
+          { key: 'last_maintenance', label: 'Last maintenance', value: '2026-05-01' },
+          { key: 'maintenance_interval', label: 'Maintenance interval', value: '30 days' },
+        ],
+        secondary_fields: [],
+        details_collapsed: true,
       },
     ],
+    invariants: {
+      read_result_shape: 'status',
+      read_status_contract: 'entity_status_v1',
+      read_status_entity_type: 'machine',
+    },
   })
 }
 

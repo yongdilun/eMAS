@@ -468,6 +468,19 @@ class ResultTableBlock(ResponseBlockBase):
     approval_id: str | None = None
 
 
+class StatusResultBlock(ResponseBlockBase):
+    type: Literal["status_result"] = "status_result"
+    operation_id: str | None = None
+    title: str = Field(default="Status", min_length=1)
+    summary: str = Field(min_length=1)
+    entity_type: str | None = None
+    entity_id: str | None = None
+    primary_status: str | None = None
+    fields: list[dict[str, Any]] = Field(default_factory=list)
+    secondary_fields: list[dict[str, Any]] = Field(default_factory=list)
+    details_collapsed: bool = True
+
+
 class RecordPreviewBlock(ResponseBlockBase):
     type: Literal["record_preview"] = "record_preview"
     title: str = Field(default="Records", min_length=1)
@@ -513,6 +526,7 @@ ResponseBlock = Annotated[
     | CompletedStepBlock
     | ResultSummaryBlock
     | ResultTableBlock
+    | StatusResultBlock
     | RecordPreviewBlock
     | KnowledgeAnswerBlock
     | SourceListBlock

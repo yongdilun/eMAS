@@ -19,6 +19,16 @@ const stateTone = {
     complete: 'text-primary bg-primary/10',
 }
 
+function MaterialActivityIcon({ icon, className = '' }) {
+    return (
+        <span
+            aria-hidden="true"
+            className={`material-symbols-outlined ${className}`}
+            data-icon={icon}
+        />
+    )
+}
+
 function latestStep(steps) {
     if (!Array.isArray(steps) || !steps.length) return null
     return steps[steps.length - 1]
@@ -94,7 +104,7 @@ const ActivityTimeline = ({ steps = [] }) => {
             >
                 <span className="flex min-w-0 items-center gap-2">
                     <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${tone}`}>
-                        <span className={`material-symbols-outlined text-[14px] ${iconMotion}`}>{icon}</span>
+                        <MaterialActivityIcon icon={icon} className={`text-[14px] ${iconMotion}`} />
                     </span>
                     <span className="min-w-0">
                         <span className="block truncate font-medium text-ink-muted">{summaryLabel}</span>
@@ -105,9 +115,7 @@ const ActivityTimeline = ({ steps = [] }) => {
                 </span>
                 <span className="flex shrink-0 items-center gap-1 text-[11px] text-ink-subtle">
                     {rows.length} update{rows.length === 1 ? '' : 's'}
-                    <span className="material-symbols-outlined text-base">
-                        {expanded ? 'expand_less' : 'expand_more'}
-                    </span>
+                    <MaterialActivityIcon icon={expanded ? 'expand_less' : 'expand_more'} className="text-base" />
                 </span>
             </button>
 
@@ -126,7 +134,7 @@ const ActivityTimeline = ({ steps = [] }) => {
                                         }`}
                                 >
                                     <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${stepTone}`}>
-                                        <span className={`material-symbols-outlined text-[11px] ${stepMotion}`}>{stepIcon}</span>
+                                        <MaterialActivityIcon icon={stepIcon} className={`text-[11px] ${stepMotion}`} />
                                     </span>
                                     <span className="min-w-0 flex-1">
                                         <span className="flex items-center gap-2 text-ink-muted">

@@ -31,6 +31,7 @@ from factory_agent.schemas import (
     RunStep,
     ShortMessageBlock,
     SourceListBlock,
+    StatusResultBlock,
     TimelineEventResponse,
 )
 
@@ -1791,6 +1792,222 @@ def _read_summary(rows: list[dict[str, Any]], fallback: str | None) -> str:
     return f"Found {len(rows)} {_plural(len(rows), 'record')}."
 
 
+_STATUS_VALUE_KEYS = ("currentstatus", "machinestatus", "operationalstatus", "state", "status")
+_STATUS_OUTCOME_VALUES = {"succeeded", "success", "ok", "done", "updated", "created", "deleted", "applied", "pending"}
+_STATUS_METADATA_KEYS = {
+    "operationid",
+    "stepid",
+    "toolname",
+    "rowid",
+    "approvalid",
+    "success",
+    "data",
+    "result",
+    "outcome",
+}
+_STATUS_LOW_VALUE_KEYS = {
+    "defaultsetuptime",
+    "defaultcleaningtime",
+    "defaultchangeovertime",
+    "utilizationrate",
+}
+_STATUS_INTENT_RE = re.compile(r"\b(status|state|health|condition|running|availability|available|alarms?)\b", re.IGNORECASE)
+_STATUS_ENTITY_ID_KEYS: dict[str, tuple[str, ...]] = {
+    "machine": ("machineid", "id", "recordid", "rowid"),
+    "job": ("jobid", "id", "recordid", "rowid"),
+    "product": ("productid", "id", "recordid", "rowid"),
+    "inventory": ("inventoryid", "materialid", "id", "recordid", "rowid"),
+    "record": ("id", "recordid", "rowid"),
+}
+_STATUS_FIELD_ORDER: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {
+    "machine": [
+        ("machine_id", "Machine ID", ("machineid", "id")),
+        ("machine_name", "Machine name", ("machinename", "name")),
+        ("machine_type", "Machine type", ("machinetype", "type")),
+        ("location", "Location", ("location",)),
+        ("status", "Status", _STATUS_VALUE_KEYS),
+        ("capacity_per_hour", "Capacity per hour", ("capacityperhour",)),
+        ("last_maintenance", "Last maintenance", ("lastmaintenancedate", "lastmaintenance")),
+        ("maintenance_interval", "Maintenance interval", ("maintenanceintervaldays", "maintenanceinterval")),
+    ],
+}
+
+
+def _canonical_status_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+
+
+def _human_status_label(key: Any) -> str:
+    raw = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(key or "field"))
+    raw = raw.replace("_", " ").replace("-", " ")
+    parts = [part for part in raw.split() if part]
+    if not parts:
+        return "Field"
+    return " ".join("ID" if part.lower() == "id" else part.capitalize() for part in parts)
+
+
+def _status_row_value(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    wanted = {_canonical_status_key(alias) for alias in aliases}
+    for key, value in row.items():
+        if _canonical_status_key(key) in wanted and value not in (None, ""):
+            return value
+    return None
+
+
+def _status_entity_type(row: dict[str, Any]) -> str:
+    tool_name = _trimmed(row.get("tool_name")).lower()
+    key_text = " ".join(_canonical_status_key(key) for key in row)
+    probe = f"{tool_name} {key_text}"
+    if "machine" in probe:
+        return "machine"
+    if "job" in probe:
+        return "job"
+    if "product" in probe:
+        return "product"
+    if "inventory" in probe or "material" in probe:
+        return "inventory"
+    return "record"
+
+
+def _status_display_value(canonical: str, value: Any) -> str:
+    text = _trimmed(value)
+    if not text:
+        return ""
+    if canonical in {"status", "machine_status"}:
+        return text.replace("_", " ").lower()
+    if canonical == "maintenance_interval" and text.isdigit():
+        count = int(text)
+        return f"{count} {_plural(count, 'day')}"
+    return text
+
+
+def _is_zeroish(value: Any) -> bool:
+    if value in (None, ""):
+        return True
+    if isinstance(value, (int, float)):
+        return float(value) == 0.0
+    text = _trimmed(value).lower()
+    return text in {"0", "0.0", "0%", "none", "n/a", "null", "false"}
+
+
+def _status_request_wants_full_details(session: Any) -> bool:
+    text = _trimmed(getattr(session, "current_intent", None)).lower()
+    return bool(re.search(r"\b(full|technical|raw|all\s+fields?|every\s+field|complete\s+details?)\b", text))
+
+
+def _status_primary_value(row: dict[str, Any]) -> str | None:
+    for key in _STATUS_VALUE_KEYS:
+        value = _status_row_value(row, (key,))
+        display = _status_display_value("status", value)
+        if display and display not in _STATUS_OUTCOME_VALUES:
+            return display
+    return None
+
+
+def _status_entity_id(row: dict[str, Any], entity_type: str) -> str | None:
+    value = _status_row_value(row, _STATUS_ENTITY_ID_KEYS.get(entity_type, _STATUS_ENTITY_ID_KEYS["record"]))
+    text = _trimmed(value)
+    return text or None
+
+
+def _status_visible_fields(row: dict[str, Any], entity_type: str) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    order = _STATUS_FIELD_ORDER.get(entity_type)
+    if not order:
+        entity_id = _status_entity_id(row, entity_type)
+        status = _status_primary_value(row)
+        if entity_id:
+            fields.append({"key": f"{entity_type}_id", "label": f"{entity_type.capitalize()} ID", "value": entity_id})
+        if status:
+            fields.append({"key": "status", "label": "Status", "value": status, "primary": True})
+        return fields
+
+    seen: set[str] = set()
+    for canonical, label, aliases in order:
+        value = _status_row_value(row, aliases)
+        if value in (None, ""):
+            continue
+        if canonical in {"capacity_per_hour", "maintenance_interval"} and _is_zeroish(value):
+            continue
+        display = _status_display_value(canonical, value)
+        if not display:
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        fields.append({"key": canonical, "label": label, "value": display, "primary": canonical == "status"})
+    return fields
+
+
+def _status_secondary_fields(row: dict[str, Any], *, visible_keys: set[str], include: bool) -> list[dict[str, Any]]:
+    if not include:
+        return []
+    fields: list[dict[str, Any]] = []
+    for key, value in row.items():
+        canonical = _canonical_status_key(key)
+        if canonical in visible_keys or canonical in _STATUS_METADATA_KEYS:
+            continue
+        if canonical in _STATUS_LOW_VALUE_KEYS and _is_zeroish(value):
+            continue
+        display = _status_display_value(canonical, value)
+        if not display:
+            continue
+        fields.append({"key": str(key), "label": _human_status_label(key), "value": display})
+    return fields[:12]
+
+
+def _status_result_from_read_rows(
+    rows: list[dict[str, Any]],
+    *,
+    operation_id: str | None,
+    session: Any,
+) -> dict[str, Any] | None:
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        return None
+    row = rows[0]
+    intent_probe = f"{_trimmed(getattr(session, 'current_intent', None))} {_trimmed(row.get('tool_name'))}"
+    if not _STATUS_INTENT_RE.search(intent_probe):
+        return None
+    primary_status = _status_primary_value(row)
+    if not primary_status:
+        return None
+    entity_type = _status_entity_type(row)
+    entity_id = _status_entity_id(row, entity_type)
+    if not entity_id:
+        return None
+
+    entity_label = entity_type.capitalize()
+    summary = f"{entity_label} {entity_id} is {primary_status}."
+    fields = _status_visible_fields(row, entity_type)
+    visible_key_tokens = {
+        _canonical_status_key(field.get("key"))
+        for field in fields
+        if isinstance(field, dict)
+    }
+    visible_key_tokens.update(
+        _canonical_status_key(alias)
+        for _canonical, _label, aliases in _STATUS_FIELD_ORDER.get(entity_type, [])
+        for alias in aliases
+        if any(field.get("key") == _canonical for field in fields)
+    )
+    secondary_fields = _status_secondary_fields(
+        row,
+        visible_keys=visible_key_tokens,
+        include=_status_request_wants_full_details(session),
+    )
+    return {
+        "operation_id": operation_id,
+        "title": f"{entity_label} status",
+        "summary": summary,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "primary_status": primary_status,
+        "fields": fields,
+        "secondary_fields": secondary_fields,
+        "details_collapsed": True,
+    }
+
+
 def _is_non_terminal_progress_presentation(*, presentation: PresentationResponse, state: str) -> bool:
     diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
     return (
@@ -1855,6 +2072,7 @@ def _compose_run_steps(
     mutation_groups: list[MutationGroup],
     read_evidence: list[ReadEvidence],
     sources: list[dict[str, Any]],
+    status_result: dict[str, Any] | None,
     presentation: PresentationResponse,
     timeline: list[TimelineEventResponse],
     activity_steps: list[ActivityStepResponse],
@@ -2021,13 +2239,18 @@ def _compose_run_steps(
 
     if not approvals and read_evidence:
         total_rows = sum(len(item.rows) for item in read_evidence)
+        read_rows = [row for item in read_evidence for row in item.rows]
         run_steps.append(
             RunStep(
                 step_id=f"read:{operation_id or document_id}",
                 kind="read",
                 state="completed",
-                title=f"Read {total_rows} {_plural(total_rows, 'record')}",
-                summary=_read_summary([row for item in read_evidence for row in item.rows], presentation.summary),
+                title=(
+                    f"Read {status_result['entity_type']} status"
+                    if status_result and status_result.get("entity_type")
+                    else f"Read {total_rows} {_plural(total_rows, 'record')}"
+                ),
+                summary=status_result.get("summary") if status_result else _read_summary(read_rows, presentation.summary),
                 operation_id=operation_id,
                 record_count=total_rows,
             )
@@ -2070,11 +2293,12 @@ def _compose_run_steps(
         )
 
     if state == "completed" and not latest_pending:
-        completion_summary = (
-            _aggregate_mutation_summary(mutation_groups)
-            if mutation_groups
-            else _trimmed(presentation.summary) or None
-        )
+        if mutation_groups:
+            completion_summary = _aggregate_mutation_summary(mutation_groups)
+        elif status_result:
+            completion_summary = _trimmed(status_result.get("summary")) or None
+        else:
+            completion_summary = _trimmed(presentation.summary) or None
         run_steps.append(
             RunStep(
                 step_id=f"completed:{operation_id or document_id}",
@@ -2169,6 +2393,7 @@ def _short_message(
     approvals: list[ApprovalResponse],
     mutation_groups: list[MutationGroup],
     read_rows: list[dict[str, Any]],
+    status_result: dict[str, Any] | None,
     sources: list[dict[str, Any]],
     presentation: PresentationResponse,
     session: Any,
@@ -2199,6 +2424,9 @@ def _short_message(
 
     if sources:
         return _trimmed(presentation.summary) or "I found a source-backed answer."
+
+    if status_result:
+        return _trimmed(status_result.get("summary")) or "Status is ready."
 
     if read_rows:
         return _read_summary(read_rows, presentation.summary)
@@ -2271,6 +2499,7 @@ def _compose_blocks(
     approvals: list[ApprovalResponse],
     mutation_groups: list[MutationGroup],
     read_rows: list[dict[str, Any]],
+    status_result: dict[str, Any] | None,
     sources: list[dict[str, Any]],
     presentation: PresentationResponse,
     failure_profile: FailureProfile | None,
@@ -2391,7 +2620,26 @@ def _compose_blocks(
     if presentation.kind == "knowledge_answer" and message:
         blocks.append(KnowledgeAnswerBlock(id=f"knowledge:{operation_id or document_id}", answer=message, operation_id=operation_id))
 
-    if read_rows and not mutation_groups:
+    if status_result and not mutation_groups:
+        blocks.append(
+            StatusResultBlock(
+                id=f"status:{operation_id or document_id}",
+                operation_id=status_result.get("operation_id") or operation_id,
+                title=_trimmed(status_result.get("title")) or "Status",
+                summary=_trimmed(status_result.get("summary")) or message,
+                entity_type=_trimmed(status_result.get("entity_type")) or None,
+                entity_id=_trimmed(status_result.get("entity_id")) or None,
+                primary_status=_trimmed(status_result.get("primary_status")) or None,
+                fields=status_result.get("fields") if isinstance(status_result.get("fields"), list) else [],
+                secondary_fields=(
+                    status_result.get("secondary_fields")
+                    if isinstance(status_result.get("secondary_fields"), list)
+                    else []
+                ),
+                details_collapsed=bool(status_result.get("details_collapsed", True)),
+            )
+        )
+    elif read_rows and not mutation_groups:
         blocks.extend(
             _record_blocks_for_rows(
                 id_prefix=f"{operation_id or document_id}:read-results",
@@ -2479,6 +2727,7 @@ def compose_response_document(
         )
     read_groups = _read_evidence(steps=steps, timeline=timeline, presentation=presentation, operation_id=operation_id)
     read_rows = _dedupe_rows([row for item in read_groups for row in item.rows if not _is_empty_result_envelope(row)])
+    status_result = _status_result_from_read_rows(read_rows, operation_id=operation_id, session=session)
     sources = presentation.sources if isinstance(presentation.sources, list) else []
     failure_profile = _failure_profile(
         state=state,
@@ -2498,6 +2747,7 @@ def compose_response_document(
         mutation_groups=mutation_groups,
         read_evidence=read_groups,
         sources=sources,
+        status_result=status_result,
         presentation=presentation,
         timeline=timeline,
         activity_steps=activity_steps,
@@ -2510,6 +2760,7 @@ def compose_response_document(
         approvals=approvals,
         mutation_groups=mutation_groups,
         read_rows=read_rows,
+        status_result=status_result,
         sources=sources,
         presentation=presentation,
         session=session,
@@ -2525,12 +2776,13 @@ def compose_response_document(
         approvals=approvals,
         mutation_groups=mutation_groups,
         read_rows=read_rows,
+        status_result=status_result,
         sources=sources,
         presentation=presentation,
         failure_profile=failure_profile,
     )
 
-    read_shape = _read_result_shape(read_rows) if read_rows or presentation.kind == "answer" else None
+    read_shape = "status" if status_result else _read_result_shape(read_rows) if read_rows or presentation.kind == "answer" else None
     diagnostics = _sanitize_diagnostic_value(dict(presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}))
     if presentation.kind == "answer" and state == "completed" and not read_rows and not sources and not mutation_groups:
         diagnostics["reason"] = "no_results"
@@ -2559,6 +2811,8 @@ def compose_response_document(
         "approved_business_change_count": len(changed_mutation_groups) if mutation_groups and not latest_pending else None,
         "affected_record_preview_limit": 5 if mutation_groups else None,
         "read_result_shape": read_shape,
+        "read_status_contract": "entity_status_v1" if status_result else None,
+        "read_status_entity_type": status_result.get("entity_type") if status_result else None,
         "failure_reason": failure_profile.reason if failure_profile else None,
         "orphan_turn_state": (
             failure_profile.reason == "orphan_turn_state"

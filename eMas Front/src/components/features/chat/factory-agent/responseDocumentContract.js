@@ -21,6 +21,7 @@ const BLOCK_TYPES = new Set([
   'result_summary',
   'mutation_result',
   'result_table',
+  'status_result',
   'record_preview',
   'knowledge_answer',
   'source_list',
@@ -67,6 +68,21 @@ function cleanRows(value) {
 function cleanSources(value) {
   return Array.isArray(value)
     ? value.filter((source) => source && typeof source === 'object' && !Array.isArray(source))
+    : []
+}
+
+function cleanStatusFields(value) {
+  return Array.isArray(value)
+    ? value
+      .filter((field) => field && typeof field === 'object' && !Array.isArray(field))
+      .map((field) => ({
+        ...field,
+        key: cleanString(field.key),
+        label: cleanString(field.label),
+        value: cleanString(field.value),
+        primary: Boolean(field.primary),
+      }))
+      .filter((field) => field.label && field.value)
     : []
 }
 
@@ -190,6 +206,8 @@ function normalizeBlock(block, index, violations) {
     operation_id: cleanString(block.operation_id || block.operationId) || null,
     rows,
     sources,
+    fields: cleanStatusFields(block.fields),
+    secondary_fields: cleanStatusFields(block.secondary_fields || block.secondaryFields),
     steps: Array.isArray(block.steps) ? block.steps.filter((row) => row && typeof row === 'object') : [],
     impact: cleanObject(block.impact),
     technical_details: cleanObject(block.technical_details || block.technicalDetails),
@@ -207,6 +225,7 @@ function defaultBlockTitle(type) {
   if (type === 'result_summary') return 'Result summary'
   if (type === 'mutation_result') return 'Mutation result'
   if (type === 'result_table') return 'Affected records'
+  if (type === 'status_result') return 'Status'
   if (type === 'record_preview') return 'Records'
   if (type === 'source_list') return 'Knowledge sources'
   if (type === 'diagnostic') return 'Needs attention'

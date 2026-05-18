@@ -972,6 +972,72 @@ test('FactoryAgentChatPanel renders mutation result table from response_document
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel renders read-only machine status from typed status_result without raw markdown', async () => {
+  const document = baseResponseDocument({
+    message: 'Machine M-CNC-01 is running.',
+    summary: 'Machine M-CNC-01 is running.',
+    run_steps: [
+      { step_id: 'read-machine-status', kind: 'read', state: 'completed', title: 'Read machine status' },
+      { step_id: 'completed-read', kind: 'completed', state: 'completed', title: 'Run complete' },
+    ],
+    blocks: [
+      { id: 'message:machine-status', type: 'short_message', message: 'Machine M-CNC-01 is running.', status: 'completed' },
+      {
+        id: 'status:machine-status',
+        type: 'status_result',
+        title: 'Machine status',
+        summary: 'Machine M-CNC-01 is running.',
+        entity_type: 'machine',
+        entity_id: 'M-CNC-01',
+        primary_status: 'running',
+        fields: [
+          { key: 'machine_id', label: 'Machine ID', value: 'M-CNC-01' },
+          { key: 'machine_name', label: 'Machine name', value: 'CNC Mill 01' },
+          { key: 'machine_type', label: 'Machine type', value: 'CNC mill' },
+          { key: 'location', label: 'Location', value: 'Line 1' },
+          { key: 'status', label: 'Status', value: 'running', primary: true },
+          { key: 'capacity_per_hour', label: 'Capacity per hour', value: '40' },
+          { key: 'last_maintenance', label: 'Last maintenance', value: '2026-05-01' },
+          { key: 'maintenance_interval', label: 'Maintenance interval', value: '30 days' },
+        ],
+        secondary_fields: [],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-machine-status', name: 'Machine status', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-machine-status', name: 'Machine status', status: 'COMPLETED' }],
+    activeSessionName: 'Machine status',
+    turns: [responseDocumentTurn(document, {
+      user: {
+        content: 'Show status for machine with machine id M-CNC-01',
+        created_at: '2026-05-16T10:00:00.000Z',
+      },
+      summary: 'done_all\n\n**Success**\n\nMachineid: M-CNC-01',
+      tools: [{ rows: [{ Machineid: 'M-CNC-01', Defaultsetuptime: 0 }] }],
+    })],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Machine M-CNC-01 is running\./))
+  assert.equal((view.text().match(/Machine M-CNC-01 is running\./g) || []).length, 1)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="status_result"]').length, 1)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"]').length, 0)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="mutation_result"]').length, 0)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"]').length, 0)
+  assert.match(view.text(), /Machine ID/)
+  assert.match(view.text(), /Machine name/)
+  assert.match(view.text(), /Machine type/)
+  assert.match(view.text(), /Capacity per hour/)
+  assert.doesNotMatch(view.text(), /done_all/)
+  assert.doesNotMatch(view.text(), /\*\*Success\*\*/)
+  assert.doesNotMatch(view.text(), /Machineid/)
+  assert.doesNotMatch(view.text(), /Defaultsetuptime/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders completed mutation response_document as one grouped business result', async () => {
   const mediumRows = Array.from({ length: 10 }, (_, index) => ({
     job_id: `JOB-MED-${String(index + 1).padStart(3, '0')}`,
