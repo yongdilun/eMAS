@@ -1436,6 +1436,135 @@ git status --short --branch
 git diff --check
 ```
 
+### Phase 21: Backend Capability Metadata Readiness
+
+Goal: Enhance backend/OpenAPI/tool metadata so the generic entity response work has reliable backend semantics before implementation starts.
+
+Problem this phase targets:
+
+- Phase 20 found that the response-document layer is ready to become more generic, but backend route/tool metadata is still not rich enough to support that cleanly.
+- Starting generic response-document composition before backend readiness would force more inference from endpoint names, job/machine labels, summary prose, or frontend fixtures.
+- OpenAPI, generated `tools.md`, generated tool vocabulary, and RAG API reference mirrors must move together or the planner, tool selector, RAG docs, and tests will drift.
+
+Files likely touched:
+
+- `emas/docs/swagger.json`
+- `emas/docs/swagger.yaml`
+- `rag_sources/01_emas_internal_docs/api_reference/openapi.json`
+- `factory-agent/factory_agent/tools.md`
+- `rag_sources/01_emas_internal_docs/api_reference/tools.md`
+- `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`
+- `factory-agent/factory_agent/registry/toolgen.py`
+- `factory-agent/factory_agent/planning/tool_intent_profile.py`
+- `factory-agent/factory_agent/planning/tool_selector.py`
+- `factory-agent/tests/test_toolgen.py`
+- `factory-agent/tests/test_tool_intent_profile.py`
+- `factory-agent/tests/test_tool_selector.py`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+Implementation steps:
+
+- Inspect the current OpenAPI and generated tool metadata for entity/action/capability gaps.
+- Update the backend/OpenAPI source of truth where needed so supported routes expose enough metadata for:
+  - entity type;
+  - stable entity id fields;
+  - display id fields;
+  - read/status capability;
+  - mutation capability;
+  - approval requirement;
+  - no-op/no-match outcomes;
+  - business-change field metadata.
+- Regenerate and keep in sync:
+  - `emas/docs/swagger.json`;
+  - `emas/docs/swagger.yaml`;
+  - `rag_sources/01_emas_internal_docs/api_reference/openapi.json`;
+  - `factory-agent/factory_agent/tools.md`;
+  - `rag_sources/01_emas_internal_docs/api_reference/tools.md`;
+  - `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`.
+- Add or update tests proving generated tools and generated vocabulary include generic entity/capability metadata beyond machine/job when the backend surface supports it.
+- Add metadata-readiness tests for the future contracts:
+  - `entity_status_v1`;
+  - `business_change_v1`;
+  - `entity_agnostic_no_matching_records_v1`.
+- Do not hand-edit generated `tools.md` or generated vocabulary output. Update the generator or source metadata, then regenerate.
+
+Acceptance criteria:
+
+- Backend metadata can identify supported entity status reads generically, not only machine status.
+- Backend metadata can represent business-change/no-op semantics needed by generic mutation result composition.
+- OpenAPI, RAG OpenAPI mirror, Factory Agent tools reference, RAG tools reference, and generated vocabulary are synchronized.
+- Tool generation and vocabulary tests pass.
+- Phase 22 is unblocked only when the tracker records the ready evidence.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_toolgen.py tests/test_tool_intent_profile.py tests/test_tool_selector.py -q
+python scripts/generate_tools.py --local --no-db
+python scripts/generate_tool_intent_vocabulary.py
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+### Phase 22: Generic Entity Status And Mutation Business Contract
+
+Goal: Implement the generic entity response-document contracts after backend metadata is ready.
+
+Problem this phase targets:
+
+- Phase 18 made machine status clean, but entity status must work through a generic contract.
+- Phase 14/15 made job priority mutation results clean, but business-change grouping must work through typed metadata rather than priority prose parsing.
+- Phase 17 made no-op mutation results entity-agnostic, but coverage still needs at least one safe non-job proof.
+
+Prerequisite:
+
+- Phase 21 must be marked Done with OpenAPI, generated tools, generated vocabulary, and `tools.md` synchronized.
+
+Files likely touched:
+
+- `factory-agent/factory_agent/services/response_document_service.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/tests/test_response_document_contract.py`
+- `eMas Front/src/components/features/chat/factory-agent/ResponseDocumentRenderer.jsx`
+- `eMas Front/e2e/support/responseDocumentProbe.js`
+- `eMas Front/e2e/support/responseDocumentScenarios.js`
+- `eMas Front/e2e/specs/final-response-quality.spec.js`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+- `docs/qa/manual_prompt_regression_bank.md`
+
+Implementation steps:
+
+- Add an `entity_status_v1` response-document contract for machine plus at least one non-machine entity.
+- Add typed `business_change_v1` payload support with entity type, change type, field changes, selector summary, source-state basis, business-change id, record id/display id, ordering, and row outcome.
+- Migrate priority cascade composition to prefer typed business-change fields over summary text parsing.
+- Add one safe non-job no-op mutation backend contract or fixture without enabling broad new writes.
+- Add focused frontend/probe proof that status, business-change, and no-op blocks render from typed fields rather than exact RD-001/RD-008 labels.
+- Preserve RD-001, RD-002, RD-006, RD-007, RD-008, and RD-009 behavior.
+
+Acceptance criteria:
+
+- Generic entity status works for machine plus at least one non-machine entity.
+- Completed mutation grouping no longer depends on priority/job prose when typed business-change fields are available.
+- At least one non-job no-op proof exists.
+- Existing flagship flows still pass.
+- Browser or semantic-probe evidence proves visible UI is driven by generic typed contracts.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_toolgen.py tests/test_tool_intent_profile.py -q
+
+Set-Location "..\eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "entity status|business change|no-op|RD-001|RD-008"
+```
+
 ## Stop Conditions
 
 Stop and fix before continuing when:
@@ -1476,6 +1605,9 @@ Stop and fix before continuing when:
 - New no-op mutation logic is hardcoded only to jobs or priority changes.
 - New status response formatting is hardcoded only to `M-CNC-01` or one machine route.
 - Phase 20 finds product-risk overfitting without a tracker entry and Phase 21 recommendation.
+- Phase 22 starts before Phase 21 proves backend/OpenAPI/tool/vocabulary readiness.
+- OpenAPI, RAG OpenAPI mirror, generated `tools.md`, RAG `tools.md`, or generated vocabulary are updated inconsistently.
+- Generated tool metadata cannot express the entity/action/capability semantics required by the generic response-document contract.
 
 ## Out Of Scope For This Plan
 

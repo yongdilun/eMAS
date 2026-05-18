@@ -27,7 +27,9 @@ Created: 2026-05-18
 | 17 | Entity-agnostic no-op mutation result contract | Done | Codex | Added typed no-op mutation groups with entity/selector/change/count fields, approval-safe partial and all-no-op backend contracts, and mocked browser semantic proof. |
 | 18 | Read-only status response contract | Done | Codex | Added generic typed `status_result` response-document blocks for read-only status answers, clean machine labels, frontend rendering/probes, and RD-008 browser proof. |
 | 19 | RAG question-type routing contract | Done | Codex | Added reusable semantic `question_type` routing before missing-entity checks, covered LOTO notification document-content prompts, preserved machine-specific LOTO/status controls, and added RD-009 browser semantic proof. |
-| 20 | Entity-specific overfitting audit | Done | Codex | Audited backend routing/planning, response-document composition, frontend renderer/probes, seeded fixtures, scenario oracles, and QA docs; Phase 21 should generalize entity status plus mutation business-change/no-op contracts. |
+| 20 | Entity-specific overfitting audit | Done | Codex | Audited backend routing/planning, response-document composition, frontend renderer/probes, seeded fixtures, scenario oracles, and QA docs; generic entity work needs backend metadata readiness first. |
+| 21 | Backend capability metadata readiness | Not Started | Codex | Enhance backend/OpenAPI/tool metadata so entity status, business changes, no-op mutations, vocabulary, `tools.md`, and RAG API references are available before generic response-document implementation. |
+| 22 | Generic entity status and mutation business contract | Not Started | Codex | After Phase 21 metadata is ready, implement `entity_status_v1`, `business_change_v1`, and non-job no-op coverage without depending on job/machine special cases. |
 
 ## Current Blockers
 
@@ -37,7 +39,8 @@ Created: 2026-05-18
 - No-data mutation steps now have an explicit Phase 17 no-op contract with visible `Not changed` groups, approval exclusion, and no mutation attempt for zero-match groups.
 - Read-only status response cleanup is complete for Phase 18. `Show status for machine with machine id M-CNC-01` now renders one typed `status_result` answer and forbids raw assistant markers, dump-style API labels, duplicate answer text, approval UI, and mutation UI.
 - LOTO document-content question misclassification is fixed in Phase 19. `According to the LOTO procedure, what notification is required before starting lockout` now routes as document-content RAG/procedure content without requiring `machine_id`.
-- Several recent fixes are still at risk of becoming entity-specific special cases. Phase 20 audits job/machine/product/material-specific implementation, tests, and docs before Phase 21 is planned.
+- Several recent fixes are still at risk of becoming entity-specific special cases. Phase 20 audited this; Phase 21 now prepares backend/OpenAPI/tool/vocabulary metadata before the generic response-document contract starts.
+- Phase 22 must not begin until Phase 21 proves OpenAPI, generated tool metadata, generated vocabulary, and `tools.md` expose enough typed entity/action/capability evidence for generic status and business-change composition.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -104,7 +107,9 @@ Created: 2026-05-18
 - Entity IDs are required only after the semantic question type proves the route actually needs that entity.
 - Document-content RAG questions should not be forced into machine-specific clarification just because they mention LOTO, procedure, lockout, or "before".
 - No-op mutation semantics are entity-agnostic business outcomes, not job-priority-only rendering.
-- Phase 20 is audit-only by default. Phase 21 scope will be chosen from the audit findings rather than guessed up front.
+- Phase 20 is audit-only by default.
+- Phase 21 is backend metadata readiness: OpenAPI/Swagger, RAG OpenAPI mirror, `tools.md`, generated tool vocabulary, and capability metadata must be updated together.
+- Phase 22 is the generic entity response contract and starts only after Phase 21 returns ready evidence.
 
 ## Flagship Inputs
 
@@ -119,7 +124,9 @@ Created: 2026-05-18
 | RD-007 | Mutation prompt where every requested edit has zero matching records | All-no-op regression. Proves `No changes were made`, no approval card appears, and no mutation audit rows are created. |
 | RD-008 | `Show status for machine with machine id M-CNC-01` | Read-only status regression. Proves one clean typed machine-status answer without `done_all`, raw `**Success**`, dump-style field labels, duplicate answer text, approval UI, or mutation UI. |
 | RD-009 | `According to the LOTO procedure, what notification is required before starting lockout` | RAG question-type routing regression. Proves document-content LOTO questions route to RAG/procedure content without machine-ID clarification. |
-| RD-010 | Phase 20 audit only | Finds overfitted entity-specific implementation patterns before Phase 21 is created. |
+| RD-010 | Phase 20 audit only | Finds overfitted entity-specific implementation patterns before backend readiness and generic response-contract phases are created. |
+| RD-011 | Phase 21 backend metadata readiness | Proves OpenAPI/tool/vocabulary metadata exposes generic entity status and mutation business-change semantics before response-document implementation. |
+| RD-012 | Phase 22 generic entity contract | Proves entity status, business changes, and non-job no-op mutations render from typed generic contracts rather than job/machine special cases. |
 
 ## Additional Required Scenario Groups
 
@@ -143,6 +150,8 @@ Created: 2026-05-18
 | Read-only status cleanup | `Show status for machine with machine id M-CNC-01` | One typed status answer with human labels, no raw assistant markdown, no duplicate blocks, no generic dump table, no approval/mutation UI. |
 | RAG document-content routing | `According to the LOTO procedure, what notification is required before starting lockout` | RAG/procedure answer is attempted without machine-ID clarification; adjacent machine-specific LOTO and machine-status prompts still route correctly. |
 | Entity-specific overfitting audit | Search routing, composition, renderer, fixture, oracle, and docs for job/machine/product/material overfitting | Inventory product-risk and missing-general-contract patterns, then propose Phase 21 based on findings. |
+| Backend metadata readiness | OpenAPI, generated tools, generated vocabulary, `tools.md`, and RAG mirrors | Status/business-change/no-op semantics are present as typed metadata before generic response-document implementation. |
+| Generic entity contract | Product/material/job/machine status and mutation business-change/no-op fixtures | Response document composes and renders by typed entity/action/change metadata, not exact job or machine wording. |
 
 ## Phase 0 Checklist
 
@@ -1462,17 +1471,17 @@ Date: 2026-05-19
 
 ### Overfitting Inventory
 
-| ID | Classification | File/path | Exact pattern | Why it is overfitted | Likely future failure mode | Recommended abstraction or contract | Proposed Phase 21 scope |
+| ID | Classification | File/path | Exact pattern | Why it is overfitted | Likely future failure mode | Recommended abstraction or contract | Phase 21/22 handling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| P20-01 | product-risk | `factory-agent/factory_agent/planning/intent.py:658`, `factory-agent/factory_agent/planning/intent.py:864`, `factory-agent/factory_agent/planning/tool_selector.py:966`, `factory-agent/factory_agent/services/response_document_service.py:1815`, `factory-agent/tests/test_response_document_contract.py:1211`, `eMas Front/e2e/specs/final-response-quality.spec.js:678` | Live status routing is machine-only: `_is_live_operational_status_question` returns true only for `entity == "machine"` or machine hints, route emits `tool.read.machine_status`, tool selection asks only for machine lookup, status field order only defines the rich machine schema, and tests/probes cover only `M-CNC-01`. | Phase 18's user-facing contract is named and tested as a clean read-only status answer, but the route/tool/field proof is still machine-centered. | `status for product P-001`, `status for material MAT-002`, inventory availability/status, or work-order state can fall through to unknown/direct lookup/table output instead of a typed `status_result`, or render sparse generic fields with no stable field contract. | Introduce an `entity_status_v1` route family with `entity_type`, `entity_id`, `primary_status`, `fields`, `secondary_fields`, and capability-based tool selection for machine/job/product/material/inventory status reads. Keep machine field order as one schema entry, not the route definition. | Phase 21 should generalize read-only status routing/composition beyond machine and add product/material/job status contract tests plus one mocked browser fixture. |
-| P20-02 | product-risk | `factory-agent/factory_agent/services/response_document_service.py:1270`, `factory-agent/factory_agent/services/response_document_service.py:1285`, `factory-agent/factory_agent/services/response_document_service.py:1316`, `factory-agent/factory_agent/services/response_document_service.py:1589`, `factory-agent/factory_agent/services/response_document_service.py:1641`, `factory-agent/factory_agent/services/response_document_service.py:1663`, `factory-agent/tests/test_response_document_contract.py:280` | Completed mutation grouping, order, row cleanup, labels, and summaries are derived from priority fields and job id shape: `_priority_business_key`, `_business_change_order_from_text`, `_source_priority`, `_target_priority`, `Original High -> Low`, `job_id` when ID starts with `JOB-`, and job/record noun fallback. | Phase 14/15 fixed RD-001 by extracting priority/job facts, but the "business-level mutation" contract still gets its richest behavior only from priority deltas. | A future product/material/inventory/work-order mutation can collapse into `Business change N`, lose before/after field details, sort by approval rather than the user's business clauses, or render as generic records even when typed change facts exist. | Define a typed `business_change_v1` payload with `entity_type`, `change_type`, ordered `field_changes`, `selector_summary`, `source_state_basis`, `business_change_id`, and row-level `record_id`/`display_id`. Composition should prefer these fields over regexing summary text. | Phase 21 should extract the priority cascade special case into the generic business-change contract while preserving RD-001/RD-002 behavior. |
-| P20-03 | missing-general-contract | `factory-agent/tests/test_response_document_contract.py:948`, `factory-agent/tests/test_response_document_contract.py:1080`, `eMas Front/e2e/support/responseDocumentScenarios.js:359`, `eMas Front/e2e/specs/final-response-quality.spec.js:531`, prior deferral at `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md:1143` | The production no-op payload is entity-agnostic, but backend/browser proof uses `entity_type="job"`, `selector_summary="priority = ..."`, `change_summary="priority -> ..."`, and visible `no matching jobs`. | The contract says no-op mutations are entity-agnostic, yet tests can pass without proving product/material/inventory selectors emit or render the same contract. | A non-job no-op could request approval for zero matched records, disappear from final output, or show fake success while RD-006/RD-007 still pass. | Add table-driven no-op fixtures across at least one non-job entity with `entity_type`, `selector_summary`, `change_summary`, `matched_count=0`, `changed_count=0`, `status=not_changed`, and `reason=no_matching_records`. | Phase 21 should add the smallest safe non-job no-op contract at backend and mocked browser layers without enabling broad new write behavior. |
-| P20-04 | planning-risk | `factory-agent/factory_agent/planning/intent.py:13`, `factory-agent/factory_agent/planning/intent.py:731`, `factory-agent/factory_agent/planning/intent.py:923`, `factory-agent/factory_agent/planning/tool_selector.py:1017` | Semantic write routes are `tool.write.jobs` only; mutation detection is `_is_job_mutation_request`; tool selection maps write/create/delete requests only through job endpoints. | This may be acceptable for today's approved write surface, but it means Phase 17's entity-agnostic no-op wording cannot be exercised naturally for product/material/inventory writes. | New safe write tools for non-job entities would not inherit the no-op/approval/business-change response contract without another entity-specific routing branch. | Before adding write routes, define a route/tool capability contract for mutating entity types and their required approval/no-op metadata. | Defer broad write expansion unless product scope requires it; Phase 21 should only add contract fixtures and abstractions needed to prevent future one-off write routes. |
-| P20-05 | product-risk | `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:316`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:337`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:386`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:481` | Legacy no-`response_document` table suppression detects contradictions through priority columns and priority/job wording such as `jobs affected`, `current vs requested priority`, `priority to high`, and `high-priority`. | The valid response-document path bypasses this code, but compatibility sessions still decide stale-table visibility from job-priority prose instead of typed ownership/state. | A legacy or degraded non-priority mutation could keep stale pre-commit tables visible after completion because the contradiction detector only understands priority words. | Make stale-table suppression use typed `presentation.kind`, operation/approval ownership, row outcome/state, and response-document absence rules; leave text parsing as an explicitly allowlisted fallback. | Phase 21 can keep product behavior unchanged but should add a guard/test that non-priority typed presentations do not rely on priority-word contradiction checks. |
-| P20-06 | test_fixture | `eMas Front/e2e/support/responseDocumentScenarios.js:1`, `eMas Front/e2e/support/responseDocumentScenarios.js:32`, `eMas Front/e2e/specs/final-response-quality.spec.js:249`, `eMas Front/e2e/support/responseDocumentProbe.js:41` | Mocked browser fixtures and probes use exact RD prompts, `JOB-SEED-*`, `M-CNC-01`, `Medium -> High`, `Original High -> Low`, `Updated 63 jobs across 22 approved steps`, and dump-style machine labels. | These constants live in test/fixture/probe files and represent deterministic oracle evidence, not product routing/composition logic. | They become risky only if treated as proof of the general contract without adjacent non-job/non-machine rows. | Keep exact fixtures, but pair them with generic contract rows from P20-01/P20-03. | Phase 21 should add minimal generic fixture variants, not delete the canonical RD fixtures. |
-| P20-07 | acceptable_fixture | `factory-agent/factory_agent/testing_seeded_scenarios.py:92`, `factory-agent/factory_agent/testing_seeded_scenarios.py:201`, `factory-agent/factory_agent/testing_seeded_adapters.py:26`, `factory-agent/factory_agent/testing_seeded_adapters.py:710`, `tests/e2e/scenarios/manual_prompt_regressions.json:171`, `tests/e2e/scenarios/seed_pipeline.json:241` | Seeded scenarios and adapters contain phase markers, seeded job/machine IDs, controlled LOTO answers, and job-priority cascade interpreters. | They are isolated behind seeded/testing adapters or scenario banks and are intentionally deterministic. The product route/composer no longer branches on these IDs. | Risk is coverage illusion: fixture adapters can duplicate product behavior and hide live planner gaps if promoted as general proof. | Keep these as fixtures; require product contracts to be proven in backend composer/route tests and use real LangGraph only when seeded adapters could hide planner/RAG/tool-selection behavior. | No Phase 21 product change; use as fixtures for new generic status/no-op cases if safe. |
-| P20-08 | defer | `factory-agent/factory_agent/rag/knowledge_policy.py:115`, `factory-agent/factory_agent/services/plan_creation_service.py:325`, `docs/qa/HARDCODE_REDUCTION_PLAN.md:252` | Curated fallback policies currently cover LOTO notification and OSHA LOTO, with route/topic scoping through the knowledge policy registry. | This is LOTO-specific, but it is scoped policy data rather than a response-document rendering shortcut, and non-LOTO document prompts do not borrow the OSHA/LOTO fallback. | Future document domains may need similar data-backed policy entries; adding them as inline code would revive the hardcode risk. | Keep curated fallback content behind a policy registry/data pack and require route/topic evidence before applying a fallback. | Defer to the hardcode-reduction/knowledge-policy track unless Phase 21's status/no-op scope touches RAG fallback data. |
-| P20-09 | test_fixture | `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1187`, `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1326`, `docs/qa/manual_prompt_regression_bank.md:242`, `docs/qa/manual_prompt_regression_bank.md:247` | QA docs explicitly call out general classes for prior prompt fixes: job-priority no-op must become entity-agnostic, and LOTO notification routing must become generic document-content question typing beyond LOTO. | The docs do not say only "fix this prompt"; they mostly define the broader class and coverage level. | The only remaining doc risk is that Phase 21 could pick one new exact prompt instead of the classes identified here. | Use this Phase 20 inventory as the Phase 21 source of truth and add future bank entries for entity-status and non-job no-op prompt classes. | Phase 21 should be evidence-led from P20-01 through P20-03, not another one-off prompt patch. |
+| P20-01 | product-risk | `factory-agent/factory_agent/planning/intent.py:658`, `factory-agent/factory_agent/planning/intent.py:864`, `factory-agent/factory_agent/planning/tool_selector.py:966`, `factory-agent/factory_agent/services/response_document_service.py:1815`, `factory-agent/tests/test_response_document_contract.py:1211`, `eMas Front/e2e/specs/final-response-quality.spec.js:678` | Live status routing is machine-only: `_is_live_operational_status_question` returns true only for `entity == "machine"` or machine hints, route emits `tool.read.machine_status`, tool selection asks only for machine lookup, status field order only defines the rich machine schema, and tests/probes cover only `M-CNC-01`. | Phase 18's user-facing contract is named and tested as a clean read-only status answer, but the route/tool/field proof is still machine-centered. | `status for product P-001`, `status for material MAT-002`, inventory availability/status, or work-order state can fall through to unknown/direct lookup/table output instead of a typed `status_result`, or render sparse generic fields with no stable field contract. | Introduce an `entity_status_v1` route family with `entity_type`, `entity_id`, `primary_status`, `fields`, `secondary_fields`, and capability-based tool selection for machine/job/product/material/inventory status reads. Keep machine field order as one schema entry, not the route definition. | Phase 21 should prepare OpenAPI/tool/vocabulary metadata for entity status. Phase 22 should generalize read-only status routing/composition beyond machine and add product/material/job status contract tests plus one mocked browser fixture. |
+| P20-02 | product-risk | `factory-agent/factory_agent/services/response_document_service.py:1270`, `factory-agent/factory_agent/services/response_document_service.py:1285`, `factory-agent/factory_agent/services/response_document_service.py:1316`, `factory-agent/factory_agent/services/response_document_service.py:1589`, `factory-agent/factory_agent/services/response_document_service.py:1641`, `factory-agent/factory_agent/services/response_document_service.py:1663`, `factory-agent/tests/test_response_document_contract.py:280` | Completed mutation grouping, order, row cleanup, labels, and summaries are derived from priority fields and job id shape: `_priority_business_key`, `_business_change_order_from_text`, `_source_priority`, `_target_priority`, `Original High -> Low`, `job_id` when ID starts with `JOB-`, and job/record noun fallback. | Phase 14/15 fixed RD-001 by extracting priority/job facts, but the "business-level mutation" contract still gets its richest behavior only from priority deltas. | A future product/material/inventory/work-order mutation can collapse into `Business change N`, lose before/after field details, sort by approval rather than the user's business clauses, or render as generic records even when typed change facts exist. | Define a typed `business_change_v1` payload with `entity_type`, `change_type`, ordered `field_changes`, `selector_summary`, `source_state_basis`, `business_change_id`, and row-level `record_id`/`display_id`. Composition should prefer these fields over regexing summary text. | Phase 21 should expose business-change metadata through OpenAPI/tool docs where possible. Phase 22 should extract the priority cascade special case into the generic business-change contract while preserving RD-001/RD-002 behavior. |
+| P20-03 | missing-general-contract | `factory-agent/tests/test_response_document_contract.py:948`, `factory-agent/tests/test_response_document_contract.py:1080`, `eMas Front/e2e/support/responseDocumentScenarios.js:359`, `eMas Front/e2e/specs/final-response-quality.spec.js:531`, prior deferral at `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md:1143` | The production no-op payload is entity-agnostic, but backend/browser proof uses `entity_type="job"`, `selector_summary="priority = ..."`, `change_summary="priority -> ..."`, and visible `no matching jobs`. | The contract says no-op mutations are entity-agnostic, yet tests can pass without proving product/material/inventory selectors emit or render the same contract. | A non-job no-op could request approval for zero matched records, disappear from final output, or show fake success while RD-006/RD-007 still pass. | Add table-driven no-op fixtures across at least one non-job entity with `entity_type`, `selector_summary`, `change_summary`, `matched_count=0`, `changed_count=0`, `status=not_changed`, and `reason=no_matching_records`. | Phase 21 should identify safe backend metadata/fixture support for non-job no-op. Phase 22 should add the smallest safe non-job no-op contract at backend and mocked browser layers without enabling broad new write behavior. |
+| P20-04 | planning-risk | `factory-agent/factory_agent/planning/intent.py:13`, `factory-agent/factory_agent/planning/intent.py:731`, `factory-agent/factory_agent/planning/intent.py:923`, `factory-agent/factory_agent/planning/tool_selector.py:1017` | Semantic write routes are `tool.write.jobs` only; mutation detection is `_is_job_mutation_request`; tool selection maps write/create/delete requests only through job endpoints. | This may be acceptable for today's approved write surface, but it means Phase 17's entity-agnostic no-op wording cannot be exercised naturally for product/material/inventory writes. | New safe write tools for non-job entities would not inherit the no-op/approval/business-change response contract without another entity-specific routing branch. | Before adding write routes, define a route/tool capability contract for mutating entity types and their required approval/no-op metadata. | Defer broad write expansion unless product scope requires it. Phase 21 should add metadata readiness checks only; Phase 22 should add only contract fixtures and abstractions needed to prevent future one-off write routes. |
+| P20-05 | product-risk | `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:316`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:337`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:386`, `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx:481` | Legacy no-`response_document` table suppression detects contradictions through priority columns and priority/job wording such as `jobs affected`, `current vs requested priority`, `priority to high`, and `high-priority`. | The valid response-document path bypasses this code, but compatibility sessions still decide stale-table visibility from job-priority prose instead of typed ownership/state. | A legacy or degraded non-priority mutation could keep stale pre-commit tables visible after completion because the contradiction detector only understands priority words. | Make stale-table suppression use typed `presentation.kind`, operation/approval ownership, row outcome/state, and response-document absence rules; leave text parsing as an explicitly allowlisted fallback. | Phase 22 can keep product behavior unchanged but should add a guard/test that non-priority typed presentations do not rely on priority-word contradiction checks. |
+| P20-06 | test_fixture | `eMas Front/e2e/support/responseDocumentScenarios.js:1`, `eMas Front/e2e/support/responseDocumentScenarios.js:32`, `eMas Front/e2e/specs/final-response-quality.spec.js:249`, `eMas Front/e2e/support/responseDocumentProbe.js:41` | Mocked browser fixtures and probes use exact RD prompts, `JOB-SEED-*`, `M-CNC-01`, `Medium -> High`, `Original High -> Low`, `Updated 63 jobs across 22 approved steps`, and dump-style machine labels. | These constants live in test/fixture/probe files and represent deterministic oracle evidence, not product routing/composition logic. | They become risky only if treated as proof of the general contract without adjacent non-job/non-machine rows. | Keep exact fixtures, but pair them with generic contract rows from P20-01/P20-03. | Phase 22 should add minimal generic fixture variants, not delete the canonical RD fixtures. |
+| P20-07 | acceptable_fixture | `factory-agent/factory_agent/testing_seeded_scenarios.py:92`, `factory-agent/factory_agent/testing_seeded_scenarios.py:201`, `factory-agent/factory_agent/testing_seeded_adapters.py:26`, `factory-agent/factory_agent/testing_seeded_adapters.py:710`, `tests/e2e/scenarios/manual_prompt_regressions.json:171`, `tests/e2e/scenarios/seed_pipeline.json:241` | Seeded scenarios and adapters contain phase markers, seeded job/machine IDs, controlled LOTO answers, and job-priority cascade interpreters. | They are isolated behind seeded/testing adapters or scenario banks and are intentionally deterministic. The product route/composer no longer branches on these IDs. | Risk is coverage illusion: fixture adapters can duplicate product behavior and hide live planner gaps if promoted as general proof. | Keep these as fixtures; require product contracts to be proven in backend composer/route tests and use real LangGraph only when seeded adapters could hide planner/RAG/tool-selection behavior. | No Phase 21 product behavior change; use as fixtures for new generic status/no-op cases if safe in Phase 22. |
+| P20-08 | defer | `factory-agent/factory_agent/rag/knowledge_policy.py:115`, `factory-agent/factory_agent/services/plan_creation_service.py:325`, `docs/qa/HARDCODE_REDUCTION_PLAN.md:252` | Curated fallback policies currently cover LOTO notification and OSHA LOTO, with route/topic scoping through the knowledge policy registry. | This is LOTO-specific, but it is scoped policy data rather than a response-document rendering shortcut, and non-LOTO document prompts do not borrow the OSHA/LOTO fallback. | Future document domains may need similar data-backed policy entries; adding them as inline code would revive the hardcode risk. | Keep curated fallback content behind a policy registry/data pack and require route/topic evidence before applying a fallback. | Defer to the hardcode-reduction/knowledge-policy track unless Phase 22's status/no-op scope touches RAG fallback data. |
+| P20-09 | test_fixture | `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1187`, `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md:1326`, `docs/qa/manual_prompt_regression_bank.md:242`, `docs/qa/manual_prompt_regression_bank.md:247` | QA docs explicitly call out general classes for prior prompt fixes: job-priority no-op must become entity-agnostic, and LOTO notification routing must become generic document-content question typing beyond LOTO. | The docs do not say only "fix this prompt"; they mostly define the broader class and coverage level. | The only remaining doc risk is that Phase 22 could pick one new exact prompt instead of the classes identified here. | Use this Phase 20 inventory as the source of truth and add future bank entries for entity-status and non-job no-op prompt classes. | Phase 21 prepares metadata from P20-01 through P20-03; Phase 22 implements the generic contracts without another one-off prompt patch. |
 
 ### Top Risks
 
@@ -1482,7 +1491,51 @@ Date: 2026-05-19
 
 ### Recommended Phase 21
 
-Phase 21 should be **Generic Entity Status And Mutation Business Contract**.
+Phase 21 should be **Backend Capability Metadata Readiness**.
+
+Why this comes first:
+
+- Phase 20 found that the backend route/tool/composition layer still lacks enough generic metadata to support a true entity-generic response contract.
+- Starting generic response-document work before backend metadata is ready would repeat the same mistake: frontend and response-composer code would infer status or business changes from job/machine labels, endpoint names, or summary prose.
+- The backend needs to expose entity/action/change semantics through OpenAPI, generated tools, generated vocabulary, and `tools.md` before Phase 22 implements generic response-document behavior.
+
+Scope:
+
+- Update Go/OpenAPI metadata where needed so relevant read/status and mutation-capability routes expose:
+  - `entity_type`;
+  - stable entity identifier fields;
+  - read/status capability;
+  - write/mutation capability;
+  - approval/no-op requirements;
+  - business-change field metadata when available.
+- Regenerate and verify:
+  - `emas/docs/swagger.json`;
+  - `emas/docs/swagger.yaml`;
+  - `rag_sources/01_emas_internal_docs/api_reference/openapi.json`;
+  - `factory-agent/factory_agent/tools.md`;
+  - `rag_sources/01_emas_internal_docs/api_reference/tools.md`;
+  - `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`.
+- Add backend tests proving tool generation and vocabulary preserve generic entity tokens for at least:
+  - machine;
+  - job;
+  - product or material;
+  - inventory or work order if present in the current OpenAPI surface.
+- Add contract checks proving generated tools contain enough capability metadata for:
+  - `entity_status_v1`;
+  - `business_change_v1`;
+  - `entity_agnostic_no_matching_records_v1`.
+- Do not change broad response-document rendering yet. Phase 21 is backend readiness, not the generic UI/composer implementation.
+
+Out of scope:
+
+- Enabling broad product/material/inventory writes.
+- Replacing the response-document renderer.
+- Replacing seeded fixtures.
+- Adding new prompt wording volume that does not test metadata readiness.
+
+### Recommended Phase 22
+
+Phase 22 should be **Generic Entity Status And Mutation Business Contract** after Phase 21 is green.
 
 Scope:
 
@@ -1491,7 +1544,7 @@ Scope:
 - Add one safe non-job no-op mutation fixture or backend-only contract proving `entity_agnostic_no_matching_records_v1` without broadening approved write behavior.
 - Add a small frontend/probe check that final business groups and status blocks render from typed fields rather than exact RD-001/RD-008 labels.
 
-Out of scope:
+Phase 22 out of scope:
 
 - Enabling broad product/material/inventory writes.
 - Replacing all seeded fixtures.
@@ -1553,6 +1606,84 @@ No product behavior changed in Phase 20. This was a docs-only audit. No safety e
 git status --short --branch
 git diff --check
 ```
+
+## Phase 21 Checklist
+
+- [ ] Confirm branch is `codex/playwright-e2e-plan` and inspect current OpenAPI/tool/vocabulary metadata.
+- [ ] Identify backend/OpenAPI metadata gaps for generic entity status, mutation business changes, and no-op mutation outcomes.
+- [ ] Update the backend/OpenAPI source of truth where needed so supported routes expose typed entity/action/capability semantics.
+- [ ] Regenerate `emas/docs/swagger.json` and `emas/docs/swagger.yaml` when backend Swagger changes.
+- [ ] Sync `rag_sources/01_emas_internal_docs/api_reference/openapi.json` from the current Swagger/OpenAPI.
+- [ ] Regenerate `factory-agent/factory_agent/tools.md` using the existing tool generation pipeline.
+- [ ] Sync `rag_sources/01_emas_internal_docs/api_reference/tools.md` from the regenerated Factory Agent tools reference.
+- [ ] Regenerate `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`.
+- [ ] Add or update tests proving generated tools/vocabulary preserve generic entity tokens and capability tags beyond machine/job.
+- [ ] Add or update tests proving metadata is sufficient for `entity_status_v1`, `business_change_v1`, and `entity_agnostic_no_matching_records_v1`.
+- [ ] Update tracker and manual regression bank.
+- [ ] Run backend metadata/tool generation verification.
+- [ ] Commit Phase 21.
+
+## Phase 21 Implementation Notes
+
+Status: Not Started
+
+Phase 21 is backend readiness for generic response-document work. It should improve the backend metadata supply chain, not implement broad frontend rendering or generic response-document composition.
+
+### Required Metadata Artifacts
+
+The following must be kept in sync when metadata changes:
+
+- `emas/docs/swagger.json`
+- `emas/docs/swagger.yaml`
+- `rag_sources/01_emas_internal_docs/api_reference/openapi.json`
+- `factory-agent/factory_agent/tools.md`
+- `rag_sources/01_emas_internal_docs/api_reference/tools.md`
+- `factory-agent/factory_agent/generated/tool_intent_vocabulary.json`
+
+### Required Backend Semantics
+
+OpenAPI/tool metadata should be able to express or derive:
+
+- entity type, such as machine, job, product, material, inventory, or work order;
+- stable entity id fields and display id fields;
+- read/status capability;
+- mutation capability;
+- approval requirement;
+- no-op/no-match outcome support;
+- business-change fields, including changed field, previous value, new value, selector, and source-state basis when available.
+
+### Phase 21 Verification Target
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_toolgen.py tests/test_tool_intent_profile.py tests/test_tool_selector.py -q
+python scripts/generate_tools.py --local --no-db
+python scripts/generate_tool_intent_vocabulary.py
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+If Swagger/OpenAPI generation requires the Go backend toolchain, run the existing project command for Swagger regeneration and document it in this tracker. Do not hand-edit generated `tools.md` or generated vocabulary output.
+
+## Phase 22 Checklist
+
+- [ ] Start only after Phase 21 marks backend metadata ready.
+- [ ] Add `entity_status_v1` route/composition contract for machine plus at least one non-machine entity.
+- [ ] Add typed `business_change_v1` contract and migrate priority cascade composition to prefer typed fields over summary parsing.
+- [ ] Add at least one safe non-job no-op backend contract or fixture.
+- [ ] Add focused frontend/probe proof that generic status/business-change/no-op blocks render from typed fields.
+- [ ] Preserve RD-001, RD-002, RD-006, RD-007, RD-008, and RD-009 behavior.
+- [ ] Update tracker and manual regression bank.
+- [ ] Run backend, frontend, and focused browser verification.
+- [ ] Commit Phase 22.
+
+## Phase 22 Implementation Notes
+
+Status: Blocked Until Phase 21
+
+Phase 22 is the generic response-document implementation phase that Phase 20 originally recommended as Phase 21. It is intentionally blocked until OpenAPI/tool/vocabulary metadata is ready.
 
 ## Phase 10 Implementation Notes
 
@@ -1708,7 +1839,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Continue the queued implementation sequence with Phase 19, then Phase 20. Phase 20 must run before Phase 21 is defined so the next phase is based on the entity-specific overfitting audit rather than another guessed special case.
+Start Phase 21 backend capability metadata readiness. Do not start Phase 22 generic entity response-document implementation until Phase 21 proves OpenAPI, RAG OpenAPI mirror, generated `tools.md`, RAG `tools.md`, generated vocabulary, and capability metadata are synchronized and sufficient.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 
