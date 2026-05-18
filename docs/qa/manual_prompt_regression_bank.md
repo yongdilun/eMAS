@@ -256,6 +256,16 @@ Phase 20 is an audit gate before Phase 21. It does not add a single prompt as th
 |---|---|---|---|
 | `response-document-phase20-overfitting-audit` | Audit backend routing/planning, response-document composition, frontend rendering/probes, seeded fixtures, Playwright assertions, scenario oracles, and QA docs for entity-specific overfitting. | Findings are classified as `acceptable_fixture`, `test_fixture`, `product-risk`, `planning-risk`, `missing-general-contract`, or `defer`. Product-risk and missing-general-contract findings must include a recommended abstraction and Phase 21 proposal. | Planned: docs/tracker audit inventory; no product behavior change unless explicitly approved |
 
+## Phase 21 Candidate Prompt Classes From Phase 20 Audit
+
+These are future regression-bank candidates, not Phase 20 product fixes. Add executable entries only when Phase 21 starts or when one of these classes is observed manually.
+
+| Candidate ID | Prompt / flow class | Expected deterministic behavior | First useful coverage |
+|---|---|---|---|
+| `response-document-phase21-generic-entity-status` | Status read for a non-machine entity, such as product, material/inventory, or work order status. | Route as an entity-status read when a supported status tool exists, compose a typed `status_result` with `entity_type`, `entity_id`, `primary_status`, human fields, no approval UI, and no raw assistant/API dump labels. | Backend semantic route/tool contract, backend response-document contract, then one mocked browser fixture if visible DOM can diverge. |
+| `response-document-phase21-non-job-noop-mutation` | Safe mutation-selector no-op for a non-job entity. | Emit `entity_agnostic_no_matching_records_v1` with `Not changed`, no approval for zero-match groups, no fake success, and no mutation/audit rows for the no-op group. | Backend response-document contract first; mocked browser only if the display contract changes. |
+| `response-document-phase21-generic-business-change` | Completed mutation result whose changed field is not `priority` and whose entity is not a `JOB-*` record. | Group final results by typed business-change fields rather than priority prose; preserve ordering, entity labels, row outcomes, and clean audit display without exact RD-001 labels. | Backend response-document contract plus focused frontend renderer/probe coverage. |
+
 ## Phase 15 Release Enforcement Note
 
 Phase 15 assigns every fixed or newly found prompt/workflow miss to a blocking lane:
