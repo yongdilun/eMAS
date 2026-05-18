@@ -7,7 +7,7 @@ Created: 2026-05-18
 
 | Phase | Name | Status | Owner | Notes |
 | --- | --- | --- | --- | --- |
-| 0 | Response gap audit and contract inventory | Not Started | Next agent | Map current final-response, typed presentation, timeline, approval, and frontend rendering paths. |
+| 0 | Response gap audit and contract inventory | Completed | Codex | Current backend/frontend response paths, existing coverage, missing gates, blockers, and Phase 1 starting point documented below. |
 | 1 | Backend response document schema | Not Started | Next agent | Add additive `response_document.version=1`, `run_steps`, and typed blocks beside existing `presentation`. |
 | 2 | Deterministic composer and run steps | Not Started | Next agent | Build backend-owned deterministic response composer with progressive disclosure rules. |
 | 3 | Failure recovery response documents | Not Started | Next agent | Add typed failure taxonomy, operator-friendly diagnostic cards, impact summaries, and context-aware next actions. |
@@ -25,6 +25,8 @@ Created: 2026-05-18
 - Existing `presentation` and frontend merge/ranking logic can still create old/new source-of-truth confusion until cleanup is complete.
 - Busy traffic can still cause rendering bugs unless response documents include revisions and frontend applies them through one reducer.
 - Broken flows such as timeout, validation-loop exhaustion, interrupted SSE, auth denial, or backend failure do not yet have one operator-friendly failure-card standard.
+- Phase 0 audit found no additive `response_document`, no `snapshot_revision`, and no frontend response-document reducer. Existing `cursor` protects notification invalidation only, while `presentation` and activity rows can still be assembled independently.
+- Phase 0 audit found frontend table/detail selection still depends on legacy bundle/table heuristics and phrase checks. This is a blocker for retiring `presentation` as the primary UI contract, but it should be fixed in later implementation phases, not Phase 0.
 
 ## Open Questions
 
@@ -95,14 +97,199 @@ Created: 2026-05-18
 
 ## Phase 0 Checklist
 
-- [ ] Inventory backend response creation paths.
-- [ ] Inventory frontend rendering paths.
-- [ ] Map current `presentation` usage and legacy phrase/table inference.
-- [ ] Map approval card rendering and bundle UI paths.
-- [ ] Map timeline/SSE to activity UI behavior.
-- [ ] Document current tests that already cover response quality.
-- [ ] Document missing tests.
-- [ ] Update this tracker with audit findings.
+- [x] Inventory backend response creation paths.
+- [x] Inventory frontend rendering paths.
+- [x] Map current `presentation` usage and legacy phrase/table inference.
+- [x] Map approval card rendering and bundle UI paths.
+- [x] Map timeline/SSE to activity UI behavior.
+- [x] Document current tests that already cover response quality.
+- [x] Document missing tests.
+- [x] Update this tracker with audit findings.
+
+## Phase 0 Audit Findings
+
+Date: 2026-05-18
+
+Phase 0 was documentation-only. No backend schema, UI renderer, reducer, or product behavior was implemented.
+
+### Files Inspected
+
+- `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md`
+- `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
+- `factory-agent/factory_agent/schemas.py`
+- `factory-agent/factory_agent/services/session_snapshot_service.py`
+- `factory-agent/factory_agent/services/planner_service.py`
+- `factory-agent/factory_agent/services/execution_service.py`
+- `factory-agent/factory_agent/api/routers/messages.py`
+- `factory-agent/factory_agent/api/routers/events.py`
+- `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx`
+- `eMas Front/src/components/features/chat/factory-agent/activityTimelineUtils.js`
+- `eMas Front/src/components/features/chat/factory-agent/presentationContract.js`
+- `eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js`
+- `eMas Front/src/components/features/chat/turns/turnAssembler.js`
+- Current related tests under `factory-agent/tests` and `eMas Front/e2e`
+
+### Backend Response Creation Paths
+
+- API contract lives in `factory-agent/factory_agent/schemas.py`.
+  - `PresentationResponse` is the current typed display contract with `kind`, `state`, `operation_id`, `approval_id`, `summary`, `rows`, `sources`, `diagnostics`, and `invariants`.
+  - `TimelineEventResponse.presentation` attaches typed presentation to selected timeline events.
+  - `SessionSnapshotResponse.presentation` is described as authoritative typed presentation for the current snapshot/final response.
+  - `SessionSnapshotResponse.cursor` is the current monotonic event cursor for notification SSE staleness. There is no `snapshot_revision` or per-turn document revision yet.
+  - There is no `ResponseDocument`, `RunStep`, typed block schema, or `response_document` payload yet.
+
+- Final text is assembled mostly in `factory-agent/factory_agent/services/session_snapshot_service.py`.
+  - Conversation/RAG assistant messages become `session_completed` timeline events.
+  - Completed sessions without a latest completion event synthesize `completed:{session_id}`.
+  - Completion synthesis chooses a useful assistant message, generic completion message, or a useful latest tool result via `_operator_result_content_for_completion`.
+  - Several filters prevent raw JSON, plan-like text, approval-wait text, and generic tool completion from winning.
+  - Tool-result text is produced from stored tool messages, `PlanStep.result_summary`, `summarize_tool_result`, or fallback strings such as `<tool> completed`.
+
+- Typed `presentation` is derived in `session_snapshot_service.py`.
+  - `_derive_snapshot_presentation` chooses pending approval, expired approval, rejected approval, blocked, partial failure, failed, empty final response, completed mutation, knowledge answer, completed answer, or non-terminal diagnostic.
+  - `_presentation_for_event` derives per-event typed presentations for `approval_required`, `approval_decided`, and `tool_result`.
+  - `_attach_typed_presentations_to_events` attaches the snapshot presentation to the latest terminal event and per-event presentations elsewhere.
+  - Row evidence comes from `_rows_from_steps`, `_rows_from_tool_events`, `_approval_rows_from_args`, and `_operation_rows_from_result`.
+
+- Failed/blocked/timeout/cancelled/expired states are converted through several paths.
+  - `ExecutionService.run_langgraph_session` maps planner clarification to `BLOCKED`, planner rejected to `BLOCKED` plus HTTP 400, and planner backend/transient failures to `FAILED` plus HTTP 503.
+  - `messages.py` handles user cancel commands by marking pending work skipped/rejected, setting session status to `IDLE`, and storing the cancellation error.
+  - `session_snapshot_service.py` converts `BLOCKED` to `session_blocked`, `FAILED` to `session_failed`, user-cancelled state to a cancellation-flavored `session_failed`, and expired/rejected approvals to typed presentation states.
+  - Timeout and transient failures are recognized in `planner_service.py` via `_is_transient_exception`, but Phase 0 found no typed failure taxonomy or operator failure-card template yet.
+
+- Approval bundle UI data is created before snapshot rendering.
+  - Current dedicated tests point to `factory_agent.graph.approval_summary.build_job_priority_bundle_uiview` and `build_approval_required_payload`.
+  - Snapshot approval rows read `approval.args.bundle_ui.rows`, `preview`, or `staged_writes` through `_approval_rows_from_args`.
+  - Timeline approval events expose `details.args`, `details.tool`, `details.input_schema`, `missing_required`, `side_effect_level`, and `expires_at`.
+
+- SSE/polling snapshot payloads are assembled from snapshots.
+  - `events.py` has three streams:
+    - `/events/semantic` polls snapshots every 1s and emits timeline-derived semantic events plus resume markers and heartbeats.
+    - `/events/activity` polls snapshots every 1s and emits server activity steps with signature dedupe and optional fault injection.
+    - `/events` notification stream polls snapshots every 0.5s and emits `snapshot_invalidated` and `phase_changed` frames when `cursor` or `phase` changes.
+  - Frontend still re-fetches full snapshots after notification invalidation. Activity SSE updates only the activity strip.
+  - No backend stream currently emits a typed response-document revision.
+
+### Frontend Rendering Paths
+
+- `presentation` is normalized in `presentationContract.js`.
+  - `normalizeTypedPresentation` sanitizes shape, rows, sources, diagnostics, and invariants.
+  - `summaryFromTypedPresentation`, `typedPresentationIsAuthoritative`, `tablePresentationFromTypedPresentation`, and `activityStepFromTypedPresentation` convert typed presentation into text, tables, and activity rows.
+
+- Snapshot state enters the UI in `useFactoryAgentChat.js`.
+  - `applySnapshot` sets `session`, `plan`, `steps`, `timeline`, `presentation`, `pendingApproval`, `resumeHint`, and `activitySteps`.
+  - Activity steps prefer `snapshot.activity_steps`; fallback builds steps from snapshot timeline and presentation.
+  - Active-stream snapshots union server activity rows by id with existing rows; terminal snapshots finalize historical rows.
+  - There is no centralized document reducer, revision comparison, or invalid-document diagnostic path.
+
+- Turn summary is chosen in `turnAssembler.js`.
+  - `assembleFactoryAgentTurns` groups timeline events by turn, merges event presentations, then applies the snapshot presentation to the latest turn.
+  - `presentationMergeRank` ranks snapshot presentation above terminal events, pending approval, failures, tool results, and plan events.
+  - `computeFactoryAgentTurnSummary` prefers authoritative typed presentation but can fall back through approval, terminal, plan, tool, and phrase-based heuristics.
+  - The function still strips approval-wait phrases and checks for plan-like, raw JSON, interrupt-bundle, generic completion, and stale approval text.
+
+- Timeline/activity rows are built in `activityTimelineUtils.js`.
+  - `buildActivityStepsFromSnapshot` prefers operation-scoped timeline events, suppresses premature `session_completed` while active/pending, injects status-based rows, and adds typed-presentation rows for non-completed terminal states.
+  - `buildStepsFromEventsOperational` creates operator activity rows from timeline event type, approval position, and tool result ordering.
+  - `finalizeHistoricalActivityStates`, `stripPrematureTerminalActivitySteps`, and `injectExecutionSummaryFromPlanSteps` try to prevent stale `Current` rows and missing execution evidence.
+
+- Approval cards and affected records render in `FactoryAgentChatPanel.jsx`.
+  - `AssistantTurnBubble` renders `ActivityTimeline`, optional resume banner, streamed summary, `TablePresentation`, `TurnDetails`, confirmation options, and `ApprovalCard`.
+  - `pendingApprovalVisibleSummary` chooses `bundle_ui.headline`, compacted risk summary, or "Waiting for approval."
+  - `showApprovalCard` is tied to `pendingApproval`, latest turn ownership, `WAITING_APPROVAL`, and resume state.
+  - Full approval card implementation lives in `ApprovalCard`; Phase 0 did not change it.
+
+- Tables/lists/details are inferred in `FactoryAgentChatPanel.jsx` and `turnAssembler.js`.
+  - `bundleUiPresentationFromTurn` chooses pending approval bundle, decided/stashed bundle, or latest approval-required event bundle.
+  - `getLatestToolPresentation` prefers typed mutation/partial-failure table presentation, otherwise scans latest tool presentation tables and can skip tables that contradict summary text.
+  - `buildUserDetailLines` collects diagnostics, plan explanation, tool content, approval content, and terminal reason, then dedupes and truncates.
+  - `summarizeToolResult` in `turnAssembler.js` infers list/table summaries from result rows, `details.presentation.table.rows`, ids, `_summary`, `summary`, `message`, `detail`, and `status`.
+
+- Stale text or old presentation can still override newer state in these spots.
+  - `presentationMergeRank` is rank-based, not revision-based. A high-rank stale snapshot presentation can still win if the backend sends it.
+  - `applySnapshot` accepts every fetched snapshot for the requested session without comparing cursor/revision against current state.
+  - Activity stream rows merge by id/signature and timestamp, but there is no session/document revision guard for out-of-order full snapshots.
+  - `bundleTableByApprovalIdRef` intentionally preserves approval bundle tables after decision, which helps avoid evidence loss but can also preserve old evidence until later logic hides it.
+  - `useStagedAssistantSummary` delays summary changes for progress staging, so very fast backend state changes can temporarily display older text.
+  - Table contradiction checks and summary heuristics can hide stale tables, but they are phrase/data-shape heuristics rather than a contract.
+
+### Existing Test Coverage
+
+- Backend contract coverage already exists for current `presentation` behavior.
+  - `factory-agent/tests/test_typed_snapshot_presentation_contract.py` covers pending approval over stale success text, rejected, expired, partial failure, successful multi-approval rows, cancelled, knowledge-source presentation, empty final response diagnostic, and failed-over-stale-success presentation.
+  - `factory-agent/tests/test_snapshot_timeline_final_response_contract.py` covers completion projection helpers and stateful oracle invariants for final response timing, approval ids, timeline/SSE ordering, committed jobs, and final response phrases.
+  - `factory-agent/tests/test_approval_bundle_ui.py` covers job-priority approval bundle UI payload shape and headline/row evidence.
+  - Related backend tests also include `test_event_stream_runtime.py`, `test_phase7_api_ui_alignment.py`, `test_summary_bundle.py`, `test_langgraph_state_machine_oracles.py`, and `test_hardcode_guardrails.py`.
+
+- Frontend/Playwright coverage already protects many legacy visible behaviors.
+  - `eMas Front/e2e/specs/chat-fixtures.spec.js` covers backend unavailable without fake success, empty completed assistant content not reusing old answer, typed rejected presentation suppressing stale success, typed pending approval over stale completion text, and typed knowledge sources.
+  - `chat-sse-activity.spec.js` covers ordered activity stream rows and final-answer gating until completed snapshot state.
+  - `chat-sse-notification.spec.js` covers notification SSE invalidation and final completion.
+  - `chat-stream-errors.spec.js` covers malformed SSE recovery, execute 409 retry, non-terminal active busy state with no fake final answer, and notification stream-drop fallback without final success.
+  - `full-stack-sse-hard.spec.js` covers out-of-order/duplicate SSE not regressing phase or duplicating visible activity.
+  - `full-stack-data-integrity.spec.js` covers seeded approval chains, original-state semantics, approval rejection, refresh during active approval, stale/expired approval safety, cross-surface agreement, partial/failure cases, and stream-drop polling recovery.
+  - `real-langgraph-critical.spec.js` covers real LangGraph two-approval workflows, no premature `Run complete`, final aggregation for the SO-041 scenario, and visible stale-copy exclusions.
+
+### Missing Coverage For New Response-Document Plan
+
+- No backend tests assert a `response_document` exists, validates, or agrees with `presentation`.
+- No tests cover `response_document.revision`, `snapshot_revision`, document identity, turn identity, or operation identity.
+- No frontend unit tests exist for a centralized response-document reducer because the reducer does not exist yet.
+- No tests cover invalid existing `response_document` rendering a safe diagnostic instead of falling back to `presentation`.
+- No tests cover same-revision conflicting document content.
+- No tests cover higher document revision winning across polling/SSE disagreement.
+- No tests cover cross-turn/cross-document stale response documents being ignored.
+- No tests assert collapse state keyed by stable block id across accepted document revisions.
+- No response-document renderer tests cover block types such as `run_activity`, `short_message`, `approval_card`, `completed_step`, `result_summary`, `result_table`, `source_list`, `warning`, and `diagnostic`.
+- Existing browser tests cover final text and some visible exclusions, but they do not yet assert compact default approval-card height, top 3-5 affected records, expandable full details, or completed-step evidence preserved beside approval 2 as typed blocks.
+- Failure tests do not yet assert typed failure-card fields for cause, impact, changes applied, incomplete steps, safe retry policy, next actions, and collapsed sanitized technical details.
+- Busy traffic coverage exists for activity/SSE, but not for full response-document event storms or final-then-stale-pending document downgrades.
+
+### Known Bug Classes Mapped To Current Paths
+
+- Missing multi-step conclusion:
+  - Backend final text synthesis in `session_snapshot_service.py` and frontend `computeFactoryAgentTurnSummary` can still choose one terminal/tool summary. Existing seeded/real tests cover some cascades, but typed block aggregation is missing.
+
+- Approval 2 overwriting approval 1 evidence:
+  - Snapshot presentation has one primary `approval_id`; frontend displays latest pending approval as primary and stashes decided bundle tables by approval id. There is no typed completed-step block guaranteeing approval 1 evidence remains visible during approval 2.
+
+- Stale read summary overriding mutation result:
+  - Backend filters plan-like/generic/approval-wait text and frontend has table contradiction checks, but both are heuristic. A response document should make mutation result blocks authoritative.
+
+- Approval card taking too much chat space:
+  - `ApprovalCard` plus `TablePresentation` and bundle rows can still dominate the bubble. Existing plan calls for compact preview, but Phase 0 found no response-document-driven compact card contract yet.
+
+- Collapse reopens after polling/SSE:
+  - Current table collapse is derived from `presentation`, `pendingApproval`, and `hasServerDecidedApproval`. There is no reducer-owned collapse state keyed by stable block id.
+
+- Stale `Current` activity row:
+  - `finalizeHistoricalActivityStates`, `stripPrematureTerminalActivitySteps`, and `injectExecutionSummaryFromPlanSteps` mitigate this. However, activity rows are still built separately from final response state and do not share a response-document revision.
+
+- Timeout/failure shows vague or ugly response:
+  - `planner_service.py` classifies transient failures and `ExecutionService` maps them to `FAILED`, but snapshot presentation only exposes generic diagnostic fields. There is no operator-friendly typed failure taxonomy or action policy.
+
+- Busy traffic/out-of-order SSE or polling rendering stale UI:
+  - Notification SSE uses `cursor`, activity SSE dedupes by row signature, and tests cover some out-of-order activity behavior. Full snapshots and typed response surface updates do not yet have per-document revision ordering.
+
+### Phase 0 Decisions
+
+- Do not modify product code in Phase 0.
+- Do not add schema fields until Phase 1.
+- Keep `PresentationResponse` as the audited legacy contract that Phase 1 must agree with.
+- Phase 1 should add response-document schemas in `schemas.py` and assemble an additive placeholder/minimal document in the snapshot path without changing frontend rendering.
+- Phase 2 should own deterministic composition in a new `response_document_service.py` unless implementation proves it is small enough to keep `session_snapshot_service.py` readable.
+- Keep `cursor` as existing notification invalidation evidence, but add explicit `snapshot_revision`/document revision rather than overloading activity ids or timeline ordering.
+- Treat existing phrase/table heuristics as migration risks to isolate in Phase 8, not as contracts to copy into the response-document renderer.
+
+### Recommended Phase 1 Starting Point
+
+Start with `factory-agent/factory_agent/schemas.py` and `factory-agent/factory_agent/services/session_snapshot_service.py`:
+
+- Add additive Pydantic schemas for `ResponseDocument`, `RunStep`, and response blocks.
+- Add `response_document` to `SessionSnapshotResponse` while keeping `presentation` unchanged.
+- Use a minimal deterministic mapper from existing `SessionSnapshotResponse.presentation`, `activity_steps`, `pending_approval`, and `timeline` so tests can assert presence and agreement without changing UI.
+- Add `factory-agent/tests/test_response_document_contract.py` covering schema presence, version, identity, state alignment with `presentation`, pending approval, completed mutation, rejected/expired/cancelled/failed diagnostics, and knowledge sources.
+- Defer frontend use, revision conflict behavior, compact renderer, and reducer behavior to later phases.
 
 ## Phase 1 Checklist
 
@@ -224,18 +411,23 @@ git status --short --branch
 Test-Path "docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md"; Test-Path "docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md"
 Get-Content "docs/qa/HARDCODE_REDUCTION_TRACK.md" | Select-Object -First 25
 rg -n "PresentationResponse|presentation|run_steps|response_document|FactoryAgentChatPanel|turnAssembler|activityTimeline" factory-agent/factory_agent/schemas.py factory-agent/factory_agent/services/session_snapshot_service.py "eMas Front/src/components/features/chat" -g "!**/node_modules/**"
+git add -- "docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md" "docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md"; git commit -m "docs: add response document UX plan"
+rg -n "final_response|final response|presentation|approval|snapshot|timeline|SSE|ServerSent|EventSource|poll|expired|cancelled|timeout|blocked|failed" factory-agent/factory_agent/schemas.py factory-agent/factory_agent/services/session_snapshot_service.py factory-agent/factory_agent/services/planner_service.py factory-agent/factory_agent/services/execution_service.py factory-agent/factory_agent/api/routers/messages.py factory-agent/factory_agent/api/routers/events.py
+rg -n "presentation|summary|timeline|activity|approval|affected|record|table|list|details|stale|current|collapse|poll|EventSource|SSE" "eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx" "eMas Front/src/components/features/chat/factory-agent/activityTimelineUtils.js" "eMas Front/src/components/features/chat/factory-agent/presentationContract.js" "eMas Front/src/components/features/chat/factory-agent/useFactoryAgentChat.js" "eMas Front/src/components/features/chat/turns/turnAssembler.js"
+rg --files factory-agent/tests "eMas Front/e2e" | rg "(response|presentation|snapshot|timeline|approval|final|sse|poll|collapse|busy|traffic|factory|langgraph|oracle|failure|timeout|turn)"
+rg -n "presentation|final response|session_completed|approval|required|pending|expired|cancelled|failed|timeline|activity|SSE|poll|collapse|stale|response_document|empty final|busy|out-of-order|out of order" factory-agent/tests "eMas Front/e2e"
 ```
 
 ## Test Results
 
-- Documentation creation only so far.
-- No product tests have been run for this new plan.
+- Phase 0 was documentation-only.
+- No backend, frontend unit, or Playwright product tests were run because Phase 0 did not implement product behavior.
+- Required verification passed: `git diff --check`.
 
 ## Files Changed
 
-- `docs/qa/RESPONSE_DOCUMENT_UX_PLAN.md`
 - `docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md`
 
 ## Next Action
 
-Start Phase 0. Do not implement UI or backend schema before the current response paths and test gaps are documented in this tracker.
+Start Phase 1 by adding additive backend response-document schemas and a minimal snapshot response-document mapper beside existing `presentation`; keep frontend behavior unchanged.
