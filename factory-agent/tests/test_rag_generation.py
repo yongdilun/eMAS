@@ -3,6 +3,7 @@ import json
 from unittest.mock import MagicMock, patch
 from factory_agent.rag.schemas import Chunk, ScoredChunk, AnswerResult
 from factory_agent.rag.generation import AnswerGenerator, SAFETY_WARNING_BLOCK
+from factory_agent.rag.source_metadata import normalize_source_locators
 
 @pytest.fixture
 def mock_settings():
@@ -233,3 +234,45 @@ def test_generate_answer_empty_input(mock_build_llm, mock_settings):
     
     assert "No relevant documents" in result.answer
     assert len(result.sources) == 0
+
+
+def test_normalize_source_locators_reassigns_duplicate_final_source_numbers():
+    sources = normalize_source_locators(
+        [
+            {
+                "source_number": 1,
+                "source_id": "doc-a#chunk-a",
+                "doc_id": "doc-a",
+                "chunk_id": "chunk-a",
+                "title": "Document A",
+                "organization": "Org A",
+                "snippet": "Evidence A.",
+            },
+            {
+                "source_number": 1,
+                "source_id": "doc-b#chunk-b",
+                "doc_id": "doc-b",
+                "chunk_id": "chunk-b",
+                "title": "Document B",
+                "organization": "Org B",
+                "snippet": "Evidence B.",
+            },
+            {
+                "source_number": 2,
+                "source_id": "doc-c#chunk-c",
+                "doc_id": "doc-c",
+                "chunk_id": "chunk-c",
+                "title": "Document C",
+                "organization": "Org C",
+                "snippet": "Evidence C.",
+            },
+        ]
+    )
+
+    assert [source["source_number"] for source in sources] == [1, 2, 3]
+    assert len({source["source_number"] for source in sources}) == len(sources)
+    assert [(source["source_id"], source["doc_id"], source["title"]) for source in sources] == [
+        ("doc-a#chunk-a", "doc-a", "Document A"),
+        ("doc-b#chunk-b", "doc-b", "Document B"),
+        ("doc-c#chunk-c", "doc-c", "Document C"),
+    ]

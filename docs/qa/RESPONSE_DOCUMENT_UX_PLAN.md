@@ -1897,6 +1897,297 @@ npm test
 npm run test:e2e:response-document -- --grep "source PDF|source drawer|highlight|LOTO"
 ```
 
+### Phase 30: RAG Reingestion And Live Release Proof
+
+Goal: Rebuild the local RAG stores after the PDF source-locator upgrade and prove live source payloads carry page-aware safe locator metadata.
+
+Problem this phase targets:
+
+- Phase 29 can add the correct ingestion behavior while old local Chroma/BM25 stores still contain stale chunks.
+- Source UX proof is incomplete if browser fixtures have PDF metadata but live retrieved chunks still lack `page`, `pdf_url`, `text_search`, or `char_range`.
+- Local ingestion must not leak raw filesystem `file_path` through normal source payloads.
+
+Prerequisite:
+
+- Phase 29 must be marked Done.
+
+Implementation steps:
+
+- Reingest the registered RAG sources from `rag_sources/00_metadata_templates/source_register.json`.
+- Confirm local vector and BM25 indexes agree on page-aware locator metadata.
+- Prove OSHA LOTO chunks carry `source_id`, `doc_id`, `chunk_id`, `title`, `organization`, `snippet`, `page`, `pdf_url`, `text_search`, and `char_range`.
+- Prove normal source payloads do not expose raw local `file_path`.
+- Keep source drawer fallback coverage for sources that genuinely lack PDF locators.
+
+Acceptance criteria:
+
+- Local RAG indexes are rebuilt or verified as current.
+- Live LOTO source payloads include safe page/highlight locator metadata.
+- Existing typed RAG/source browser gates remain green.
+- Reingestion steps and accepted limitations are recorded in the tracker.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_rag_ingestion.py tests/test_rag_generation.py tests/test_response_document_contract.py tests/test_rag_knowledge_policy.py -q
+
+Set-Location "..\eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "LOTO|source PDF|source drawer|highlight|typed RAG"
+npm run test:e2e:seeded-oracles -- --grep "LOTO|source|RAG"
+```
+
+### Phase 31: Backend RAG Evidence Truth Cleanup
+
+Goal: Remove unsafe hardcoded runtime RAG fallback behavior and make backend citation/source truth deterministic before any new source UI work.
+
+Status: Completed 2026-05-19. Backend cleanup and focused regression coverage are in place; Phases 32, 33, 34, and 35 remain planned.
+
+Problem this phase targets:
+
+- `LOTO Notification Requirements` is currently a hardcoded runtime policy fallback, not a retrieved PDF-backed source.
+- Policy fallback sources can reuse `source_number: 1`, which can overwrite or confuse real PDF-backed source citations.
+- Backend-added answer supplements can appear without their own typed citation evidence.
+- Helpful-looking fallback answers can make unsupported safety/procedure claims appear source-backed.
+- Existing Phase 27-30 tests are not sufficient by themselves because they previously allowed the synthetic policy source, duplicate source numbering, and uncited backend-added fallback text.
+
+Prerequisite:
+
+- Phase 30 must be marked Done.
+
+Implementation steps:
+
+- Remove hardcoded runtime RAG policy fallback answers and synthetic sources such as `loto_notification_requirement` from real chat paths.
+- If retrieved sources do not support the requested safety/procedure claim, return an insufficient-context answer instead of adding policy text from code.
+- Keep retrieved sources visible for insufficient-context answers as "related sources checked" or equivalent wording, not proof of the unsupported claim.
+- Ensure final RAG source numbers are unique after all source normalization and merging.
+- Ensure citation mapping uses stable source identity and does not allow duplicate source numbers to redirect a chip to the wrong source.
+- Ensure every important backend-owned answer claim/sentence has typed citation evidence or is clearly marked as insufficient context.
+- Add RAG hardcode guardrails that fail if product/runtime code branches on exact LOTO prompt text, emits synthetic `loto_notification_requirement`, or appends answer text from policy fallback without retrieved source evidence.
+- Add new focused backend regression tests; do not count Phase 31 complete only because older tests still pass.
+- Add a negative unsupported-prompt test for:
+
+```text
+According to the OSHA lockout/tagout guide, what notification is required before starting lockout?
+```
+
+- Add a contract or unit test proving no synthetic `loto_notification_requirement` / `LOTO Notification Requirements` source appears in runtime RAG output.
+- Add a unit test proving source normalization/merging cannot leave duplicate final `source_number` values.
+- Add a response-document contract test proving uncited backend-added factual supplement text is blocked or converted to insufficient context.
+
+Acceptance criteria:
+
+- No real/runtime response includes synthetic `loto_notification_requirement` or a hardcoded `LOTO Notification Requirements` source.
+- No backend-added RAG answer supplement can appear as an uncited fact.
+- Unsupported safety/procedure prompts produce insufficient-context output instead of fallback facts.
+- Final source numbers are unique and source identity is stable.
+- New Phase 31 tests fail on the pre-cleanup behavior and pass after the cleanup.
+- Guardrails distinguish runtime/product code from allowed tests, seeded fixtures, and docs references.
+- Existing Phase 27-30 backend RAG, safety, source, and response-document contract tests remain green.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_hardcode_guardrails.py -q
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+### Phase 32: Live RAG Positive And Negative Release Proof
+
+Goal: Prove the cleaned backend RAG behavior through real or seeded pipeline paths before frontend source UI expansion.
+
+Problem this phase targets:
+
+- Backend contract tests can pass while live retrieval, route selection, source locators, or browser payloads still drift.
+- Removing hardcoded fallback behavior must not be mistaken for a broken RAG system.
+- The release proof needs one supported PDF-backed answer and one honest unsupported/insufficient-context answer.
+
+Prerequisite:
+
+- Phase 31 must be marked Done.
+
+Implementation steps:
+
+- Use a real PDF-backed positive proof prompt:
+
+```text
+According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?
+```
+
+- Require the positive answer to cite `osha_3120_lockout_tagout` with `doc_id`, `chunk_id`, `page`, `pdf_url`, and `char_range` or `text_search`.
+- Use the old unsupported prompt as the negative proof:
+
+```text
+According to the OSHA lockout/tagout guide, what notification is required before starting lockout?
+```
+
+- Require the negative answer to say insufficient context when indexed PDFs do not support the requested claim.
+- Show retrieved sources for the negative answer as related sources checked, not proof of the unsupported claim.
+- Prove LOTO document-content routing still does not ask for machine ID.
+- Prove API/browser payloads do not leak `loto_notification_requirement` or hardcoded fallback content.
+
+Acceptance criteria:
+
+- Positive real/seeded proof returns source-backed OSHA PDF evidence.
+- Negative real/seeded proof returns insufficient-context wording and related sources checked.
+- Both proofs preserve typed `safety_notice_v1`, `knowledge_answer_v1`, and source locator contracts where applicable.
+- No source chip, drawer payload, or bibliography payload disagrees on source number, source id, document id, or title.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_response_document_contract.py -q
+
+Set-Location "..\eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "OSHA lockout|reenergizing|insufficient context|LOTO|source|RAG"
+npm run test:e2e:seeded-oracles -- --grep "LOTO|source|RAG|insufficient context"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+### Phase 33: Side Evidence Drawer And PDF Panel UX
+
+Goal: Replace source-chip metadata-only interaction with a usable evidence workspace that can show source details and PDF evidence in one resizable side panel.
+
+Problem this phase targets:
+
+- A source chip can open a plain metadata drawer even when a cited or related source has PDF/page/highlight locator metadata.
+- Users need to inspect cited evidence without losing the chat context.
+- One inline source tag represents one cited claim/evidence group, so related supporting sources must be discoverable without making fake inline citations.
+
+Prerequisite:
+
+- Phase 32 must be marked Done.
+
+Implementation steps:
+
+- Replace or upgrade the source drawer into a resizable, closable side evidence drawer for source-chip clicks.
+- Show the cited source first and related supporting sources second.
+- When a cited or related source has `pdf_url` and page/locator metadata, open the PDF inside the same side panel.
+- Add back navigation from in-panel PDF view to the evidence list.
+- If exact highlight is unavailable, jump to the cited page and show snippet/search evidence instead of silently falling back to metadata-only display.
+- Preserve drawer-only fallback for true no-PDF sources.
+- Add component/probe/browser coverage for PDF-backed source, related supporting source, and no-PDF fallback.
+
+Acceptance criteria:
+
+- Clicking the positive OSHA source chip opens the side evidence drawer.
+- The drawer can open the PDF in-panel at the cited page/highlight fallback.
+- Back navigation returns from PDF view to evidence list.
+- True no-PDF sources still show useful drawer evidence without pretending to have PDF support.
+- Source chip, drawer entry, and bibliography source identity agree.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+npm run test:e2e:response-document -- --grep "source drawer|side evidence|PDF|back navigation|source chip|related source"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+### Phase 34: Source Tooltip And Responsive Chat Width
+
+Goal: Fix the layout problems independently from RAG truth and source drawer behavior.
+
+Problem this phase targets:
+
+- Source hover cards can overflow outside the chat surface near the right edge.
+- Assistant response cards remain too narrow when the chatbot/modal is resized wider.
+- Structured response-document content needs more width than plain prose, but long text still needs readable line lengths.
+
+Prerequisite:
+
+- Phase 33 must be marked Done.
+
+Implementation steps:
+
+- Make source-chip hover cards collision-aware: prefer bottom-right, flip to bottom-left or another safe placement when needed, and keep the card inside the chat/evidence container.
+- Add right-edge and small-screen hover tests.
+- Make assistant response cards grow with the chatbot/modal width while preserving readable prose widths.
+- Allow structured content such as source evidence, tables, approvals, and PDF panels to use wider space.
+- Add resize tests proving the chat content area grows when the chatbot/modal grows.
+
+Acceptance criteria:
+
+- Tooltip placement stays within the visible chat/evidence surface at right-edge and small-screen positions.
+- Resizing the chatbot/modal wider also widens the assistant response/card area enough to use available space.
+- Long prose remains readable and does not become edge-to-edge on very wide screens.
+- Structured response-document blocks can use wider layouts where useful.
+
+Verification command:
+
+```powershell
+Set-Location "eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "tooltip|responsive|resize|source chip|chat width"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+### Phase 35: Final RAG Source UX Release Gate
+
+Goal: Run the integrated release proof after backend RAG truth cleanup, live RAG proof, source evidence drawer, and responsive layout hardening.
+
+Problem this phase targets:
+
+- Individually green backend and frontend phases can still disagree when the real pipeline, response document, visible UI, source interactions, and layout are exercised together.
+- The plan should not claim the RAG/source UX refactor is complete until the positive, negative, PDF, drawer, tooltip, and resize paths all pass together.
+
+Prerequisite:
+
+- Phases 31, 32, 33, and 34 must be marked Done.
+
+Implementation steps:
+
+- Run the positive OSHA reenergizing PDF-backed answer through the real/seeded response-document browser path.
+- Run the negative before-starting-lockout insufficient-context answer through the real/seeded response-document browser path.
+- Verify no hardcoded fallback source or answer text appears in runtime/API/browser payloads.
+- Verify source chip to side evidence drawer to in-panel PDF to back navigation.
+- Verify no-PDF fallback remains available for true no-PDF sources.
+- Verify tooltip edge positioning and resized chatbot/card width in browser.
+- Update tracker and manual regression bank with final release evidence.
+
+Acceptance criteria:
+
+- Positive PDF-backed OSHA answer passes with locator evidence and in-panel PDF/source UX.
+- Negative unsupported prompt passes with insufficient context and related sources checked.
+- RAG hardcode guardrails pass.
+- Tooltip and responsive width gates pass.
+- Existing Phase 27-34 suites remain green.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_hardcode_guardrails.py -q
+
+Set-Location "..\eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+npm run test:e2e:response-document -- --grep "OSHA lockout|reenergizing|insufficient context|side evidence|PDF|tooltip|responsive"
+npm run test:e2e:seeded-oracles -- --grep "LOTO|source|RAG|insufficient context"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
 ## Stop Conditions
 
 Stop and fix before continuing when:
@@ -1951,6 +2242,13 @@ Stop and fix before continuing when:
 - A valid `response_document` renders legacy `ChatMessage` source/safety chrome on top of typed response-document blocks.
 - Source chips are claimed complete without minimum locator metadata: `source_id`, `doc_id`, `chunk_id`, `title`, `organization`, and `snippet`.
 - PDF highlight is treated as complete while ingestion still loses page boundaries or exposes only raw local `file_path`.
+- Runtime RAG answers use hardcoded policy fallback text or synthetic sources such as `loto_notification_requirement` instead of retrieved evidence.
+- Backend-added RAG answer text appears without typed citation evidence or an explicit insufficient-context state.
+- Multiple final RAG sources share the same `source_number` or a source chip opens a different source than its displayed number/title implies.
+- Unsupported safety/procedure prompts are answered as facts from uncited fallback content instead of returning insufficient context with related sources checked.
+- Source-chip PDF UX falls back to metadata-only display when a cited or related source has a safe `pdf_url` and page/locator metadata.
+- Source hover cards overflow outside the chat/evidence container.
+- Assistant response cards remain artificially narrow after the chatbot/modal is resized wider.
 
 ## Out Of Scope For This Plan
 

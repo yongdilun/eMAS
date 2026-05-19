@@ -11,7 +11,12 @@ from factory_agent.graph.noop_mutations import (
     NO_OP_MUTATION_STATUS,
     normalize_no_op_mutation,
 )
-from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
+from factory_agent.rag.source_metadata import (
+    insufficient_context_answer,
+    is_insufficient_context_answer,
+    normalize_source_locators,
+    sanitize_rag_answer_text,
+)
 from factory_agent.schemas import (
     ActivityStepResponse,
     ApprovalRequiredBlock,
@@ -388,8 +393,8 @@ def _trimmed(value: Any) -> str:
 _FOOTNOTE_DEFINITION_RE = re.compile(
     r"(?m)^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*"
 )
-_FOOTNOTE_MARKER_RE = re.compile(r"\[\^([^\]\n]+)\]")
-_FOOTNOTE_MARKER_CLUSTER_RE = re.compile(r"((?:\s*\[\^[^\]\n]+\])+)")
+_FOOTNOTE_MARKER_RE = re.compile(r"\[\^([^\]\n]+)\]|\[(\d+)\]")
+_FOOTNOTE_MARKER_CLUSTER_RE = re.compile(r"((?:\s*(?:\[\^[^\]\n]+\]|\[\d+\]))+)")
 
 
 def _strip_footnote_markup(value: Any) -> str:
@@ -399,6 +404,15 @@ def _strip_footnote_markup(value: Any) -> str:
     text = re.sub(r"\s+([,.;:!?])", r"\1", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return re.sub(r"[ \t]+\n", "\n", text).strip()
+
+
+def _citation_marker_values(value: str) -> list[str]:
+    markers: list[str] = []
+    for match in _FOOTNOTE_MARKER_RE.finditer(value):
+        marker = match.group(1) or match.group(2)
+        if marker:
+            markers.append(marker)
+    return markers
 
 
 def _source_key(value: Any) -> str:
@@ -452,7 +466,7 @@ def _knowledge_answer_payload(answer: Any, sources: list[dict[str, Any]]) -> tup
             end += 1
         text = f"{answer_without_definitions[cursor:match.start()]}{trailing_punctuation}"
         refs: list[dict[str, Any]] = []
-        for marker in _FOOTNOTE_MARKER_RE.findall(match.group(0)):
+        for marker in _citation_marker_values(match.group(0)):
             source = source_by_number.get(str(marker).strip())
             if not source:
                 continue
@@ -485,13 +499,19 @@ def _knowledge_answer_payload(answer: Any, sources: list[dict[str, Any]]) -> tup
     if clean_answer and not segments:
         segments.append({"text": clean_answer, "citation_ids": []})
 
-    if sources and segments and not any(segment.get("citation_ids") for segment in segments):
-        first_source = sources[0]
-        citation = _citation_payload(first_source)
-        citation_id = str(citation.get("citation_id") or "")
-        if citation_id:
-            citations_by_id[citation_id] = citation
-            segments[0]["citation_ids"] = [citation_id]
+    if sources and segments:
+        if is_insufficient_context_answer(clean_answer):
+            citations_by_id = {}
+            segments = [{"text": clean_answer, "citation_ids": []}]
+        else:
+            cited_segments = [segment for segment in segments if segment.get("citation_ids")]
+            if cited_segments:
+                segments = cited_segments
+                clean_answer = "\n\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
+            else:
+                clean_answer = insufficient_context_answer(has_sources=True)
+                citations_by_id = {}
+                segments = [{"text": clean_answer, "citation_ids": []}]
 
     return clean_answer, segments, list(citations_by_id.values())
 

@@ -4,7 +4,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
+from factory_agent.rag.source_metadata import (
+    insufficient_context_answer,
+    normalize_source_locators,
+    sanitize_rag_answer_text,
+)
 
 
 UNABLE_ANSWER_PREFIXES = (
@@ -19,11 +23,8 @@ class KnowledgePolicy:
     route_families: tuple[str, ...]
     required_topics: tuple[str, ...] = ()
     required_query_evidence: tuple[str, ...] = ()
-    fallback_answer: str = ""
-    fallback_sources: tuple[dict[str, Any], ...] = ()
     safety_content: str | None = None
     required_answer_evidence: tuple[str, ...] = ()
-    answer_supplement: str | None = None
 
     def applies_to(
         self,
@@ -85,26 +86,23 @@ class KnowledgePolicyRegistry:
     ) -> KnowledgePolicyApplication:
         policy = self.select(route_family=route_family, query=query, semantic_frame=semantic_frame)
         if policy is None:
-            return KnowledgePolicyApplication(answer=answer, sources=list(sources), safety_content=safety_content)
+            merged_answer = sanitize_rag_answer_text(answer)
+            if route_family in {"rag.procedure", "rag.loto_procedure", "rag.safety_policy"} and _is_empty_or_unusable_answer(
+                merged_answer
+            ):
+                merged_answer = insufficient_context_answer(has_sources=bool(sources))
+            return KnowledgePolicyApplication(answer=merged_answer, sources=list(sources), safety_content=safety_content)
 
         merged_answer = (answer or "").strip()
         merged_sources = list(sources)
         merged_safety = safety_content
-        if _is_empty_or_unusable_answer(merged_answer):
-            merged_answer = policy.fallback_answer
-            merged_sources = [dict(source) for source in policy.fallback_sources]
-            merged_safety = policy.safety_content
-        else:
-            if policy.answer_supplement and not _answer_has_required_evidence(
-                merged_answer,
-                policy.required_answer_evidence,
-            ):
-                merged_answer = f"{merged_answer.rstrip()}\n\n{policy.answer_supplement}".strip()
-            existing_doc_ids = {_source_doc_id(source) for source in merged_sources}
-            for policy_source in policy.fallback_sources:
-                if str(policy_source.get("doc_id") or "") not in existing_doc_ids:
-                    merged_sources.append(dict(policy_source))
-            merged_safety = merged_safety or policy.safety_content
+        if (
+            _is_empty_or_unusable_answer(merged_answer)
+            or not merged_sources
+            or not _answer_has_required_evidence(merged_answer, policy.required_answer_evidence)
+        ):
+            merged_answer = insufficient_context_answer(has_sources=bool(merged_sources))
+        merged_safety = merged_safety or policy.safety_content
         merged_answer = sanitize_rag_answer_text(merged_answer)
         merged_sources = normalize_source_locators(
             merged_sources,
@@ -133,37 +131,11 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                     r"\bbefore\s+lockout\b",
                     r"\bbefore\s+lockout\s*/?\s*tagout\b",
                 ),
-                fallback_answer=(
-                    "The LOTO procedure requires affected employees to be notified before lockout/tagout starts. "
-                    "The notification should explain that the equipment will be locked out or tagged out, why the "
-                    "shutdown is required, and when the lockout/tagout condition will begin."
-                ),
-                fallback_sources=(
-                    {
-                        "source_id": "loto_notification_requirement#policy:loto-notification-requirement",
-                        "source_number": 1,
-                        "doc_id": "loto_notification_requirement",
-                        "chunk_id": "policy:loto-notification-requirement",
-                        "title": "LOTO Notification Requirements",
-                        "organization": "Factory Safety",
-                        "snippet": (
-                            "Affected employees must be notified before lockout/tagout starts, including why "
-                            "the shutdown is required and when the lockout/tagout condition begins."
-                        ),
-                        "authority_level": "site_procedure",
-                        "license": "internal",
-                        "policy_only": True,
-                    },
-                ),
                 safety_content=(
                     "LOTO is safety-critical. Follow your site's approved energy-control procedure and use only "
                     "authorized lockout/tagout controls."
                 ),
                 required_answer_evidence=("notify", "affected employee"),
-                answer_supplement=(
-                    "Before lockout/tagout starts, affected employees must be notified that the equipment will be "
-                    "locked out or tagged out and when the control begins."
-                ),
             ),
             KnowledgePolicy(
                 policy_id="osha_loto_control_of_hazardous_energy",
@@ -175,56 +147,11 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                     r"\bhazardous\s+energy\b",
                     r"\bcontrol\s+of\s+hazardous\s+energy\b",
                 ),
-                fallback_answer=(
-                    "According to OSHA, Lockout/Tagout (LOTO) procedures are used to control hazardous energy "
-                    "during servicing or maintenance so machines and equipment are isolated, prevented from "
-                    "unexpected startup or energization, and rendered safe before work begins. The OSHA general "
-                    "industry standard that defines this is 29 CFR 1910.147, The Control of Hazardous Energy "
-                    "(lockout/tagout). OSHA's energy-control program requirements include energy-control "
-                    "procedures, employee training, and periodic inspections."
-                ),
-                fallback_sources=(
-                    {
-                        "source_id": "osha_3120_lockout_tagout#policy:osha-3120-lockout-tagout",
-                        "source_number": 1,
-                        "doc_id": "osha_3120_lockout_tagout",
-                        "chunk_id": "policy:osha-3120-lockout-tagout",
-                        "title": "Control of Hazardous Energy Lockout/Tagout",
-                        "organization": "OSHA",
-                        "snippet": (
-                            "OSHA guidance explains that lockout/tagout controls hazardous energy during "
-                            "servicing and maintenance through energy-control procedures, training, and inspection."
-                        ),
-                        "authority_level": "official_public_guidance",
-                        "version": "2002 (Revised)",
-                        "license": "public",
-                        "policy_only": True,
-                    },
-                    {
-                        "source_id": "29_cfr_1910_147#policy:29-cfr-1910-147",
-                        "source_number": 2,
-                        "doc_id": "29_cfr_1910_147",
-                        "chunk_id": "policy:29-cfr-1910-147",
-                        "title": "29 CFR 1910.147 - The control of hazardous energy (lockout/tagout)",
-                        "organization": "OSHA",
-                        "snippet": (
-                            "29 CFR 1910.147 is the OSHA general industry lockout/tagout standard for "
-                            "controlling hazardous energy."
-                        ),
-                        "authority_level": "regulation",
-                        "license": "public",
-                        "policy_only": True,
-                    },
-                ),
                 safety_content=(
                     "This topic involves high-risk industrial procedures. Always follow your site's approved SOP, "
                     "obtain required permits, and consult your safety officer before proceeding."
                 ),
                 required_answer_evidence=("29 cfr 1910.147",),
-                answer_supplement=(
-                    "The specific OSHA general industry standard is 29 CFR 1910.147, "
-                    "The Control of Hazardous Energy (lockout/tagout)."
-                ),
             )
         ]
     )
@@ -240,13 +167,6 @@ def _semantic_topics(semantic_frame: Any | None) -> list[str]:
     if isinstance(topics, str):
         topics = [topics]
     return [str(topic).strip().lower() for topic in topics if str(topic).strip()]
-
-
-def _source_doc_id(source: Any) -> str:
-    data = source.model_dump() if hasattr(source, "model_dump") else source
-    if not isinstance(data, dict):
-        return ""
-    return str(data.get("doc_id") or "")
 
 
 def _is_empty_or_unusable_answer(answer: str) -> bool:

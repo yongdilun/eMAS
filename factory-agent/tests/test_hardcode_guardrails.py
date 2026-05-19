@@ -22,7 +22,12 @@ EXACT_RESPONSE_DOCUMENT_PROMPTS = [
     "change all medium priority job to high then change all high priority job to low",
     "change all high priority job to low then change all low priority job to medium",
     "Show status for machine with machine id M-CNC-01",
+    "According to the LOTO procedure, what notification is required before starting lockout",
+    "According to the OSHA lockout/tagout guide, what notification is required before starting lockout?",
 ]
+SYNTHETIC_LOTO_POLICY_SOURCE_RE = re.compile(
+    r"loto_notification_requirement|LOTO Notification Requirements|policy:loto-notification-requirement"
+)
 FORBIDDEN_BRANCH_LITERAL_RE = re.compile(
     "|".join(
         [
@@ -255,6 +260,21 @@ def test_product_branch_conditions_do_not_use_seeded_ids_exact_prompts_or_fixtur
         "Product-code branches must not key behavior off deterministic fixture ids, exact prompts, "
         "or canonical response-document labels. Put constants in fixtures/scenarios or route through "
         "typed metadata/contracts instead:\n" + "\n".join(hits)
+    )
+
+
+def test_runtime_product_code_does_not_emit_synthetic_loto_notification_policy_sources():
+    hits: list[str] = []
+    for rel_path in _product_branch_guard_files():
+        source = _read(rel_path)
+        for match in SYNTHETIC_LOTO_POLICY_SOURCE_RE.finditer(source):
+            line = source.count("\n", 0, match.start()) + 1
+            hits.append(f"{rel_path}:{line}: {match.group(0)}")
+
+    assert hits == [], (
+        "Runtime/product code must not emit synthetic LOTO notification fallback sources. "
+        "Tests, seeded fixtures, and docs may mention them only as scoped regression evidence:\n"
+        + "\n".join(hits)
     )
 
 

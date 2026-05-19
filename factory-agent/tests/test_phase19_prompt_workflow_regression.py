@@ -273,15 +273,21 @@ async def test_phase19_document_content_loto_prompt_workflow_returns_clean_respo
                     "answer": (
                         "The LOTO procedure requires notifying affected employees before lockout/tagout starts. "
                         "Tell them the equipment will be locked out, why the shutdown is needed, and when the "
-                        "lockout/tagout condition begins."
+                        "lockout/tagout condition begins [^1]."
                     ),
                     "sources": [
                         {
                             "source_number": 1,
-                            "doc_id": "loto_notification_requirement",
-                            "title": "LOTO Notification Requirements",
-                            "organization": "Factory Safety",
-                            "authority_level": "site_procedure",
+                            "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0027",
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "osha_3120_lockout_tagout_c0027",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "snippet": (
+                                "Notify affected employees before lockout/tagout starts and tell them when the "
+                                "lockout/tagout condition begins."
+                            ),
+                            "authority_level": "official_public_guidance",
                         }
                     ],
                     "safety_content": "Follow the site-approved LOTO procedure and authorized-employee controls.",
@@ -309,7 +315,7 @@ async def test_phase19_document_content_loto_prompt_workflow_returns_clean_respo
     assert body["status"] == "COMPLETED"
     assert body["created_by"] == "system"
     assert "notifying affected employees" in body["plan_explanation"].lower()
-    assert body["sources"][0]["doc_id"] == "loto_notification_requirement"
+    assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
     assert steps == []
 
     document = snapshot["response_document"]

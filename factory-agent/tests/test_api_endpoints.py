@@ -490,7 +490,8 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
                 {
                     "answer": (
                         "According to OSHA, Lockout/Tagout procedures control hazardous energy so "
-                        "machines are isolated and rendered safe before servicing or maintenance."
+                        "machines are isolated and rendered safe before servicing or maintenance. "
+                        "The OSHA standard is 29 CFR 1910.147 [^1]."
                     ),
                     "sources": [
                         {
@@ -531,10 +532,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
         assert body["created_by"] == "system"
         assert "29 CFR 1910.147" in body["plan_explanation"]
         assert body["sources"][0]["organization"] == "OSHA"
-        assert {source["doc_id"] for source in body["sources"]} == {
-            "osha_3120_lockout_tagout",
-            "29_cfr_1910_147",
-        }
+        assert {source["doc_id"] for source in body["sources"]} == {"osha_3120_lockout_tagout"}
         assert "approved SOP" in body["safety_content"]
 
         steps = await client.get(f"/sessions/{session_id}/steps")
@@ -546,7 +544,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
 
 
 @pytest.mark.asyncio
-async def test_create_plan_uses_osha_loto_policy_fallback_when_rag_is_empty(sessionmaker_override):
+async def test_create_plan_uses_insufficient_context_when_osha_loto_rag_is_empty(sessionmaker_override):
     class FakeRAGPipeline:
         async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
             del query, session_id, route, api_data
@@ -579,11 +577,9 @@ async def test_create_plan_uses_osha_loto_policy_fallback_when_rag_is_empty(sess
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
         body = created.json()
-        assert "29 CFR 1910.147" in body["plan_explanation"]
-        assert {source["doc_id"] for source in body["sources"]} == {
-            "osha_3120_lockout_tagout",
-            "29_cfr_1910_147",
-        }
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"] == []
         assert "consult your safety officer" in body["safety_content"]
 
 

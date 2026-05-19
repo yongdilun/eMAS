@@ -2105,6 +2105,159 @@ async def test_rag_response_document_includes_knowledge_answer_and_source_blocks
 
 
 @pytest.mark.asyncio
+async def test_rag_response_document_source_identity_and_numbers_agree_after_normalization(db_session):
+    created_at = datetime(2026, 5, 18, 15, 12, 0)
+    session_id = "rd-rag-source-identity"
+    plan_id = "rd-rag-source-identity-plan"
+    answer = "Source A supports the first claim [^1]. Source B supports the second claim [^2]."
+    sources = [
+        {
+            "source_number": 1,
+            "source_id": "doc-a#chunk-a",
+            "doc_id": "doc-a",
+            "chunk_id": "chunk-a",
+            "title": "Document A",
+            "organization": "Org A",
+            "snippet": "Source A supports the first claim.",
+        },
+        {
+            "source_number": 1,
+            "source_id": "doc-b#chunk-b",
+            "doc_id": "doc-b",
+            "chunk_id": "chunk-b",
+            "title": "Document B",
+            "organization": "Org B",
+            "snippet": "Source B supports the second claim.",
+        },
+    ]
+    db_session.add_all(
+        [
+            _session(session_id=session_id, plan_id=plan_id, created_at=created_at, event_seq=7, status="COMPLETED"),
+            _user_message(session_id=session_id, created_at=created_at),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content=answer,
+                step_id=plan_id,
+                tool_name="__conversation__",
+                created_at=created_at + timedelta(seconds=2),
+            ),
+        ]
+    )
+    plan = await db_session.get(Plan, plan_id)
+    assert plan is not None
+    plan.sources = sources
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+    source_block = next(block for block in document["blocks"] if block["type"] == "source_list")
+    listed_sources = source_block["sources"]
+    listed_by_id = {source["source_id"]: source for source in listed_sources}
+
+    assert [source["source_number"] for source in listed_sources] == [1, 2]
+    assert len({source["source_number"] for source in listed_sources}) == len(listed_sources)
+    assert {citation["source_number"] for citation in knowledge_block["citations"]} == {1, 2}
+    for citation in knowledge_block["citations"]:
+        listed = listed_by_id[citation["source_id"]]
+        assert citation["doc_id"] == listed["doc_id"]
+        assert citation["title"] == listed["title"]
+        assert citation["source_number"] == listed["source_number"]
+
+
+@pytest.mark.asyncio
+async def test_rag_response_document_blocks_uncited_backend_added_factual_supplement(db_session):
+    created_at = datetime(2026, 5, 18, 15, 18, 0)
+    session_id = "rd-rag-uncited-supplement"
+    plan_id = "rd-rag-uncited-supplement-plan"
+    uncited_supplement = (
+        "Before lockout/tagout starts, affected employees must be notified that the equipment will be "
+        "locked out or tagged out and when the control begins."
+    )
+    answer = f"The retrieved procedure says to isolate hazardous energy first [^1]. {uncited_supplement}"
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0027",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0027",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "The procedure says to isolate hazardous energy first.",
+    }
+    db_session.add_all(
+        [
+            _session(session_id=session_id, plan_id=plan_id, created_at=created_at, event_seq=7, status="COMPLETED"),
+            _user_message(session_id=session_id, created_at=created_at),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content=answer,
+                step_id=plan_id,
+                tool_name="__conversation__",
+                created_at=created_at + timedelta(seconds=2),
+            ),
+        ]
+    )
+    plan = await db_session.get(Plan, plan_id)
+    assert plan is not None
+    plan.sources = [source]
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+    serialized_block = json.dumps(knowledge_block)
+
+    assert knowledge_block["answer"] == "The retrieved procedure says to isolate hazardous energy first."
+    assert all(segment.get("citation_ids") for segment in knowledge_block["segments"])
+    assert uncited_supplement not in serialized_block
+    assert "affected employees must be notified" not in serialized_block
+
+
+@pytest.mark.asyncio
+async def test_rag_response_document_converts_wholly_uncited_source_backed_answer_to_insufficient_context(db_session):
+    created_at = datetime(2026, 5, 18, 15, 24, 0)
+    session_id = "rd-rag-wholly-uncited"
+    plan_id = "rd-rag-wholly-uncited-plan"
+    answer = "The OSHA guide requires affected employee notification before lockout starts."
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0003",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0003",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "This related source was checked.",
+    }
+    db_session.add_all(
+        [
+            _session(session_id=session_id, plan_id=plan_id, created_at=created_at, event_seq=7, status="COMPLETED"),
+            _user_message(session_id=session_id, created_at=created_at),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content=answer,
+                step_id=plan_id,
+                tool_name="__conversation__",
+                created_at=created_at + timedelta(seconds=2),
+            ),
+        ]
+    )
+    plan = await db_session.get(Plan, plan_id)
+    assert plan is not None
+    plan.sources = [source]
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+
+    assert knowledge_block["answer"].startswith("I do not have enough retrieved evidence")
+    assert "related sources checked" in knowledge_block["answer"]
+    assert knowledge_block["citations"] == []
+    assert knowledge_block["segments"] == [{"text": knowledge_block["answer"], "citation_ids": []}]
+    assert "affected employee notification before lockout starts" not in json.dumps(knowledge_block)
+
+
+@pytest.mark.asyncio
 async def test_rag_no_source_fallback_keeps_safety_notice(db_session):
     created_at = datetime(2026, 5, 18, 15, 30, 0)
     session_id = "rd-rag-no-source-safety"

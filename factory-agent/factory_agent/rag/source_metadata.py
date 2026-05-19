@@ -21,6 +21,7 @@ _LOCATOR_ALIASES = {
     "char_range": ("char_range", "charRange", "charrange", "text_range", "textRange"),
     "text_search": ("text_search", "textSearch", "highlight_text", "highlightText"),
 }
+_INSUFFICIENT_CONTEXT_PREFIX = "I do not have enough retrieved evidence to answer that safely."
 
 
 def sanitize_rag_answer_text(value: Any) -> str:
@@ -29,6 +30,19 @@ def sanitize_rag_answer_text(value: Any) -> str:
     text = re.sub(r"(?im)^[ \t]*:::\s*safety\b[ \t]*$", "", text)
     text = re.sub(r"(?im)^[ \t]*:::[ \t]*$", "", text)
     return text.strip()
+
+
+def insufficient_context_answer(*, has_sources: bool = False) -> str:
+    if has_sources:
+        return (
+            f"{_INSUFFICIENT_CONTEXT_PREFIX} The related sources checked are listed below, "
+            "but they do not prove the requested claim."
+        )
+    return _INSUFFICIENT_CONTEXT_PREFIX
+
+
+def is_insufficient_context_answer(value: Any) -> bool:
+    return sanitize_rag_answer_text(value).lower().startswith(_INSUFFICIENT_CONTEXT_PREFIX.lower())
 
 
 def snippet_from_text(value: Any, *, limit: int = 320) -> str:
@@ -194,6 +208,7 @@ def normalize_source_locators(
         if key in seen:
             continue
         seen.add(key)
-        row.setdefault("source_index", len(normalized))
+        row["source_index"] = len(normalized)
+        row["source_number"] = len(normalized) + 1
         normalized.append(row)
     return normalized

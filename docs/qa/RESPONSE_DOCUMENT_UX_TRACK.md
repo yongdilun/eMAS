@@ -38,6 +38,11 @@ Created: 2026-05-18
 | 28 | Typed RAG answer and source citation UX | Done | Codex | Added typed safety notices, knowledge answer citations, inline source chips, compact hover metadata, source drawer click behavior, PDF page-link fallback, and separate operation/RAG sections. |
 | 29 | PDF source locator and highlight upgrade | Done | Codex | PDF ingestion is page-aware, sources use safe `/documents/{doc_id}/pdf` locators, source clicks choose exact/text-search/page/drawer fallbacks deterministically, and drawer-only fallback remains covered. |
 | 30 | RAG reingestion and live release proof | Done | Codex | Rebuilt local Chroma/BM25 from the source register, proved live LOTO source locators carry safe page/highlight metadata without `file_path`, and kept typed RAG/source browser gates green. |
+| 31 | Backend RAG evidence truth cleanup | Done | Codex | Removed hardcoded runtime policy fallbacks/synthetic sources, required insufficient-context behavior for unsupported safety claims, stabilized source numbering, and added backend hardcode/citation guardrails. |
+| 32 | Live RAG positive and negative release proof | Planned | Codex | Prove one real PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through real/seeded response-document paths. |
+| 33 | Side evidence drawer and PDF panel UX | Planned | Codex | Replace metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
+| 34 | Source tooltip and responsive chat width | Planned | Codex | Fix source-hover collision near edges and make assistant response cards grow with wider chatbot/modal layouts while preserving readable prose widths. |
+| 35 | Final RAG source UX release gate | Planned | Codex | Run the integrated backend/frontend/browser release proof after Phases 31-34, including positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrails. |
 
 ## Current Blockers
 
@@ -52,6 +57,8 @@ Created: 2026-05-18
 - Phase 26 is complete. Backend contract diversity beyond jobs/machines remains covered by Phase 24 product/material fixtures; no safe non-job real/seeded browser path has been exposed without broadening write/read product scope.
 - Phase 27 fixed the post-Phase-26 RAG display regression: LOTO document-content answers no longer show raw `:::safety`, source-backed answer bodies render once, valid response-document turns do not get legacy ChatMessage source/safety chrome, and cited RAG sources carry minimum locator metadata.
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
+- Phase 31 removed the post-Phase-30 RAG evidence-truth gap: the hardcoded `LOTO Notification Requirements` policy fallback no longer appears as a real runtime source, duplicate final source numbering is normalized, and backend-added uncited factual supplement text is blocked or converted to insufficient context. Phase 32 proves real PDF-backed and insufficient-context runtime behavior.
+- Source evidence UX still needs hardening after backend truth is fixed: Phase 33 adds the resizable side evidence drawer and in-panel PDF flow; Phase 34 fixes hover collision and responsive chat width; Phase 35 runs the integrated release gate.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -130,6 +137,13 @@ Created: 2026-05-18
 - Source chips need minimum reliable metadata: `source_id`, `doc_id`, `chunk_id`, `title`, `organization`, and `snippet`; PDF page/highlight fields are now supported when reingested source chunks include them.
 - Mixed operation plus RAG answers use separate sections so live operational facts and document/procedure guidance do not blur together.
 - Exact PDF highlight now uses `char_range` or `bbox` locator metadata when available, then falls back to page plus text/snippet search, page-only PDF open, and drawer-only source evidence.
+- Runtime RAG should not invent hardcoded policy answers or synthetic sources when retrieved evidence does not support a safety/procedure claim. Insufficient context is preferred over a helpful-looking but weakly sourced answer.
+- `LOTO Notification Requirements` should not be emitted by real runtime fallback code unless it becomes a real source document with registry and ingestion metadata.
+- The positive Phase 32 RAG proof uses a real PDF-backed OSHA prompt about notification before reenergizing after removing lockout/tagout devices.
+- The old before-starting-lockout notification prompt becomes a negative proof: if the indexed PDFs do not support the claim, the response must say insufficient context and show related sources checked without fake proof.
+- One inline source chip represents one cited claim/evidence group. Important claims should get their own citation evidence; source chips, drawers, and bibliography entries must agree on source identity and numbering.
+- Source-chip clicks should open a resizable, closable side evidence drawer. The drawer shows the cited source first, related supporting sources second, and opens PDF evidence in-panel with back navigation when locator metadata exists.
+- Source hover cards must use collision-aware placement, and assistant response cards should grow with the chatbot/modal while preserving readable prose widths.
 
 ## Flagship Inputs
 
@@ -154,6 +168,12 @@ Created: 2026-05-18
 | RD-017 | Phase 27 RAG metadata readiness and legacy renderer cleanup | Proves LOTO/RAG answers have minimum source locator metadata, no visible `:::safety`, no duplicate visible answer body, and no legacy source/safety chrome when `response_document` exists. |
 | RD-018 | Phase 28 typed RAG answer and source citation UX | Proves typed safety notice, single knowledge answer body, inline source chips, compact source hover, source drawer click behavior, bibliography/details, and separate operation/RAG sections. |
 | RD-019 | Phase 29 PDF source locator and highlight upgrade | Proves PDF-backed chunks preserve page/document locators and source clicks open the best available locator: exact highlight, text/snippet search, page-only, or drawer-only fallback. |
+| RD-020 | Phase 30 RAG reingestion and live release proof | Proves live local RAG stores are rebuilt with page-aware safe PDF locators and no raw `file_path` in normal source payloads. |
+| RD-021 | `According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?` | Phase 32 positive RAG proof. Proves a real PDF-backed OSHA answer with source locator evidence and no synthetic policy source; Phase 33-35 add and release-gate the side evidence/PDF UX around it. |
+| RD-022 | `According to the OSHA lockout/tagout guide, what notification is required before starting lockout?` | Phase 32 negative RAG proof. Proves unsupported safety claims return insufficient context with related sources checked, not hardcoded `LOTO Notification Requirements` fallback text or fake source evidence. |
+| RD-023 | Source chip on PDF-backed OSHA evidence | Phase 33 source UX proof. Proves side evidence drawer, cited source first, related sources second, in-panel PDF open, and back navigation. |
+| RD-024 | Source chip near right edge plus wide chatbot/modal viewport | Phase 34 layout proof. Proves hover collision handling and responsive assistant response width. |
+| RD-025 | Full RAG source UX release gate | Phase 35 integrated proof. Proves RD-021, RD-022, RD-023, RD-024, hardcode guardrails, and existing typed RAG/source contracts together. |
 
 ## Additional Required Scenario Groups
 
@@ -186,6 +206,11 @@ Created: 2026-05-18
 | RAG metadata readiness | LOTO document-content answer with source metadata | Minimum locator metadata exists, raw safety markdown is absent, duplicated RAG bodies are blocked, and legacy source/safety chrome is isolated to no-response-document compatibility paths. |
 | Typed RAG source UX | LOTO notification answer and mixed operation + procedure guidance | Safety notice, answer, source chips, hover metadata, source drawer, bibliography/details, and separate operation/RAG sections render from typed blocks rather than markdown parsing. |
 | PDF source locator/highlight | PDF-backed LOTO/OSHA source chunk | Source click opens the best available PDF/page/highlight path without leaking raw local file paths, and falls back to source drawer when PDF metadata is missing. |
+| RAG evidence truth cleanup | Backend RAG contract and guardrail tests | Runtime removes hardcoded policy fallback answers/sources, source numbering is stable, and uncited backend-added answer text is blocked. |
+| Live RAG positive/negative proof | RD-021 and RD-022 | Positive PDF-backed answer succeeds from retrieved OSHA evidence; unsupported prompt returns insufficient context with related sources checked. |
+| Side evidence drawer and PDF panel | RD-023 | Source chip opens a resizable side evidence drawer with cited source first, related sources second, in-panel PDF/back navigation, and no-PDF fallback. |
+| Tooltip and responsive chat width | RD-024 | Hover card stays inside the container and assistant response cards grow with available width. |
+| Final RAG source UX release gate | RD-021 through RD-025 | Backend truth, live RAG, side evidence/PDF, tooltip/layout, and hardcode guardrails pass together. |
 
 ## Phase 0 Checklist
 
@@ -2377,6 +2402,47 @@ git status --short --branch
 - Real LangGraph critical was not rerun in this pass because the focused mocked response-document gate and backend oracle lanes covered the deterministic contract, while seeded/release lanes exposed existing assertion migrations.
 - Full Promptfoo/LLM semantic evaluation remains future work and is intentionally excluded from this deterministic release gate.
 
+## Phase 31 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 31 is complete. Backend product/runtime code no longer emits the synthetic `loto_notification_requirement` / `LOTO Notification Requirements` policy source or appends the old hardcoded LOTO notification supplement.
+
+### Product Fix
+
+- Knowledge policy application now prefers an explicit insufficient-context answer when retrieved evidence is missing or does not contain the required safety/procedure evidence.
+- Retrieved sources can remain attached to insufficient-context answers as related sources checked, but they are not converted into proof of the unsupported claim.
+- Runtime source normalization now assigns unique final `source_number` values after dedupe.
+- Response-document citation composition now uses stable source identity in citation payloads, supports both `[^1]` and `[1]` markers, drops uncited source-backed factual tails, and converts wholly uncited source-backed knowledge answers to insufficient context.
+- Legacy API and Phase 19 fixtures were updated so supported notification answers use retrieved OSHA source metadata rather than the removed synthetic policy source.
+
+### Regression Coverage Added
+
+- Negative unsupported prompt: `According to the OSHA lockout/tagout guide, what notification is required before starting lockout?`
+- Runtime policy output forbids `loto_notification_requirement` and `LOTO Notification Requirements`.
+- Source normalization proves duplicate input source numbers become unique final source numbers.
+- Response-document contract proves source chip/list/citation payloads agree on source id, doc id, title, and source number.
+- Response-document contract proves uncited backend-added factual supplement text is blocked, and wholly uncited source-backed factual text becomes insufficient context.
+- Hardcode guardrail forbids runtime/product code from branching on exact LOTO notification prompts or emitting synthetic LOTO notification policy sources, while tests, seeded fixtures, and docs remain the scoped places for regression references.
+
+### Phase 31 Verification
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_hardcode_guardrails.py -q
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+Results:
+
+- First pytest attempt hit a Windows temp-directory permission error while setting up `tmp_path` for `tests/test_rag_ingestion.py`.
+- Rerun with local `.pytest_tmp` as `TEMP`/`TMP`: 68 passed.
+- `git diff --check`: passed with line-ending warnings only.
+- `git status --short --branch`: showed only intended Phase 31 modified files before commit.
+
 ## Commands Run
 
 ```powershell
@@ -2403,7 +2469,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 30 is complete. Next response-document RAG work can assume the local release-proof indexes are reingested with page-aware safe locators; future work should keep reingestion explicit whenever `source_register.json` or ingestion metadata changes and continue treating drawer-only fallback as the compatibility floor.
+Phase 31 is complete. Phase 32 is next and should prove RD-021/RD-022 through real or seeded runtime paths: a positive PDF-backed OSHA reenergizing notification answer, and the before-starting-lockout negative prompt returning insufficient context with related sources checked. Do not start Phase 33 side evidence drawer/PDF work, Phase 34 tooltip/responsive width work, or Phase 35 integrated release gating until Phase 32 is proven.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 
