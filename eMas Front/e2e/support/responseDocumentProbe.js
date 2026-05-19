@@ -913,6 +913,7 @@ export async function collectVisibleResponseDocumentUi(page) {
       : []
     const pdfFrame = drawer?.querySelector('[data-source-pdf-frame]') || null
     const pdfLink = drawer?.querySelector('[data-source-pdf-link]') || null
+    const pdfLinkHref = pdfLink?.getAttribute('data-source-pdf-href') || pdfLink?.getAttribute('href') || null
     const pdfUrlInfo = (value) => {
       const raw = String(value || '')
       if (!raw) return { routeOk: false, deadFrontendDocumentUrl: false }
@@ -927,7 +928,7 @@ export async function collectVisibleResponseDocumentUi(page) {
       return { routeOk, deadFrontendDocumentUrl }
     }
     const pdfSrcInfo = pdfUrlInfo(pdfFrame?.getAttribute('src'))
-    const pdfHrefInfo = pdfUrlInfo(pdfLink?.getAttribute('href'))
+    const pdfHrefInfo = pdfUrlInfo(pdfLinkHref)
     const sourceDrawer = drawer
       ? {
         open: true,
@@ -948,7 +949,7 @@ export async function collectVisibleResponseDocumentUi(page) {
             sourceNumber: pdfFrame.getAttribute('data-source-number') || null,
             title: pdfFrame.getAttribute('data-source-title') || null,
             src: pdfFrame.getAttribute('src') || null,
-            href: pdfLink?.getAttribute('href') || null,
+            href: pdfLinkHref,
             openMode: pdfFrame.getAttribute('data-source-open-mode') || null,
             highlightKind: pdfFrame.getAttribute('data-source-highlight-kind') || null,
             routeOk: pdfSrcInfo.routeOk && (!pdfLink || pdfHrefInfo.routeOk),

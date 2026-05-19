@@ -778,10 +778,11 @@ function SourceEvidenceEntry({ source, role, onOpenPdf }) {
         {sourcePdfEvidenceText(safeSource, openTarget)}
       </div>
       {pdfHref ? (
-        <a
+        <button
+          type="button"
           className="mt-3 inline-flex items-center rounded-md bg-surface-3 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
-          href={pdfHref}
           data-source-pdf-link=""
+          data-source-pdf-href={pdfHref}
           data-source-id={safeText(safeSource.source_id) || undefined}
           data-doc-id={safeText(safeSource.doc_id) || undefined}
           data-chunk-id={safeText(safeSource.chunk_id) || undefined}
@@ -795,7 +796,7 @@ function SourceEvidenceEntry({ source, role, onOpenPdf }) {
           }}
         >
           {sourcePdfActionLabel(safeSource, openTarget)}
-        </a>
+        </button>
       ) : null}
     </article>
   )

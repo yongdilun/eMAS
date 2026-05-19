@@ -903,7 +903,7 @@ test.describe('Final response quality response_document gate', () => {
     await expect(relatedEntry).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     const pdfAction = citedEntry.locator('[data-source-pdf-link]').first()
     const citedPdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=15&highlight=char_range&char_start=0&char_end=1017'
-    await expectFactoryAgentPdfUrl(page, pdfAction, 'href', citedPdfPath)
+    await expectFactoryAgentPdfUrl(page, pdfAction, 'data-source-pdf-href', citedPdfPath)
     await expect(pdfAction).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
     await expect(pdfAction).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     await expect(pdfAction).toHaveAttribute('data-source-number', '1')
@@ -916,7 +916,7 @@ test.describe('Final response quality response_document gate', () => {
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
     const relatedPdfAction = drawer.locator('[data-source-drawer-entry][data-source-id="osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030"] [data-source-pdf-link]').first()
     const relatedPdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=15&search=Before+lockout+or+tagout+devices+are+removed+and+energy+is+restored'
-    await expectFactoryAgentPdfUrl(page, relatedPdfAction, 'href', relatedPdfPath)
+    await expectFactoryAgentPdfUrl(page, relatedPdfAction, 'data-source-pdf-href', relatedPdfPath)
     await expectFactoryAgentPdfResponse(page, () => relatedPdfAction.click(), relatedPdfPath)
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
     await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030')
@@ -1209,7 +1209,7 @@ test.describe('Final response quality response_document gate', () => {
     const link = drawer.locator('[data-source-pdf-link]').first()
     await expect(link).toBeVisible()
     const pdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=9&highlight=char_range&char_start=488&char_end=606'
-    await expectFactoryAgentPdfUrl(page, link, 'href', pdfPath)
+    await expectFactoryAgentPdfUrl(page, link, 'data-source-pdf-href', pdfPath)
 
     const summary = await expectTransitionCheckpoint(page, {
       checkpoint: 'Phase 29 source PDF highlight locator',

@@ -1331,11 +1331,12 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
   await click(view.container.querySelector('[data-source-chip]'))
   const link = await waitFor(() => {
     const node = view.container.querySelector('[data-source-pdf-link]')
-  assert.ok(node)
-  return node
+    assert.ok(node)
+    return node
   })
+  assert.equal(link.tagName, 'BUTTON')
   assert.match(link.textContent, /Open PDF search on page 9/)
-  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
   const drawer = view.container.querySelector('[data-source-drawer]')
   assert.ok(drawer?.closest('[data-chatbot-workspace]'))
   assert.equal(drawer.closest('[data-assistant-response-card]'), null)
@@ -1458,7 +1459,7 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   assert.equal(link.getAttribute('data-doc-id'), 'PDF-LOTO')
   assert.equal(link.getAttribute('data-source-number'), '1')
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'char_range')
-  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=4&highlight=char_range&char_start=120&char_end=188$/)
+  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=4&highlight=char_range&char_start=120&char_end=188$/)
   const relatedLink = view.container.querySelector('[data-source-drawer-entry][data-source-id="PDF-LOTO#text-search"] [data-source-pdf-link]')
   assert.ok(relatedLink)
   assert.equal(relatedLink.getAttribute('data-source-number'), '2')
@@ -1468,12 +1469,12 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   link = drawer.querySelector('[data-source-pdf-link]')
   assert.ok(link)
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'text_search')
-  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=5&search=Searchable\+notification\+fallback\+text\.$/)
+  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=5&search=Searchable\+notification\+fallback\+text\.$/)
 
   drawer = await clickSource('PDF-LOTO#page-only', 'page')
   link = drawer.querySelector('[data-source-pdf-link]')
   assert.ok(link)
-  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=6$/)
+  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=6$/)
 
   drawer = await clickSource('DRAWER-ONLY#chunk', 'drawer')
   assert.ok(!drawer.querySelector('[data-source-drawer-entry][data-source-role="cited"] [data-source-pdf-link]'))
