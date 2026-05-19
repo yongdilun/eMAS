@@ -368,6 +368,14 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
       title: compactText(chip?.title || '', 80) || null,
       text: compactText(chip?.text || '', 40) || null,
     })),
+    citedAnswerHighlights: asArray(ui.citedAnswerHighlights).slice(0, 12).map((highlight) => compactObject({
+      sourceId: highlight?.sourceId || null,
+      docId: highlight?.docId || null,
+      chunkId: highlight?.chunkId || null,
+      sourceNumber: highlight?.sourceNumber || null,
+      title: compactText(highlight?.title || '', 80) || null,
+      text: compactText(highlight?.text || '', 140) || null,
+    })),
     sourceDrawer: ui.sourceDrawer ? compactObject({
       open: Boolean(ui.sourceDrawer.open),
       view: ui.sourceDrawer.view || null,
@@ -396,6 +404,8 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
         href: compactText(ui.sourceDrawer.pdf.href || '', 180) || null,
         openMode: ui.sourceDrawer.pdf.openMode || null,
         highlightKind: ui.sourceDrawer.pdf.highlightKind || null,
+        renderedHighlightKind: ui.sourceDrawer.pdf.renderedHighlightKind || null,
+        highlightCount: Number(ui.sourceDrawer.pdf.highlightCount || 0),
         routeOk: Boolean(ui.sourceDrawer.pdf.routeOk),
         deadFrontendDocumentUrl: Boolean(ui.sourceDrawer.pdf.deadFrontendDocumentUrl),
       }) : null,
@@ -898,6 +908,14 @@ export async function collectVisibleResponseDocumentUi(page) {
         highlightKind: node.getAttribute('data-source-highlight-kind') || null,
         text: compact(node.innerText || node.textContent || '', 40),
       }))
+    const citedAnswerHighlights = Array.from(latestRoot.querySelectorAll('[data-cited-answer-text]')).map((node) => ({
+      sourceId: node.getAttribute('data-source-id') || null,
+      docId: node.getAttribute('data-doc-id') || null,
+      chunkId: node.getAttribute('data-chunk-id') || null,
+      sourceNumber: node.getAttribute('data-source-number') || null,
+      title: node.getAttribute('data-source-title') || null,
+      text: compact(node.innerText || node.textContent || '', 180),
+    }))
     const drawer = dialog.querySelector('[data-source-drawer]')
     const drawerEntries = drawer
       ? Array.from(drawer.querySelectorAll('[data-source-drawer-entry]')).map((node) => ({
@@ -928,6 +946,7 @@ export async function collectVisibleResponseDocumentUi(page) {
       return { routeOk, deadFrontendDocumentUrl }
     }
     const pdfFrameSrc = pdfFrame?.getAttribute('data-source-pdf-src') || pdfFrame?.getAttribute('src') || null
+    const pdfHighlightLayer = pdfFrame?.querySelector('[data-source-pdf-highlight-layer]') || null
     const pdfSrcInfo = pdfUrlInfo(pdfFrameSrc)
     const pdfHrefInfo = pdfUrlInfo(pdfLinkHref)
     const sourceDrawer = drawer
@@ -954,6 +973,8 @@ export async function collectVisibleResponseDocumentUi(page) {
             href: pdfLinkHref,
             openMode: pdfFrame.getAttribute('data-source-open-mode') || null,
             highlightKind: pdfFrame.getAttribute('data-source-highlight-kind') || null,
+            renderedHighlightKind: pdfHighlightLayer?.getAttribute('data-source-pdf-highlight-kind') || null,
+            highlightCount: Number(pdfHighlightLayer?.getAttribute('data-source-pdf-highlight-count') || 0),
             routeOk: pdfSrcInfo.routeOk && (!pdfLink || pdfHrefInfo.routeOk),
             deadFrontendDocumentUrl: pdfSrcInfo.deadFrontendDocumentUrl || pdfHrefInfo.deadFrontendDocumentUrl,
           }
@@ -980,6 +1001,7 @@ export async function collectVisibleResponseDocumentUi(page) {
       visibleApprovalIds: visibleBlocks.map((block) => block.approvalId).filter(Boolean),
       approvalActionLabels,
       sourceChips,
+      citedAnswerHighlights,
       sourceDrawer,
       latestAssistantText: latestRoot.innerText || latestRoot.textContent || '',
       visibleText: dialog.innerText || document.body.innerText || '',

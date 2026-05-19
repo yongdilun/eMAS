@@ -822,13 +822,165 @@ function pdfRequestUrl(pdfHref) {
   return value ? value.split('#')[0] : ''
 }
 
+function normalizedTextWithMap(value) {
+  const text = String(value || '')
+  const chars = []
+  const map = []
+  let pendingSpace = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (/\s/.test(char)) {
+      pendingSpace = chars.length > 0
+      continue
+    }
+    if (pendingSpace) {
+      chars.push(' ')
+      map.push(index)
+      pendingSpace = false
+    }
+    chars.push(char.toLowerCase())
+    map.push(index)
+  }
+  return { text: chars.join(''), map }
+}
+
+function normalizedNeedle(value) {
+  return safeText(value).replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function findNormalizedRange(haystack, needle) {
+  const normalizedSearch = normalizedNeedle(needle)
+  if (!normalizedSearch) return null
+  const normalizedHaystack = normalizedTextWithMap(haystack)
+  let index = normalizedHaystack.text.indexOf(normalizedSearch)
+  if (index < 0) {
+    const words = normalizedSearch.split(' ').filter(Boolean)
+    for (let size = Math.min(8, words.length); size >= 3 && index < 0; size -= 1) {
+      const phrase = words.slice(0, size).join(' ')
+      index = normalizedHaystack.text.indexOf(phrase)
+      if (index >= 0) {
+        const start = normalizedHaystack.map[index]
+        const end = normalizedHaystack.map[index + phrase.length - 1] + 1
+        return { start, end, matchedText: phrase, matchKind: 'text_search' }
+      }
+    }
+    return null
+  }
+  const start = normalizedHaystack.map[index]
+  const end = normalizedHaystack.map[index + normalizedSearch.length - 1] + 1
+  return { start, end, matchedText: normalizedSearch, matchKind: 'text_search' }
+}
+
+function rectFromTextItem(item, viewport) {
+  if (!item?.str) return null
+  const tx = viewport.transform
+  const tr = item.transform || [1, 0, 0, 1, 0, 0]
+  const a = tx[0] * tr[0] + tx[2] * tr[1]
+  const c = tx[0] * tr[2] + tx[2] * tr[3]
+  const d = tx[1] * tr[2] + tx[3] * tr[3]
+  const e = tx[0] * tr[4] + tx[2] * tr[5] + tx[4]
+  const f = tx[1] * tr[4] + tx[3] * tr[5] + tx[5]
+  const height = Math.max(6, Math.hypot(c, d))
+  const width = Math.max(4, (Number(item.width) || safeText(item.str).length * 5) * viewport.scale)
+  const left = Math.min(e, e + a)
+  const top = f - height
+  return { left, top, width, height }
+}
+
+function clampHighlightRect(rect, viewport) {
+  const pageWidth = Math.max(1, Number(viewport?.width) || 1)
+  const pageHeight = Math.max(1, Number(viewport?.height) || 1)
+  const left = Number(rect?.left)
+  const top = Number(rect?.top)
+  const width = Number(rect?.width)
+  const height = Number(rect?.height)
+  if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null
+  const clampedLeft = clampNumber(left, 0, pageWidth)
+  const clampedTop = clampNumber(top, 0, pageHeight)
+  const clampedRight = clampNumber(left + width, 0, pageWidth)
+  const clampedBottom = clampNumber(top + Math.max(height, 8), 0, pageHeight)
+  const clampedWidth = clampedRight - clampedLeft
+  const clampedHeight = clampedBottom - clampedTop
+  if (clampedWidth <= 0 || clampedHeight <= 0) return null
+  return { left: clampedLeft, top: clampedTop, width: clampedWidth, height: clampedHeight }
+}
+
+function bboxHighlightRects(bbox, viewport) {
+  const box = Array.isArray(bbox)
+    ? bbox
+    : bbox && typeof bbox === 'object'
+      ? [bbox.x0 ?? bbox.left ?? bbox.x, bbox.y0 ?? bbox.top ?? bbox.y, bbox.x1 ?? bbox.right, bbox.y1 ?? bbox.bottom]
+      : null
+  if (!Array.isArray(box) || box.length < 4) return []
+  const values = box.slice(0, 4).map(Number)
+  if (values.some((value) => !Number.isFinite(value))) return []
+  const [x1, y1, x2, y2] = values
+  const [left, top, right, bottom] = viewport.convertToViewportRectangle
+    ? viewport.convertToViewportRectangle([x1, y1, x2, y2])
+    : [x1, y1, x2, y2]
+  const rect = clampHighlightRect({
+    left: Math.min(left, right),
+    top: Math.min(top, bottom),
+    width: Math.abs(right - left),
+    height: Math.abs(bottom - top),
+  }, viewport)
+  return rect ? [rect] : []
+}
+
+function sourceHighlightRects({ source, openTarget, textContent, viewport }) {
+  if (openTarget?.highlightKind === 'bbox') {
+    const rects = bboxHighlightRects(source?.bbox || source?.bounding_box || source?.boundingBox, viewport)
+    if (rects.length) return { rects, kind: 'bbox', matchedText: '' }
+  }
+
+  let pageText = ''
+  const textItems = []
+  for (const item of textContent?.items || []) {
+    const text = safeText(item?.str)
+    if (!text) continue
+    const start = pageText.length
+    pageText += text
+    const end = pageText.length
+    const rect = rectFromTextItem(item, viewport)
+    if (rect) textItems.push({ start, end, rect, text })
+    pageText += ' '
+  }
+  const textLength = textItems.length
+    ? Math.max(...textItems.map((item) => item.end))
+    : pageText.trimEnd().length
+
+  const search = safeText(source?.text_search || source?.textSearch || source?.snippet)
+  const searchRange = findNormalizedRange(pageText, search)
+  const charRange = normalCharRange(source?.char_range || source?.charRange)
+  const range = searchRange || (charRange ? {
+    start: clampNumber(charRange.start, 0, Math.max(0, textLength - 1)),
+    end: clampNumber(charRange.end, 0, textLength),
+    matchedText: '',
+    matchKind: 'char_range',
+  } : null)
+  if (!range || range.end <= range.start) return { rects: [], kind: null, matchedText: '' }
+
+  const rects = textItems
+    .filter((item) => item.end > range.start && item.start < range.end)
+    .map((item) => item.rect)
+    .map((rect) => clampHighlightRect(rect, viewport))
+    .filter(Boolean)
+  return {
+    rects,
+    kind: searchRange ? 'text_search' : 'char_range',
+    matchedText: range.matchedText,
+  }
+}
+
 function isTestDomRuntime() {
   return typeof navigator !== 'undefined' && /\bjsdom\b/i.test(navigator.userAgent || '')
 }
 
 function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
   const canvasRef = useRef(null)
+  const pageRef = useRef(null)
   const [state, setState] = useState({ status: 'loading', pageNumber: null, pageCount: null, error: '' })
+  const [highlightState, setHighlightState] = useState({ rects: [], kind: null, matchedText: '', width: 0, height: 0 })
   const requestedPage = clampNumber(source?.page || 1, 1, 100000)
   const requestUrl = pdfRequestUrl(pdfHref)
 
@@ -862,8 +1014,21 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
       canvas.height = Math.floor(viewport.height * devicePixelRatio)
       canvas.style.width = `${Math.floor(viewport.width)}px`
       canvas.style.height = `${Math.floor(viewport.height)}px`
+      if (pageRef.current) {
+        pageRef.current.style.width = `${Math.floor(viewport.width)}px`
+        pageRef.current.style.height = `${Math.floor(viewport.height)}px`
+      }
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
       context.clearRect(0, 0, viewport.width, viewport.height)
+
+      const textContent = await page.getTextContent()
+      if (cancelled) return
+      const highlight = sourceHighlightRects({ source, openTarget, textContent, viewport })
+      setHighlightState({
+        ...highlight,
+        width: Math.floor(viewport.width),
+        height: Math.floor(viewport.height),
+      })
 
       renderTask = page.render({ canvasContext: context, viewport })
       try {
@@ -883,6 +1048,7 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
 
       const canvas = canvasRef.current
       if (!canvas || isTestDomRuntime()) {
+        setHighlightState({ rects: [], kind: openTarget.highlightKind || null, matchedText: '', width: 0, height: 0 })
         setState({ status: 'ready', pageNumber: requestedPage, pageCount: null, error: '' })
         return
       }
@@ -924,12 +1090,12 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
     return () => {
       cancelled = true
       controller.abort()
-      window.clearTimeout(resizeTimer)
+      if (resizeTimer) window.clearTimeout(resizeTimer)
       resizeObserver?.disconnect()
       renderTask?.cancel()
       pdfDocument?.destroy?.()
     }
-  }, [requestUrl, requestedPage, source?.source_id])
+  }, [requestUrl, requestedPage, source, openTarget])
 
   const statusText = state.status === 'ready'
     ? `Rendered page ${state.pageNumber || requestedPage}${state.pageCount ? ` of ${state.pageCount}` : ''}`
@@ -958,11 +1124,43 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
         {state.status === 'error' && state.error ? <span className="block pt-1 text-red-500">{state.error}</span> : null}
       </div>
       <div className="flex min-h-[24rem] justify-center">
-        <canvas
-          ref={canvasRef}
-          className="max-w-full rounded-sm border border-hairline bg-white shadow-sm"
-          data-source-pdf-canvas=""
-        />
+        <div
+          ref={pageRef}
+          className="relative max-w-full rounded-sm border border-hairline bg-white shadow-sm"
+          data-source-pdf-page=""
+        >
+          <canvas
+            ref={canvasRef}
+            className="block max-w-full bg-white"
+            data-source-pdf-canvas=""
+          />
+          <div
+            className="pointer-events-none absolute left-0 top-0"
+            style={{
+              width: highlightState.width ? `${highlightState.width}px` : '100%',
+              height: highlightState.height ? `${highlightState.height}px` : '100%',
+            }}
+            data-source-pdf-highlight-layer=""
+            data-source-pdf-highlight-kind={highlightState.kind || undefined}
+            data-source-pdf-highlight-count={String(highlightState.rects.length)}
+          >
+            {highlightState.rects.map((rect, index) => (
+              <span
+                key={`${Math.round(rect.left)}:${Math.round(rect.top)}:${index}`}
+                className="absolute rounded-[2px] bg-yellow-300/45 ring-1 ring-yellow-500/60 mix-blend-multiply"
+                style={{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${Math.max(rect.height, 8)}px`,
+                }}
+                data-source-pdf-highlight=""
+                data-source-pdf-highlight-kind={highlightState.kind || undefined}
+                data-source-pdf-highlight-text={highlightState.matchedText || undefined}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1291,10 +1489,29 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
             ? (segment.citation_ids || segment.citationIds).map((item) => safeText(item)).filter(Boolean)
             : []
           const citations = citationIds.map((id) => citationsById.get(id)).filter(Boolean)
-          return (
-            <span key={`${block.id}:segment:${segmentIndex}`}>
-              {segmentIndex > 0 ? ' ' : ''}
+          const primaryCitation = citations[0] ? citationFromSource(citations[0]) : null
+          const answerText = citations.length ? (
+            <mark
+              className="box-decoration-clone rounded-sm bg-yellow-100 px-0.5 text-ink ring-1 ring-yellow-300/70"
+              data-cited-answer-text=""
+              data-source-id={safeText(primaryCitation?.source_id) || undefined}
+              data-doc-id={safeText(primaryCitation?.doc_id) || undefined}
+              data-chunk-id={safeText(primaryCitation?.chunk_id) || undefined}
+              data-source-number={safeText(primaryCitation?.source_number) || undefined}
+              data-source-title={safeText(primaryCitation?.title) || undefined}
+            >
               {text}
+            </mark>
+          ) : text
+          return (
+            <span
+              key={`${block.id}:segment:${segmentIndex}`}
+              data-knowledge-answer-segment=""
+              data-cited-answer-segment={citations.length ? '' : undefined}
+              data-source-id={safeText(primaryCitation?.source_id) || undefined}
+            >
+              {segmentIndex > 0 ? ' ' : ''}
+              {answerText}
               {citations.map((citation, citationIndex) => (
                 <SourceChip
                   key={`${citationKey(citation)}:${citationIndex}`}

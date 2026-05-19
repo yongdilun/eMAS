@@ -444,6 +444,7 @@ test('semantic probe summarizes side evidence drawer and in-panel PDF state', ()
         { type: 'source_list', id: 'sources:osha', contract: 'source_list_v1', title: 'Knowledge sources', text: 'OSHA LOTO', buttons: ['View evidence'] },
       ],
       sourceChips: [{ sourceId: 'osha#chunk-29', docId: 'osha', chunkId: 'chunk-29', sourceNumber: '1', title: 'OSHA LOTO', text: '[1]' }],
+      citedAnswerHighlights: [{ sourceId: 'osha#chunk-29', docId: 'osha', chunkId: 'chunk-29', sourceNumber: '1', title: 'OSHA LOTO', text: 'Notify affected employees before reenergizing.' }],
       sourceDrawer: {
         open: true,
         view: 'pdf',
@@ -466,6 +467,8 @@ test('semantic probe summarizes side evidence drawer and in-panel PDF state', ()
           href: '/documents/osha/pdf#page=15&highlight=char_range&char_start=0&char_end=1017',
           openMode: 'exact',
           highlightKind: 'char_range',
+          renderedHighlightKind: 'char_range',
+          highlightCount: 2,
           routeOk: true,
           deadFrontendDocumentUrl: false,
         },
@@ -491,8 +494,12 @@ test('semantic probe summarizes side evidence drawer and in-panel PDF state', ()
   assert.equal(probe.visible.sourceDrawer.view, 'pdf')
   assert.equal(probe.visible.sourceDrawer.entries[0].role, 'cited')
   assert.equal(probe.visible.sourceDrawer.entries[1].role, 'related')
+  assert.equal(probe.visible.citedAnswerHighlights[0].sourceId, 'osha#chunk-29')
+  assert.match(probe.visible.citedAnswerHighlights[0].text, /Notify affected employees/)
   assert.equal(probe.visible.sourceDrawer.pdf.sourceId, 'osha#chunk-29')
   assert.match(probe.visible.sourceDrawer.pdf.src, /highlight=char_range/)
+  assert.equal(probe.visible.sourceDrawer.pdf.renderedHighlightKind, 'char_range')
+  assert.equal(probe.visible.sourceDrawer.pdf.highlightCount, 2)
   assert.equal(probe.visible.sourceDrawer.pdf.routeOk, true)
   assert.notEqual(probe.visible.sourceDrawer.pdf.deadFrontendDocumentUrl, true)
   assert.equal(probe.visible.sourceDrawer.shellLevel, true)
