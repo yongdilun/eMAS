@@ -2739,13 +2739,18 @@ def _compose_run_steps(
         )
 
     if sources:
+        insufficient_context = is_insufficient_context_answer(presentation.summary)
         run_steps.append(
             RunStep(
                 step_id=f"knowledge:{operation_id or document_id}",
                 kind="knowledge",
                 state="completed",
-                title="Prepared sourced answer",
-                summary=f"{len(sources)} {_plural(len(sources), 'source')} attached.",
+                title="Checked related sources" if insufficient_context else "Prepared sourced answer",
+                summary=(
+                    f"{len(sources)} related {_plural(len(sources), 'source')} checked."
+                    if insufficient_context
+                    else f"{len(sources)} {_plural(len(sources), 'source')} attached."
+                ),
                 operation_id=operation_id,
                 record_count=len(sources),
             )
@@ -2928,6 +2933,11 @@ def _short_message(
         return _trimmed(presentation.summary) or "Some rows failed while others succeeded."
 
     if sources:
+        if is_insufficient_context_answer(presentation.summary):
+            clean_summary = _strip_footnote_markup(presentation.summary)
+            if clean_summary:
+                return clean_summary.split(" The related sources checked", 1)[0].rstrip(".") + "."
+            return "I do not have enough retrieved evidence to answer that safely."
         return "I found a source-backed answer."
 
     if status_result:

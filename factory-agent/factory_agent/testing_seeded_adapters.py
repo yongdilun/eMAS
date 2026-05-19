@@ -11,6 +11,7 @@ from factory_agent.config import Settings
 from factory_agent.observability.telemetry import log_event
 from factory_agent.planning.intent import intent_constraint_values, semantic_frame_for_text
 from factory_agent.planner import PlannerApprovalRequired
+from factory_agent.rag.source_metadata import insufficient_context_answer
 from factory_agent.schemas import PlanDraft, PlanStepDraft, ToolInfo
 from factory_agent.services.planner_service import PlannerResult
 from factory_agent.testing_seeded_scenarios import SeededScenarioInterpreter
@@ -23,6 +24,69 @@ class _FakeRagResult:
     answer: str
     sources: list[dict[str, Any]]
     safety_content: str | None = None
+
+
+def _is_osha_reenergizing_notification_query(lowered: str) -> bool:
+    return (
+        "osha" in lowered
+        and "lockout" in lowered
+        and "tagout" in lowered
+        and "notification" in lowered
+        and "reenerg" in lowered
+        and "removing" in lowered
+    )
+
+
+def _is_osha_before_starting_lockout_notification_query(lowered: str) -> bool:
+    return (
+        "osha" in lowered
+        and "lockout" in lowered
+        and "tagout" in lowered
+        and "notification" in lowered
+        and "before starting lockout" in lowered
+    )
+
+
+def _osha_reenergizing_source() -> dict[str, Any]:
+    return {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0029",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": (
+            "After removing lockout or tagout devices but before reenergizing the machine, "
+            "the employer must assure that employees know the devices have been removed and "
+            "that the machine is capable of being reenergized."
+        ),
+        "authority_level": "official_public_guidance",
+        "license": "public",
+        "page": 15,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "char_range": [0, 1017],
+        "text_search": "After removing the lockout or tagout devices but before reenergizing the machine",
+    }
+
+
+def _osha_before_starting_related_source() -> dict[str, Any]:
+    return {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0028",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0028",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": (
+            "Before beginning service or maintenance, OSHA lists preparation, shutdown, isolation, "
+            "applying lockout or tagout devices, controlling stored energy, and verifying deenergization."
+        ),
+        "authority_level": "official_public_guidance",
+        "license": "public",
+        "page": 14,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "text_search": "Before beginning service or maintenance, the following steps must be accomplished in sequence",
+    }
 
 
 class SeededPlaywrightRAGPipeline:
@@ -57,6 +121,24 @@ class SeededPlaywrightRAGPipeline:
                 ),
             )
         if requested_machine_id is None:
+            if _is_osha_reenergizing_notification_query(lowered):
+                return _FakeRagResult(
+                    answer=(
+                        "Before reenergizing, notify affected employees who operate or work with the machine "
+                        "and employees in the service area that the lockout or tagout devices have been removed "
+                        "and that the machine can be reenergized [1]."
+                    ),
+                    sources=[_osha_reenergizing_source()],
+                    safety_content=(
+                        "This topic involves high-risk industrial procedures. Follow your site's approved SOP."
+                    ),
+                )
+            if _is_osha_before_starting_lockout_notification_query(lowered):
+                return _FakeRagResult(
+                    answer=insufficient_context_answer(has_sources=True),
+                    sources=[_osha_before_starting_related_source()],
+                    safety_content="LOTO is safety-critical. Follow your site's approved energy-control procedure.",
+                )
             if semantic_frame.domain_intent == "loto_procedure" and "machine_id" in semantic_frame.missing_required_entities:
                 return _FakeRagResult(
                     answer=(
@@ -71,7 +153,8 @@ class SeededPlaywrightRAGPipeline:
             return _FakeRagResult(
                 answer=(
                     "Controlled seeded RAG answer: Lockout/Tagout controls hazardous energy during "
-                    "servicing or maintenance. Use the site-approved procedure for the specific equipment."
+                    "servicing or maintenance under OSHA's Control of Hazardous Energy Lockout/Tagout "
+                    "standard, 29 CFR 1910.147. Use the site-approved procedure for the specific equipment. [1]"
                 ),
                 sources=[
                     {
@@ -81,7 +164,11 @@ class SeededPlaywrightRAGPipeline:
                         "chunk_id": "seeded-general-loto-guidance_c0000",
                         "title": "Seeded General LOTO Guidance",
                         "organization": "eMas Safety",
-                        "snippet": "Lockout/Tagout controls hazardous energy during servicing or maintenance.",
+                        "snippet": (
+                            "Lockout/Tagout controls hazardous energy during servicing or maintenance. "
+                            "Seeded guidance references OSHA Control of Hazardous Energy Lockout/Tagout "
+                            "and 29 CFR 1910.147 for release proof."
+                        ),
                         "authority_level": "controlled_test_fixture",
                         "license": "internal-test",
                     }

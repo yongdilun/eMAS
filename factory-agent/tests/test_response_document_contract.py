@@ -12,6 +12,7 @@ from factory_agent.config import Settings
 from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, Session
+from factory_agent.rag.source_metadata import insufficient_context_answer
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import ResponseDocument
 from factory_agent.services import response_document_service
@@ -2102,6 +2103,167 @@ async def test_rag_response_document_includes_knowledge_answer_and_source_blocks
     assert source_payload["text_search"] == "Notify affected employees before lockout starts."
     assert "C:/local/docs" not in json.dumps(document)
     assert any(step["kind"] == "knowledge" for step in document["run_steps"])
+
+
+@pytest.mark.asyncio
+async def test_phase32_positive_osha_reenergizing_response_document_is_pdf_source_backed(db_session):
+    created_at = datetime(2026, 5, 19, 10, 0, 0)
+    session_id = "rd-phase32-positive-osha-reenergizing"
+    plan_id = "rd-phase32-positive-plan"
+    prompt = (
+        "According to the OSHA lockout/tagout guide, what notification is required before reenergizing "
+        "a machine after removing lockout or tagout devices?"
+    )
+    answer = (
+        "Before reenergizing, notify affected employees who operate or work with the machine and employees "
+        "in the service area that the lockout or tagout devices have been removed and that the machine can "
+        "be reenergized [^1]."
+    )
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0029",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": (
+            "After removing the lockout or tagout devices but before reenergizing the machine, "
+            "the employer must assure that employees know the devices have been removed and the machine "
+            "is capable of being reenergized."
+        ),
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "page": 15,
+        "char_range": [0, 1017],
+        "text_search": "After removing the lockout or tagout devices but before reenergizing the machine",
+    }
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=7,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content=answer,
+                step_id=plan_id,
+                tool_name="__conversation__",
+                created_at=created_at + timedelta(seconds=2),
+            ),
+        ]
+    )
+    plan = await db_session.get(Plan, plan_id)
+    assert plan is not None
+    plan.sources = [source]
+    plan.safety_content = "This topic involves high-risk industrial procedures. Follow the site-approved SOP before acting."
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    serialized = json.dumps(document)
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+    source_block = next(block for block in document["blocks"] if block["type"] == "source_list")
+    citation = knowledge_block["citations"][0]
+    listed_source = source_block["sources"][0]
+
+    assert document["message"] == "I found a source-backed answer."
+    assert knowledge_block["contract"] == "knowledge_answer_v1"
+    assert knowledge_block["answer"].startswith("Before reenergizing, notify affected employees")
+    assert all(segment.get("citation_ids") for segment in knowledge_block["segments"])
+    assert citation["contract"] == "source_citation_v1"
+    for payload in (citation, listed_source):
+        assert payload["source_id"] == "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029"
+        assert payload["doc_id"] == "osha_3120_lockout_tagout"
+        assert payload["chunk_id"] == "osha_3120_lockout_tagout_c0029"
+        assert payload["page"] == 15
+        assert payload["pdf_url"] == "/documents/osha_3120_lockout_tagout/pdf"
+        assert payload["char_range"] == [0, 1017]
+        assert payload["text_search"]
+    assert listed_source["contract"] == "source_locator_v1"
+    assert "loto_notification_requirement" not in serialized
+    assert "LOTO Notification Requirements" not in serialized
+    assert "file_path" not in serialized
+    assert document["invariants"]["safety_notice_contract"] == "safety_notice_v1"
+    assert document["invariants"]["knowledge_answer_contract"] == "knowledge_answer_v1"
+    assert document["invariants"]["source_list_contract"] == "source_list_v1"
+
+
+@pytest.mark.asyncio
+async def test_phase32_negative_osha_before_starting_lockout_uses_insufficient_context_with_related_sources(db_session):
+    created_at = datetime(2026, 5, 19, 10, 8, 0)
+    session_id = "rd-phase32-negative-osha-starting-lockout"
+    plan_id = "rd-phase32-negative-plan"
+    prompt = "According to the OSHA lockout/tagout guide, what notification is required before starting lockout?"
+    answer = insufficient_context_answer(has_sources=True)
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0028",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "osha_3120_lockout_tagout_c0028",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": (
+            "Before beginning service or maintenance, OSHA lists preparation, shutdown, isolation, applying "
+            "lockout or tagout devices, controlling stored energy, and verifying deenergization."
+        ),
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "page": 14,
+        "text_search": "Before beginning service or maintenance, the following steps must be accomplished in sequence",
+    }
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=7,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content=answer,
+                step_id=plan_id,
+                tool_name="__conversation__",
+                created_at=created_at + timedelta(seconds=2),
+            ),
+        ]
+    )
+    plan = await db_session.get(Plan, plan_id)
+    assert plan is not None
+    plan.sources = [source]
+    plan.safety_content = "LOTO is safety-critical. Follow your site's approved energy-control procedure."
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    serialized = json.dumps(document)
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+    source_block = next(block for block in document["blocks"] if block["type"] == "source_list")
+
+    assert document["message"] == "I do not have enough retrieved evidence to answer that safely."
+    assert document["message"] != knowledge_block["answer"]
+    assert knowledge_block["answer"] == answer
+    assert knowledge_block["citations"] == []
+    assert knowledge_block["segments"] == [{"text": answer, "citation_ids": []}]
+    assert source_block["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
+    assert source_block["sources"][0]["chunk_id"] == "osha_3120_lockout_tagout_c0028"
+    assert source_block["sources"][0]["pdf_url"] == "/documents/osha_3120_lockout_tagout/pdf"
+    assert source_block["sources"][0]["page"] == 14
+    assert source_block["sources"][0]["text_search"]
+    assert source_block["sources"][0].get("policy_only") is not True
+    assert any(step["title"] == "Checked related sources" for step in document["run_steps"])
+    assert "loto_notification_requirement" not in serialized
+    assert "LOTO Notification Requirements" not in serialized
+    assert "affected employees must be notified before lockout/tagout starts" not in serialized
+    assert "Tell them the equipment will be locked out" not in serialized
+    assert "Which machine ID" not in serialized
+    assert "exact machine ID" not in serialized
 
 
 @pytest.mark.asyncio

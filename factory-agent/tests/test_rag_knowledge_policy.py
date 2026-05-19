@@ -9,6 +9,10 @@ OSHA_LOTO_PROMPT = (
 UNSUPPORTED_NOTIFICATION_PROMPT = (
     "According to the OSHA lockout/tagout guide, what notification is required before starting lockout?"
 )
+SUPPORTED_REENERGIZING_NOTIFICATION_PROMPT = (
+    "According to the OSHA lockout/tagout guide, what notification is required before reenergizing "
+    "a machine after removing lockout or tagout devices?"
+)
 SYNTHETIC_NOTIFICATION_SOURCE_ID = "loto_notification_requirement"
 SYNTHETIC_NOTIFICATION_SOURCE_TITLE = "LOTO Notification Requirements"
 
@@ -118,6 +122,54 @@ def test_loto_notification_policy_preserves_answer_when_retrieved_evidence_suppo
     assert result.answer == "The retrieved procedure says to notify affected employees before lockout starts [^1]."
     assert [source["doc_id"] for source in result.sources] == ["osha_3120_lockout_tagout"]
     assert_no_synthetic_loto_notification_source(result)
+    assert "approved energy-control procedure" in result.safety_content
+
+
+def test_osha_reenergizing_notification_policy_preserves_pdf_backed_answer():
+    registry = default_knowledge_policy_registry()
+    frame = semantic_frame_for_text(SUPPORTED_REENERGIZING_NOTIFICATION_PROMPT)
+
+    result = registry.apply(
+        route_family=frame.route,
+        query=SUPPORTED_REENERGIZING_NOTIFICATION_PROMPT,
+        answer=(
+            "Before reenergizing, notify affected employees who operate or work with the machine and employees "
+            "in the service area that the lockout or tagout devices have been removed and that the machine can "
+            "be reenergized [^1]."
+        ),
+        sources=[
+            {
+                "source_number": 1,
+                "source_id": "osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029",
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0029",
+                "title": "Control of Hazardous Energy Lockout/Tagout",
+                "organization": "OSHA",
+                "snippet": (
+                    "After removing the lockout or tagout devices but before reenergizing the machine, "
+                    "the employer must assure that employees know the devices have been removed."
+                ),
+                "page": 15,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "char_range": [0, 1017],
+                "text_search": "After removing the lockout or tagout devices but before reenergizing the machine",
+            }
+        ],
+        safety_content=None,
+        semantic_frame=frame,
+    )
+
+    assert result.policy_id == "loto_notification_document_content"
+    assert result.answer.startswith("Before reenergizing, notify affected employees")
+    assert [source["doc_id"] for source in result.sources] == ["osha_3120_lockout_tagout"]
+    assert_no_synthetic_loto_notification_source(result)
+    source = result.sources[0]
+    assert_minimum_locator(source)
+    assert source["page"] == 15
+    assert source["pdf_url"] == "/documents/osha_3120_lockout_tagout/pdf"
+    assert source["char_range"] == [0, 1017]
+    assert source["text_search"]
+    assert source.get("policy_only") is not True
     assert "approved energy-control procedure" in result.safety_content
 
 

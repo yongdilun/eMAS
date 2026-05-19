@@ -23,6 +23,7 @@ EXACT_RESPONSE_DOCUMENT_PROMPTS = [
     "change all high priority job to low then change all low priority job to medium",
     "Show status for machine with machine id M-CNC-01",
     "According to the LOTO procedure, what notification is required before starting lockout",
+    "According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?",
     "According to the OSHA lockout/tagout guide, what notification is required before starting lockout?",
 ]
 SYNTHETIC_LOTO_POLICY_SOURCE_RE = re.compile(

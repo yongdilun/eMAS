@@ -39,7 +39,7 @@ Created: 2026-05-18
 | 29 | PDF source locator and highlight upgrade | Done | Codex | PDF ingestion is page-aware, sources use safe `/documents/{doc_id}/pdf` locators, source clicks choose exact/text-search/page/drawer fallbacks deterministically, and drawer-only fallback remains covered. |
 | 30 | RAG reingestion and live release proof | Done | Codex | Rebuilt local Chroma/BM25 from the source register, proved live LOTO source locators carry safe page/highlight metadata without `file_path`, and kept typed RAG/source browser gates green. |
 | 31 | Backend RAG evidence truth cleanup | Done | Codex | Removed hardcoded runtime policy fallbacks/synthetic sources, required insufficient-context behavior for unsupported safety claims, stabilized source numbering, and added backend hardcode/citation guardrails. |
-| 32 | Live RAG positive and negative release proof | Planned | Codex | Prove one real PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through real/seeded response-document paths. |
+| 32 | Live RAG positive and negative release proof | Done | Codex | Proved one PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through backend contracts, mocked browser, and seeded response-document paths. |
 | 33 | Side evidence drawer and PDF panel UX | Planned | Codex | Replace metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
 | 34 | Source tooltip and responsive chat width | Planned | Codex | Fix source-hover collision near edges and make assistant response cards grow with wider chatbot/modal layouts while preserving readable prose widths. |
 | 35 | Final RAG source UX release gate | Planned | Codex | Run the integrated backend/frontend/browser release proof after Phases 31-34, including positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrails. |
@@ -57,7 +57,7 @@ Created: 2026-05-18
 - Phase 26 is complete. Backend contract diversity beyond jobs/machines remains covered by Phase 24 product/material fixtures; no safe non-job real/seeded browser path has been exposed without broadening write/read product scope.
 - Phase 27 fixed the post-Phase-26 RAG display regression: LOTO document-content answers no longer show raw `:::safety`, source-backed answer bodies render once, valid response-document turns do not get legacy ChatMessage source/safety chrome, and cited RAG sources carry minimum locator metadata.
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
-- Phase 31 removed the post-Phase-30 RAG evidence-truth gap: the hardcoded `LOTO Notification Requirements` policy fallback no longer appears as a real runtime source, duplicate final source numbering is normalized, and backend-added uncited factual supplement text is blocked or converted to insufficient context. Phase 32 proves real PDF-backed and insufficient-context runtime behavior.
+- Phase 32 proved the post-cleanup RAG release behavior: the OSHA reenergizing prompt is source-backed by `osha_3120_lockout_tagout` with PDF locator metadata, and the before-starting-lockout prompt returns insufficient context with related OSHA sources checked instead of a policy fallback or machine-ID clarification.
 - Source evidence UX still needs hardening after backend truth is fixed: Phase 33 adds the resizable side evidence drawer and in-panel PDF flow; Phase 34 fixes hover collision and responsive chat width; Phase 35 runs the integrated release gate.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
@@ -2443,6 +2443,59 @@ Results:
 - `git diff --check`: passed with line-ending warnings only.
 - `git status --short --branch`: showed only intended Phase 31 modified files before commit.
 
+## Phase 32 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 32 is complete. RD-021/RD-022 now prove the cleaned RAG behavior through backend response-document contracts, mocked browser response-document fixtures, and the seeded Playwright RAG path.
+
+### Release Proof
+
+- Positive prompt: `According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?`
+- Positive result: answers from `osha_3120_lockout_tagout` and carries `doc_id`, `chunk_id`, `page`, `pdf_url`, and `char_range`/`text_search` in both citation and source-list payloads.
+- Negative prompt: `According to the OSHA lockout/tagout guide, what notification is required before starting lockout?`
+- Negative result: returns insufficient context, keeps the retrieved OSHA source as a related checked source, emits no citation proof for the unsupported claim, and does not ask for a machine ID.
+- Runtime/browser payloads now forbid `loto_notification_requirement` and hardcoded `LOTO Notification Requirements` source evidence in the Phase 32 RAG proof lane.
+
+### Product Fix
+
+- Insufficient-context RAG turns with related sources now use `Checked related sources` progress copy instead of `Prepared sourced answer`.
+- The short response-document message for insufficient context no longer claims the answer is source-backed and avoids duplicating the full knowledge-answer body.
+- Seeded OSHA/LOTO RAG output now includes the required `29 CFR 1910.147` evidence when it is meant to support the generic hazardous-energy answer, while the before-starting-lockout prompt remains insufficient context.
+
+### Regression Coverage Added
+
+- Backend generation proof for OSHA reenergizing PDF source locators.
+- Backend policy proof preserving the OSHA reenergizing answer and rejecting unsupported before-starting-lockout claims.
+- Backend response-document proof for RD-021 positive citation/source-list locator agreement and RD-022 insufficient-context related-source behavior.
+- Mocked browser proof for RD-021/RD-022 visible response-document behavior.
+- Seeded browser proof for positive OSHA source-backed RAG and negative insufficient-context RAG in the deterministic seeded stack.
+
+### Phase 32 Verification
+
+```powershell
+Set-Location "factory-agent"
+New-Item -ItemType Directory -Force -Path ".pytest_tmp" | Out-Null
+$env:TEMP=(Resolve-Path ".pytest_tmp").Path; $env:TMP=$env:TEMP
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_response_document_contract.py -q
+
+Set-Location "..\eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "OSHA lockout|reenergizing|insufficient context|LOTO|source|RAG"
+npm run test:e2e:seeded-oracles -- --grep "LOTO|source|RAG|insufficient context"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+Results:
+
+- Backend RAG/response-document lane: 49 passed.
+- Frontend unit/component lane: 120 passed.
+- Focused mocked response-document browser grep: 10 passed.
+- Focused seeded-oracle browser grep: first run exposed the generic seeded LOTO answer missing required `29 CFR 1910.147` support; after the seeded evidence fix, 19 passed.
+
 ## Commands Run
 
 ```powershell
@@ -2469,7 +2522,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 31 is complete. Phase 32 is next and should prove RD-021/RD-022 through real or seeded runtime paths: a positive PDF-backed OSHA reenergizing notification answer, and the before-starting-lockout negative prompt returning insufficient context with related sources checked. Do not start Phase 33 side evidence drawer/PDF work, Phase 34 tooltip/responsive width work, or Phase 35 integrated release gating until Phase 32 is proven.
+Phase 32 is complete. Phase 33 is next and should add the side evidence drawer and PDF panel UX. Do not start Phase 34 tooltip/responsive width work or Phase 35 integrated release gating until Phase 33 is proven.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

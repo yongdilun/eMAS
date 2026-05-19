@@ -78,6 +78,8 @@ export const documentContentRagForbiddenProbeText = Object.freeze([
   { label: 'no-results diagnostic', pattern: /\bNo results\b/i },
   { label: 'completed_answer technical detail', pattern: /completed_answer/i },
   { label: 'approval UI on RAG answer', pattern: /Approval required/i },
+  { label: 'synthetic LOTO notification source id', pattern: /loto_notification_requirement/i },
+  { label: 'hardcoded LOTO notification source title', pattern: /LOTO Notification Requirements/i },
 ])
 
 const DISPLAYABLE_BLOCK_TYPES = new Set([

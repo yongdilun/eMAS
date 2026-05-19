@@ -19,6 +19,7 @@ import {
   responseDocumentLotoNotificationPrompt,
   responseDocumentMixedOperationRagPrompt,
   responseDocumentNoResultsPrompt,
+  responseDocumentOshaReenergizingPrompt,
   responseDocumentPartialNoOpPrompt,
   responseDocumentPartialFailurePrompt,
   responseDocumentReadStatusPrompt,
@@ -773,35 +774,117 @@ test.describe('Final response quality response_document gate', () => {
     await expectForbiddenTextAbsent(page)
   })
 
-  test('RD-009 response_document LOTO document content notification answer does not ask for machine ID', async ({ page }, testInfo) => {
+  test('Phase 32 positive OSHA lockout reenergizing RAG proof is PDF source-backed', async ({ page }, testInfo) => {
     test.setTimeout(45_000)
     await openChat(page)
-    await sendChatPrompt(page, responseDocumentLotoNotificationPrompt)
-    await expect(page.getByText(/affected employees to be notified before lockout\/tagout starts/i).first()).toBeVisible()
+    await sendChatPrompt(page, responseDocumentOshaReenergizingPrompt)
+
+    await expect(page.getByText(/Before reenergizing, notify affected employees/i).first()).toBeVisible()
     await expandActivity(page, 'Run complete')
     await expect(page.getByText('Prepared sourced answer').first()).toBeVisible()
     await expect(page.getByText('Safety notice').first()).toBeVisible()
-    await expect(page.getByText(/site-approved SOP/i).first()).toBeVisible()
-    const sourceChip = page.locator('[data-source-chip][data-source-id="LOTO-NOTIFICATION-REQ#chunk-notification-before-lockout"]').first()
-    await expect(sourceChip).toBeVisible()
-    await sourceChip.hover()
-    await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'LOTO Notification Requirements' }).first()).toBeVisible()
-    await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'Factory Safety' }).first()).toBeVisible()
-    await expect(page.locator('[data-source-chip-hover]').filter({ hasText: /Chunk chunk-notification-before-lockout/i }).first()).toBeVisible()
-    await sourceChip.click()
-    await expect(page.locator('[data-source-drawer][data-doc-id="LOTO-NOTIFICATION-REQ"][data-chunk-id="chunk-notification-before-lockout"]').first()).toBeVisible()
-    await expect(page.locator('[data-source-drawer-snippet]').filter({ hasText: /Affected employees must be notified/i }).first()).toBeVisible()
     await expect(page.getByText('Knowledge sources').first()).toBeVisible()
-    await expect(page.getByText('LOTO Notification Requirements').first()).toBeVisible()
+    await expect(page.getByText('Control of Hazardous Energy Lockout/Tagout').first()).toBeVisible()
+    await expect(page.getByText('osha_3120_lockout_tagout').first()).toBeVisible()
+
+    const sourceChip = page.locator('[data-source-chip][data-source-id="osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029"]').first()
+    await expect(sourceChip).toBeVisible()
+    await expect(sourceChip).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
+    await expect(sourceChip).toHaveAttribute('data-chunk-id', 'osha_3120_lockout_tagout_c0029')
+    await expect(sourceChip).toHaveAttribute('data-source-open-mode', 'exact')
+    await expect(sourceChip).toHaveAttribute('data-source-highlight-kind', 'char_range')
+    await sourceChip.hover()
+    await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'Control of Hazardous Energy Lockout/Tagout' }).first()).toBeVisible()
+    await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'OSHA' }).first()).toBeVisible()
+    await sourceChip.click()
+    const drawer = page.locator('[data-source-drawer][data-doc-id="osha_3120_lockout_tagout"][data-chunk-id="osha_3120_lockout_tagout_c0029"]').first()
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('[data-source-drawer-snippet]')).toContainText(/before reenergizing the machine/i)
+    await expect(drawer.locator('[data-source-pdf-link]').first()).toHaveAttribute('href', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+
+    const visible = await visibleText(page)
+    expect(visible).not.toMatch(/loto_notification_requirement/i)
+    expect(visible).not.toMatch(/LOTO Notification Requirements/i)
+    expect(visible).not.toMatch(/Which machine ID/i)
+
+    const summary = await expectTransitionCheckpoint(page, {
+      checkpoint: 'Phase 32 positive OSHA reenergizing RAG proof',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['safety_notice', 'knowledge_answer', 'source_list'],
+        backendBlockTypes: ['safety_notice', 'knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        approvalActionCount: 0,
+        responseContracts: ['safety_notice_v1', 'knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
+        forbiddenText: documentContentRagForbiddenProbeText,
+        textIncludes: [
+          responseDocumentOshaReenergizingPrompt,
+          'Before reenergizing, notify affected employees',
+          'Control of Hazardous Energy Lockout/Tagout',
+          'osha_3120_lockout_tagout',
+        ],
+        textExcludes: [
+          /loto_notification_requirement/i,
+          /LOTO Notification Requirements/i,
+          /Which machine ID/i,
+          /Approval required/i,
+        ],
+      },
+    })
+    await testInfo.attach('phase32-positive-osha-reenergizing-semantic-probe.json', {
+      body: serializeSemanticProbe(summary),
+      contentType: 'application/json',
+    })
+
+    const snapshot = await snapshotForPage(page)
+    const knowledgeBlock = snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
+    const citation = knowledgeBlock.citations?.[0]
+    expect(citation?.doc_id).toBe('osha_3120_lockout_tagout')
+    expect(citation?.chunk_id).toBe('osha_3120_lockout_tagout_c0029')
+    expect(citation?.page).toBe(15)
+    expect(citation?.pdf_url).toBe('/documents/osha_3120_lockout_tagout/pdf')
+    expect(citation?.char_range || citation?.text_search).toBeTruthy()
+    const sourceBlock = snapshot.response_document.blocks.find((block) => block.type === 'source_list')
+    const source = sourceBlock.sources[0]
+    expect(source.doc_id).toBe(citation.doc_id)
+    expect(source.chunk_id).toBe(citation.chunk_id)
+    expect(source.page).toBe(15)
+    expect(source.pdf_url).toBe('/documents/osha_3120_lockout_tagout/pdf')
+    expect(source.char_range || source.text_search).toBeTruthy()
+    expect(JSON.stringify(snapshot.response_document)).not.toMatch(/loto_notification_requirement|LOTO Notification Requirements/i)
+  })
+
+  test('Phase 32 negative OSHA lockout before-starting notification returns insufficient context without machine ID', async ({ page }, testInfo) => {
+    test.setTimeout(45_000)
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentLotoNotificationPrompt)
+    await expect(page.getByText(/I do not have enough retrieved evidence to answer that safely/i).first()).toBeVisible()
+    await expect(page.getByText(/related sources checked/i).first()).toBeVisible()
+    await expandActivity(page, 'Run complete')
+    await expect(page.getByText('Checked related sources').first()).toBeVisible()
+    await expect(page.getByText('Safety notice').first()).toBeVisible()
+    await expect(page.getByText(/site-approved SOP/i).first()).toBeVisible()
+    await expect(page.locator('[data-source-chip]')).toHaveCount(0)
+    await expect(page.getByText('Knowledge sources').first()).toBeVisible()
+    await expect(page.getByText('Control of Hazardous Energy Lockout/Tagout').first()).toBeVisible()
+    await expect(page.getByText('osha_3120_lockout_tagout').first()).toBeVisible()
     await expect(page.getByText('Which machine ID')).toHaveCount(0)
     await expect(page.getByText('No results')).toHaveCount(0)
     const visible = await visibleText(page)
-    expect((visible.match(/The LOTO procedure requires affected employees to be notified before lockout\/tagout starts\./g) || []).length).toBe(1)
+    expect(visible).not.toMatch(/affected employees must be notified before lockout\/tagout starts/i)
+    expect(visible).not.toMatch(/Tell them the equipment will be locked out/i)
+    expect(visible).not.toMatch(/loto_notification_requirement/i)
+    expect(visible).not.toMatch(/LOTO Notification Requirements/i)
     expect(visible).not.toMatch(/:::safety/i)
     expect(visible).not.toMatch(/Safety Advisory/i)
 
     const summary = await expectTransitionCheckpoint(page, {
-      checkpoint: 'RD-009 LOTO document content notification response contract',
+      checkpoint: 'Phase 32 negative OSHA before-starting-lockout insufficient-context contract',
       snapshotForPage,
       testInfo,
       expected: {
@@ -817,19 +900,23 @@ test.describe('Final response quality response_document gate', () => {
         forbiddenText: documentContentRagForbiddenProbeText,
         textIncludes: [
           responseDocumentLotoNotificationPrompt,
-          'The LOTO procedure requires affected employees to be notified before lockout/tagout starts.',
+          'I do not have enough retrieved evidence to answer that safely.',
+          'related sources checked',
           'Safety notice',
-          'LOTO Notification Requirements',
+          'Control of Hazardous Energy Lockout/Tagout',
         ],
         textExcludes: [
           /Which machine ID/i,
           /No results/i,
           /completed_answer/i,
           /Approval required/i,
+          /loto_notification_requirement/i,
+          /LOTO Notification Requirements/i,
+          /Tell them the equipment will be locked out/i,
         ],
       },
     })
-    await testInfo.attach('rd-009-loto-document-content-semantic-probe.json', {
+    await testInfo.attach('phase32-negative-osha-insufficient-context-semantic-probe.json', {
       body: serializeSemanticProbe(summary),
       contentType: 'application/json',
     })
@@ -839,8 +926,9 @@ test.describe('Final response quality response_document gate', () => {
     expect(safetyBlock.contract).toBe('safety_notice_v1')
     const knowledgeBlock = snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
     expect(knowledgeBlock.contract).toBe('knowledge_answer_v1')
-    expect(knowledgeBlock.citations?.[0]?.contract).toBe('source_citation_v1')
-    expect(knowledgeBlock.segments?.[0]?.citation_ids?.length).toBeGreaterThan(0)
+    expect(knowledgeBlock.answer).toMatch(/^I do not have enough retrieved evidence/i)
+    expect(knowledgeBlock.citations || []).toHaveLength(0)
+    expect(knowledgeBlock.segments?.[0]?.citation_ids || []).toHaveLength(0)
     const sourceBlock = snapshot.response_document.blocks.find((block) => block.type === 'source_list')
     expect(sourceBlock).toBeTruthy()
     expect(sourceBlock.contract).toBe('source_list_v1')
@@ -850,8 +938,12 @@ test.describe('Final response quality response_document gate', () => {
         expect(source[key]).toBeTruthy()
       }
       expect(source.file_path).toBeUndefined()
+      expect(source.doc_id).toBe('osha_3120_lockout_tagout')
+      expect(source.policy_only).toBeUndefined()
     }
     expect(snapshot.response_document.message).not.toBe(snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')?.answer)
+    expect(snapshot.response_document.message).toMatch(/^I do not have enough retrieved evidence/i)
+    expect(JSON.stringify(snapshot.response_document)).not.toMatch(/loto_notification_requirement|LOTO Notification Requirements|Tell them the equipment will be locked out/i)
   })
 
   test('typed RAG mixed operation answer renders separate operation and procedure sections', async ({ page }, testInfo) => {
@@ -863,7 +955,7 @@ test.describe('Final response quality response_document gate', () => {
     await expect(page.getByText('Procedure guidance').first()).toBeVisible()
     await expect(page.getByText('Knowledge sources').first()).toBeVisible()
     await expect(page.getByText(/M-CNC-01 is running on Line 1/i).first()).toBeVisible()
-    await expect(page.getByText(/Affected employees must be notified before lockout\/tagout starts/i).first()).toBeVisible()
+    await expect(page.getByText(/Before reenergizing after lockout or tagout devices are removed/i).first()).toBeVisible()
 
     const operationSections = page.locator('[data-response-block-type="status_result"][data-response-contract="entity_status_v1"]')
     const guidanceSections = page.locator('[data-response-block-type="knowledge_answer"][data-response-contract="knowledge_answer_v1"]')
@@ -893,7 +985,7 @@ test.describe('Final response quality response_document gate', () => {
           'Machine status',
           'Procedure guidance',
           'M-CNC-01 is running on Line 1.',
-          'Affected employees must be notified before lockout/tagout starts',
+          'Before reenergizing after lockout or tagout devices are removed',
         ],
       },
     })

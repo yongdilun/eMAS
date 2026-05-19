@@ -4,10 +4,13 @@ export const responseDocumentReverseCascadePrompt =
   'change all high priority job to low then change all low priority job to medium'
 export const responseDocumentReadStatusPrompt = 'Show status for machine with machine id M-CNC-01'
 export const responseDocumentLotoPrompt = 'Render response_document LOTO procedure answer for M-CNC-01'
-export const responseDocumentLotoNotificationPrompt =
-  'According to the LOTO procedure, what notification is required before starting lockout'
+export const responseDocumentOshaReenergizingPrompt =
+  'According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?'
+export const responseDocumentOshaUnsupportedNotificationPrompt =
+  'According to the OSHA lockout/tagout guide, what notification is required before starting lockout?'
+export const responseDocumentLotoNotificationPrompt = responseDocumentOshaUnsupportedNotificationPrompt
 export const responseDocumentMixedOperationRagPrompt =
-  'Show M-CNC-01 status and the LOTO notification guidance as separate sections'
+  'Show M-CNC-01 status and OSHA lockout/tagout reenergizing notification guidance as separate sections'
 export const responseDocumentSourcePdfPrompt = 'Render response_document source PDF highlight fixture'
 export const responseDocumentNoResultsPrompt = 'Find response_document jobs that do not exist'
 export const responseDocumentPartialFailurePrompt = 'Run response_document partial failure fixture'
@@ -737,63 +740,149 @@ export function lotoDocument(session) {
   })
 }
 
-export function lotoNotificationDocument(session) {
-  const answer = 'The LOTO procedure requires affected employees to be notified before lockout/tagout starts. Tell them the equipment will be locked out, why the shutdown is needed, and when the lockout condition begins.'
-  const citation = {
-    contract: 'source_citation_v1',
-    citation_id: 'citation:LOTO-NOTIFICATION-REQ#chunk-notification-before-lockout',
-    source_id: 'LOTO-NOTIFICATION-REQ#chunk-notification-before-lockout',
+function oshaReenergizingCitation() {
+  return {
+    contract: SOURCE_CITATION_CONTRACT,
+    citation_id: 'citation:osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029',
+    source_id: 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029',
     source_number: 1,
-    title: 'LOTO Notification Requirements',
-    doc_id: 'LOTO-NOTIFICATION-REQ',
-    chunk_id: 'chunk-notification-before-lockout',
-    organization: 'Factory Safety',
-    snippet: 'Affected employees must be notified before lockout/tagout starts and told why shutdown is needed and when control begins.',
-    policy_only: true,
+    title: 'Control of Hazardous Energy Lockout/Tagout',
+    doc_id: 'osha_3120_lockout_tagout',
+    chunk_id: 'osha_3120_lockout_tagout_c0029',
+    organization: 'OSHA',
+    snippet: 'After removing lockout or tagout devices but before reenergizing the machine, the employer must assure that employees know the devices have been removed and that the machine is capable of being reenergized.',
+    pdf_url: '/documents/osha_3120_lockout_tagout/pdf',
+    page: 15,
+    char_range: [0, 1017],
+    text_search: 'After removing the lockout or tagout devices but before reenergizing the machine',
   }
+}
+
+export function oshaReenergizingDocument(session) {
+  const answer = 'Before reenergizing, notify affected employees who operate or work with the machine and employees in the service area that the lockout or tagout devices have been removed and that the machine can be reenergized.'
+  const citation = oshaReenergizingCitation()
   return baseDocument(session, {
-    operationId: 'pw-plan-rd-loto-notification',
+    operationId: 'pw-plan-rd-osha-reenergizing',
     revision: 3,
     state: 'completed',
     message: 'I found a source-backed answer.',
-    currentStepId: 'completed-loto-notification',
+    currentStepId: 'completed-osha-reenergizing',
     runSteps: [
-      { step_id: 'knowledge-loto-notification', kind: 'knowledge', state: 'completed', title: 'Prepared sourced answer', summary: '1 source attached.' },
-      { step_id: 'completed-loto-notification', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'LOTO notification answer is ready.' },
+      { step_id: 'knowledge-osha-reenergizing', kind: 'knowledge', state: 'completed', title: 'Prepared sourced answer', summary: '1 PDF source attached.' },
+      { step_id: 'completed-osha-reenergizing', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'OSHA reenergizing notification answer is ready.' },
     ],
     blocks: [
       {
-        id: 'safety:loto-notification',
+        id: 'safety:osha-reenergizing',
         type: 'safety_notice',
-        contract: 'safety_notice_v1',
-        operation_id: 'pw-plan-rd-loto-notification',
-        safety_content: 'LOTO notification is part of a high-risk control process. Follow the site-approved SOP before acting.',
+        contract: SAFETY_NOTICE_CONTRACT,
+        operation_id: 'pw-plan-rd-osha-reenergizing',
+        safety_content: 'This topic involves high-risk industrial procedures. Follow the site-approved SOP before acting.',
       },
       {
-        id: 'knowledge:loto-notification',
+        id: 'knowledge:osha-reenergizing',
         type: 'knowledge_answer',
-        contract: 'knowledge_answer_v1',
-        operation_id: 'pw-plan-rd-loto-notification',
+        contract: KNOWLEDGE_ANSWER_CONTRACT,
+        operation_id: 'pw-plan-rd-osha-reenergizing',
         answer,
         segments: [{ text: answer, citation_ids: [citation.citation_id] }],
         citations: [citation],
       },
       {
+        id: 'sources:osha-reenergizing',
+        type: 'source_list',
+        contract: SOURCE_LIST_CONTRACT,
+        operation_id: 'pw-plan-rd-osha-reenergizing',
+        sources: [
+          {
+            contract: SOURCE_LOCATOR_CONTRACT,
+            source_id: citation.source_id,
+            source_number: citation.source_number,
+            title: citation.title,
+            doc_id: citation.doc_id,
+            chunk_id: citation.chunk_id,
+            organization: citation.organization,
+            snippet: citation.snippet,
+            pdf_url: citation.pdf_url,
+            page: citation.page,
+            char_range: citation.char_range,
+            text_search: citation.text_search,
+          },
+        ],
+      },
+    ],
+    invariants: {
+      safety_notice_contract: SAFETY_NOTICE_CONTRACT,
+      knowledge_answer_contract: KNOWLEDGE_ANSWER_CONTRACT,
+      source_list_contract: SOURCE_LIST_CONTRACT,
+      source_locator_contract: SOURCE_LOCATOR_CONTRACT,
+      pdf_source_locator: true,
+      phase32_positive_rag_proof: true,
+    },
+  })
+}
+
+export function lotoNotificationDocument(session) {
+  const answer = 'I do not have enough retrieved evidence to answer that safely. The related sources checked are listed below, but they do not prove the requested claim.'
+  const message = 'I do not have enough retrieved evidence to answer that safely.'
+  const citation = {
+    contract: SOURCE_LOCATOR_CONTRACT,
+    source_id: 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0028',
+    source_number: 1,
+    title: 'Control of Hazardous Energy Lockout/Tagout',
+    doc_id: 'osha_3120_lockout_tagout',
+    chunk_id: 'osha_3120_lockout_tagout_c0028',
+    organization: 'OSHA',
+    snippet: 'Before beginning service or maintenance, OSHA lists preparation, shutdown, isolation, applying lockout or tagout devices, controlling stored energy, and verifying deenergization.',
+    pdf_url: '/documents/osha_3120_lockout_tagout/pdf',
+    page: 14,
+    text_search: 'Before beginning service or maintenance, the following steps must be accomplished in sequence',
+  }
+  return baseDocument(session, {
+    operationId: 'pw-plan-rd-loto-notification',
+    revision: 3,
+    state: 'completed',
+    message,
+    currentStepId: 'completed-loto-notification',
+    runSteps: [
+      { step_id: 'knowledge-loto-notification', kind: 'knowledge', state: 'completed', title: 'Checked related sources', summary: '1 related source checked.' },
+      { step_id: 'completed-loto-notification', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'Insufficient context response is ready.' },
+    ],
+    blocks: [
+      {
+        id: 'safety:loto-notification',
+        type: 'safety_notice',
+        contract: SAFETY_NOTICE_CONTRACT,
+        operation_id: 'pw-plan-rd-loto-notification',
+        safety_content: 'LOTO is safety-critical. Follow the site-approved SOP before acting.',
+      },
+      {
+        id: 'knowledge:loto-notification',
+        type: 'knowledge_answer',
+        contract: KNOWLEDGE_ANSWER_CONTRACT,
+        operation_id: 'pw-plan-rd-loto-notification',
+        answer,
+        segments: [{ text: answer, citation_ids: [] }],
+        citations: [],
+      },
+      {
         id: 'sources:loto-notification',
         type: 'source_list',
-        contract: 'source_list_v1',
+        contract: SOURCE_LIST_CONTRACT,
         operation_id: 'pw-plan-rd-loto-notification',
         sources: [
           {
-            contract: 'source_locator_v1',
-            source_id: 'LOTO-NOTIFICATION-REQ#chunk-notification-before-lockout',
+            contract: SOURCE_LOCATOR_CONTRACT,
+            source_id: citation.source_id,
             source_number: 1,
-            title: 'LOTO Notification Requirements',
-            doc_id: 'LOTO-NOTIFICATION-REQ',
-            chunk_id: 'chunk-notification-before-lockout',
-            organization: 'Factory Safety',
-            snippet: 'Affected employees must be notified before lockout/tagout starts and told why shutdown is needed and when control begins.',
-            policy_only: true,
+            title: citation.title,
+            doc_id: citation.doc_id,
+            chunk_id: citation.chunk_id,
+            organization: citation.organization,
+            snippet: citation.snippet,
+            pdf_url: citation.pdf_url,
+            page: citation.page,
+            text_search: citation.text_search,
           },
         ],
       },
@@ -801,24 +890,14 @@ export function lotoNotificationDocument(session) {
     invariants: {
       rag_question_type: 'document_content_question',
       missing_required_entities: [],
+      phase32_negative_rag_proof: true,
     },
   })
 }
 
 export function mixedOperationRagDocument(session) {
-  const guidance = 'Affected employees must be notified before lockout/tagout starts and told why the equipment shutdown is needed.'
-  const citation = {
-    contract: SOURCE_CITATION_CONTRACT,
-    citation_id: 'citation:LOTO-MIXED-NOTIFICATION#chunk-notification',
-    source_id: 'LOTO-MIXED-NOTIFICATION#chunk-notification',
-    source_number: 1,
-    title: 'LOTO Notification Requirements',
-    doc_id: 'LOTO-MIXED-NOTIFICATION',
-    chunk_id: 'chunk-notification',
-    organization: 'Factory Safety',
-    snippet: 'Affected employees must be notified before lockout/tagout starts and told why shutdown is needed.',
-    policy_only: true,
-  }
+  const guidance = 'Before reenergizing after lockout or tagout devices are removed, affected employees who operate or work with the machine and employees in the service area must know the devices were removed and the machine can be reenergized.'
+  const citation = oshaReenergizingCitation()
   return baseDocument(session, {
     operationId: 'pw-plan-rd-mixed-operation-rag',
     revision: 3,
@@ -827,7 +906,7 @@ export function mixedOperationRagDocument(session) {
     currentStepId: 'completed-mixed-operation-rag',
     runSteps: [
       { step_id: 'read-mixed-status', kind: 'read', state: 'completed', title: 'Read machine status', summary: 'M-CNC-01 status is running.' },
-      { step_id: 'knowledge-mixed-loto', kind: 'knowledge', state: 'completed', title: 'Prepared sourced guidance', summary: '1 source attached.' },
+      { step_id: 'knowledge-mixed-loto', kind: 'knowledge', state: 'completed', title: 'Prepared sourced guidance', summary: '1 PDF source attached.' },
       { step_id: 'completed-mixed-operation-rag', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'Status and LOTO guidance are ready.' },
     ],
     blocks: [
@@ -879,7 +958,10 @@ export function mixedOperationRagDocument(session) {
             chunk_id: citation.chunk_id,
             organization: citation.organization,
             snippet: citation.snippet,
-            policy_only: true,
+            pdf_url: citation.pdf_url,
+            page: citation.page,
+            char_range: citation.char_range,
+            text_search: citation.text_search,
           },
         ],
       },

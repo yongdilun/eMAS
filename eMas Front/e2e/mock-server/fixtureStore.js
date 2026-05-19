@@ -73,6 +73,7 @@ import {
   lotoDocument,
   lotoNotificationDocument,
   mixedOperationRagDocument,
+  oshaReenergizingDocument,
   sourcePdfLocatorDocument,
   noResultsDocument,
   partialFailureDocument,
@@ -90,6 +91,7 @@ import {
   responseDocumentLotoPrompt,
   responseDocumentLotoNotificationPrompt,
   responseDocumentMixedOperationRagPrompt,
+  responseDocumentOshaReenergizingPrompt,
   responseDocumentSourcePdfPrompt,
   responseDocumentNoResultsPrompt,
   responseDocumentPartialNoOpPrompt,
@@ -956,6 +958,14 @@ export const scenarioCatalog = {
     operationId: 'pw-plan-rd-loto',
     objective: 'Render response_document sourced LOTO answer.',
     buildDocument: lotoDocument,
+  }),
+
+  responseDocumentOshaReenergizing: responseDocumentCompletionScenario({
+    name: 'responseDocumentOshaReenergizing',
+    prompt: responseDocumentOshaReenergizingPrompt,
+    operationId: 'pw-plan-rd-osha-reenergizing',
+    objective: 'Render Phase 32 positive OSHA PDF-backed RAG proof.',
+    buildDocument: oshaReenergizingDocument,
   }),
 
   responseDocumentLotoNotification: responseDocumentCompletionScenario({

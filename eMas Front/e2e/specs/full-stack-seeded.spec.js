@@ -125,6 +125,85 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
     })
   })
 
+  test('scenario 34b @prompt-regression: OSHA lockout RAG proves positive source and insufficient context', async ({ page }, testInfo) => {
+    await openChat(page)
+    const positivePrompt = 'According to the OSHA lockout/tagout guide, what notification is required before reenergizing a machine after removing lockout or tagout devices?'
+    await sendPrompt(page, positivePrompt)
+
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'scenario 34b Phase 32 positive OSHA source-backed RAG proof',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['knowledge_answer', 'source_list'],
+        backendBlockTypes: ['knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        approvalActionCount: 0,
+        textIncludes: [
+          positivePrompt,
+          'Before reenergizing, notify affected employees',
+          'Control of Hazardous Energy Lockout/Tagout',
+          'osha_3120_lockout_tagout',
+        ],
+        textExcludes: [/Which machine ID/i, /loto_notification_requirement/i, /LOTO Notification Requirements/i],
+      },
+    })
+
+    const positiveSnapshot = await snapshotForPage(page)
+    const positiveKnowledge = positiveSnapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
+    const positiveSource = positiveSnapshot.response_document.blocks.find((block) => block.type === 'source_list')?.sources?.[0]
+    expect(positiveKnowledge?.citations?.[0]?.doc_id).toBe('osha_3120_lockout_tagout')
+    expect(positiveKnowledge?.citations?.[0]?.chunk_id).toBe('osha_3120_lockout_tagout_c0029')
+    expect(positiveSource?.pdf_url).toBe('/documents/osha_3120_lockout_tagout/pdf')
+    expect(positiveSource?.page).toBe(15)
+    expect(positiveSource?.char_range || positiveSource?.text_search).toBeTruthy()
+
+    const negativePrompt = 'According to the OSHA lockout/tagout guide, what notification is required before starting lockout?'
+    await sendPrompt(page, negativePrompt)
+
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'scenario 34b Phase 32 negative OSHA insufficient context RAG proof',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['knowledge_answer', 'source_list'],
+        backendBlockTypes: ['knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
+        approvalActionCount: 0,
+        textIncludes: [
+          negativePrompt,
+          'I do not have enough retrieved evidence to answer that safely.',
+          'related sources checked',
+          'Control of Hazardous Energy Lockout/Tagout',
+        ],
+        textExcludes: [
+          /Which machine ID/i,
+          /affected employees must be notified before lockout\/tagout starts/i,
+          /Tell them the equipment will be locked out/i,
+          /loto_notification_requirement/i,
+          /LOTO Notification Requirements/i,
+        ],
+      },
+    })
+
+    const negativeSnapshot = await snapshotForPage(page)
+    const negativeKnowledge = negativeSnapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
+    const negativeSource = negativeSnapshot.response_document.blocks.find((block) => block.type === 'source_list')?.sources?.[0]
+    expect(negativeKnowledge?.answer).toMatch(/^I do not have enough retrieved evidence/i)
+    expect(negativeKnowledge?.citations || []).toHaveLength(0)
+    expect(negativeSource?.doc_id).toBe('osha_3120_lockout_tagout')
+    expect(negativeSource?.policy_only).toBeUndefined()
+    expect(JSON.stringify(negativeSnapshot.response_document)).not.toMatch(/loto_notification_requirement|LOTO Notification Requirements/i)
+  })
+
   test('scenario 35: approval-required flow renders pending approval from real Factory Agent snapshot', async ({ page }) => {
     await openChat(page)
     await sendPrompt(page, 'Seeded approval: change low priority jobs to high priority')
