@@ -1346,6 +1346,8 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
   })
   assert.equal(citedAnswerText.getAttribute('data-source-id'), 'PDF-LOTO#chunk-9')
   assert.equal(citedAnswerText.getAttribute('data-doc-id'), 'PDF-LOTO')
+  assert.match(citedAnswerText.className, /rag-citation-highlight/)
+  assert.doesNotMatch(citedAnswerText.className, /bg-(amber|yellow)/)
   assert.match(citedAnswerText.textContent || '', /Use page-specific LOTO notification guidance/)
   const link = await waitFor(() => {
     const node = view.container.querySelector('[data-source-pdf-link]')

@@ -1551,7 +1551,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, activeH
           const primaryCitation = selectedCitation ? citationFromSource(selectedCitation) : null
           const answerText = selectedCitation ? (
             <mark
-              className="box-decoration-clone rounded-sm bg-amber-100 px-0.5 text-amber-950 ring-1 ring-amber-300/70 dark:bg-primary/20 dark:text-ink dark:ring-primary/45"
+              className="rag-citation-highlight"
               data-cited-answer-text=""
               data-source-id={safeText(primaryCitation?.source_id) || undefined}
               data-doc-id={safeText(primaryCitation?.doc_id) || undefined}

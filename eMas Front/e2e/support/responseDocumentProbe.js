@@ -800,11 +800,12 @@ export async function collectVisibleResponseDocumentUi(page) {
       .map((node) => (node.textContent || '').trim())
       .find((value) => statusSet.has(value)) || null
     const activeSessionButton = dialog.querySelector('aside [aria-current="page"]')
+    const sessionSidebarCollapsed = Boolean(dialog.querySelector('aside button[aria-label="Expand sessions"]'))
     const activeSidebarStatus = activeSessionButton
       ? Array.from(activeSessionButton.querySelectorAll('span'))
         .map((node) => (node.textContent || '').trim())
         .find((value) => statusSet.has(value)) || null
-      : null
+      : sessionSidebarCollapsed ? headerStatus : null
     const activeSessionName = activeSessionButton
       ? Array.from(activeSessionButton.querySelectorAll('span'))
         .map((node) => (node.textContent || '').trim())

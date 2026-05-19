@@ -828,6 +828,7 @@ const FactoryAgentChatPanel = ({
 }) => {
   const chatRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
+  const sourceEvidenceAutoCollapsedSidebarRef = useRef(false)
   const {
     session,
     messages,
@@ -882,6 +883,15 @@ const FactoryAgentChatPanel = ({
     return `${document.document_id || document.id || turnWithDocument.id || 'response-document'}:${document.revision ?? 'unknown'}`
   }, [turns])
 
+  const closeSourceEvidence = useCallback(() => {
+    setSourceEvidence(null)
+    setSourceEvidencePdf(null)
+    if (sourceEvidenceAutoCollapsedSidebarRef.current) {
+      sourceEvidenceAutoCollapsedSidebarRef.current = false
+      setSidebarCollapsed(false)
+    }
+  }, [])
+
   const handleOpenSourceEvidence = useCallback((payload) => {
     if (!payload?.source) return
     const nextEvidence = {
@@ -890,17 +900,17 @@ const FactoryAgentChatPanel = ({
       documentId: payload.documentId || null,
       revision: payload.revision ?? null,
     }
-    setSourceEvidence((current) => {
-      if (current && sourceEvidenceKey(current) === sourceEvidenceKey(nextEvidence)) return null
-      return nextEvidence
-    })
+    if (sourceEvidence && sourceEvidenceKey(sourceEvidence) === sourceEvidenceKey(nextEvidence)) {
+      closeSourceEvidence()
+      return
+    }
+    if (!sourceEvidence && !sidebarCollapsed) {
+      sourceEvidenceAutoCollapsedSidebarRef.current = true
+      setSidebarCollapsed(true)
+    }
+    setSourceEvidence(nextEvidence)
     setSourceEvidencePdf(null)
-  }, [])
-
-  const closeSourceEvidence = useCallback(() => {
-    setSourceEvidence(null)
-    setSourceEvidencePdf(null)
-  }, [])
+  }, [closeSourceEvidence, sidebarCollapsed, sourceEvidence])
 
   useEffect(() => {
     closeSourceEvidence()

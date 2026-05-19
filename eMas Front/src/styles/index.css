@@ -34,6 +34,22 @@
   .app-nav-link-active .app-nav-active-marker {
     @apply opacity-100;
   }
+
+  .rag-citation-highlight {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    border-radius: 4px;
+    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface-1));
+    color: var(--color-ink);
+    outline: 1px solid color-mix(in srgb, var(--color-primary) 32%, var(--color-hairline-strong));
+    padding-inline: 2px;
+  }
+
+  .dark .rag-citation-highlight {
+    background-color: color-mix(in srgb, var(--color-primary) 26%, var(--color-surface-3));
+    color: var(--color-ink);
+    outline-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-hairline-strong));
+  }
 }
 
 @layer base {
