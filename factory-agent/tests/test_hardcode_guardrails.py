@@ -29,6 +29,20 @@ EXACT_RESPONSE_DOCUMENT_PROMPTS = [
 SYNTHETIC_LOTO_POLICY_SOURCE_RE = re.compile(
     r"loto_notification_requirement|LOTO Notification Requirements|policy:loto-notification-requirement"
 )
+PRODUCT_RUNTIME_LITERAL_RE = re.compile(
+    "|".join(
+        [
+            r"M-CNC-01",
+            r"JOB-SEED",
+            r"loto_notification_requirement",
+            r"LOTO Notification Requirements",
+            r"policy:loto-notification-requirement",
+            r"osha_3120_lockout_tagout(?:_c\d+)?",
+            *[re.escape(prompt) for prompt in EXACT_RESPONSE_DOCUMENT_PROMPTS],
+        ]
+    ),
+    re.IGNORECASE,
+)
 FORBIDDEN_BRANCH_LITERAL_RE = re.compile(
     "|".join(
         [
@@ -277,6 +291,39 @@ def test_runtime_product_code_does_not_emit_synthetic_loto_notification_policy_s
         "Tests, seeded fixtures, and docs may mention them only as scoped regression evidence:\n"
         + "\n".join(hits)
     )
+
+
+def test_runtime_product_code_does_not_embed_phase27_source_prompt_or_fixture_literals():
+    hits: list[str] = []
+    for rel_path in _product_branch_guard_files():
+        source = _read(rel_path)
+        for match in PRODUCT_RUNTIME_LITERAL_RE.finditer(source):
+            line = source.count("\n", 0, match.start()) + 1
+            hits.append(f"{rel_path}:{line}: {match.group(0)}")
+
+    assert hits == [], (
+        "Runtime/product source must not embed exact Phase 27+ source ids, chunk ids, seeded ids, "
+        "or exact RAG regression prompts. Put those values in tests, seeded fixtures, docs, "
+        "or source/entity registries instead:\n" + "\n".join(hits)
+    )
+
+
+def test_knowledge_policy_uses_registry_metadata_not_policy_id_branches():
+    source = _read("factory-agent/factory_agent/rag/knowledge_policy.py")
+    hits: list[str] = []
+    for pattern in (
+        re.compile(r"\bpolicy\.policy_id\s*(?:==|!=)"),
+        re.compile(r"\bif\s+policy\.policy_id\b"),
+    ):
+        for match in pattern.finditer(source):
+            line = source.count("\n", 0, match.start()) + 1
+            hits.append(f"factory-agent/factory_agent/rag/knowledge_policy.py:{line}: {match.group(0)}")
+
+    assert hits == [], (
+        "Knowledge policies should route through registry metadata such as EvidenceSupportProfile, "
+        "not one-off policy_id branches:\n" + "\n".join(hits)
+    )
+    assert "EvidenceSupportProfile" in source
 
 
 def test_phase_and_seeded_fixture_allowlist_is_explicit():

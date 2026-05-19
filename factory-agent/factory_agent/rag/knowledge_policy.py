@@ -8,6 +8,7 @@ from factory_agent.rag.source_metadata import (
     insufficient_context_answer,
     normalize_source_locators,
     sanitize_rag_answer_text,
+    snippet_from_text,
 )
 
 
@@ -18,6 +19,29 @@ UNABLE_ANSWER_PREFIXES = (
 
 
 @dataclass(frozen=True)
+class SourceIdentityRequirement:
+    query_evidence: tuple[str, ...]
+    identity_evidence: tuple[str, ...]
+
+    def applies_to(self, query: str) -> bool:
+        return _matches_any_pattern(query, self.query_evidence)
+
+
+@dataclass(frozen=True)
+class EvidenceSupportProfile:
+    profile_id: str
+    required_query_evidence: tuple[str, ...] = ()
+    required_answer_evidence: tuple[str, ...] = ()
+    required_answer_any_evidence: tuple[tuple[str, ...], ...] = ()
+    required_source_evidence: tuple[str, ...] = ()
+    required_source_any_evidence: tuple[tuple[str, ...], ...] = ()
+    recovery_strategy: str | None = None
+
+    def applies_to(self, query: str) -> bool:
+        return not self.required_query_evidence or _matches_any_pattern(query, self.required_query_evidence)
+
+
+@dataclass(frozen=True)
 class KnowledgePolicy:
     policy_id: str
     route_families: tuple[str, ...]
@@ -25,6 +49,8 @@ class KnowledgePolicy:
     required_query_evidence: tuple[str, ...] = ()
     safety_content: str | None = None
     required_answer_evidence: tuple[str, ...] = ()
+    source_identity_requirements: tuple[SourceIdentityRequirement, ...] = ()
+    support_profiles: tuple[EvidenceSupportProfile, ...] = ()
 
     def applies_to(
         self,
@@ -38,10 +64,7 @@ class KnowledgePolicy:
         topics = set(_semantic_topics(semantic_frame))
         if self.required_topics and not topics.intersection(self.required_topics):
             return False
-        if self.required_query_evidence and not any(
-            re.search(pattern, query or "", re.IGNORECASE)
-            for pattern in self.required_query_evidence
-        ):
+        if self.required_query_evidence and not _matches_any_pattern(query, self.required_query_evidence):
             return False
         return True
 
@@ -156,6 +179,29 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                     "authorized lockout/tagout controls."
                 ),
                 required_answer_evidence=("notify", "affected employee"),
+                source_identity_requirements=(
+                    SourceIdentityRequirement(
+                        query_evidence=(r"\bosha\b",),
+                        identity_evidence=("osha",),
+                    ),
+                ),
+                support_profiles=(
+                    EvidenceSupportProfile(
+                        profile_id="reenergizing_notification",
+                        required_query_evidence=(r"\bre-?energiz",),
+                        required_answer_evidence=("employee",),
+                        required_answer_any_evidence=(
+                            ("know", "notify", "notification", "informed", "aware", "assure"),
+                            ("reenerg", "removed", "device"),
+                        ),
+                        required_source_evidence=("reenerg", "employee"),
+                        required_source_any_evidence=(
+                            ("know", "assure", "notify", "informed", "aware"),
+                            ("remov", "device"),
+                        ),
+                        recovery_strategy="source_excerpt",
+                    ),
+                ),
             ),
             KnowledgePolicy(
                 policy_id="osha_loto_control_of_hazardous_energy",
@@ -194,11 +240,71 @@ def _is_empty_or_unusable_answer(answer: str) -> bool:
     return not lowered or any(lowered.startswith(prefix) for prefix in UNABLE_ANSWER_PREFIXES)
 
 
+def _matches_any_pattern(value: str, patterns: Sequence[str]) -> bool:
+    return any(re.search(pattern, value or "", re.IGNORECASE) for pattern in patterns)
+
+
 def _answer_has_required_evidence(answer: str, required_evidence: Sequence[str]) -> bool:
     if not required_evidence:
         return True
     lowered = (answer or "").lower()
     return all(evidence.lower() in lowered for evidence in required_evidence)
+
+
+def _text_has_evidence(
+    text: str,
+    *,
+    required_evidence: Sequence[str] = (),
+    required_any_evidence: Sequence[Sequence[str]] = (),
+) -> bool:
+    lowered = (text or "").lower()
+    if any(evidence.lower() not in lowered for evidence in required_evidence):
+        return False
+    for evidence_group in required_any_evidence:
+        if not any(evidence.lower() in lowered for evidence in evidence_group):
+            return False
+    return True
+
+
+def _policy_support_profile(policy: KnowledgePolicy, query: str) -> EvidenceSupportProfile | None:
+    for profile in policy.support_profiles:
+        if profile.applies_to(query):
+            return profile
+    return None
+
+
+def _source_identity_requirements_are_met(
+    *,
+    policy: KnowledgePolicy,
+    query: str,
+    sources: Sequence[Any],
+) -> bool:
+    for requirement in policy.source_identity_requirements:
+        if requirement.applies_to(query) and not _has_source_identity(sources, requirement.identity_evidence):
+            return False
+    return True
+
+
+def _source_supports_profile(source: Any, profile: EvidenceSupportProfile) -> bool:
+    return _text_has_evidence(
+        _source_item_text(source),
+        required_evidence=profile.required_source_evidence,
+        required_any_evidence=profile.required_source_any_evidence,
+    )
+
+
+def _first_source_supporting_profile(
+    sources: Sequence[Any],
+    profile: EvidenceSupportProfile,
+) -> Any | None:
+    for source in sources:
+        if _source_supports_profile(source, profile):
+            return source
+    return None
+
+
+def _sources_support_profile(sources: Sequence[Any], profile: EvidenceSupportProfile) -> bool:
+    return _first_source_supporting_profile(sources, profile) is not None
 
 
 def _policy_answer_has_required_evidence(
@@ -208,8 +314,15 @@ def _policy_answer_has_required_evidence(
     answer: str,
     sources: Sequence[Any],
 ) -> bool:
-    if policy.policy_id == "loto_notification_document_content":
-        return _loto_notification_answer_is_source_supported(query=query, answer=answer, sources=sources)
+    if not _source_identity_requirements_are_met(policy=policy, query=query, sources=sources):
+        return False
+    profile = _policy_support_profile(policy, query)
+    if profile is not None:
+        return _text_has_evidence(
+            answer,
+            required_evidence=profile.required_answer_evidence,
+            required_any_evidence=profile.required_answer_any_evidence,
+        ) and _sources_support_profile(sources, profile)
     return _answer_has_required_evidence(answer, policy.required_answer_evidence)
 
 
@@ -219,80 +332,49 @@ def _source_backed_policy_answer(
     query: str,
     sources: Sequence[Any],
 ) -> str | None:
-    if policy.policy_id != "loto_notification_document_content":
+    profile = _policy_support_profile(policy, query)
+    if profile is None or profile.recovery_strategy != "source_excerpt":
         return None
-    if not re.search(r"\bre-?energiz", query or "", re.IGNORECASE):
-        return None
-    supporting_source = _first_reenergizing_notification_source(sources)
+    supporting_source = _first_source_supporting_profile(sources, profile)
     if supporting_source is None:
         return None
-    source_number = _source_value(supporting_source, "source_number") or 1
-    return (
-        "Before reenergizing the machine after lockout or tagout devices are removed, the employer must assure "
-        "that employees who operate or work with the machine, and employees in the service or maintenance area, "
-        f"know the devices have been removed and that the machine is capable of being reenergized.[^{source_number}]"
+    return _source_excerpt_answer(supporting_source)
+
+
+def _source_excerpt_answer(source: Any) -> str | None:
+    excerpt = snippet_from_text(
+        _source_value(source, "snippet") or _source_value(source, "text_search") or _source_value(source, "text"),
+        limit=360,
     )
+    if not excerpt:
+        return None
+    source_number = _source_value(source, "source_number") or 1
+    punctuated = excerpt if excerpt.endswith((".", "!", "?")) else f"{excerpt}."
+    return f"{punctuated}[^{source_number}]"
 
 
-def _loto_notification_answer_is_source_supported(
-    *,
-    query: str,
-    answer: str,
-    sources: Sequence[Any],
-) -> bool:
-    lowered_query = (query or "").lower()
-    if "osha" in lowered_query and not _has_osha_source(sources):
-        return False
-    if re.search(r"\bre-?energiz", lowered_query, re.IGNORECASE):
-        lowered_answer = (answer or "").lower()
-        answer_ok = (
-            "employee" in lowered_answer
-            and any(term in lowered_answer for term in ("know", "notify", "notification", "informed", "aware", "assure"))
-            and any(term in lowered_answer for term in ("reenerg", "removed", "device"))
-        )
-        return answer_ok and _source_text_supports_reenergizing_notification(sources)
-    return _answer_has_required_evidence(answer, ("notify", "affected employee"))
-
-
-def _source_text_supports_reenergizing_notification(sources: Sequence[Any]) -> bool:
-    return _first_reenergizing_notification_source(sources) is not None
-
-
-def _first_reenergizing_notification_source(sources: Sequence[Any]) -> Any | None:
+def _has_source_identity(sources: Sequence[Any], identity_evidence: Sequence[str]) -> bool:
     for source in sources:
-        if _source_item_supports_reenergizing_notification(source):
-            return source
-    return None
-
-
-def _source_item_supports_reenergizing_notification(source: Any) -> bool:
-    source_text = _source_item_text(source)
-    return (
-        "reenerg" in source_text
-        and "employee" in source_text
-        and any(term in source_text for term in ("know", "assure", "notify", "informed", "aware"))
-        and ("remov" in source_text or "device" in source_text)
-    )
-
-
-def _has_osha_source(sources: Sequence[Any]) -> bool:
-    for source in sources:
-        identity = " ".join(
-            str(_source_value(source, key) or "")
-            for key in ("doc_id", "title", "organization", "source_id")
-        ).lower()
-        if "osha" in identity:
+        identity = _source_item_identity(source)
+        if all(evidence.lower() in identity for evidence in identity_evidence):
             return True
     return False
 
 
 def _source_item_text(source: Any) -> str:
     parts: list[str] = []
-    for key in ("snippet", "text_search", "title", "organization", "doc_id"):
+    for key in ("snippet", "text_search", "text", "title", "organization", "doc_id"):
         value = _source_value(source, key)
         if value:
             parts.append(str(value))
     return " ".join(parts).lower()
+
+
+def _source_item_identity(source: Any) -> str:
+    return " ".join(
+        str(_source_value(source, key) or "")
+        for key in ("doc_id", "title", "organization", "source_id")
+    ).lower()
 
 
 def _source_value(source: Any, key: str) -> Any:

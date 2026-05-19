@@ -43,6 +43,7 @@ Created: 2026-05-18
 | 33 | Side evidence drawer and PDF panel UX | Done | Codex | Replaced metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
 | 34 | Source tooltip and responsive chat width | Done | Codex | Added collision-aware source hover placement and responsive assistant response card width, with prose width constraints and browser proofs for right-edge tooltip and modal resize behavior. |
 | 35 | Final RAG source UX release gate | Done | Codex | Integrated release proof passed after fixing the two manual blockers: shell-level side evidence panel ownership and backend-routed in-panel PDF URLs. |
+| 36 | Post-Phase-27 hardcode and generalization audit | Done | Codex | Audited Phase 27+ RAG/source UX commits, fixed product hardcodes, and added guardrails for exact source/prompt/fixture literals plus policy-id branches. |
 
 ## Current Blockers
 
@@ -59,6 +60,7 @@ Created: 2026-05-18
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
 - Phase 32 proved the post-cleanup RAG release behavior: the OSHA reenergizing prompt is source-backed by `osha_3120_lockout_tagout` with PDF locator metadata, and the before-starting-lockout prompt returns insufficient context with related OSHA sources checked instead of a policy fallback or machine-ID clarification.
 - Source evidence workspace is complete through Phase 35: source chips open a shell-owned right-side workspace panel, cited evidence appears before related supporting sources, PDF-backed sources open in-panel through the configured Factory Agent `/documents/{doc_id}/pdf` route, true no-PDF sources keep drawer-only evidence, hover cards stay inside visible chat/evidence bounds, and wider chatbot/modal layouts give structured response content more usable width.
+- Phase 36 is complete. Product/runtime code no longer embeds Phase 27+ exact RAG prompts, seeded machine/job ids, OSHA source/chunk ids, or synthetic LOTO policy source ids; the remaining exact references are scoped to tests, fixtures, docs, and generated RAG stores.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -174,6 +176,7 @@ Created: 2026-05-18
 | RD-023 | Source chip on PDF-backed OSHA evidence | Phase 33 source UX proof. Proves side evidence drawer, cited source first, related sources second, in-panel PDF open, and back navigation. |
 | RD-024 | Source chip near right edge plus wide chatbot/modal viewport | Phase 34 layout proof. Proves hover collision handling and responsive assistant response width. |
 | RD-025 | Full RAG source UX release gate | Phase 35 integrated proof. Proves RD-021, RD-022, RD-023, RD-024, hardcode guardrails, and existing typed RAG/source contracts together. |
+| RD-026 | Phase 27+ hardcode/generalization audit | Phase 36 maintainability proof. Audits commits `dd9e0cbe` through `56dc16e5` for one-off prompt/source/entity fixes and records reusable source/entity/vocabulary/contract replacements or accepted exceptions. |
 
 ## Additional Required Scenario Groups
 
@@ -211,6 +214,7 @@ Created: 2026-05-18
 | Side evidence drawer and PDF panel | RD-023 | Source chip opens a resizable side evidence drawer with cited source first, related sources second, in-panel PDF/back navigation, and no-PDF fallback. |
 | Tooltip and responsive chat width | RD-024 | Hover card stays inside the container and assistant response cards grow with available width. |
 | Final RAG source UX release gate | RD-021 through RD-025 | Backend truth, live RAG, side evidence/PDF, tooltip/layout, and hardcode guardrails pass together. |
+| Post-Phase-27 hardcode/generalization audit | RD-026 | Phase 27+ RAG/source UX commits are audited for exact prompt/source/chunk/entity coupling, guardrails are extended for blind spots, and reusable metadata/vocabulary/contract replacements are identified. |
 
 ## Phase 0 Checklist
 
@@ -2619,6 +2623,64 @@ Results:
 - Focused response-document probe lane: 12 passed.
 - Focused mocked response-document browser release grep: 5 passed.
 
+## Phase 36 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 36 is complete. The audit used the actual git range `dd9e0cbe^..HEAD` and covered backend RAG/source metadata, response-document composition, frontend source/PDF UX, browser probes, seeded fixtures, and hardcode guardrails.
+
+### Product Risks Fixed
+
+- Runtime chat starter prompts used the seeded machine id `M-CNC-01` and an exact LOTO regression prompt. They now use generic capability prompts, and a guardrail prevents product code from reintroducing exact seeded ids or Phase 27+ RAG prompts.
+- A tracked scratch script under `factory_agent/brain/.../scratch` hardcoded the OSHA source id. The unused generated/debug artifact was removed from the product tree.
+- `KnowledgePolicy` had policy-id-specific branches and a source-backed reenergizing answer template. The behavior now routes through reusable `SourceIdentityRequirement` and `EvidenceSupportProfile` registry metadata, and answer recovery uses the supporting source excerpt with citation rather than a one-off hardcoded answer body.
+- Product comments that mentioned seeded job ids were generalized so static guards can scan product source, including comments, without allowing fixture literals to creep back in.
+
+### Classification
+
+- Runtime/product risk: fixed in `FactoryAgentChatPanel.jsx`, `knowledge_policy.py`, product comments, and the removed scratch script.
+- Accepted test/fixture constants: `factory-agent/tests`, `factory_agent/testing_seeded_*`, `eMas Front/e2e`, and component tests may keep exact prompts, seeded ids, and OSHA doc/chunk ids as deterministic regression evidence.
+- Docs-only references: QA plan/tracker/manual regression docs may name exact prompts and source ids to preserve the audit trail.
+- Generated artifacts: local vector/BM25 stores may contain ingested source ids; generated/debug scratch files should not be tracked in runtime product paths.
+
+### Reusable Contract Decisions
+
+- Source registry metadata: keep `doc_id`, `chunk_id`, `pdf_url`, page/search/highlight data as the source identity and locator contract; future source-specific evidence rules should move toward source-register or vocabulary metadata if more policies are added.
+- Source locator contract: no frontend source/PDF behavior branches on a specific document, title, source id, or chunk id; it keys off locator fields such as `pdf_url`, `page`, `char_range`, `bbox`, and `text_search`.
+- Response-document block contract: RAG rendering remains driven by `knowledge_answer`, `safety_notice`, and `source_list` blocks, not legacy markdown or source titles.
+- Generated vocabulary/OpenAPI/tool metadata: existing entity/status/mutation paths already use `entity_type`, `business_change_v1`, and capability tags; broader RAG evidence vocabulary should be generated when additional policy profiles appear.
+- Entity/capability registry: seeded machine/job ids remain fixture data only; product starter prompts are now generic capability examples.
+- Shared frontend evidence utility: source chip, drawer, PDF route, highlight fallback, and selected-source highlighting continue through shared source utility functions in `ResponseDocumentRenderer.jsx`.
+- Documented exception: `generation.py` still contains domain vocabulary boosts for notification/reenergizing evidence ranking. Owner: RAG/source relevance. Revisit when evidence-support profiles move into generated/source-register metadata.
+
+### Guardrails Added
+
+- Product runtime code must not embed exact Phase 27+ RAG prompts, seeded fixture ids, synthetic LOTO source ids, or OSHA source/chunk ids.
+- Knowledge policy code must use registry metadata, not `policy.policy_id` branches, for source/answer support behavior.
+
+### Phase 36 Verification
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_hardcode_guardrails.py tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py -q
+
+Set-Location "..\eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+Results:
+
+- Exact backend command first hit the known Windows temp-directory permission error in `tmp_path` setup for `tests/test_rag_ingestion.py` after 64 passed; rerun with repo-local `.pytest_tmp` as `TEMP`/`TMP`: 68 passed.
+- Frontend unit/component lane: 122 passed.
+- Focused response-document probe lane: 12 passed.
+- `git diff --check`: passed.
+- `git status --short --branch`: clean after commit.
+
 ## Commands Run
 
 ```powershell
@@ -2645,7 +2707,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 35 is complete. The RAG/source UX release gate is closed; any future work should be tracked as a new follow-up phase rather than reopening this release gate.
+Phase 36 is complete. The next RAG/source follow-up should externalize additional evidence-support vocabulary into source-register or generated metadata if another domain-specific policy profile is added.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

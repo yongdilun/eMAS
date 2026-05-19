@@ -2196,6 +2196,135 @@ git diff --check
 git status --short --branch
 ```
 
+### Phase 36: Post-Phase-27 Hardcode And Generalization Audit
+
+Goal: Audit all RAG/source UX work from Phase 27 onward for one-off hardcoded fixes, entity-specific assumptions, exact prompt/source-id coupling, and vocabulary/tool metadata gaps that should be replaced by reusable contracts or registries.
+
+Status: Completed 2026-05-19. Product hardcodes found by the audit were fixed: seeded/exact starter prompts were generalized, a tracked OSHA scratch script was removed, policy-id-specific RAG answer rescue was replaced with evidence-profile registry metadata, and guardrails now block exact source/prompt/fixture literals plus policy-id branches in product/runtime code.
+
+Problem this phase targets:
+
+- Phase 27-35 fixed many visible RAG/source UX bugs quickly, but follow-up fixes can accidentally encode exact source ids, prompt text, entity labels, chunk ids, or one document path.
+- A fix that works only for OSHA LOTO, one source card, one PDF route, one machine/job entity, or one phrase can fail the next similar RAG/source case.
+- Some hardcoded behavior may be better solved by source registry metadata, generated vocabulary, OpenAPI/tool capability metadata, response-document contracts, or a small reusable source/evidence model.
+- Existing guardrails focus on earlier fixture ids and obvious strings; Phase 36 should inspect the actual Phase 27+ commit range and close any gaps.
+
+Commit range to audit:
+
+```text
+dd9e0cbe phase 27 rag metadata cleanup
+50521ba4 phase 28 typed rag citation ux
+e947808e feat: add PDF source locator fallback support
+965aa5e2 docs: add rag source locator phases
+9d5fab66 phase 30 rag reingestion release proof
+910c5543 Implement Phase 31 RAG evidence truth cleanup
+e75e2e7c test: add phase 32 live RAG proof
+09e227b2 feat: add side evidence drawer PDF panel
+356f7998 Implement Phase 34 responsive source tooltips
+11ca1cbb Implement Phase 35 RAG source UX gate
+577b8245 Fix live RAG source evidence and inline PDFs
+ec15dfff Focus RAG source snippets on supporting evidence
+3cd2ddbf Harden source PDF drawer action
+aa8136db Render source PDFs with PDF.js
+5ecfe5a5 Highlight cited RAG evidence in PDF and answer
+e5f6f517 Fix RAG source panel sizing and selection highlights
+3f5e66a5 Use window-style fullscreen toggle icon
+ce4b7dec Align chat header controls with sidebar
+efa27bab Polish assistant window controls and activity state
+6bf1fd0a Refine assistant header control icons
+1399e488 Toggle source evidence from source cards
+adaa0d28 Improve RAG answer width and highlight contrast
+dcbec30d Use theme-aware RAG citation highlights
+56dc16e5 Let source hover tooltips pass through clicks
+```
+
+Primary files/areas to inspect:
+
+- Backend RAG source pipeline:
+  - `factory-agent/factory_agent/rag/generation.py`
+  - `factory-agent/factory_agent/rag/knowledge_policy.py`
+  - `factory-agent/factory_agent/rag/source_metadata.py`
+  - `factory-agent/factory_agent/rag/ingestion.py`
+  - `factory-agent/factory_agent/rag/document_registry.py`
+  - `factory-agent/factory_agent/api/routers/documents.py`
+- Backend response-document composition:
+  - `factory-agent/factory_agent/services/response_document_service.py`
+  - `factory-agent/factory_agent/services/session_snapshot_service.py`
+  - `factory-agent/factory_agent/schemas.py`
+- Frontend source/evidence UI:
+  - `eMas Front/src/components/features/chat/factory-agent/ResponseDocumentRenderer.jsx`
+  - `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx`
+  - `eMas Front/src/components/features/chat/factory-agent/responseDocumentContract.js`
+  - `eMas Front/src/services/factoryAgentApi.js`
+- Browser probes and fixtures:
+  - `eMas Front/e2e/support/responseDocumentProbe.js`
+  - `eMas Front/e2e/support/responseDocumentScenarios.js`
+  - `eMas Front/e2e/specs/final-response-quality.spec.js`
+  - seeded/mock fixture stores and transition oracles.
+- Existing guardrails:
+  - `factory-agent/tests/test_hardcode_guardrails.py`
+  - RAG, ingestion, response-document, and browser probe tests touched by Phase 27-35.
+
+Prerequisite:
+
+- Phase 35 must be marked Done.
+
+Implementation steps:
+
+- Inspect the exact Phase 27+ commit range using git, not memory:
+
+```powershell
+git log --oneline --reverse dd9e0cbe^..HEAD
+git diff --name-only dd9e0cbe^..HEAD
+```
+
+- Search runtime/product code for suspicious exact strings and one-off branches, including but not limited to:
+  - exact prompts from RD-021/RD-022 and old LOTO notification prompts;
+  - `loto_notification_requirement`;
+  - `LOTO Notification Requirements`;
+  - `osha_3120_lockout_tagout`;
+  - hardcoded chunk ids such as `osha_3120_lockout_tagout_c0027`;
+  - source-title or document-title branches;
+  - machine/job fixture ids or labels such as `M-CNC-01`, `JOB-SEED`, `priority`, or status labels in product code;
+  - PDF viewer/source panel branches tied to one document, one entity, or one source title.
+- Separate acceptable fixture/test/docs constants from product/runtime risks.
+- For each risky pattern, decide whether the durable fix should be:
+  - source registry metadata;
+  - source locator contract;
+  - response-document block contract;
+  - generated vocabulary/OpenAPI/tool metadata;
+  - entity/capability registry;
+  - shared frontend source/evidence utility;
+  - or an explicit documented exception with owner and expiry condition.
+- Pay special attention to entity/vocabulary-related fixes that can replace multiple hardcoded cases at once, such as `entity_type`, `source_kind`, `locator_kind`, `evidence_role`, `capability`, `status`, `procedure`, or `document_content` metadata.
+- Extend guardrails where the audit finds a real blind spot.
+- If a product bug or hardcoded runtime fix is found, fix it in this phase before marking the phase complete.
+- If no product fix is needed, record the audit result and remaining accepted risks.
+
+Acceptance criteria:
+
+- Tracker lists the Phase 27+ commit range and audited file groups.
+- Audit findings distinguish product risk, accepted fixture/test usage, docs-only references, and generated artifacts.
+- No runtime/product code branches on exact prompt text, one source id/title/chunk id, one entity label/id, or one document path unless it is backed by registry/contract metadata or documented exception.
+- At least one guardrail is added or updated if the audit reveals an untested hardcode class.
+- Any recurring one-off pattern has a reusable replacement recommendation, especially through source/entity/vocabulary/metadata contracts.
+- Phase 36 does not claim complete if it only documents a product bug without fixing it.
+
+Verification command:
+
+```powershell
+Set-Location "factory-agent"
+python -m pytest tests/test_hardcode_guardrails.py tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py -q
+
+Set-Location "..\eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
 ## Stop Conditions
 
 Stop and fix before continuing when:

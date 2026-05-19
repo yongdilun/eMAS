@@ -244,7 +244,8 @@ def test_osha_reenergizing_notification_policy_recovers_when_llm_refuses_but_sou
     )
 
     assert result.policy_id == "loto_notification_document_content"
-    assert result.answer.startswith("Before reenergizing the machine")
+    assert result.answer.startswith("After removing the lockout or tagout devices")
+    assert "employer must assure" in result.answer
     assert "[^1]" in result.answer
     assert result.sources[0]["chunk_id"] == "osha_3120_lockout_tagout_c0029"
     assert_no_synthetic_loto_notification_source(result)

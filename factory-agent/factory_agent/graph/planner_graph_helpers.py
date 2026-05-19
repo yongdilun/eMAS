@@ -763,8 +763,8 @@ def _deterministic_plan_repair(
             ],
         )
 
-    # Require the literal word "job" after show/get/view — do not use `\s+job\b` alone or it
-    # matches the `job` prefix inside lowercased IDs like `JOB-SEED-001` → `job-seed-001`.
+    # Require the literal word "job" after show/get/view; matching only the prefix can
+    # misread fixture-style job identifiers as a lookup command.
     if (
         job_lookup_id
         and re.search(r"\b(?:show|get|view)\s+job\s+", lowered)

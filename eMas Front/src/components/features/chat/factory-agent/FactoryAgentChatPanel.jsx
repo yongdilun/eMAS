@@ -28,6 +28,11 @@ const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
 )
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
 const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
+const STARTER_PROMPTS = Object.freeze([
+  'Show status for a machine',
+  'Find low priority jobs',
+  'Ask about a safety procedure',
+])
 
 function isProgressSummary(text) {
   const normalized = String(text || '').trim()
@@ -1078,11 +1083,7 @@ const FactoryAgentChatPanel = ({
                 Ask for operations tasks requiring safe approvals.
               </p>
               <div className="flex flex-wrap justify-center gap-2 mt-4">
-                {[
-                  'Show status for machine with machine id M-CNC-01',
-                  'Find all low priority jobs',
-                  'According to the LOTO procedure, what notification is required before starting lockout',
-                ].map((prompt) => (
+                {STARTER_PROMPTS.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"

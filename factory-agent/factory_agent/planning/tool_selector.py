@@ -1138,8 +1138,8 @@ class ToolSelector:
 
     def _diagnostic_tool_names(self, *, intent: str, tools_by_name: dict[str, ToolInfo]) -> list[str]:
         # Compound-intent guard: when the user asks for multiple things in one
-        # message (e.g. "Check machine M-LTH-02 status and then show slots for
-        # JOB-SEED-001"), every diagnostic shortcut below would only match the
+        # message (for example a machine status plus a job slot request), every
+        # diagnostic shortcut below would only match the
         # first clause and return a single tool, starving the second clause of
         # its tool. Skip all single-tool fast-paths so the normal retrieval +
         # rerank pipeline can score every clause's tools.
