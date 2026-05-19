@@ -165,7 +165,7 @@ const Settings = () => {
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current({ quietAuthToast: true })
+      handleSaveRef.current({ quietAuthInline: true, quietAuthToast: true })
     }, 1200)
   }, [])
 
@@ -199,7 +199,9 @@ const Settings = () => {
     } catch (err) {
       logger.error('Failed to save settings', err)
       const msg = apiErrorMessage(err, 'Failed to save settings.')
-      setSaveErr(msg)
+      if (!(options.quietAuthInline === true && err?.type === 'AUTH')) {
+        setSaveErr(msg)
+      }
       if (!(options.quietAuthToast === true && err?.type === 'AUTH')) {
         toast.error(msg, apiErrorToastOptions(err))
       }
