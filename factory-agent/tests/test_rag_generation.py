@@ -273,7 +273,9 @@ def test_generate_osha_reenergizing_source_locator_uses_supporting_chunk_when_do
     source = result.sources[0].model_dump()
     assert source["chunk_id"] == "osha_3120_lockout_tagout_c0029"
     assert source["page"] == 15
-    assert source["text_search"] == "After removing the lockout or tagout devices but before reenergizing the machine"
+    assert source["snippet"].startswith("After removing the lockout or tagout devices")
+    assert "capable of being reenergized" in source["snippet"]
+    assert source["text_search"] == source["snippet"]
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_answer_no_safety_warning(mock_build_llm, mock_settings, sample_chunks):
