@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ActivityTimeline from './ActivityTimeline'
 import {
   activityStepsFromResponseDocument,
@@ -9,6 +9,9 @@ import {
 import { TablePresentation } from '../turns/TurnBlocks'
 
 const PREVIEW_LIMIT = 5
+const EVIDENCE_DRAWER_DEFAULT_WIDTH = 440
+const EVIDENCE_DRAWER_MIN_WIDTH = 320
+const EVIDENCE_DRAWER_MAX_WIDTH = 720
 const TECHNICAL_REDACTION_RE = /\b(api[_-]?key|authorization|bearer|password|secret|token)\b\s*[:=]?\s*[^\s,;]+/gi
 const SAFETY_ADMONITION_RE = /(?:^|\n)[ \t]*:::\s*safety\b[\s\S]*?(?:\n[ \t]*:::[ \t]*(?=\n|$)|$)/gi
 const FOOTNOTE_DEFINITION_RE = /^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*/gm
@@ -24,6 +27,12 @@ function safeText(value) {
     .replace(FOOTNOTE_MARKER_RE, '')
     .replace(/\s+([,.;:!?])/g, '$1')
     .trim()
+}
+
+function clampNumber(value, min, max) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return min
+  return Math.min(max, Math.max(min, number))
 }
 
 function rowLabel(row, index) {
@@ -383,6 +392,99 @@ function sourceOpenTarget(source) {
   return { mode: 'pdf', href: url, highlightKind: null }
 }
 
+function sourceLookupKeys(source) {
+  const safeSource = citationFromSource(source)
+  if (!safeSource) return []
+  const sourceId = safeText(safeSource.source_id)
+  const docId = safeText(safeSource.doc_id)
+  const chunkId = safeText(safeSource.chunk_id)
+  const number = safeText(safeSource.source_number)
+  return [
+    safeText(safeSource.citation_id),
+    citationKey(safeSource),
+    sourceId,
+    sourceId ? `citation:${sourceId}` : '',
+    docId && chunkId ? `${docId}#${chunkId}` : '',
+    docId && chunkId ? `citation:${docId}#${chunkId}` : '',
+    docId && number ? `${docId}#source-${number}` : '',
+    number ? `source-number:${number}` : '',
+    number ? `citation:${number}` : '',
+  ].filter(Boolean)
+}
+
+function sourcesReferToSame(left, right) {
+  const leftKeys = new Set(sourceLookupKeys(left))
+  if (!leftKeys.size) return false
+  return sourceLookupKeys(right).some((key) => leftKeys.has(key))
+}
+
+function hasSourceValue(value) {
+  if (value == null) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+function mergeSourceDetails(primary, fallback) {
+  const primarySource = citationFromSource(primary) || {}
+  const fallbackSource = citationFromSource(fallback) || {}
+  const merged = { ...fallbackSource, ...primarySource }
+  for (const [key, value] of Object.entries(fallbackSource)) {
+    if (!hasSourceValue(primarySource[key]) && hasSourceValue(value)) merged[key] = value
+  }
+  return citationFromSource(merged)
+}
+
+function addSourceLookupEntries(lookup, source) {
+  const safeSource = citationFromSource(source)
+  if (!safeSource) return
+  for (const key of sourceLookupKeys(safeSource)) {
+    const existing = lookup.get(key)
+    lookup.set(key, existing ? mergeSourceDetails(existing, safeSource) : safeSource)
+  }
+}
+
+function collectDocumentSources(document) {
+  const sources = []
+  for (const block of document?.blocks || []) {
+    if (block?.type !== 'source_list' || !Array.isArray(block.sources)) continue
+    for (const source of block.sources) {
+      const safeSource = citationFromSource(source)
+      if (!safeSource) continue
+      if (sources.some((item) => sourcesReferToSame(item, safeSource))) continue
+      sources.push(safeSource)
+    }
+  }
+  return sources
+}
+
+function sourcePdfActionLabel(source, openTarget = sourceOpenTarget(source)) {
+  if (openTarget.mode === 'exact') return 'Open highlighted PDF'
+  if (openTarget.mode === 'search') return `Open PDF search on page ${source?.page}`
+  if (source?.page) return `Open PDF page ${source.page}`
+  return 'Open PDF'
+}
+
+function sourcePdfEvidenceText(source, openTarget = sourceOpenTarget(source)) {
+  const page = safeText(source?.page)
+  const search = safeText(source?.text_search || source?.textSearch || source?.snippet)
+  if (openTarget.mode === 'exact' && openTarget.highlightKind === 'char_range') {
+    return page ? `Text-layer highlight available on page ${page}.` : 'Text-layer highlight available.'
+  }
+  if (openTarget.mode === 'exact' && openTarget.highlightKind === 'bbox') {
+    return page ? `PDF area highlight available on page ${page}.` : 'PDF area highlight available.'
+  }
+  if (openTarget.mode === 'search') {
+    return `Exact highlight unavailable. Showing page ${page} with search evidence${search ? `: ${search}` : '.'}`
+  }
+  if (openTarget.mode === 'page') {
+    return `Exact highlight unavailable. Showing page ${page}${search ? ` with snippet evidence: ${search}` : '.'}`
+  }
+  if (openTarget.mode === 'pdf') return 'PDF available, but page metadata was not provided.'
+  return 'PDF locator unavailable. Showing source metadata and snippet evidence.'
+}
+
 function SourceHoverCard({ source }) {
   if (!source) return null
   const location = sourceLocationLabel(source)
@@ -417,6 +519,7 @@ function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSo
         data-doc-id={safeText(source.doc_id) || undefined}
         data-chunk-id={safeText(source.chunk_id) || undefined}
         data-source-number={safeText(source.source_number) || undefined}
+        data-source-title={safeText(source.title) || undefined}
         data-source-open-mode={openTarget.mode}
         data-source-highlight-kind={openTarget.highlightKind || undefined}
         onMouseEnter={() => setActiveHoverId(id)}
@@ -432,87 +535,236 @@ function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSo
   )
 }
 
-function SourceDrawer({ source, onClose }) {
+function SourceEvidenceEntry({ source, role, onOpenPdf }) {
   const safeSource = citationFromSource(source)
   if (!safeSource) return null
   const location = sourceLocationLabel(safeSource)
   const openTarget = sourceOpenTarget(safeSource)
   const pdfHref = openTarget.href
+  const sourceNumber = safeText(safeSource.source_number)
   return (
-    <aside
-      role="dialog"
-      aria-label="Source details"
-      className="mt-3 rounded-md border border-hairline bg-surface-1 px-3 py-3 text-sm"
-      data-source-drawer=""
+    <article
+      className="rounded-md border border-hairline bg-surface-2 px-3 py-3"
+      data-source-drawer-entry=""
+      data-source-role={role}
       data-source-id={safeText(safeSource.source_id) || undefined}
       data-doc-id={safeText(safeSource.doc_id) || undefined}
       data-chunk-id={safeText(safeSource.chunk_id) || undefined}
+      data-source-number={sourceNumber || undefined}
+      data-source-title={safeText(safeSource.title) || undefined}
       data-source-open-mode={openTarget.mode}
       data-source-highlight-kind={openTarget.highlightKind || undefined}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-ink">{safeSource.title || 'Source details'}</div>
+          <div className="text-[11px] font-semibold uppercase text-ink-subtle">
+            {role === 'cited' ? 'Cited source' : 'Related source'}
+            {sourceNumber ? ` ${sourceNumber}` : ''}
+          </div>
+          <div className="mt-0.5 break-words text-sm font-semibold text-ink">{safeSource.title || 'Source details'}</div>
           {safeSource.organization ? <div className="mt-0.5 text-xs text-ink-muted">{safeSource.organization}</div> : null}
         </div>
-        <button
-          type="button"
-          className="rounded-md px-2 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-2"
-          onClick={onClose}
-        >
-          Close
-        </button>
       </div>
       <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
         {safeSource.doc_id ? (
-          <div className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2">
+          <div className="min-w-0 rounded-md bg-surface-1 px-2.5 py-2">
             <dt className="font-semibold text-ink-muted">Document</dt>
             <dd className="mt-0.5 break-words text-ink">{safeSource.doc_id}</dd>
           </div>
         ) : null}
         {safeSource.chunk_id ? (
-          <div className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2">
+          <div className="min-w-0 rounded-md bg-surface-1 px-2.5 py-2">
             <dt className="font-semibold text-ink-muted">Chunk</dt>
             <dd className="mt-0.5 break-words text-ink">{safeSource.chunk_id}</dd>
           </div>
         ) : null}
         {location ? (
-          <div className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2">
+          <div className="min-w-0 rounded-md bg-surface-1 px-2.5 py-2">
             <dt className="font-semibold text-ink-muted">Location</dt>
             <dd className="mt-0.5 break-words text-ink">{location}</dd>
           </div>
         ) : null}
-        {safeSource.source_number ? (
-          <div className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2">
+        {sourceNumber ? (
+          <div className="min-w-0 rounded-md bg-surface-1 px-2.5 py-2">
             <dt className="font-semibold text-ink-muted">Citation</dt>
-            <dd className="mt-0.5 break-words text-ink">Source {safeSource.source_number}</dd>
+            <dd className="mt-0.5 break-words text-ink">Source {sourceNumber}</dd>
           </div>
         ) : null}
       </dl>
       {safeSource.snippet ? (
-        <div className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-ink" data-source-drawer-snippet="">
+        <div className="mt-3 rounded-md bg-surface-1 px-3 py-2 text-xs text-ink" data-source-drawer-snippet="">
           {safeSource.snippet}
         </div>
       ) : null}
+      <div className="mt-3 text-xs text-ink-subtle" data-source-pdf-evidence-summary="">
+        {sourcePdfEvidenceText(safeSource, openTarget)}
+      </div>
       {pdfHref ? (
         <a
-          className="mt-3 inline-flex items-center rounded-md bg-surface-3 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-surface-2"
+          className="mt-3 inline-flex items-center rounded-md bg-surface-3 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
           href={pdfHref}
-          target="_blank"
-          rel="noreferrer"
           data-source-pdf-link=""
+          data-source-id={safeText(safeSource.source_id) || undefined}
+          data-doc-id={safeText(safeSource.doc_id) || undefined}
+          data-chunk-id={safeText(safeSource.chunk_id) || undefined}
+          data-source-number={sourceNumber || undefined}
+          data-source-title={safeText(safeSource.title) || undefined}
           data-source-open-mode={openTarget.mode}
           data-source-highlight-kind={openTarget.highlightKind || undefined}
+          onClick={(event) => {
+            event.preventDefault()
+            onOpenPdf?.(safeSource)
+          }}
         >
-          {openTarget.mode === 'exact'
-            ? 'Open highlighted PDF'
-            : openTarget.mode === 'search'
-              ? `Open PDF search on page ${safeSource.page}`
-              : safeSource.page
-                ? `Open PDF page ${safeSource.page}`
-                : 'Open PDF'}
+          {sourcePdfActionLabel(safeSource, openTarget)}
         </a>
       ) : null}
+    </article>
+  )
+}
+
+function SourcePdfView({ source, onBack }) {
+  const safeSource = citationFromSource(source)
+  if (!safeSource) return null
+  const openTarget = sourceOpenTarget(safeSource)
+  const pdfHref = openTarget.href
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-source-pdf-view="">
+      <div className="border-b border-hairline px-4 py-3">
+        <button
+          type="button"
+          className="inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold text-primary hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          onClick={onBack}
+          data-source-pdf-back=""
+        >
+          Back to evidence
+        </button>
+        <div className="mt-2 text-sm font-semibold text-ink">
+          {safeSource.source_number ? `Source ${safeSource.source_number}: ` : ''}{safeSource.title || 'PDF evidence'}
+        </div>
+        <div className="mt-1 text-xs text-ink-muted" data-source-pdf-evidence="">
+          {sourcePdfEvidenceText(safeSource, openTarget)}
+        </div>
+      </div>
+      {pdfHref ? (
+        <iframe
+          title={`PDF evidence for ${safeSource.title || safeSource.doc_id || 'source'}`}
+          src={pdfHref}
+          className="min-h-[28rem] flex-1 bg-surface-2"
+          data-source-pdf-frame=""
+          data-source-id={safeText(safeSource.source_id) || undefined}
+          data-doc-id={safeText(safeSource.doc_id) || undefined}
+          data-chunk-id={safeText(safeSource.chunk_id) || undefined}
+          data-source-number={safeText(safeSource.source_number) || undefined}
+          data-source-title={safeText(safeSource.title) || undefined}
+          data-source-open-mode={openTarget.mode}
+          data-source-highlight-kind={openTarget.highlightKind || undefined}
+        />
+      ) : (
+        <div className="px-4 py-4 text-sm text-ink-muted">No PDF locator is available for this source.</div>
+      )}
+    </div>
+  )
+}
+
+function SourceDrawer({ source, sources = [], pdfSource, onOpenPdf, onBack, onClose }) {
+  const safeSource = citationFromSource(source)
+  const [drawerWidth, setDrawerWidth] = useState(EVIDENCE_DRAWER_DEFAULT_WIDTH)
+  if (!safeSource) return null
+  const sourceList = (Array.isArray(sources) ? sources : []).map(citationFromSource).filter(Boolean)
+  const matchingSource = sourceList.find((item) => sourcesReferToSame(item, safeSource))
+  const citedSource = mergeSourceDetails(safeSource, matchingSource)
+  const relatedSources = sourceList
+    .filter((item) => !sourcesReferToSame(item, citedSource))
+    .map((item) => citationFromSource(item))
+    .filter(Boolean)
+  const activePdfSource = pdfSource
+    ? mergeSourceDetails(pdfSource, sourceList.find((item) => sourcesReferToSame(item, pdfSource)))
+    : null
+  const drawerSource = activePdfSource || citedSource
+  const openTarget = sourceOpenTarget(drawerSource)
+  const view = activePdfSource ? 'pdf' : 'list'
+
+  function handleResizePointerDown(event) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = drawerWidth
+    const handlePointerMove = (moveEvent) => {
+      const delta = startX - moveEvent.clientX
+      setDrawerWidth(clampNumber(startWidth + delta, EVIDENCE_DRAWER_MIN_WIDTH, EVIDENCE_DRAWER_MAX_WIDTH))
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  }
+
+  return (
+    <aside
+      role="dialog"
+      aria-label="Side evidence drawer"
+      aria-modal="false"
+      className="fixed bottom-4 right-4 top-4 z-50 flex max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-md border border-hairline bg-surface-1 text-sm shadow-2xl"
+      style={{ width: `min(${drawerWidth}px, calc(100vw - 1rem))` }}
+      data-source-drawer=""
+      data-source-evidence-drawer=""
+      data-source-drawer-view={view}
+      data-source-id={safeText(drawerSource.source_id) || undefined}
+      data-doc-id={safeText(drawerSource.doc_id) || undefined}
+      data-chunk-id={safeText(drawerSource.chunk_id) || undefined}
+      data-source-number={safeText(drawerSource.source_number) || undefined}
+      data-source-title={safeText(drawerSource.title) || undefined}
+      data-source-open-mode={openTarget.mode}
+      data-source-highlight-kind={openTarget.highlightKind || undefined}
+    >
+      <div
+        className="absolute bottom-0 left-0 top-0 w-2 cursor-ew-resize border-l border-transparent hover:border-primary/40"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize evidence drawer"
+        data-source-drawer-resize-handle=""
+        onPointerDown={handleResizePointerDown}
+      />
+      <div className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-ink">Side evidence</div>
+          <div className="mt-0.5 truncate text-xs text-ink-muted">
+            {drawerSource.source_number ? `Source ${drawerSource.source_number}` : 'Source'} · {drawerSource.title || drawerSource.doc_id || 'Evidence'}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="rounded-md px-2 py-1 text-xs font-semibold text-ink-muted hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          onClick={onClose}
+          data-source-drawer-close=""
+        >
+          Close
+        </button>
+      </div>
+      {activePdfSource ? (
+        <SourcePdfView source={activePdfSource} onBack={onBack} />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="space-y-3">
+            <SourceEvidenceEntry source={citedSource} role="cited" onOpenPdf={onOpenPdf} />
+            {relatedSources.length ? (
+              <section className="space-y-2" data-related-source-section="">
+                <div className="text-xs font-semibold uppercase text-ink-subtle">Related supporting sources</div>
+                {relatedSources.map((relatedSource, index) => (
+                  <SourceEvidenceEntry
+                    key={`${citationKey(relatedSource) || relatedSource.source_id || relatedSource.doc_id || 'related'}:${index}`}
+                    source={relatedSource}
+                    role="related"
+                    onOpenPdf={onOpenPdf}
+                  />
+                ))}
+              </section>
+            ) : null}
+          </div>
+        </div>
+      )}
     </aside>
   )
 }
@@ -679,8 +931,11 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
   const citationsById = new Map(sourceLookup)
   for (const citation of blockCitations) {
     const safeCitation = citationFromSource(citation)
-    const key = citationKey(safeCitation)
-    if (key) citationsById.set(key, safeCitation)
+    const existing = sourceLookupKeys(safeCitation)
+      .map((key) => citationsById.get(key))
+      .find(Boolean)
+    const mergedCitation = mergeSourceDetails(safeCitation, existing)
+    addSourceLookupEntries(citationsById, mergedCitation)
   }
   const segments = Array.isArray(block.segments) && block.segments.length
     ? block.segments
@@ -722,28 +977,41 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
   )
 }
 
-function SourceListBlock({ block }) {
+function SourceListBlock({ block, onOpenSource }) {
   const sources = Array.isArray(block.sources) ? block.sources : []
   if (!sources.length) return null
   return (
     <CompactCard title={block.title || 'Knowledge sources'} blockType="source_list" blockId={block.id} contract={block.contract || 'source_list_v1'}>
       <div className="mt-2 space-y-2 text-xs text-ink-muted">
         {sources.map((source, index) => {
-          const title = safeText(source.title || source.doc_id || `Source ${index + 1}`)
-          const snippet = safeText(source.snippet)
+          const safeSource = citationFromSource(source)
+          const title = safeText(safeSource?.title || safeSource?.doc_id || `Source ${index + 1}`)
+          const snippet = safeText(safeSource?.snippet)
           return (
             <div
-              key={`${source.source_id || source.doc_id || title}-${index}`}
+              key={`${safeSource?.source_id || safeSource?.doc_id || title}-${index}`}
               className="rounded-md bg-surface-2 px-2.5 py-2"
-              data-response-contract={safeText(source.contract) || undefined}
-              data-source-id={safeText(source.source_id) || undefined}
-              data-doc-id={safeText(source.doc_id) || undefined}
-              data-chunk-id={safeText(source.chunk_id) || undefined}
+              data-response-contract={safeText(source?.contract) || undefined}
+              data-source-id={safeText(safeSource?.source_id) || undefined}
+              data-doc-id={safeText(safeSource?.doc_id) || undefined}
+              data-chunk-id={safeText(safeSource?.chunk_id) || undefined}
+              data-source-number={safeText(safeSource?.source_number) || undefined}
+              data-source-title={title || undefined}
             >
-              <div className="font-semibold text-ink">{title}</div>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="font-semibold text-ink">{title}</div>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-primary hover:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  onClick={() => onOpenSource?.(safeSource)}
+                  data-source-list-open=""
+                >
+                  View evidence
+                </button>
+              </div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 {['doc_id', 'chunk_id', 'page', 'machine_id', 'organization'].map((key) => (
-                  source[key] ? <span key={key}>{humanizeResponseDocumentKey(key)}: {String(source[key])}</span> : null
+                  safeSource?.[key] ? <span key={key}>{humanizeResponseDocumentKey(key)}: {String(safeSource[key])}</span> : null
                 ))}
               </div>
               {snippet ? <div className="mt-1.5 line-clamp-2 text-ink-subtle">{snippet}</div> : null}
@@ -862,7 +1130,7 @@ function renderBlock(block, props) {
   if (block.type === 'record_preview') return <RecordPreviewBlock key={block.id} block={block} />
   if (block.type === 'safety_notice') return <SafetyNoticeBlock key={block.id} block={block} />
   if (block.type === 'knowledge_answer') return <KnowledgeAnswerBlock key={block.id} block={block} {...props} />
-  if (block.type === 'source_list') return <SourceListBlock key={block.id} block={block} />
+  if (block.type === 'source_list') return <SourceListBlock key={block.id} block={block} onOpenSource={props.onOpenSource} />
   if (block.type === 'warning' || block.type === 'diagnostic') return <DiagnosticBlock key={block.id} block={block} />
   return null
 }
@@ -875,23 +1143,18 @@ export default function ResponseDocumentRenderer({
   isDecidingApproval,
 }) {
   const [activeSource, setActiveSource] = useState(null)
+  const [activePdfSource, setActivePdfSource] = useState(null)
   const [activeHoverId, setActiveHoverId] = useState(null)
+  const sourceListSources = useMemo(() => collectDocumentSources(document), [document])
   const sourceLookup = useMemo(() => {
     const lookup = new Map()
-    for (const block of document?.blocks || []) {
-      if (block?.type !== 'source_list' || !Array.isArray(block.sources)) continue
-      for (const source of block.sources) {
-        const citation = citationFromSource(source)
-        const key = citationKey(citation)
-        if (key) lookup.set(key, citation)
-        const sourceId = safeText(citation?.source_id)
-        if (sourceId) lookup.set(`citation:${sourceId}`, citation)
-        const number = safeText(citation?.source_number)
-        if (number) lookup.set(`citation:${number}`, citation)
-      }
-    }
+    for (const source of sourceListSources) addSourceLookupEntries(lookup, source)
     return lookup
-  }, [document])
+  }, [sourceListSources])
+  useEffect(() => {
+    setActiveSource(null)
+    setActivePdfSource(null)
+  }, [document?.document_id, document?.revision])
   if (!document) return null
   const activitySteps = activityStepsFromResponseDocument(document)
   const message = responseDocumentMessage(document)
@@ -953,7 +1216,10 @@ export default function ResponseDocumentRenderer({
         sourceLookup,
         activeHoverId,
         setActiveHoverId,
-        onOpenSource: setActiveSource,
+        onOpenSource: (source) => {
+          setActiveSource(source)
+          setActivePdfSource(null)
+        },
       })]
     })
     .filter(Boolean)
@@ -963,7 +1229,17 @@ export default function ResponseDocumentRenderer({
       <ActivityTimeline steps={activitySteps} />
       {message ? <div className="whitespace-pre-wrap break-words text-ink">{message}</div> : null}
       {renderedBlocks}
-      <SourceDrawer source={activeSource} onClose={() => setActiveSource(null)} />
+      <SourceDrawer
+        source={activeSource}
+        sources={sourceListSources}
+        pdfSource={activePdfSource}
+        onOpenPdf={setActivePdfSource}
+        onBack={() => setActivePdfSource(null)}
+        onClose={() => {
+          setActiveSource(null)
+          setActivePdfSource(null)
+        }}
+      />
     </div>
   )
 }

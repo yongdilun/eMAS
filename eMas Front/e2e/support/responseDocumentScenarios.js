@@ -758,9 +758,26 @@ function oshaReenergizingCitation() {
   }
 }
 
+function oshaReenergizingRelatedSource() {
+  return {
+    contract: SOURCE_LOCATOR_CONTRACT,
+    source_id: 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030',
+    source_number: 2,
+    title: 'Control of Hazardous Energy Lockout/Tagout',
+    doc_id: 'osha_3120_lockout_tagout',
+    chunk_id: 'osha_3120_lockout_tagout_c0030',
+    organization: 'OSHA',
+    snippet: 'Before removing lockout or tagout devices and restoring energy, OSHA describes checks for personnel, tools, and machine components.',
+    pdf_url: '/documents/osha_3120_lockout_tagout/pdf',
+    page: 15,
+    text_search: 'Before lockout or tagout devices are removed and energy is restored',
+  }
+}
+
 export function oshaReenergizingDocument(session) {
   const answer = 'Before reenergizing, notify affected employees who operate or work with the machine and employees in the service area that the lockout or tagout devices have been removed and that the machine can be reenergized.'
   const citation = oshaReenergizingCitation()
+  const relatedSource = oshaReenergizingRelatedSource()
   return baseDocument(session, {
     operationId: 'pw-plan-rd-osha-reenergizing',
     revision: 3,
@@ -808,6 +825,7 @@ export function oshaReenergizingDocument(session) {
             char_range: citation.char_range,
             text_search: citation.text_search,
           },
+          relatedSource,
         ],
       },
     ],

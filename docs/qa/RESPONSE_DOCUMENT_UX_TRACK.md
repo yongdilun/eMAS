@@ -40,7 +40,7 @@ Created: 2026-05-18
 | 30 | RAG reingestion and live release proof | Done | Codex | Rebuilt local Chroma/BM25 from the source register, proved live LOTO source locators carry safe page/highlight metadata without `file_path`, and kept typed RAG/source browser gates green. |
 | 31 | Backend RAG evidence truth cleanup | Done | Codex | Removed hardcoded runtime policy fallbacks/synthetic sources, required insufficient-context behavior for unsupported safety claims, stabilized source numbering, and added backend hardcode/citation guardrails. |
 | 32 | Live RAG positive and negative release proof | Done | Codex | Proved one PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through backend contracts, mocked browser, and seeded response-document paths. |
-| 33 | Side evidence drawer and PDF panel UX | Planned | Codex | Replace metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
+| 33 | Side evidence drawer and PDF panel UX | Done | Codex | Replaced metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
 | 34 | Source tooltip and responsive chat width | Planned | Codex | Fix source-hover collision near edges and make assistant response cards grow with wider chatbot/modal layouts while preserving readable prose widths. |
 | 35 | Final RAG source UX release gate | Planned | Codex | Run the integrated backend/frontend/browser release proof after Phases 31-34, including positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrails. |
 
@@ -58,7 +58,7 @@ Created: 2026-05-18
 - Phase 27 fixed the post-Phase-26 RAG display regression: LOTO document-content answers no longer show raw `:::safety`, source-backed answer bodies render once, valid response-document turns do not get legacy ChatMessage source/safety chrome, and cited RAG sources carry minimum locator metadata.
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
 - Phase 32 proved the post-cleanup RAG release behavior: the OSHA reenergizing prompt is source-backed by `osha_3120_lockout_tagout` with PDF locator metadata, and the before-starting-lockout prompt returns insufficient context with related OSHA sources checked instead of a policy fallback or machine-ID clarification.
-- Source evidence UX still needs hardening after backend truth is fixed: Phase 33 adds the resizable side evidence drawer and in-panel PDF flow; Phase 34 fixes hover collision and responsive chat width; Phase 35 runs the integrated release gate.
+- Source evidence workspace is complete for Phase 33: source chips open a resizable side drawer, cited evidence appears before related supporting sources, PDF-backed sources open in-panel with back navigation, and true no-PDF sources keep drawer-only evidence. Phase 34 still fixes hover collision and responsive chat width; Phase 35 still runs the integrated release gate.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -2496,6 +2496,49 @@ Results:
 - Focused mocked response-document browser grep: 10 passed.
 - Focused seeded-oracle browser grep: first run exposed the generic seeded LOTO answer missing required `29 CFR 1910.147` support; after the seeded evidence fix, 19 passed.
 
+## Phase 33 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 33 is complete. Source-chip clicks now open a side evidence workspace instead of a metadata-only drawer.
+
+### Product Fix
+
+- Source chips and source-list entries open a resizable, closable side evidence drawer.
+- The drawer shows the cited source first and related supporting sources second.
+- PDF-backed cited and related sources open inside the same side panel with the existing PDF fragment locator.
+- The PDF panel includes back navigation to the evidence list.
+- Exact highlights use `char_range` or `bbox`; when exact highlight metadata is unavailable, the panel opens to page/search evidence and shows the snippet/search fallback.
+- True no-PDF sources keep drawer-only evidence without a PDF action.
+- Source chip, drawer entry, PDF action, in-panel PDF frame, source list, and bibliography payload all preserve source id, doc id, chunk id, source number, and title identity.
+
+### Regression Coverage Added
+
+- Component coverage for side evidence drawer list view, related supporting sources, PDF action identity, in-panel PDF view/back navigation, deterministic highlight fallback order, and no-PDF drawer fallback.
+- Probe coverage for side evidence drawer view, cited/related entries, and in-panel PDF metadata.
+- Mocked browser coverage for the Phase 32 OSHA reenergizing positive proof through source chip -> side evidence drawer -> in-panel PDF -> back navigation -> related source PDF fallback.
+
+### Phase 33 Verification
+
+```powershell
+Set-Location "eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+npm run test:e2e:response-document -- --grep "source drawer|side evidence|PDF|back navigation|source chip|related source"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+Results:
+
+- Frontend unit/component lane: 121 passed.
+- Focused response-document probe lane: 12 passed.
+- Focused mocked browser Phase 33 grep: 2 passed using one worker on fresh ports after manually starting the mock/Vite servers.
+- First direct Playwright command attempts hung in webServer startup/reuse before test execution; recent Node test server processes were stopped, the underlying jsdom assertion memory blow-up was fixed, and the matching browser tests passed once servers were already healthy.
+- `git diff --check`: passed with line-ending warnings only.
+
 ## Commands Run
 
 ```powershell
@@ -2522,7 +2565,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 32 is complete. Phase 33 is next and should add the side evidence drawer and PDF panel UX. Do not start Phase 34 tooltip/responsive width work or Phase 35 integrated release gating until Phase 33 is proven.
+Phase 33 is complete. Phase 34 is next and should fix source tooltip collision and responsive chat width. Do not start Phase 35 integrated release gating until Phase 34 is proven.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

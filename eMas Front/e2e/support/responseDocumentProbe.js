@@ -365,13 +365,37 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
       docId: chip?.docId || null,
       chunkId: chip?.chunkId || null,
       sourceNumber: chip?.sourceNumber || null,
+      title: compactText(chip?.title || '', 80) || null,
       text: compactText(chip?.text || '', 40) || null,
     })),
     sourceDrawer: ui.sourceDrawer ? compactObject({
       open: Boolean(ui.sourceDrawer.open),
+      view: ui.sourceDrawer.view || null,
       sourceId: ui.sourceDrawer.sourceId || null,
       docId: ui.sourceDrawer.docId || null,
       chunkId: ui.sourceDrawer.chunkId || null,
+      sourceNumber: ui.sourceDrawer.sourceNumber || null,
+      title: compactText(ui.sourceDrawer.title || '', 100) || null,
+      entries: asArray(ui.sourceDrawer.entries).slice(0, 8).map((entry) => compactObject({
+        role: entry?.role || null,
+        sourceId: entry?.sourceId || null,
+        docId: entry?.docId || null,
+        chunkId: entry?.chunkId || null,
+        sourceNumber: entry?.sourceNumber || null,
+        title: compactText(entry?.title || '', 100) || null,
+        openMode: entry?.openMode || null,
+        highlightKind: entry?.highlightKind || null,
+      })),
+      pdf: ui.sourceDrawer.pdf ? compactObject({
+        sourceId: ui.sourceDrawer.pdf.sourceId || null,
+        docId: ui.sourceDrawer.pdf.docId || null,
+        chunkId: ui.sourceDrawer.pdf.chunkId || null,
+        sourceNumber: ui.sourceDrawer.pdf.sourceNumber || null,
+        title: compactText(ui.sourceDrawer.pdf.title || '', 100) || null,
+        src: compactText(ui.sourceDrawer.pdf.src || '', 180) || null,
+        openMode: ui.sourceDrawer.pdf.openMode || null,
+        highlightKind: ui.sourceDrawer.pdf.highlightKind || null,
+      }) : null,
       text: compactText(ui.sourceDrawer.text || '', 180) || null,
     }) : null,
     forbiddenTextHits: compactArray(forbiddenTextHits(ui.visibleText || '', expected), 20),
@@ -864,19 +888,49 @@ export async function collectVisibleResponseDocumentUi(page) {
         docId: node.getAttribute('data-doc-id') || null,
         chunkId: node.getAttribute('data-chunk-id') || null,
         sourceNumber: node.getAttribute('data-source-number') || null,
+        title: node.getAttribute('data-source-title') || null,
         openMode: node.getAttribute('data-source-open-mode') || null,
         highlightKind: node.getAttribute('data-source-highlight-kind') || null,
         text: compact(node.innerText || node.textContent || '', 40),
       }))
     const drawer = latestRoot.querySelector('[data-source-drawer]')
+    const drawerEntries = drawer
+      ? Array.from(drawer.querySelectorAll('[data-source-drawer-entry]')).map((node) => ({
+        role: node.getAttribute('data-source-role') || null,
+        sourceId: node.getAttribute('data-source-id') || null,
+        docId: node.getAttribute('data-doc-id') || null,
+        chunkId: node.getAttribute('data-chunk-id') || null,
+        sourceNumber: node.getAttribute('data-source-number') || null,
+        title: node.getAttribute('data-source-title') || null,
+        openMode: node.getAttribute('data-source-open-mode') || null,
+        highlightKind: node.getAttribute('data-source-highlight-kind') || null,
+      }))
+      : []
+    const pdfFrame = drawer?.querySelector('[data-source-pdf-frame]') || null
     const sourceDrawer = drawer
       ? {
         open: true,
+        view: drawer.getAttribute('data-source-drawer-view') || null,
         sourceId: drawer.getAttribute('data-source-id') || null,
         docId: drawer.getAttribute('data-doc-id') || null,
         chunkId: drawer.getAttribute('data-chunk-id') || null,
+        sourceNumber: drawer.getAttribute('data-source-number') || null,
+        title: drawer.getAttribute('data-source-title') || null,
         openMode: drawer.getAttribute('data-source-open-mode') || null,
         highlightKind: drawer.getAttribute('data-source-highlight-kind') || null,
+        entries: drawerEntries,
+        pdf: pdfFrame
+          ? {
+            sourceId: pdfFrame.getAttribute('data-source-id') || null,
+            docId: pdfFrame.getAttribute('data-doc-id') || null,
+            chunkId: pdfFrame.getAttribute('data-chunk-id') || null,
+            sourceNumber: pdfFrame.getAttribute('data-source-number') || null,
+            title: pdfFrame.getAttribute('data-source-title') || null,
+            src: pdfFrame.getAttribute('src') || null,
+            openMode: pdfFrame.getAttribute('data-source-open-mode') || null,
+            highlightKind: pdfFrame.getAttribute('data-source-highlight-kind') || null,
+          }
+          : null,
         text: compact(drawer.innerText || drawer.textContent || '', 220),
       }
       : null

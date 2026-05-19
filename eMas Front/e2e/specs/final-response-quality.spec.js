@@ -774,7 +774,7 @@ test.describe('Final response quality response_document gate', () => {
     await expectForbiddenTextAbsent(page)
   })
 
-  test('Phase 32 positive OSHA lockout reenergizing RAG proof is PDF source-backed', async ({ page }, testInfo) => {
+  test('Phase 33 side evidence drawer opens PDF panel with back navigation and related source identity', async ({ page }, testInfo) => {
     test.setTimeout(45_000)
     await openChat(page)
     await sendChatPrompt(page, responseDocumentOshaReenergizingPrompt)
@@ -791,16 +791,50 @@ test.describe('Final response quality response_document gate', () => {
     await expect(sourceChip).toBeVisible()
     await expect(sourceChip).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     await expect(sourceChip).toHaveAttribute('data-chunk-id', 'osha_3120_lockout_tagout_c0029')
+    await expect(sourceChip).toHaveAttribute('data-source-number', '1')
+    await expect(sourceChip).toHaveAttribute('data-source-title', 'Control of Hazardous Energy Lockout/Tagout')
     await expect(sourceChip).toHaveAttribute('data-source-open-mode', 'exact')
     await expect(sourceChip).toHaveAttribute('data-source-highlight-kind', 'char_range')
     await sourceChip.hover()
     await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'Control of Hazardous Energy Lockout/Tagout' }).first()).toBeVisible()
     await expect(page.locator('[data-source-chip-hover]').filter({ hasText: 'OSHA' }).first()).toBeVisible()
     await sourceChip.click()
-    const drawer = page.locator('[data-source-drawer][data-doc-id="osha_3120_lockout_tagout"][data-chunk-id="osha_3120_lockout_tagout_c0029"]').first()
+    const drawer = page.locator('[data-source-drawer]').first()
     await expect(drawer).toBeVisible()
-    await expect(drawer.locator('[data-source-drawer-snippet]')).toContainText(/before reenergizing the machine/i)
-    await expect(drawer.locator('[data-source-pdf-link]').first()).toHaveAttribute('href', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+    await expect(drawer).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
+    await expect(drawer).toHaveAttribute('data-chunk-id', 'osha_3120_lockout_tagout_c0029')
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
+    await expect(drawer.locator('[data-source-drawer-resize-handle]')).toBeVisible()
+    const citedEntry = drawer.locator('[data-source-drawer-entry][data-source-role="cited"]').first()
+    await expect(citedEntry).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
+    await expect(citedEntry).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
+    await expect(citedEntry).toHaveAttribute('data-source-number', '1')
+    await expect(citedEntry).toHaveAttribute('data-source-title', 'Control of Hazardous Energy Lockout/Tagout')
+    await expect(citedEntry.locator('[data-source-drawer-snippet]')).toContainText(/before reenergizing the machine/i)
+    await expect(drawer.getByText('Related supporting sources')).toBeVisible()
+    const relatedEntry = drawer.locator('[data-source-drawer-entry][data-source-role="related"]').first()
+    await expect(relatedEntry).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030')
+    await expect(relatedEntry).toHaveAttribute('data-source-number', '2')
+    await expect(relatedEntry).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
+    const pdfAction = citedEntry.locator('[data-source-pdf-link]').first()
+    await expect(pdfAction).toHaveAttribute('href', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+    await expect(pdfAction).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
+    await expect(pdfAction).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
+    await expect(pdfAction).toHaveAttribute('data-source-number', '1')
+    await pdfAction.click()
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
+    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('src', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
+    await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Text-layer highlight available on page 15/i)
+    await drawer.locator('[data-source-pdf-back]').click()
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
+    const relatedPdfAction = drawer.locator('[data-source-drawer-entry][data-source-id="osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030"] [data-source-pdf-link]').first()
+    await relatedPdfAction.click()
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
+    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030')
+    await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Exact highlight unavailable/i)
+    await drawer.locator('[data-source-pdf-back]').click()
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
 
     const visible = await visibleText(page)
     expect(visible).not.toMatch(/loto_notification_requirement/i)
@@ -808,7 +842,7 @@ test.describe('Final response quality response_document gate', () => {
     expect(visible).not.toMatch(/Which machine ID/i)
 
     const summary = await expectTransitionCheckpoint(page, {
-      checkpoint: 'Phase 32 positive OSHA reenergizing RAG proof',
+      checkpoint: 'Phase 33 positive OSHA side evidence PDF proof',
       snapshotForPage,
       testInfo,
       expected: {
@@ -836,7 +870,7 @@ test.describe('Final response quality response_document gate', () => {
         ],
       },
     })
-    await testInfo.attach('phase32-positive-osha-reenergizing-semantic-probe.json', {
+    await testInfo.attach('phase33-positive-osha-side-evidence-semantic-probe.json', {
       body: serializeSemanticProbe(summary),
       contentType: 'application/json',
     })
@@ -856,6 +890,13 @@ test.describe('Final response quality response_document gate', () => {
     expect(source.page).toBe(15)
     expect(source.pdf_url).toBe('/documents/osha_3120_lockout_tagout/pdf')
     expect(source.char_range || source.text_search).toBeTruthy()
+    expect(source.source_id).toBe(citation.source_id)
+    expect(source.source_number).toBe(citation.source_number)
+    expect(source.title).toBe(citation.title)
+    const relatedSource = sourceBlock.sources.find((item) => item.source_number === 2)
+    expect(relatedSource?.source_id).toBe('osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030')
+    expect(relatedSource?.doc_id).toBe('osha_3120_lockout_tagout')
+    expect(relatedSource?.title).toBe(citation.title)
     expect(JSON.stringify(snapshot.response_document)).not.toMatch(/loto_notification_requirement|LOTO Notification Requirements/i)
   })
 

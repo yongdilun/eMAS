@@ -1227,6 +1227,8 @@ test('FactoryAgentChatPanel renders RAG source block from response_document type
   assert.equal(sourceChip.textContent.trim(), '[1]')
   await click(sourceChip)
   await waitFor(() => assert.ok(view.container.querySelector('[data-source-drawer]')))
+  assert.equal(view.container.querySelector('[data-source-drawer]')?.getAttribute('data-source-drawer-view'), 'list')
+  assert.equal(view.container.querySelector('[data-source-drawer-entry]')?.getAttribute('data-source-role'), 'cited')
   assert.match(view.text(), /Document/)
   assert.match(view.text(), /Chunk/)
   assert.match(view.text(), /Notify affected employees before lockout begins/)
@@ -1331,6 +1333,16 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
   })
   assert.match(link.textContent, /Open PDF search on page 9/)
   assert.match(link.getAttribute('href'), /\/documents\/pdf-loto\.pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  await click(link)
+  const frame = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-pdf-frame]')
+    assert.ok(node)
+    return node
+  })
+  assert.match(frame.getAttribute('src'), /\/documents\/pdf-loto\.pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Exact highlight unavailable/)
+  await click(view.container.querySelector('[data-source-pdf-back]'))
+  await waitFor(() => assert.equal(view.container.querySelector('[data-source-drawer]')?.getAttribute('data-source-drawer-view'), 'list'))
 
   await view.unmount()
 })
@@ -1430,10 +1442,21 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   }
 
   let drawer = await clickSource('PDF-LOTO#exact-char', 'exact')
+  assert.equal(drawer.getAttribute('data-source-drawer-view'), 'list')
+  assert.equal(drawer.querySelector('[data-source-drawer-resize-handle]')?.getAttribute('aria-label'), 'Resize evidence drawer')
+  assert.equal(drawer.querySelector('[data-source-drawer-entry][data-source-role="cited"]')?.getAttribute('data-source-id'), 'PDF-LOTO#exact-char')
+  assert.equal(drawer.querySelectorAll('[data-source-drawer-entry][data-source-role="related"]').length, 3)
   let link = drawer.querySelector('[data-source-pdf-link]')
   assert.ok(link)
+  assert.equal(link.getAttribute('data-source-id'), 'PDF-LOTO#exact-char')
+  assert.equal(link.getAttribute('data-doc-id'), 'PDF-LOTO')
+  assert.equal(link.getAttribute('data-source-number'), '1')
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'char_range')
   assert.match(link.getAttribute('href'), /\/documents\/PDF-LOTO\/pdf#page=4&highlight=char_range&char_start=120&char_end=188$/)
+  const relatedLink = view.container.querySelector('[data-source-drawer-entry][data-source-id="PDF-LOTO#text-search"] [data-source-pdf-link]')
+  assert.ok(relatedLink)
+  assert.equal(relatedLink.getAttribute('data-source-number'), '2')
+  assert.equal(relatedLink.getAttribute('data-source-open-mode'), 'search')
 
   drawer = await clickSource('PDF-LOTO#text-search', 'search')
   link = drawer.querySelector('[data-source-pdf-link]')
@@ -1447,7 +1470,7 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   assert.match(link.getAttribute('href'), /\/documents\/PDF-LOTO\/pdf#page=6$/)
 
   drawer = await clickSource('DRAWER-ONLY#chunk', 'drawer')
-  assert.equal(drawer.querySelector('[data-source-pdf-link]'), null)
+  assert.ok(!drawer.querySelector('[data-source-drawer-entry][data-source-role="cited"] [data-source-pdf-link]'))
   assert.match(view.text(), /Drawer fallback remains available/)
 
   await view.unmount()
@@ -1616,7 +1639,7 @@ test('FactoryAgentSessionSidebar uses separate controls for select, rename, and 
     }),
   )
 
-  assert.equal(view.container.querySelector('button button'), null)
+  assert.ok(!view.container.querySelector('button button'))
 
   await click(view.container.querySelector('button[aria-label="Rename session Priority review"]'))
   assert.deepEqual(calls.at(-1), ['edit', 'session-1'])

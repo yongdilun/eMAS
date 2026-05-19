@@ -391,6 +391,105 @@ test('semantic probe summarizes typed RAG source chip and citation evidence', ()
   assert.ok(probe.backend.responseContracts.includes('source_locator_v1'))
 })
 
+test('semantic probe summarizes side evidence drawer and in-panel PDF state', () => {
+  const probe = buildSemanticProbe({
+    checkpoint: 'side evidence PDF panel',
+    snapshot: baseSnapshot({
+      session: { session_id: 'session-phase33', name: 'Chat 33', status: 'COMPLETED' },
+      phase: 'COMPLETED',
+      pending_approval: null,
+      response_document: {
+        state: 'completed',
+        revision: 33,
+        current_step_id: 'completed-rag',
+        run_steps: [{ step_id: 'completed-rag', kind: 'completed', state: 'completed', title: 'Run complete' }],
+        blocks: [
+          {
+            id: 'knowledge:osha',
+            type: 'knowledge_answer',
+            contract: 'knowledge_answer_v1',
+            answer: 'Notify affected employees before reenergizing.',
+            citations: [
+              {
+                contract: 'source_citation_v1',
+                citation_id: 'citation:osha#chunk-29',
+                source_id: 'osha#chunk-29',
+                source_number: 1,
+                doc_id: 'osha',
+                chunk_id: 'chunk-29',
+                title: 'OSHA LOTO',
+              },
+            ],
+          },
+          {
+            id: 'sources:osha',
+            type: 'source_list',
+            contract: 'source_list_v1',
+            sources: [
+              { contract: 'source_locator_v1', source_id: 'osha#chunk-29', source_number: 1, doc_id: 'osha', chunk_id: 'chunk-29', title: 'OSHA LOTO' },
+              { contract: 'source_locator_v1', source_id: 'osha#chunk-30', source_number: 2, doc_id: 'osha', chunk_id: 'chunk-30', title: 'OSHA LOTO' },
+            ],
+          },
+        ],
+      },
+    }),
+    ui: baseUi({
+      headerStatus: 'Complete',
+      activeSidebarStatus: 'Complete',
+      visibleBlockTypes: ['knowledge_answer', 'source_list'],
+      visibleBlockIds: ['knowledge:osha', 'sources:osha'],
+      visibleContracts: ['knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
+      visibleBlocks: [
+        { type: 'knowledge_answer', id: 'knowledge:osha', contract: 'knowledge_answer_v1', title: 'Procedure guidance', text: 'Notify affected employees before reenergizing. [1]', buttons: ['[1]'] },
+        { type: 'source_list', id: 'sources:osha', contract: 'source_list_v1', title: 'Knowledge sources', text: 'OSHA LOTO', buttons: ['View evidence'] },
+      ],
+      sourceChips: [{ sourceId: 'osha#chunk-29', docId: 'osha', chunkId: 'chunk-29', sourceNumber: '1', title: 'OSHA LOTO', text: '[1]' }],
+      sourceDrawer: {
+        open: true,
+        view: 'pdf',
+        sourceId: 'osha#chunk-29',
+        docId: 'osha',
+        chunkId: 'chunk-29',
+        sourceNumber: '1',
+        title: 'OSHA LOTO',
+        entries: [
+          { role: 'cited', sourceId: 'osha#chunk-29', docId: 'osha', chunkId: 'chunk-29', sourceNumber: '1', title: 'OSHA LOTO', openMode: 'exact', highlightKind: 'char_range' },
+          { role: 'related', sourceId: 'osha#chunk-30', docId: 'osha', chunkId: 'chunk-30', sourceNumber: '2', title: 'OSHA LOTO', openMode: 'search', highlightKind: 'text_search' },
+        ],
+        pdf: {
+          sourceId: 'osha#chunk-29',
+          docId: 'osha',
+          chunkId: 'chunk-29',
+          sourceNumber: '1',
+          title: 'OSHA LOTO',
+          src: '/documents/osha/pdf#page=15&highlight=char_range&char_start=0&char_end=1017',
+          openMode: 'exact',
+          highlightKind: 'char_range',
+        },
+        text: 'Side evidence Source 1 OSHA LOTO Text-layer highlight available on page 15.',
+      },
+      approvalActionLabels: [],
+      visibleApprovalIds: [],
+      visibleText: 'Notify affected employees before reenergizing. Side evidence Source 1 OSHA LOTO Back to evidence',
+    }),
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      pendingApprovalId: null,
+      visibleBlockTypes: ['knowledge_answer', 'source_list'],
+      backendBlockTypes: ['knowledge_answer', 'source_list'],
+      responseContracts: ['knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
+    },
+  })
+
+  assert.equal(probe.diagnosis.classification, 'unknown')
+  assert.equal(probe.visible.sourceDrawer.view, 'pdf')
+  assert.equal(probe.visible.sourceDrawer.entries[0].role, 'cited')
+  assert.equal(probe.visible.sourceDrawer.entries[1].role, 'related')
+  assert.equal(probe.visible.sourceDrawer.pdf.sourceId, 'osha#chunk-29')
+  assert.match(probe.visible.sourceDrawer.pdf.src, /highlight=char_range/)
+})
+
 test('final response quality violations explain noisy or duplicated rendered output', () => {
   const violations = finalResponseQualityViolations({
     finalResultCardCount: 2,

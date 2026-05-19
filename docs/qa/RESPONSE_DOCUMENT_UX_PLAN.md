@@ -2060,6 +2060,8 @@ git status --short --branch
 
 Goal: Replace source-chip metadata-only interaction with a usable evidence workspace that can show source details and PDF evidence in one resizable side panel.
 
+Status: Completed 2026-05-19. Source chips now open a resizable side evidence drawer with cited/related source grouping, in-panel PDF view, back navigation, page/search fallback evidence, and no-PDF drawer fallback; Phases 34 and 35 remain planned.
+
 Problem this phase targets:
 
 - A source chip can open a plain metadata drawer even when a cited or related source has PDF/page/highlight locator metadata.
