@@ -1227,7 +1227,10 @@ test('FactoryAgentChatPanel renders RAG source block from response_document type
   assert.equal(sourceChip.textContent.trim(), '[1]')
   await click(sourceChip)
   await waitFor(() => assert.ok(view.container.querySelector('[data-source-drawer]')))
-  assert.equal(view.container.querySelector('[data-source-drawer]')?.getAttribute('data-source-drawer-view'), 'list')
+  const drawer = view.container.querySelector('[data-source-drawer]')
+  assert.equal(drawer?.getAttribute('data-source-drawer-view'), 'list')
+  assert.ok(drawer.closest('[data-chatbot-workspace]'))
+  assert.equal(drawer.closest('[data-assistant-response-card]'), null)
   assert.equal(view.container.querySelector('[data-source-drawer-entry]')?.getAttribute('data-source-role'), 'cited')
   assert.match(view.text(), /Document/)
   assert.match(view.text(), /Chunk/)
@@ -1289,7 +1292,7 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
             chunk_id: 'chunk-9',
             organization: 'Factory Safety',
             snippet: 'Page 9 covers notification timing.',
-            pdf_url: '/documents/pdf-loto.pdf',
+            pdf_url: '/documents/PDF-LOTO/pdf',
             page: 9,
           },
         ],
@@ -1308,7 +1311,7 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
             chunk_id: 'chunk-9',
             organization: 'Factory Safety',
             snippet: 'Page 9 covers notification timing.',
-            pdf_url: '/documents/pdf-loto.pdf',
+            pdf_url: '/documents/PDF-LOTO/pdf',
             page: 9,
           },
         ],
@@ -1328,18 +1331,21 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
   await click(view.container.querySelector('[data-source-chip]'))
   const link = await waitFor(() => {
     const node = view.container.querySelector('[data-source-pdf-link]')
-    assert.ok(node)
-    return node
+  assert.ok(node)
+  return node
   })
   assert.match(link.textContent, /Open PDF search on page 9/)
-  assert.match(link.getAttribute('href'), /\/documents\/pdf-loto\.pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  const drawer = view.container.querySelector('[data-source-drawer]')
+  assert.ok(drawer?.closest('[data-chatbot-workspace]'))
+  assert.equal(drawer.closest('[data-assistant-response-card]'), null)
   await click(link)
   const frame = await waitFor(() => {
     const node = view.container.querySelector('[data-source-pdf-frame]')
     assert.ok(node)
     return node
   })
-  assert.match(frame.getAttribute('src'), /\/documents\/pdf-loto\.pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  assert.match(frame.getAttribute('src'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
   assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Exact highlight unavailable/)
   await click(view.container.querySelector('[data-source-pdf-back]'))
   await waitFor(() => assert.equal(view.container.querySelector('[data-source-drawer]')?.getAttribute('data-source-drawer-view'), 'list'))
@@ -1452,7 +1458,7 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   assert.equal(link.getAttribute('data-doc-id'), 'PDF-LOTO')
   assert.equal(link.getAttribute('data-source-number'), '1')
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'char_range')
-  assert.match(link.getAttribute('href'), /\/documents\/PDF-LOTO\/pdf#page=4&highlight=char_range&char_start=120&char_end=188$/)
+  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=4&highlight=char_range&char_start=120&char_end=188$/)
   const relatedLink = view.container.querySelector('[data-source-drawer-entry][data-source-id="PDF-LOTO#text-search"] [data-source-pdf-link]')
   assert.ok(relatedLink)
   assert.equal(relatedLink.getAttribute('data-source-number'), '2')
@@ -1462,12 +1468,12 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   link = drawer.querySelector('[data-source-pdf-link]')
   assert.ok(link)
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'text_search')
-  assert.match(link.getAttribute('href'), /\/documents\/PDF-LOTO\/pdf#page=5&search=Searchable\+notification\+fallback\+text\.$/)
+  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=5&search=Searchable\+notification\+fallback\+text\.$/)
 
   drawer = await clickSource('PDF-LOTO#page-only', 'page')
   link = drawer.querySelector('[data-source-pdf-link]')
   assert.ok(link)
-  assert.match(link.getAttribute('href'), /\/documents\/PDF-LOTO\/pdf#page=6$/)
+  assert.match(link.getAttribute('href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=6$/)
 
   drawer = await clickSource('DRAWER-ONLY#chunk', 'drawer')
   assert.ok(!drawer.querySelector('[data-source-drawer-entry][data-source-role="cited"] [data-source-pdf-link]'))

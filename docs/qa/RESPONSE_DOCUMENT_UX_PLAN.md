@@ -2148,6 +2148,8 @@ git status --short --branch
 
 ### Phase 35: Final RAG Source UX Release Gate
 
+Status: Completed 2026-05-19. The integrated gate passed after fixing the shell-level side evidence panel ownership and backend-routed PDF URL resolution blockers.
+
 Goal: Run the integrated release proof after backend RAG truth cleanup, live RAG proof, source evidence drawer, and responsive layout hardening.
 
 Problem this phase targets:

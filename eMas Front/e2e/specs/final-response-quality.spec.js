@@ -302,6 +302,27 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+async function expectFactoryAgentPdfUrl(page, locator, attr, expectedPathWithFragment) {
+  const value = await locator.getAttribute(attr)
+  expect(value).toBe(`${mockBaseUrl}${expectedPathWithFragment}`)
+  const parsed = new URL(value)
+  const frontend = new URL(page.url())
+  expect(parsed.origin).toBe(new URL(mockBaseUrl).origin)
+  expect(parsed.pathname).toBe(expectedPathWithFragment.split('#')[0])
+  expect(parsed.origin === frontend.origin && /^\/documents\//.test(parsed.pathname)).toBe(false)
+}
+
+async function expectFactoryAgentPdfResponse(page, action, expectedPathWithFragment) {
+  const expectedUrl = `${mockBaseUrl}${expectedPathWithFragment.split('#')[0]}`
+  const responsePromise = page.waitForResponse((response) =>
+    response.url() === expectedUrl && response.status() === 200,
+  )
+  await action()
+  const response = await responsePromise
+  expect(response.headers()['content-type']).toMatch(/application\/pdf/i)
+  return response
+}
+
 function finalBusinessQualityExpected({
   summary,
   groups = [
@@ -854,6 +875,17 @@ test.describe('Final response quality response_document gate', () => {
     await sourceChip.click()
     const drawer = page.locator('[data-source-drawer]').first()
     await expect(drawer).toBeVisible()
+    await expect(drawer).toHaveAttribute('data-shell-evidence-panel', '')
+    await expect(page.locator('[data-response-document-root] [data-source-drawer]')).toHaveCount(0)
+    expect(await drawer.evaluate((node) => Boolean(node.closest('[data-chatbot-workspace]')))).toBe(true)
+    expect(await drawer.evaluate((node) => Boolean(node.closest('[data-assistant-response-card]')))).toBe(false)
+    const workspaceBox = await elementBox(page.locator('[data-chatbot-workspace]').first())
+    const mainBox = await elementBox(page.locator('[data-chatbot-workspace-main]').first())
+    const drawerBox = await elementBox(drawer)
+    expect(mainBox.width).toBeGreaterThan(240)
+    expect(drawerBox.width).toBeGreaterThan(260)
+    expect(mainBox.right).toBeLessThanOrEqual(drawerBox.left + 2)
+    expect(drawerBox.right).toBeLessThanOrEqual(workspaceBox.right + 2)
     await expect(drawer).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     await expect(drawer).toHaveAttribute('data-chunk-id', 'osha_3120_lockout_tagout_c0029')
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
@@ -870,21 +902,25 @@ test.describe('Final response quality response_document gate', () => {
     await expect(relatedEntry).toHaveAttribute('data-source-number', '2')
     await expect(relatedEntry).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     const pdfAction = citedEntry.locator('[data-source-pdf-link]').first()
-    await expect(pdfAction).toHaveAttribute('href', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+    const citedPdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=15&highlight=char_range&char_start=0&char_end=1017'
+    await expectFactoryAgentPdfUrl(page, pdfAction, 'href', citedPdfPath)
     await expect(pdfAction).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
     await expect(pdfAction).toHaveAttribute('data-doc-id', 'osha_3120_lockout_tagout')
     await expect(pdfAction).toHaveAttribute('data-source-number', '1')
-    await pdfAction.click()
+    await expectFactoryAgentPdfResponse(page, () => pdfAction.click(), citedPdfPath)
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
-    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('src', /\/documents\/osha_3120_lockout_tagout\/pdf#page=15&highlight=char_range&char_start=0&char_end=1017$/)
+    await expectFactoryAgentPdfUrl(page, drawer.locator('[data-source-pdf-frame]'), 'src', citedPdfPath)
     await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029')
     await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Text-layer highlight available on page 15/i)
     await drawer.locator('[data-source-pdf-back]').click()
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
     const relatedPdfAction = drawer.locator('[data-source-drawer-entry][data-source-id="osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030"] [data-source-pdf-link]').first()
-    await relatedPdfAction.click()
+    const relatedPdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=15&search=Before+lockout+or+tagout+devices+are+removed+and+energy+is+restored'
+    await expectFactoryAgentPdfUrl(page, relatedPdfAction, 'href', relatedPdfPath)
+    await expectFactoryAgentPdfResponse(page, () => relatedPdfAction.click(), relatedPdfPath)
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
     await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0030')
+    await expectFactoryAgentPdfUrl(page, drawer.locator('[data-source-pdf-frame]'), 'src', relatedPdfPath)
     await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Exact highlight unavailable/i)
     await drawer.locator('[data-source-pdf-back]').click()
     await expect(drawer).toHaveAttribute('data-source-drawer-view', 'list')
@@ -1172,7 +1208,8 @@ test.describe('Final response quality response_document gate', () => {
     await expect(drawer.locator('[data-source-drawer-snippet]')).toContainText(/Affected employees must be notified/i)
     const link = drawer.locator('[data-source-pdf-link]').first()
     await expect(link).toBeVisible()
-    await expect(link).toHaveAttribute('href', /\/documents\/osha_3120_lockout_tagout\/pdf#page=9&highlight=char_range&char_start=488&char_end=606$/)
+    const pdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=9&highlight=char_range&char_start=488&char_end=606'
+    await expectFactoryAgentPdfUrl(page, link, 'href', pdfPath)
 
     const summary = await expectTransitionCheckpoint(page, {
       checkpoint: 'Phase 29 source PDF highlight locator',

@@ -1,7 +1,7 @@
 import logger from './logger'
 import { normalizeFactoryAgentError } from './factoryAgentErrors'
 
-const FACTORY_AGENT_BASE_URL = (
+export const FACTORY_AGENT_BASE_URL = (
   import.meta.env?.VITE_FACTORY_AGENT_BASE_URL ||
   'http://127.0.0.1:8000'
 ).replace(/\/+$/, '')
@@ -18,9 +18,26 @@ export const factoryAgentStreamAuth = {
     : '',
 }
 
+export function buildFactoryAgentUrl(path) {
+  const value = String(path || '').trim()
+  if (!value) return FACTORY_AGENT_BASE_URL
+  try {
+    return new URL(value).toString()
+  } catch {
+    // Relative Factory Agent deployments usually mount the API behind /agent.
+  }
+  if (!value.startsWith('/')) return `${FACTORY_AGENT_BASE_URL}/${value}`
+  if (
+    FACTORY_AGENT_BASE_URL.startsWith('/') &&
+    (value === FACTORY_AGENT_BASE_URL || value.startsWith(`${FACTORY_AGENT_BASE_URL}/`))
+  ) {
+    return value
+  }
+  return `${FACTORY_AGENT_BASE_URL}${value}`
+}
+
 function buildUrl(path) {
-  if (!path.startsWith('/')) return `${FACTORY_AGENT_BASE_URL}/${path}`
-  return `${FACTORY_AGENT_BASE_URL}${path}`
+  return buildFactoryAgentUrl(path)
 }
 
 async function parseErrorBody(res) {

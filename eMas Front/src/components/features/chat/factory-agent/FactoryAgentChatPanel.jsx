@@ -5,7 +5,7 @@ import ActivityTimeline from './ActivityTimeline'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import FactoryAgentChatComposer from './FactoryAgentChatComposer'
 import FactoryAgentSessionSidebar from './FactoryAgentSessionSidebar'
-import ResponseDocumentRenderer from './ResponseDocumentRenderer'
+import ResponseDocumentRenderer, { SourceDrawer } from './ResponseDocumentRenderer'
 import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
 import { compactInterruptApprovalHeadline, resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
@@ -605,6 +605,7 @@ function AssistantTurnBubble({
   showResumeBanner,
   session,
   isLatestTurn,
+  onOpenSourceEvidence,
 }) {
   const responseDocumentResult = normalizeResponseDocument(turn?.responseDocument)
   const responseDocument = responseDocumentResult.document
@@ -676,6 +677,7 @@ function AssistantTurnBubble({
               showApprovalActions={showApprovalCard || showResponseDocumentApprovalActions}
               decideApproval={decideApproval}
               isDecidingApproval={isDecidingApproval}
+              onOpenSourceEvidence={onOpenSourceEvidence}
             />
           ) : (
             <>
@@ -831,6 +833,34 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
   const [editingName, setEditingName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [isDeletingSession, setIsDeletingSession] = useState(false)
+  const [sourceEvidence, setSourceEvidence] = useState(null)
+  const [sourceEvidencePdf, setSourceEvidencePdf] = useState(null)
+  const latestResponseDocumentKey = useMemo(() => {
+    const turnWithDocument = [...(turns || [])].reverse().find((turn) => turn?.responseDocument)
+    const document = turnWithDocument?.responseDocument
+    if (!document) return null
+    return `${document.document_id || document.id || turnWithDocument.id || 'response-document'}:${document.revision ?? 'unknown'}`
+  }, [turns])
+
+  const handleOpenSourceEvidence = useCallback((payload) => {
+    if (!payload?.source) return
+    setSourceEvidence({
+      source: payload.source,
+      sources: Array.isArray(payload.sources) ? payload.sources : [],
+      documentId: payload.documentId || null,
+      revision: payload.revision ?? null,
+    })
+    setSourceEvidencePdf(null)
+  }, [])
+
+  const closeSourceEvidence = useCallback(() => {
+    setSourceEvidence(null)
+    setSourceEvidencePdf(null)
+  }, [])
+
+  useEffect(() => {
+    closeSourceEvidence()
+  }, [closeSourceEvidence, latestResponseDocumentKey, session?.session_id])
 
   useEffect(() => {
     if (!chatRef.current) return
@@ -959,7 +989,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           onRetryConnection={retryConnection}
         />
 
-        <div ref={chatRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto bg-canvas px-4 py-4">
+        <div className="flex min-h-0 flex-1 bg-canvas" data-chatbot-workspace="">
+          <div className="flex min-w-0 flex-1 flex-col" data-chatbot-workspace-main="">
+            <div ref={chatRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto px-4 py-4">
           {loading && (turns?.length || 0) === 0 && messages.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-ink-subtle text-sm">
               Loading...
@@ -1054,6 +1086,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                         showResumeBanner={showResumeBanner}
                         session={session}
                         isLatestTurn={isLatestTurn}
+                        onOpenSourceEvidence={handleOpenSourceEvidence}
                       />
                     ) : null}
                   </Fragment>
@@ -1075,21 +1108,31 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
               timestamp={formatFactoryAgentTime(Date.now())}
             />
           )}
-        </div>
+            </div>
 
-        <FactoryAgentChatComposer
-          input={input}
-          onInputChange={setInput}
-          messageMode={messageMode}
-          onMessageModeChange={setMessageMode}
-          disabled={inputDisabled}
-          placeholder={placeholder}
-          canCancel={canCancel}
-          isCancelling={isCancelling}
-          isSending={isSending}
-          onCancel={handleCancel}
-          onSend={handleSend}
-        />
+            <FactoryAgentChatComposer
+              input={input}
+              onInputChange={setInput}
+              messageMode={messageMode}
+              onMessageModeChange={setMessageMode}
+              disabled={inputDisabled}
+              placeholder={placeholder}
+              canCancel={canCancel}
+              isCancelling={isCancelling}
+              isSending={isSending}
+              onCancel={handleCancel}
+              onSend={handleSend}
+            />
+          </div>
+          <SourceDrawer
+            source={sourceEvidence?.source}
+            sources={sourceEvidence?.sources || []}
+            pdfSource={sourceEvidencePdf}
+            onOpenPdf={setSourceEvidencePdf}
+            onBack={() => setSourceEvidencePdf(null)}
+            onClose={closeSourceEvidence}
+          />
+        </div>
       </div>
     </div>
   )

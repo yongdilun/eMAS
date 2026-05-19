@@ -393,9 +393,14 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
         sourceNumber: ui.sourceDrawer.pdf.sourceNumber || null,
         title: compactText(ui.sourceDrawer.pdf.title || '', 100) || null,
         src: compactText(ui.sourceDrawer.pdf.src || '', 180) || null,
+        href: compactText(ui.sourceDrawer.pdf.href || '', 180) || null,
         openMode: ui.sourceDrawer.pdf.openMode || null,
         highlightKind: ui.sourceDrawer.pdf.highlightKind || null,
+        routeOk: Boolean(ui.sourceDrawer.pdf.routeOk),
+        deadFrontendDocumentUrl: Boolean(ui.sourceDrawer.pdf.deadFrontendDocumentUrl),
       }) : null,
+      shellLevel: Boolean(ui.sourceDrawer.shellLevel),
+      insideAssistantCard: Boolean(ui.sourceDrawer.insideAssistantCard),
       text: compactText(ui.sourceDrawer.text || '', 180) || null,
     }) : null,
     forbiddenTextHits: compactArray(forbiddenTextHits(ui.visibleText || '', expected), 20),
@@ -893,7 +898,7 @@ export async function collectVisibleResponseDocumentUi(page) {
         highlightKind: node.getAttribute('data-source-highlight-kind') || null,
         text: compact(node.innerText || node.textContent || '', 40),
       }))
-    const drawer = latestRoot.querySelector('[data-source-drawer]')
+    const drawer = dialog.querySelector('[data-source-drawer]')
     const drawerEntries = drawer
       ? Array.from(drawer.querySelectorAll('[data-source-drawer-entry]')).map((node) => ({
         role: node.getAttribute('data-source-role') || null,
@@ -907,6 +912,22 @@ export async function collectVisibleResponseDocumentUi(page) {
       }))
       : []
     const pdfFrame = drawer?.querySelector('[data-source-pdf-frame]') || null
+    const pdfLink = drawer?.querySelector('[data-source-pdf-link]') || null
+    const pdfUrlInfo = (value) => {
+      const raw = String(value || '')
+      if (!raw) return { routeOk: false, deadFrontendDocumentUrl: false }
+      let parsed
+      try {
+        parsed = new URL(raw, window.location.href)
+      } catch {
+        return { routeOk: false, deadFrontendDocumentUrl: false }
+      }
+      const routeOk = /\/(?:agent\/)?documents\/[^/]+\/pdf$/.test(parsed.pathname)
+      const deadFrontendDocumentUrl = parsed.origin === window.location.origin && /^\/documents\/[^/]+\/pdf$/.test(parsed.pathname)
+      return { routeOk, deadFrontendDocumentUrl }
+    }
+    const pdfSrcInfo = pdfUrlInfo(pdfFrame?.getAttribute('src'))
+    const pdfHrefInfo = pdfUrlInfo(pdfLink?.getAttribute('href'))
     const sourceDrawer = drawer
       ? {
         open: true,
@@ -927,10 +948,15 @@ export async function collectVisibleResponseDocumentUi(page) {
             sourceNumber: pdfFrame.getAttribute('data-source-number') || null,
             title: pdfFrame.getAttribute('data-source-title') || null,
             src: pdfFrame.getAttribute('src') || null,
+            href: pdfLink?.getAttribute('href') || null,
             openMode: pdfFrame.getAttribute('data-source-open-mode') || null,
             highlightKind: pdfFrame.getAttribute('data-source-highlight-kind') || null,
+            routeOk: pdfSrcInfo.routeOk && (!pdfLink || pdfHrefInfo.routeOk),
+            deadFrontendDocumentUrl: pdfSrcInfo.deadFrontendDocumentUrl || pdfHrefInfo.deadFrontendDocumentUrl,
           }
           : null,
+        shellLevel: Boolean(drawer.closest('[data-chatbot-workspace]')),
+        insideAssistantCard: Boolean(drawer.closest('[data-assistant-response-card]')),
         text: compact(drawer.innerText || drawer.textContent || '', 220),
       }
       : null

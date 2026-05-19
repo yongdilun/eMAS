@@ -413,6 +413,32 @@ function sendJson(req, url, res, status, body, logMeta = {}) {
   res.end(JSON.stringify(body))
 }
 
+function pdfFixtureBytes(label = 'Factory Agent PDF evidence') {
+  const safeLabel = String(label).replace(/[()\\]/g, ' ')
+  const stream = `BT /F1 12 Tf 24 100 Td (${safeLabel}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 180] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${Buffer.byteLength(stream, 'utf8')} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let body = '%PDF-1.4\n'
+  const offsets = [0]
+  for (const [index, objectBody] of objects.entries()) {
+    offsets.push(Buffer.byteLength(body, 'utf8'))
+    body += `${index + 1} 0 obj\n${objectBody}\nendobj\n`
+  }
+  const xrefOffset = Buffer.byteLength(body, 'utf8')
+  body += `xref\n0 ${objects.length + 1}\n`
+  body += '0000000000 65535 f \n'
+  for (const offset of offsets.slice(1)) {
+    body += `${String(offset).padStart(10, '0')} 00000 n \n`
+  }
+  body += `trailer\n<< /Root 1 0 R /Size ${objects.length + 1} >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  return Buffer.from(body, 'utf8')
+}
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let raw = ''
@@ -548,6 +574,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     sendJson(req, url, res, 200, { ok: true })
+    return
+  }
+
+  const documentPdfMatch = url.pathname.match(/^\/documents\/([^/]+)\/pdf$/)
+  if (req.method === 'GET' && documentPdfMatch) {
+    const body = pdfFixtureBytes(`Factory Agent PDF evidence for ${decodeURIComponent(documentPdfMatch[1])}`)
+    logRequest({ req, url, status: 200 })
+    res.writeHead(200, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-Id',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${documentPdfMatch[1]}.pdf"`,
+    })
+    res.end(body)
     return
   }
 

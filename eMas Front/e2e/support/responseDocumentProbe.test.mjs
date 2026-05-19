@@ -463,9 +463,14 @@ test('semantic probe summarizes side evidence drawer and in-panel PDF state', ()
           sourceNumber: '1',
           title: 'OSHA LOTO',
           src: '/documents/osha/pdf#page=15&highlight=char_range&char_start=0&char_end=1017',
+          href: '/documents/osha/pdf#page=15&highlight=char_range&char_start=0&char_end=1017',
           openMode: 'exact',
           highlightKind: 'char_range',
+          routeOk: true,
+          deadFrontendDocumentUrl: false,
         },
+        shellLevel: true,
+        insideAssistantCard: false,
         text: 'Side evidence Source 1 OSHA LOTO Text-layer highlight available on page 15.',
       },
       approvalActionLabels: [],
@@ -488,6 +493,10 @@ test('semantic probe summarizes side evidence drawer and in-panel PDF state', ()
   assert.equal(probe.visible.sourceDrawer.entries[1].role, 'related')
   assert.equal(probe.visible.sourceDrawer.pdf.sourceId, 'osha#chunk-29')
   assert.match(probe.visible.sourceDrawer.pdf.src, /highlight=char_range/)
+  assert.equal(probe.visible.sourceDrawer.pdf.routeOk, true)
+  assert.notEqual(probe.visible.sourceDrawer.pdf.deadFrontendDocumentUrl, true)
+  assert.equal(probe.visible.sourceDrawer.shellLevel, true)
+  assert.notEqual(probe.visible.sourceDrawer.insideAssistantCard, true)
 })
 
 test('final response quality violations explain noisy or duplicated rendered output', () => {

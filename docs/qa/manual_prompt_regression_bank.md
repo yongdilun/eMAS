@@ -402,6 +402,22 @@ Phase 30 closure evidence:
 - Passed: `npm run test:e2e:seeded-oracles -- --grep "LOTO|source|RAG"` -> 18 passed.
 - Passed: `git diff --check` -> passed with line-ending warnings only.
 
+## Response Document Phase 35 Final RAG Source UX Release Gate
+
+Phase 35 closes the final manual layout/PDF blockers found after Phases 33-34.
+
+| Candidate ID | Prompt / flow class | Expected deterministic behavior | Coverage |
+|---|---|---|---|
+| `response-document-phase35-shell-side-evidence-panel` | Positive OSHA reenergizing source chip click. | The side evidence drawer is owned by the chatbot shell as a right-side workspace panel, not by the assistant response card; chat content and the evidence panel share the available chatbot width. | `FactoryAgentChatPanel.component.test.mjs`; `responseDocumentProbe.test.mjs`; `final-response-quality.spec.js::Phase 33 side evidence drawer opens PDF panel with back navigation and related source identity`. |
+| `response-document-phase35-backend-routed-pdf-panel` | In-panel PDF open for `/documents/{doc_id}/pdf`. | PDF link and iframe URLs resolve through the configured Factory Agent/API route, never a dead frontend `/documents/...` localhost route, and the mocked browser observes an `application/pdf` response from `/documents/osha_3120_lockout_tagout/pdf`. | `factoryAgentApi.buildFactoryAgentUrl`; `FactoryAgentChatPanel.component.test.mjs`; `responseDocumentProbe.js`; `final-response-quality.spec.js::Phase 33 side evidence drawer opens PDF panel with back navigation and related source identity`. |
+
+Phase 35 closure evidence:
+
+- Passed: `python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_hardcode_guardrails.py -q` -> 72 passed after setting pytest temp vars to the workspace.
+- Passed: `npm test` -> 121 passed.
+- Passed: `node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs` -> 12 passed.
+- Passed: `npm run test:e2e:response-document -- --grep "OSHA lockout|reenergizing|insufficient context|side evidence|PDF|tooltip|responsive"` -> 5 passed.
+
 ## Phase 15 Release Enforcement Note
 
 Phase 15 assigns every fixed or newly found prompt/workflow miss to a blocking lane:

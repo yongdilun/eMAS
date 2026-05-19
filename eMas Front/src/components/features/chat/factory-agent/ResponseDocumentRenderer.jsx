@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ActivityTimeline from './ActivityTimeline'
 import {
@@ -8,6 +8,7 @@ import {
   tablePresentationFromResponseRows,
 } from './responseDocumentContract.js'
 import { TablePresentation } from '../turns/TurnBlocks'
+import { buildFactoryAgentUrl } from '../../../../services/factoryAgentApi.js'
 
 const PREVIEW_LIMIT = 5
 const EVIDENCE_DRAWER_DEFAULT_WIDTH = 440
@@ -354,8 +355,14 @@ function appendPdfFragment(url, params) {
   return `${url}${separator}${fragment}`
 }
 
+function resolvePdfUrl(url) {
+  const value = safeText(url)
+  if (!value) return ''
+  return buildFactoryAgentUrl(value)
+}
+
 function sourceOpenTarget(source) {
-  const url = safeText(source?.pdf_url || source?.pdfUrl)
+  const url = resolvePdfUrl(source?.pdf_url || source?.pdfUrl)
   if (!url) return { mode: 'drawer', href: null, highlightKind: null }
   const page = safeText(source?.page)
   const charRange = normalCharRange(source?.char_range || source?.charRange)
@@ -838,7 +845,7 @@ function SourcePdfView({ source, onBack }) {
   )
 }
 
-function SourceDrawer({ source, sources = [], pdfSource, onOpenPdf, onBack, onClose }) {
+export function SourceDrawer({ source, sources = [], pdfSource, onOpenPdf, onBack, onClose }) {
   const safeSource = citationFromSource(source)
   const [drawerWidth, setDrawerWidth] = useState(EVIDENCE_DRAWER_DEFAULT_WIDTH)
   if (!safeSource) return null
@@ -874,13 +881,16 @@ function SourceDrawer({ source, sources = [], pdfSource, onOpenPdf, onBack, onCl
 
   return (
     <aside
-      role="dialog"
+      role="complementary"
       aria-label="Side evidence drawer"
-      aria-modal="false"
-      className="fixed bottom-4 right-4 top-4 z-50 flex max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-md border border-hairline bg-surface-1 text-sm shadow-2xl"
-      style={{ width: `min(${drawerWidth}px, calc(100vw - 1rem))` }}
+      className="relative z-10 flex h-full max-w-[48%] shrink-0 flex-col overflow-hidden border-l border-hairline bg-surface-1 text-sm shadow-[-12px_0_24px_rgba(15,23,42,0.08)]"
+      style={{
+        width: `min(${drawerWidth}px, 48%)`,
+        minWidth: `min(${EVIDENCE_DRAWER_MIN_WIDTH}px, 48%)`,
+      }}
       data-source-drawer=""
       data-source-evidence-drawer=""
+      data-shell-evidence-panel=""
       data-source-drawer-view={view}
       data-source-id={safeText(drawerSource.source_id) || undefined}
       data-doc-id={safeText(drawerSource.doc_id) || undefined}
@@ -1312,9 +1322,8 @@ export default function ResponseDocumentRenderer({
   showApprovalActions,
   decideApproval,
   isDecidingApproval,
+  onOpenSourceEvidence,
 }) {
-  const [activeSource, setActiveSource] = useState(null)
-  const [activePdfSource, setActivePdfSource] = useState(null)
   const [activeHoverId, setActiveHoverId] = useState(null)
   const sourceListSources = useMemo(() => collectDocumentSources(document), [document])
   const sourceLookup = useMemo(() => {
@@ -1322,10 +1331,6 @@ export default function ResponseDocumentRenderer({
     for (const source of sourceListSources) addSourceLookupEntries(lookup, source)
     return lookup
   }, [sourceListSources])
-  useEffect(() => {
-    setActiveSource(null)
-    setActivePdfSource(null)
-  }, [document?.document_id, document?.revision])
   if (!document) return null
   const activitySteps = activityStepsFromResponseDocument(document)
   const message = responseDocumentMessage(document)
@@ -1388,8 +1393,12 @@ export default function ResponseDocumentRenderer({
         activeHoverId,
         setActiveHoverId,
         onOpenSource: (source) => {
-          setActiveSource(source)
-          setActivePdfSource(null)
+          onOpenSourceEvidence?.({
+            source,
+            sources: sourceListSources,
+            documentId: document.document_id || document.id || null,
+            revision: document.revision ?? null,
+          })
         },
       })]
     })
@@ -1400,17 +1409,6 @@ export default function ResponseDocumentRenderer({
       <ActivityTimeline steps={activitySteps} />
       {message ? <div className="max-w-[72ch] whitespace-pre-wrap break-words text-ink" data-response-document-prose="">{message}</div> : null}
       {renderedBlocks}
-      <SourceDrawer
-        source={activeSource}
-        sources={sourceListSources}
-        pdfSource={activePdfSource}
-        onOpenPdf={setActivePdfSource}
-        onBack={() => setActivePdfSource(null)}
-        onClose={() => {
-          setActiveSource(null)
-          setActivePdfSource(null)
-        }}
-      />
     </div>
   )
 }

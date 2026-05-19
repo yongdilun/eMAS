@@ -42,7 +42,7 @@ Created: 2026-05-18
 | 32 | Live RAG positive and negative release proof | Done | Codex | Proved one PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through backend contracts, mocked browser, and seeded response-document paths. |
 | 33 | Side evidence drawer and PDF panel UX | Done | Codex | Replaced metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
 | 34 | Source tooltip and responsive chat width | Done | Codex | Added collision-aware source hover placement and responsive assistant response card width, with prose width constraints and browser proofs for right-edge tooltip and modal resize behavior. |
-| 35 | Final RAG source UX release gate | Planned | Codex | Run the integrated backend/frontend/browser release proof after Phases 31-34, including positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrails. |
+| 35 | Final RAG source UX release gate | Done | Codex | Integrated release proof passed after fixing the two manual blockers: shell-level side evidence panel ownership and backend-routed in-panel PDF URLs. |
 
 ## Current Blockers
 
@@ -58,7 +58,7 @@ Created: 2026-05-18
 - Phase 27 fixed the post-Phase-26 RAG display regression: LOTO document-content answers no longer show raw `:::safety`, source-backed answer bodies render once, valid response-document turns do not get legacy ChatMessage source/safety chrome, and cited RAG sources carry minimum locator metadata.
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
 - Phase 32 proved the post-cleanup RAG release behavior: the OSHA reenergizing prompt is source-backed by `osha_3120_lockout_tagout` with PDF locator metadata, and the before-starting-lockout prompt returns insufficient context with related OSHA sources checked instead of a policy fallback or machine-ID clarification.
-- Source evidence workspace is complete through Phase 34: source chips open a resizable side drawer, cited evidence appears before related supporting sources, PDF-backed sources open in-panel with back navigation, true no-PDF sources keep drawer-only evidence, hover cards stay inside visible chat/evidence bounds, and wider chatbot/modal layouts give structured response content more usable width. Phase 35 still runs the integrated release gate.
+- Source evidence workspace is complete through Phase 35: source chips open a shell-owned right-side workspace panel, cited evidence appears before related supporting sources, PDF-backed sources open in-panel through the configured Factory Agent `/documents/{doc_id}/pdf` route, true no-PDF sources keep drawer-only evidence, hover cards stay inside visible chat/evidence bounds, and wider chatbot/modal layouts give structured response content more usable width.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -2576,6 +2576,49 @@ Results:
 - Focused mocked browser Phase 34 grep: 2 passed.
 - App/test Node runners were checked after the browser run; no owned `eMas Front`, mock-server, Vite, or Playwright test Node processes remained.
 
+## Phase 35 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 35 is complete. The final release gate fixed the two manual blockers before claiming the integrated RAG/source UX proof.
+
+### Product Fix
+
+- Moved side evidence drawer ownership out of `ResponseDocumentRenderer` and into `FactoryAgentChatPanel`, so source chips open a shell-level right-side workspace panel instead of a response-card-owned overlay.
+- The chat column and evidence panel now share the chatbot workspace width; the drawer is a flex sibling of the chat/composer column and no longer lives under `[data-assistant-response-card]`.
+- PDF source links and iframes now resolve through `VITE_FACTORY_AGENT_BASE_URL`, so `/documents/{doc_id}/pdf` becomes the configured Factory Agent/API route, such as `http://127.0.0.1:<factory-agent-port>/documents/{doc_id}/pdf` in mocked/dev runs or `/agent/documents/{doc_id}/pdf` in release proxy runs.
+- Source chip behavior still opens cited source first, related sources second, in-panel PDF view, PDF back navigation, and true no-PDF fallback behavior from Phase 33.
+- Tooltip edge positioning and widened chatbot/card behavior from Phase 34 remain covered.
+
+### Regression Coverage Added
+
+- Component coverage proves the evidence drawer is shell-level, outside the assistant response card, and PDF href/src values use the Factory Agent document route.
+- Semantic probe coverage now records shell-level drawer ownership and PDF route/dead-frontend-URL evidence.
+- Mocked browser coverage proves the positive OSHA reenergizing answer opens the shell-level side evidence panel, loads the PDF iframe through the mock Factory Agent `/documents/{doc_id}/pdf` route with an `application/pdf` response, and preserves related-source PDF/back navigation.
+- Mocked browser coverage in the same grep continues to prove the negative before-starting-lockout insufficient-context answer, tooltip edge behavior, responsive chatbot width, and no hardcoded fallback source leaks.
+
+### Phase 35 Verification
+
+```powershell
+Set-Location "factory-agent"
+New-Item -ItemType Directory -Force -Path ".pytest_tmp" | Out-Null
+$env:TEMP=(Resolve-Path ".pytest_tmp").Path
+$env:TMP=$env:TEMP
+python -m pytest tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_rag_ingestion.py tests/test_response_document_contract.py tests/test_response_document_failures.py tests/test_hardcode_guardrails.py -q
+
+Set-Location "..\eMas Front"
+npm test
+node --test --test-concurrency=1 e2e/support/responseDocumentProbe.test.mjs
+npm run test:e2e:response-document -- --grep "OSHA lockout|reenergizing|insufficient context|side evidence|PDF|tooltip|responsive"
+```
+
+Results:
+
+- Backend RAG/source/guardrail lane: 72 passed.
+- Frontend unit/component lane: 121 passed.
+- Focused response-document probe lane: 12 passed.
+- Focused mocked response-document browser release grep: 5 passed.
+
 ## Commands Run
 
 ```powershell
@@ -2602,7 +2645,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 34 is complete. Phase 35 is next and should run the final integrated RAG source UX release gate. Do not mark the RAG/source UX refactor complete until Phase 35 proves the positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrail paths together.
+Phase 35 is complete. The RAG/source UX release gate is closed; any future work should be tracked as a new follow-up phase rather than reopening this release gate.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 
