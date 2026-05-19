@@ -249,7 +249,11 @@ export function apiErrorMessage(err, fallback = 'An unexpected error occurred.')
 
 export function apiErrorToastOptions(err, options = {}) {
   if (err?.type === 'AUTH') {
-    return { ...options, dedupeKey: AUTH_EXPIRED_TOAST_DEDUPE_KEY }
+    return {
+      ...options,
+      dedupeKey: AUTH_EXPIRED_TOAST_DEDUPE_KEY,
+      suppressAfterFirst: true,
+    }
   }
   return options
 }

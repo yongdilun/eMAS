@@ -52,6 +52,32 @@ async function renderToastRun(run) {
   )
 }
 
+async function renderToastSequence(sequence) {
+  const { ToastProvider, useToast } = await server.ssrLoadModule('/src/context/ToastContext.jsx')
+
+  const ToastRunner = () => {
+    const toast = useToast()
+    const [done, setDone] = React.useState(false)
+    const hasRun = React.useRef(false)
+
+    React.useEffect(() => {
+      if (hasRun.current) return
+      hasRun.current = true
+      sequence(toast, () => setDone(true))
+    }, [sequence, toast])
+
+    return done ? React.createElement('span', { 'data-test-ready': 'true' }, 'done') : null
+  }
+
+  return render(
+    React.createElement(
+      ToastProvider,
+      null,
+      React.createElement(ToastRunner),
+    ),
+  )
+}
+
 test('ToastProvider dedupes repeated session-expired errors with the same dedupe key', async () => {
   const message = 'Your session has expired. Please refresh and try again.'
   const view = await renderToastRun((toast) => {
@@ -65,18 +91,37 @@ test('ToastProvider dedupes repeated session-expired errors with the same dedupe
   await view.unmount()
 })
 
+test('ToastProvider suppresses repeated auth-expired toast after the first visible cycle', async () => {
+  const message = 'Your session has expired. Please refresh and try again.'
+  const view = await renderToastSequence((toast, done) => {
+    const id = toast.error(message, { dedupeKey: 'auth-expired', duration: 0 })
+    toast.dismiss(id)
+    setTimeout(() => {
+      toast.error(message, { dedupeKey: 'auth-expired', duration: 0 })
+      done()
+    }, 350)
+  })
+
+  await waitFor(() => {
+    assert.ok(view.container.querySelector('[data-test-ready="true"]'))
+    assert.equal(countToastMessages(view.container, message), 0)
+  })
+
+  await view.unmount()
+})
+
 test('ToastProvider allows different messages or different dedupe keys', async () => {
-  const sessionExpired = 'Your session has expired. Please refresh and try again.'
+  const validationError = 'Machine ID is required.'
   const retryLater = 'Could not save settings. Try again later.'
   const view = await renderToastRun((toast) => {
-    toast.error(sessionExpired, { dedupeKey: 'auth-expired', duration: 0 })
-    toast.error(retryLater, { dedupeKey: 'auth-expired', duration: 0 })
-    toast.error(sessionExpired, { dedupeKey: 'settings-save', duration: 0 })
+    toast.error(validationError, { dedupeKey: 'settings-save', duration: 0 })
+    toast.error(retryLater, { dedupeKey: 'settings-save', duration: 0 })
+    toast.error(validationError, { dedupeKey: 'machine-form', duration: 0 })
   })
 
   await waitFor(() => {
     assert.equal(view.container.querySelectorAll('p').length, 3)
-    assert.equal(countToastMessages(view.container, sessionExpired), 2)
+    assert.equal(countToastMessages(view.container, validationError), 2)
     assert.equal(countToastMessages(view.container, retryLater), 1)
   })
 

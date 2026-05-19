@@ -14,6 +14,7 @@ const AUTH_EXPIRED_DEDUPE_KEY = 'auth-expired'
 export function ToastProvider({ children }) {
     const [toasts, setToasts] = useState([])
     const toastsRef = useRef([])
+    const suppressedToastsRef = useRef(new Set())
     const timers = useRef({})
 
     const updateToasts = useCallback((updater) => {
@@ -38,6 +39,15 @@ export function ToastProvider({ children }) {
             const dedupeKey =
                 options.dedupeKey ??
                 (dedupeMessage === AUTH_EXPIRED_MESSAGE ? AUTH_EXPIRED_DEDUPE_KEY : null)
+            const suppressAfterFirst =
+                options.suppressAfterFirst === true ||
+                (dedupeKey === AUTH_EXPIRED_DEDUPE_KEY && dedupeMessage === AUTH_EXPIRED_MESSAGE)
+            const suppressionKey = suppressAfterFirst && dedupeKey != null
+                ? `${dedupeKey}::${dedupeMessage}`
+                : null
+            if (suppressionKey && suppressedToastsRef.current.has(suppressionKey)) {
+                return null
+            }
             if (dedupeKey != null) {
                 const existing = toastsRef.current.find((t) =>
                     !t.leaving &&
@@ -48,6 +58,7 @@ export function ToastProvider({ children }) {
             }
 
             const id = ++_uid
+            if (suppressionKey) suppressedToastsRef.current.add(suppressionKey)
             const duration = options.duration ?? (variant === 'error' ? 6000 : 4000)
             const nextToast = {
                 id,

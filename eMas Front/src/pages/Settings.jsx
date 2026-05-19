@@ -165,11 +165,11 @@ const Settings = () => {
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current()
+      handleSaveRef.current({ quietAuthToast: true })
     }, 1200)
   }, [])
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (options = {}) => {
     setSaveMsg(''); setSaveErr('')
     // PUT /settings: theme, language, notifications (bool), ai_enabled — SETTINGS_FRONTEND.md
     const payload = {
@@ -200,7 +200,9 @@ const Settings = () => {
       logger.error('Failed to save settings', err)
       const msg = apiErrorMessage(err, 'Failed to save settings.')
       setSaveErr(msg)
-      toast.error(msg, apiErrorToastOptions(err))
+      if (!(options.quietAuthToast === true && err?.type === 'AUTH')) {
+        toast.error(msg, apiErrorToastOptions(err))
+      }
     }
   }, [
     aiEnabled,
