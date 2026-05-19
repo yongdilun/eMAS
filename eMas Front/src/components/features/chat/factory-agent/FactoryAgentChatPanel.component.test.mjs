@@ -1328,12 +1328,16 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
   const view = await renderPanelWithState(chatState)
 
   await waitFor(() => assert.ok(view.container.querySelector('[data-source-chip]')))
-  const citedAnswerText = view.container.querySelector('[data-cited-answer-text]')
-  assert.ok(citedAnswerText)
+  assert.equal(view.container.querySelector('[data-cited-answer-text]'), null)
+  await click(view.container.querySelector('[data-source-chip]'))
+  const citedAnswerText = await waitFor(() => {
+    const node = view.container.querySelector('[data-cited-answer-text]')
+    assert.ok(node)
+    return node
+  })
   assert.equal(citedAnswerText.getAttribute('data-source-id'), 'PDF-LOTO#chunk-9')
   assert.equal(citedAnswerText.getAttribute('data-doc-id'), 'PDF-LOTO')
   assert.match(citedAnswerText.textContent || '', /Use page-specific LOTO notification guidance/)
-  await click(view.container.querySelector('[data-source-chip]'))
   const link = await waitFor(() => {
     const node = view.container.querySelector('[data-source-pdf-link]')
     assert.ok(node)

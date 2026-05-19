@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ActivityTimeline from './ActivityTimeline'
 import {
@@ -428,6 +428,11 @@ function sourcesReferToSame(left, right) {
   const leftKeys = new Set(sourceLookupKeys(left))
   if (!leftKeys.size) return false
   return sourceLookupKeys(right).some((key) => leftKeys.has(key))
+}
+
+function sourceMatchesKeys(source, keys) {
+  if (!keys?.size) return false
+  return sourceLookupKeys(source).some((key) => keys.has(key))
 }
 
 function hasSourceValue(value) {
@@ -977,12 +982,19 @@ function isTestDomRuntime() {
 }
 
 function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
+  const frameRef = useRef(null)
   const canvasRef = useRef(null)
   const pageRef = useRef(null)
   const [state, setState] = useState({ status: 'loading', pageNumber: null, pageCount: null, error: '' })
   const [highlightState, setHighlightState] = useState({ rects: [], kind: null, matchedText: '', width: 0, height: 0 })
+  const [zoom, setZoom] = useState(1)
   const requestedPage = clampNumber(source?.page || 1, 1, 100000)
   const requestUrl = pdfRequestUrl(pdfHref)
+  const zoomLabel = `${Math.round(zoom * 100)}%`
+
+  const updateZoom = useCallback((delta) => {
+    setZoom((current) => clampNumber(Number((current + delta).toFixed(2)), 0.5, 2.5))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -1000,8 +1012,9 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
       const page = await pdf.getPage(pageNumber)
       if (cancelled) return
       const baseViewport = page.getViewport({ scale: 1 })
-      const availableWidth = Math.max(220, (canvas.parentElement?.clientWidth || 520) - 24)
-      const scale = clampNumber(availableWidth / baseViewport.width, 0.65, 1.75)
+      const availableWidth = Math.max(220, (frameRef.current?.clientWidth || 520) - 24)
+      const fitScale = availableWidth / baseViewport.width
+      const scale = clampNumber(fitScale * zoom, 0.35, 3)
       const viewport = page.getViewport({ scale })
       const devicePixelRatio = clampNumber(window.devicePixelRatio || 1, 1, 2)
 
@@ -1066,14 +1079,14 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
       if (cancelled) return
       setState({ status: 'ready', pageNumber, pageCount: pdfDocument.numPages || null, error: '' })
 
-      if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+      if (typeof ResizeObserver !== 'undefined' && frameRef.current) {
         resizeObserver = new ResizeObserver(() => {
           window.clearTimeout(resizeTimer)
           resizeTimer = window.setTimeout(() => {
             if (!cancelled && pdfDocument) renderPage(pdfDocument, pageNumber).catch(() => {})
           }, 120)
         })
-        resizeObserver.observe(canvas.parentElement)
+        resizeObserver.observe(frameRef.current)
       }
     }
 
@@ -1095,7 +1108,7 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
       renderTask?.cancel()
       pdfDocument?.destroy?.()
     }
-  }, [requestUrl, requestedPage, source, openTarget])
+  }, [requestUrl, requestedPage, source, openTarget, zoom])
 
   const statusText = state.status === 'ready'
     ? `Rendered page ${state.pageNumber || requestedPage}${state.pageCount ? ` of ${state.pageCount}` : ''}`
@@ -1107,7 +1120,7 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
 
   return (
     <div
-      className="min-h-[28rem] flex-1 overflow-auto bg-surface-2 px-3 py-3"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-2"
       data-source-pdf-frame=""
       data-source-pdf-renderer="pdfjs"
       data-source-pdf-src={pdfHref}
@@ -1119,46 +1132,91 @@ function SourcePdfCanvasView({ source, pdfHref, openTarget }) {
       data-source-open-mode={openTarget.mode}
       data-source-highlight-kind={openTarget.highlightKind || undefined}
     >
-      <div className="mb-3 rounded-md border border-hairline bg-surface-1 px-3 py-2 text-xs text-ink-muted" data-source-pdf-status="">
-        {statusText}
-        {state.status === 'error' && state.error ? <span className="block pt-1 text-red-500">{state.error}</span> : null}
+      <div className="shrink-0 px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-surface-1 px-3 py-2 text-xs text-ink-muted">
+          <div data-source-pdf-status="">
+            {statusText}
+            {state.status === 'error' && state.error ? <span className="block pt-1 text-red-500">{state.error}</span> : null}
+          </div>
+          <div className="flex items-center gap-1" data-source-pdf-zoom-controls="">
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-hairline bg-surface-2 text-ink-muted hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+              aria-label="Zoom out PDF"
+              title="Zoom out"
+              disabled={zoom <= 0.5}
+              onClick={() => updateZoom(-0.1)}
+              data-source-pdf-zoom-out=""
+            >
+              <span className="material-symbols-outlined text-base">zoom_out</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-7 min-w-[3.25rem] items-center justify-center rounded-md border border-hairline bg-surface-2 px-2 text-[11px] font-semibold text-ink-muted hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              aria-label="Fit PDF to panel width"
+              title="Fit to panel width"
+              onClick={() => setZoom(1)}
+              data-source-pdf-fit-width=""
+              data-source-pdf-zoom-value={zoomLabel}
+            >
+              {zoomLabel}
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-hairline bg-surface-2 text-ink-muted hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+              aria-label="Zoom in PDF"
+              title="Zoom in"
+              disabled={zoom >= 2.5}
+              onClick={() => updateZoom(0.1)}
+              data-source-pdf-zoom-in=""
+            >
+              <span className="material-symbols-outlined text-base">zoom_in</span>
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="flex min-h-[24rem] justify-center">
-        <div
-          ref={pageRef}
-          className="relative max-w-full rounded-sm border border-hairline bg-white shadow-sm"
-          data-source-pdf-page=""
-        >
-          <canvas
-            ref={canvasRef}
-            className="block max-w-full bg-white"
-            data-source-pdf-canvas=""
-          />
+      <div
+        ref={frameRef}
+        className="min-h-0 flex-1 overflow-auto px-3 pb-3"
+        data-source-pdf-scroll-frame=""
+      >
+        <div className="flex min-h-full w-max min-w-full justify-center py-3">
           <div
-            className="pointer-events-none absolute left-0 top-0"
-            style={{
-              width: highlightState.width ? `${highlightState.width}px` : '100%',
-              height: highlightState.height ? `${highlightState.height}px` : '100%',
-            }}
-            data-source-pdf-highlight-layer=""
-            data-source-pdf-highlight-kind={highlightState.kind || undefined}
-            data-source-pdf-highlight-count={String(highlightState.rects.length)}
+            ref={pageRef}
+            className="relative rounded-sm border border-hairline bg-white shadow-sm"
+            data-source-pdf-page=""
           >
-            {highlightState.rects.map((rect, index) => (
-              <span
-                key={`${Math.round(rect.left)}:${Math.round(rect.top)}:${index}`}
-                className="absolute rounded-[2px] bg-yellow-300/45 ring-1 ring-yellow-500/60 mix-blend-multiply"
-                style={{
-                  left: `${rect.left}px`,
-                  top: `${rect.top}px`,
-                  width: `${rect.width}px`,
-                  height: `${Math.max(rect.height, 8)}px`,
-                }}
-                data-source-pdf-highlight=""
-                data-source-pdf-highlight-kind={highlightState.kind || undefined}
-                data-source-pdf-highlight-text={highlightState.matchedText || undefined}
-              />
-            ))}
+            <canvas
+              ref={canvasRef}
+              className="block bg-white"
+              data-source-pdf-canvas=""
+            />
+            <div
+              className="pointer-events-none absolute left-0 top-0"
+              style={{
+                width: highlightState.width ? `${highlightState.width}px` : '100%',
+                height: highlightState.height ? `${highlightState.height}px` : '100%',
+              }}
+              data-source-pdf-highlight-layer=""
+              data-source-pdf-highlight-kind={highlightState.kind || undefined}
+              data-source-pdf-highlight-count={String(highlightState.rects.length)}
+            >
+              {highlightState.rects.map((rect, index) => (
+                <span
+                  key={`${Math.round(rect.left)}:${Math.round(rect.top)}:${index}`}
+                  className="absolute rounded-[2px] bg-yellow-300/45 ring-1 ring-yellow-500/60 mix-blend-multiply"
+                  style={{
+                    left: `${rect.left}px`,
+                    top: `${rect.top}px`,
+                    width: `${rect.width}px`,
+                    height: `${Math.max(rect.height, 8)}px`,
+                  }}
+                  data-source-pdf-highlight=""
+                  data-source-pdf-highlight-kind={highlightState.kind || undefined}
+                  data-source-pdf-highlight-text={highlightState.matchedText || undefined}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -1460,7 +1518,7 @@ function SafetyNoticeBlock({ block }) {
   )
 }
 
-function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHoverId, onOpenSource }) {
+function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, activeHoverId, setActiveHoverId, onOpenSource }) {
   const blockCitations = Array.isArray(block.citations) ? block.citations : []
   const citationsById = new Map(sourceLookup)
   for (const citation of blockCitations) {
@@ -1489,8 +1547,9 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
             ? (segment.citation_ids || segment.citationIds).map((item) => safeText(item)).filter(Boolean)
             : []
           const citations = citationIds.map((id) => citationsById.get(id)).filter(Boolean)
-          const primaryCitation = citations[0] ? citationFromSource(citations[0]) : null
-          const answerText = citations.length ? (
+          const selectedCitation = citations.find((citation) => sourceMatchesKeys(citation, selectedSourceKeys))
+          const primaryCitation = selectedCitation ? citationFromSource(selectedCitation) : null
+          const answerText = selectedCitation ? (
             <mark
               className="box-decoration-clone rounded-sm bg-yellow-100 px-0.5 text-ink ring-1 ring-yellow-300/70"
               data-cited-answer-text=""
@@ -1507,7 +1566,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
             <span
               key={`${block.id}:segment:${segmentIndex}`}
               data-knowledge-answer-segment=""
-              data-cited-answer-segment={citations.length ? '' : undefined}
+              data-cited-answer-segment={selectedCitation ? '' : undefined}
               data-source-id={safeText(primaryCitation?.source_id) || undefined}
             >
               {segmentIndex > 0 ? ' ' : ''}
@@ -1695,6 +1754,7 @@ export default function ResponseDocumentRenderer({
   decideApproval,
   isDecidingApproval,
   onOpenSourceEvidence,
+  selectedSourceEvidence,
 }) {
   const [activeHoverId, setActiveHoverId] = useState(null)
   const sourceListSources = useMemo(() => collectDocumentSources(document), [document])
@@ -1703,14 +1763,29 @@ export default function ResponseDocumentRenderer({
     for (const source of sourceListSources) addSourceLookupEntries(lookup, source)
     return lookup
   }, [sourceListSources])
-  if (!document) return null
+  const selectedSource = useMemo(() => {
+    const selected = citationFromSource(selectedSourceEvidence?.source)
+    if (!selected || !document) return null
+    const documentId = document.document_id || document.id || null
+    const selectedDocumentId = selectedSourceEvidence?.documentId || null
+    if (documentId && selectedDocumentId && documentId !== selectedDocumentId) return null
+    if (
+      selectedSourceEvidence?.revision != null &&
+      document.revision != null &&
+      String(selectedSourceEvidence.revision) !== String(document.revision)
+    ) {
+      return null
+    }
+    return mergeSourceDetails(selected, sourceListSources.find((item) => sourcesReferToSame(item, selected)))
+  }, [document, selectedSourceEvidence, sourceListSources])
+  const selectedSourceKeys = useMemo(() => new Set(sourceLookupKeys(selectedSource)), [selectedSource])
   const activitySteps = activityStepsFromResponseDocument(document)
   const message = responseDocumentMessage(document)
-  const finalSummaryBlock = (document.blocks || []).find((block) =>
+  const finalSummaryBlock = (document?.blocks || []).find((block) =>
     block?.type === 'result_summary' &&
     block.status === 'completed',
   )
-  const finalMutationBlock = (document.blocks || []).find((block) =>
+  const finalMutationBlock = (document?.blocks || []).find((block) =>
     block?.type === 'mutation_result' &&
     block.status === 'completed' &&
     Array.isArray(block.groups) &&
@@ -1721,7 +1796,7 @@ export default function ResponseDocumentRenderer({
   const duplicateTableOwners = useMemo(() => {
     const approvalOwners = new Set()
     const mutationOwners = new Set()
-    for (const block of document.blocks || []) {
+    for (const block of document?.blocks || []) {
       const approvalId = block.approval_id || ''
       const operationId = block.operation_id || ''
       if (block?.type === 'approval_required') approvalOwners.add(`${approvalId}:${operationId}`)
@@ -1729,6 +1804,7 @@ export default function ResponseDocumentRenderer({
     }
     return { approvalOwners, mutationOwners }
   }, [document])
+  if (!document) return null
   const renderedBlocks = (document.blocks || [])
     .filter((block) => {
       if (!['result_table', 'record_preview'].includes(block?.type)) return true
@@ -1762,6 +1838,7 @@ export default function ResponseDocumentRenderer({
         isDecidingApproval,
         documentMessage: message,
         sourceLookup,
+        selectedSourceKeys,
         activeHoverId,
         setActiveHoverId,
         onOpenSource: (source) => {

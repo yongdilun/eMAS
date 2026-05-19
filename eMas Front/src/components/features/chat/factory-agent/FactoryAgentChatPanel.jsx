@@ -606,6 +606,7 @@ function AssistantTurnBubble({
   session,
   isLatestTurn,
   onOpenSourceEvidence,
+  activeSourceEvidence,
 }) {
   const responseDocumentResult = normalizeResponseDocument(turn?.responseDocument)
   const responseDocument = responseDocumentResult.document
@@ -678,6 +679,7 @@ function AssistantTurnBubble({
               decideApproval={decideApproval}
               isDecidingApproval={isDecidingApproval}
               onOpenSourceEvidence={onOpenSourceEvidence}
+              selectedSourceEvidence={activeSourceEvidence}
             />
           ) : (
             <>
@@ -790,7 +792,13 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
   )
 }
 
-const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useFactoryAgentChat }) => {
+const FactoryAgentChatPanel = ({
+  onClose,
+  onHeaderMouseDown,
+  isFullscreen = false,
+  onToggleFullscreen,
+  useChatState = useFactoryAgentChat,
+}) => {
   const chatRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const {
@@ -835,6 +843,13 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
   const [isDeletingSession, setIsDeletingSession] = useState(false)
   const [sourceEvidence, setSourceEvidence] = useState(null)
   const [sourceEvidencePdf, setSourceEvidencePdf] = useState(null)
+  const activeSourceEvidence = useMemo(() => {
+    if (!sourceEvidence) return null
+    return {
+      ...sourceEvidence,
+      source: sourceEvidencePdf || sourceEvidence.source,
+    }
+  }, [sourceEvidence, sourceEvidencePdf])
   const latestResponseDocumentKey = useMemo(() => {
     const turnWithDocument = [...(turns || [])].reverse().find((turn) => turn?.responseDocument)
     const document = turnWithDocument?.responseDocument
@@ -960,6 +975,21 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
             </span>
           </div>
           <div className="flex items-center gap-1">
+            {onToggleFullscreen ? (
+              <button
+                type="button"
+                onClick={onToggleFullscreen}
+                className="p-2 rounded-md hover:bg-surface-2 text-ink-subtle"
+                aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                data-ai-assistant-fullscreen-toggle=""
+                data-ai-assistant-fullscreen-state={isFullscreen ? 'fullscreen' : 'windowed'}
+              >
+                <span className="material-symbols-outlined">
+                  {isFullscreen ? 'fullscreen_exit' : 'fullscreen'}
+                </span>
+              </button>
+            ) : null}
             {onClose && (
               <button
                 type="button"
@@ -1087,6 +1117,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                         session={session}
                         isLatestTurn={isLatestTurn}
                         onOpenSourceEvidence={handleOpenSourceEvidence}
+                        activeSourceEvidence={activeSourceEvidence}
                       />
                     ) : null}
                   </Fragment>

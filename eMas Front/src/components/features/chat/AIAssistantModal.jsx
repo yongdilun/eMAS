@@ -5,6 +5,35 @@ const MIN_WIDTH = 400
 const MIN_HEIGHT = 300
 const DEFAULT_WIDTH = 900
 const DEFAULT_HEIGHT = 600
+const VIEWPORT_GAP = 8
+
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max)
+}
+
+function viewportRect() {
+    const width = typeof window === 'undefined' ? DEFAULT_WIDTH : window.innerWidth
+    const height = typeof window === 'undefined' ? DEFAULT_HEIGHT : window.innerHeight
+    return { width, height }
+}
+
+function boundedModalRect(rect) {
+    const viewport = viewportRect()
+    const maxWidth = Math.max(160, viewport.width - VIEWPORT_GAP * 2)
+    const maxHeight = Math.max(160, viewport.height - VIEWPORT_GAP * 2)
+    const minWidth = Math.min(MIN_WIDTH, maxWidth)
+    const minHeight = Math.min(MIN_HEIGHT, maxHeight)
+    const width = clamp(rect.width, minWidth, maxWidth)
+    const height = clamp(rect.height, minHeight, maxHeight)
+    const maxX = Math.max(VIEWPORT_GAP, viewport.width - width - VIEWPORT_GAP)
+    const maxY = Math.max(VIEWPORT_GAP, viewport.height - height - VIEWPORT_GAP)
+    return {
+        x: clamp(rect.x, VIEWPORT_GAP, maxX),
+        y: clamp(rect.y, VIEWPORT_GAP, maxY),
+        width,
+        height,
+    }
+}
 
 const AIAssistantModal = ({ isOpen, onClose }) => {
     const containerRef = useRef(null)
@@ -12,17 +41,23 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
     const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT })
     const [isDragging, setIsDragging] = useState(false)
     const [isResizing, setIsResizing] = useState(false)
+    const [isFullscreen, setIsFullscreen] = useState(false)
     const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 })
     const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0, edge: '' })
+    const windowedBounds = useRef({ position: { x: 0, y: 0 }, size: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT } })
 
     const fitToViewport = useCallback(() => {
-        const w = Math.min(DEFAULT_WIDTH, window.innerWidth - 32)
-        const h = Math.min(DEFAULT_HEIGHT, window.innerHeight - 48)
-        setSize({ width: w, height: h })
-        setPosition({
-            x: Math.max(0, (window.innerWidth - w) / 2),
-            y: Math.max(0, (window.innerHeight - h) / 2),
+        const viewport = viewportRect()
+        const w = Math.min(DEFAULT_WIDTH, viewport.width - VIEWPORT_GAP * 2)
+        const h = Math.min(DEFAULT_HEIGHT, viewport.height - VIEWPORT_GAP * 2)
+        const next = boundedModalRect({
+            x: (viewport.width - w) / 2,
+            y: (viewport.height - h) / 2,
+            width: w,
+            height: h,
         })
+        setSize({ width: next.width, height: next.height })
+        setPosition({ x: next.x, y: next.y })
     }, [])
 
     useEffect(() => {
@@ -37,6 +72,7 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
     }, [fitToViewport, isDragging, isOpen, isResizing])
 
     const handleMouseDown = useCallback((e) => {
+        if (isFullscreen) return
         if (!e.target.closest('[data-drag-handle]')) return
         e.preventDefault()
         setIsDragging(true)
@@ -46,9 +82,10 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
             left: position.x,
             top: position.y,
         }
-    }, [position])
+    }, [isFullscreen, position])
 
     const handleResizeMouseDown = useCallback((e, edge) => {
+        if (isFullscreen) return
         e.preventDefault()
         e.stopPropagation()
         setIsResizing(true)
@@ -61,17 +98,40 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
             top: position.y,
             edge,
         }
-    }, [size, position])
+    }, [isFullscreen, size, position])
+
+    const toggleFullscreen = useCallback(() => {
+        if (isFullscreen) {
+            const restored = windowedBounds.current
+            const next = boundedModalRect({
+                x: restored.position.x,
+                y: restored.position.y,
+                width: restored.size.width,
+                height: restored.size.height,
+            })
+            setSize({ width: next.width, height: next.height })
+            setPosition({ x: next.x, y: next.y })
+            setIsFullscreen(false)
+            return
+        }
+        windowedBounds.current = { position, size }
+        setIsDragging(false)
+        setIsResizing(false)
+        setIsFullscreen(true)
+    }, [isFullscreen, position, size])
 
     useEffect(() => {
         if (!isDragging) return
         const onMove = (e) => {
             const dx = e.clientX - dragStart.current.x
             const dy = e.clientY - dragStart.current.y
-            setPosition({
-                x: Math.max(0, dragStart.current.left + dx),
-                y: Math.max(0, dragStart.current.top + dy),
+            const next = boundedModalRect({
+                x: dragStart.current.left + dx,
+                y: dragStart.current.top + dy,
+                width: size.width,
+                height: size.height,
             })
+            setPosition({ x: next.x, y: next.y })
         }
         const onUp = () => setIsDragging(false)
         document.addEventListener('mousemove', onMove)
@@ -80,7 +140,7 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
             document.removeEventListener('mousemove', onMove)
             document.removeEventListener('mouseup', onUp)
         }
-    }, [isDragging])
+    }, [isDragging, size])
 
     useEffect(() => {
         if (!isResizing) return
@@ -102,8 +162,9 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
                 newH = Math.max(MIN_HEIGHT, h - dy)
                 newY = top + (h - newH)
             }
-            setSize({ width: newW, height: newH })
-            setPosition({ x: Math.max(0, newX), y: Math.max(0, newY) })
+            const next = boundedModalRect({ x: newX, y: newY, width: newW, height: newH })
+            setSize({ width: next.width, height: next.height })
+            setPosition({ x: next.x, y: next.y })
         }
         const onUp = () => setIsResizing(false)
         document.addEventListener('mousemove', onMove)
@@ -125,58 +186,72 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
         >
             <div
                 ref={containerRef}
-                className="pointer-events-auto absolute flex flex-col overflow-hidden rounded-xl border-2 border-hairline-strong bg-surface-1 dark:border-hairline-tertiary resize-container"
+                className={`pointer-events-auto absolute flex flex-col overflow-hidden bg-surface-1 dark:border-hairline-tertiary resize-container ${
+                    isFullscreen ? 'rounded-none border-0' : 'rounded-xl border-2 border-hairline-strong'
+                }`}
                 style={{
-                    left: position.x,
-                    top: position.y,
-                    width: size.width,
-                    height: size.height,
+                    left: isFullscreen ? 0 : position.x,
+                    top: isFullscreen ? 0 : position.y,
+                    width: isFullscreen ? '100vw' : size.width,
+                    height: isFullscreen ? '100dvh' : size.height,
+                    maxWidth: '100vw',
+                    maxHeight: '100dvh',
                     cursor: isDragging ? 'grabbing' : undefined,
                 }}
                 data-ai-assistant-modal-window=""
+                data-ai-assistant-fullscreen={isFullscreen ? 'true' : 'false'}
             >
-                <FactoryAgentChatPanel onClose={onClose} onHeaderMouseDown={handleMouseDown} />
+                <FactoryAgentChatPanel
+                    onClose={onClose}
+                    onHeaderMouseDown={handleMouseDown}
+                    isFullscreen={isFullscreen}
+                    onToggleFullscreen={toggleFullscreen}
+                />
                 {/* Resize handles - 4 edges + 4 corners */}
-                <div
-                    data-resize="n"
-                    className="absolute left-0 right-0 top-0 h-1 cursor-ns-resize hover:bg-primary/20 transition-colors z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'n')}
-                />
-                <div
-                    data-resize="s"
-                    className="absolute left-0 right-0 bottom-0 h-1 cursor-ns-resize hover:bg-primary/20 transition-colors z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 's')}
-                />
-                <div
-                    data-resize="e"
-                    className="absolute right-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/20 transition-colors z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'e')}
-                />
-                <div
-                    data-resize="w"
-                    className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/20 transition-colors z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'w')}
-                />
-                <div
-                    data-resize="nw"
-                    className="absolute left-0 top-0 w-3 h-3 cursor-nw-resize hover:bg-primary/15 rounded-br z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'nw')}
-                />
-                <div
-                    data-resize="ne"
-                    className="absolute right-0 top-0 w-3 h-3 cursor-ne-resize hover:bg-primary/15 rounded-bl z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'ne')}
-                />
-                <div
-                    data-resize="sw"
-                    className="absolute left-0 bottom-0 w-3 h-3 cursor-sw-resize hover:bg-primary/15 rounded-tr z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'sw')}
-                />
-                <div
-                    data-resize="se"
-                    className="absolute right-0 bottom-0 w-3 h-3 cursor-se-resize hover:bg-primary/15 rounded-tl z-10"
-                    onMouseDown={(e) => handleResizeMouseDown(e, 'se')}
-                />
+                {!isFullscreen ? (
+                    <>
+                        <div
+                            data-resize="n"
+                            className="absolute left-0 right-0 top-0 h-1 cursor-ns-resize hover:bg-primary/20 transition-colors z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'n')}
+                        />
+                        <div
+                            data-resize="s"
+                            className="absolute left-0 right-0 bottom-0 h-1 cursor-ns-resize hover:bg-primary/20 transition-colors z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 's')}
+                        />
+                        <div
+                            data-resize="e"
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/20 transition-colors z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'e')}
+                        />
+                        <div
+                            data-resize="w"
+                            className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/20 transition-colors z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'w')}
+                        />
+                        <div
+                            data-resize="nw"
+                            className="absolute left-0 top-0 w-3 h-3 cursor-nw-resize hover:bg-primary/15 rounded-br z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'nw')}
+                        />
+                        <div
+                            data-resize="ne"
+                            className="absolute right-0 top-0 w-3 h-3 cursor-ne-resize hover:bg-primary/15 rounded-bl z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'ne')}
+                        />
+                        <div
+                            data-resize="sw"
+                            className="absolute left-0 bottom-0 w-3 h-3 cursor-sw-resize hover:bg-primary/15 rounded-tr z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'sw')}
+                        />
+                        <div
+                            data-resize="se"
+                            className="absolute right-0 bottom-0 w-3 h-3 cursor-se-resize hover:bg-primary/15 rounded-tl z-10"
+                            onMouseDown={(e) => handleResizeMouseDown(e, 'se')}
+                        />
+                    </>
+                ) : null}
             </div>
         </div>
     )
