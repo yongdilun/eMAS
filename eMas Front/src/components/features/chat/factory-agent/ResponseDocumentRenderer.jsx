@@ -1539,7 +1539,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, activeH
       blockId={block.id}
       contract={block.contract || 'knowledge_answer_v1'}
     >
-      <div className="mt-1 max-w-[72ch] whitespace-pre-wrap break-words text-sm text-ink" data-knowledge-answer="">
+      <div className="mt-1 w-full max-w-none whitespace-pre-wrap break-words text-sm text-ink" data-knowledge-answer="">
         {segments.map((segment, segmentIndex) => {
           const text = safeText(segment.text)
           if (!text) return null
@@ -1551,7 +1551,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, activeH
           const primaryCitation = selectedCitation ? citationFromSource(selectedCitation) : null
           const answerText = selectedCitation ? (
             <mark
-              className="box-decoration-clone rounded-sm bg-yellow-100 px-0.5 text-ink ring-1 ring-yellow-300/70"
+              className="box-decoration-clone rounded-sm bg-amber-100 px-0.5 text-amber-950 ring-1 ring-amber-300/70 dark:bg-primary/20 dark:text-ink dark:ring-primary/45"
               data-cited-answer-text=""
               data-source-id={safeText(primaryCitation?.source_id) || undefined}
               data-doc-id={safeText(primaryCitation?.doc_id) || undefined}
