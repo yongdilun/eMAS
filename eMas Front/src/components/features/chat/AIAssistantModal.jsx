@@ -133,6 +133,7 @@ const AIAssistantModal = ({ isOpen, onClose }) => {
                     height: size.height,
                     cursor: isDragging ? 'grabbing' : undefined,
                 }}
+                data-ai-assistant-modal-window=""
             >
                 <FactoryAgentChatPanel onClose={onClose} onHeaderMouseDown={handleMouseDown} />
                 {/* Resize handles - 4 edges + 4 corners */}

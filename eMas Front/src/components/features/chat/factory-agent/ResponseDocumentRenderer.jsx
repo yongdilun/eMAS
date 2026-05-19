@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ActivityTimeline from './ActivityTimeline'
 import {
   activityStepsFromResponseDocument,
@@ -12,6 +13,10 @@ const PREVIEW_LIMIT = 5
 const EVIDENCE_DRAWER_DEFAULT_WIDTH = 440
 const EVIDENCE_DRAWER_MIN_WIDTH = 320
 const EVIDENCE_DRAWER_MAX_WIDTH = 720
+const SOURCE_TOOLTIP_WIDTH = 288
+const SOURCE_TOOLTIP_MIN_WIDTH = 180
+const SOURCE_TOOLTIP_EDGE_GAP = 8
+const SOURCE_TOOLTIP_OFFSET = 6
 const TECHNICAL_REDACTION_RE = /\b(api[_-]?key|authorization|bearer|password|secret|token)\b\s*[:=]?\s*[^\s,;]+/gi
 const SAFETY_ADMONITION_RE = /(?:^|\n)[ \t]*:::\s*safety\b[\s\S]*?(?:\n[ \t]*:::[ \t]*(?=\n|$)|$)/gi
 const FOOTNOTE_DEFINITION_RE = /^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*/gm
@@ -240,7 +245,7 @@ function CompactCard({ title, children, tone = 'default', blockType = null, bloc
       : 'border-hairline bg-surface-1'
   return (
     <div
-      className={`mt-3 min-w-0 max-w-full rounded-md border px-3 py-3 text-sm ${toneClass}`}
+      className={`mt-3 w-full min-w-0 max-w-full rounded-md border px-3 py-3 text-sm ${toneClass}`}
       data-response-block-type={blockType || undefined}
       data-response-block-id={blockId || undefined}
       data-response-contract={safeText(contract) || undefined}
@@ -485,25 +490,190 @@ function sourcePdfEvidenceText(source, openTarget = sourceOpenTarget(source)) {
   return 'PDF locator unavailable. Showing source metadata and snippet evidence.'
 }
 
-function SourceHoverCard({ source }) {
-  if (!source) return null
-  const location = sourceLocationLabel(source)
+function rectFromElement(element) {
+  if (!element?.getBoundingClientRect) return null
+  const rect = element.getBoundingClientRect()
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
+function intersectRects(leftRect, rightRect) {
+  const left = Math.max(leftRect.left, rightRect.left)
+  const top = Math.max(leftRect.top, rightRect.top)
+  const right = Math.min(leftRect.right, rightRect.right)
+  const bottom = Math.min(leftRect.bottom, rightRect.bottom)
+  if (right <= left || bottom <= top) return leftRect
+  return { left, top, right, bottom, width: right - left, height: bottom - top }
+}
+
+function tooltipBoundaryForAnchor(anchor) {
+  const viewport = {
+    left: SOURCE_TOOLTIP_EDGE_GAP,
+    top: SOURCE_TOOLTIP_EDGE_GAP,
+    right: Math.max(SOURCE_TOOLTIP_EDGE_GAP, window.innerWidth - SOURCE_TOOLTIP_EDGE_GAP),
+    bottom: Math.max(SOURCE_TOOLTIP_EDGE_GAP, window.innerHeight - SOURCE_TOOLTIP_EDGE_GAP),
+  }
+  const container = anchor?.closest?.('[data-source-drawer]')
+    || anchor?.closest?.('[data-response-document-root]')
+    || anchor?.closest?.('[role="dialog"]')
+  const containerRect = rectFromElement(container)
+  if (!containerRect) return { ...viewport, width: viewport.right - viewport.left, height: viewport.bottom - viewport.top }
+  const bounded = intersectRects(viewport, containerRect)
+  return { ...bounded, width: bounded.right - bounded.left, height: bounded.bottom - bounded.top }
+}
+
+function clampPlacement(value, min, max) {
+  if (max < min) return min
+  return Math.min(max, Math.max(min, value))
+}
+
+function placementFits(placement, bounds) {
   return (
-    <span
+    placement.left >= bounds.left &&
+    placement.top >= bounds.top &&
+    placement.left + placement.width <= bounds.right &&
+    placement.top + placement.height <= bounds.bottom
+  )
+}
+
+function placementOverflow(placement, bounds) {
+  return (
+    Math.max(bounds.left - placement.left, 0) +
+    Math.max(placement.left + placement.width - bounds.right, 0) +
+    Math.max(bounds.top - placement.top, 0) +
+    Math.max(placement.top + placement.height - bounds.bottom, 0)
+  )
+}
+
+function sourceTooltipPlacement(anchorRect, tooltipSize, bounds) {
+  const placements = [
+    {
+      placement: 'bottom-right',
+      left: anchorRect.left,
+      top: anchorRect.bottom + SOURCE_TOOLTIP_OFFSET,
+    },
+    {
+      placement: 'bottom-left',
+      left: anchorRect.right - tooltipSize.width,
+      top: anchorRect.bottom + SOURCE_TOOLTIP_OFFSET,
+    },
+    {
+      placement: 'top-right',
+      left: anchorRect.left,
+      top: anchorRect.top - tooltipSize.height - SOURCE_TOOLTIP_OFFSET,
+    },
+    {
+      placement: 'top-left',
+      left: anchorRect.right - tooltipSize.width,
+      top: anchorRect.top - tooltipSize.height - SOURCE_TOOLTIP_OFFSET,
+    },
+  ].map((placement) => ({ ...placement, ...tooltipSize }))
+
+  const exact = placements.find((placement) => placementFits(placement, bounds))
+  if (exact) return exact
+
+  const fallback = [...placements].sort((leftPlacement, rightPlacement) => (
+    placementOverflow(leftPlacement, bounds) - placementOverflow(rightPlacement, bounds)
+  ))[0] || placements[0]
+  return {
+    ...fallback,
+    placement: `${fallback.placement}-clamped`,
+    left: clampPlacement(fallback.left, bounds.left, bounds.right - tooltipSize.width),
+    top: clampPlacement(fallback.top, bounds.top, bounds.bottom - tooltipSize.height),
+  }
+}
+
+function SourceHoverCard({ source, anchorRef }) {
+  const tooltipRef = useRef(null)
+  const [position, setPosition] = useState({
+    left: 0,
+    top: 0,
+    width: SOURCE_TOOLTIP_WIDTH,
+    maxHeight: 320,
+    placement: 'measuring',
+    visibility: 'hidden',
+  })
+  const location = source ? sourceLocationLabel(source) : null
+
+  useLayoutEffect(() => {
+    if (!source) return undefined
+    const anchor = anchorRef?.current
+    const tooltip = tooltipRef.current
+    if (!anchor || !tooltip) return undefined
+
+    const updatePosition = () => {
+      const anchorRect = rectFromElement(anchor)
+      if (!anchorRect) return
+      const bounds = tooltipBoundaryForAnchor(anchor)
+      const width = Math.max(
+        Math.min(SOURCE_TOOLTIP_WIDTH, bounds.width),
+        Math.min(SOURCE_TOOLTIP_MIN_WIDTH, bounds.width),
+      )
+      const maxHeight = Math.max(0, bounds.height)
+      tooltip.style.width = `${width}px`
+      tooltip.style.maxHeight = `${maxHeight}px`
+      const tooltipRect = rectFromElement(tooltip) || { height: 0 }
+      const next = sourceTooltipPlacement(
+        anchorRect,
+        { width, height: tooltipRect.height },
+        bounds,
+      )
+      setPosition({
+        left: next.left,
+        top: next.top,
+        width,
+        maxHeight,
+        placement: next.placement,
+        visibility: 'visible',
+      })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [anchorRef, source])
+
+  if (!source || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div
+      ref={tooltipRef}
       role="tooltip"
-      className="absolute left-0 top-full z-20 mt-1 w-72 max-w-[min(18rem,80vw)] rounded-md border border-hairline bg-surface-1 px-3 py-2 text-left text-[11px] font-normal text-ink shadow-lg"
+      className="fixed z-50 block rounded-md border border-hairline bg-surface-1 px-3 py-2 text-left text-[11px] font-normal text-ink shadow-lg"
+      style={{
+        display: 'block',
+        left: position.left,
+        top: position.top,
+        width: position.width,
+        maxHeight: position.maxHeight,
+        overflowY: 'auto',
+        visibility: position.visibility,
+      }}
       data-source-chip-hover=""
+      data-source-chip-hover-placement={position.placement}
     >
       <span className="block font-semibold text-ink">{safeText(source.title) || 'Source'}</span>
       {source.organization ? <span className="mt-0.5 block text-ink-muted">{source.organization}</span> : null}
       {location ? <span className="mt-1 block text-ink-subtle">{location}</span> : null}
       {source.snippet ? <span className="mt-1.5 block text-ink-muted">{source.snippet}</span> : null}
-    </span>
+    </div>,
+    document.body,
   )
 }
 
 function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSource }) {
   const source = citationFromSource(citation)
+  const chipRef = useRef(null)
   if (!source) return null
   const id = citationKey(source) || `citation:${index + 1}`
   const label = `[${source.source_number || index + 1}]`
@@ -511,6 +681,7 @@ function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSo
   return (
     <span className="relative inline-flex align-baseline">
       <button
+        ref={chipRef}
         type="button"
         className="mx-1 inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-hairline bg-surface-2 px-1.5 text-[11px] font-semibold leading-none text-primary hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-primary/30"
         aria-label={`Open source ${source.source_number || index + 1}`}
@@ -530,7 +701,7 @@ function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSo
       >
         {label}
       </button>
-      {activeHoverId === id ? <SourceHoverCard source={source} /> : null}
+      {activeHoverId === id ? <SourceHoverCard source={source} anchorRef={chipRef} /> : null}
     </span>
   )
 }
@@ -947,7 +1118,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, activeHoverId, setActiveHov
       blockId={block.id}
       contract={block.contract || 'knowledge_answer_v1'}
     >
-      <div className="mt-1 whitespace-pre-wrap break-words text-sm text-ink" data-knowledge-answer="">
+      <div className="mt-1 max-w-[72ch] whitespace-pre-wrap break-words text-sm text-ink" data-knowledge-answer="">
         {segments.map((segment, segmentIndex) => {
           const text = safeText(segment.text)
           if (!text) return null
@@ -1227,7 +1398,7 @@ export default function ResponseDocumentRenderer({
   return (
     <div className="min-w-0 max-w-full" data-response-document-root="">
       <ActivityTimeline steps={activitySteps} />
-      {message ? <div className="whitespace-pre-wrap break-words text-ink">{message}</div> : null}
+      {message ? <div className="max-w-[72ch] whitespace-pre-wrap break-words text-ink" data-response-document-prose="">{message}</div> : null}
       {renderedBlocks}
       <SourceDrawer
         source={activeSource}

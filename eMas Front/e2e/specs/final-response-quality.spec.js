@@ -174,6 +174,59 @@ async function expectNoResponseDocumentOverflow(page) {
   expect(offenders).toEqual([])
 }
 
+async function elementBox(locator) {
+  return locator.evaluate((node) => {
+    const rect = node.getBoundingClientRect()
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    }
+  })
+}
+
+async function sourceTooltipMetrics(tooltipLocator) {
+  return tooltipLocator.evaluate((tooltip) => {
+    const roots = Array.from(document.querySelectorAll('[data-response-document-root]'))
+    const root = tooltip.closest('[data-response-document-root]') || roots[roots.length - 1]
+    if (!root) return null
+    const toBox = (node) => {
+      const rect = node.getBoundingClientRect()
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      }
+    }
+    return {
+      placement: tooltip.getAttribute('data-source-chip-hover-placement'),
+      tooltip: toBox(tooltip),
+      container: toBox(root),
+      viewport: {
+        left: 0,
+        top: 0,
+        right: window.innerWidth,
+        bottom: window.innerHeight,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+    }
+  })
+}
+
+function expectBoxInside(inner, outer, label, tolerance = 1.5) {
+  expect(inner.left, `${label} left edge`).toBeGreaterThanOrEqual(outer.left - tolerance)
+  expect(inner.top, `${label} top edge`).toBeGreaterThanOrEqual(outer.top - tolerance)
+  expect(inner.right, `${label} right edge`).toBeLessThanOrEqual(outer.right + tolerance)
+  expect(inner.bottom, `${label} bottom edge`).toBeLessThanOrEqual(outer.bottom + tolerance)
+}
+
 async function expandActivity(page, label) {
   const activity = page.getByRole('button', { name: new RegExp(label, 'i') }).last()
   await expect(activity).toBeVisible()
@@ -898,6 +951,72 @@ test.describe('Final response quality response_document gate', () => {
     expect(relatedSource?.doc_id).toBe('osha_3120_lockout_tagout')
     expect(relatedSource?.title).toBe(citation.title)
     expect(JSON.stringify(snapshot.response_document)).not.toMatch(/loto_notification_requirement|LOTO Notification Requirements/i)
+  })
+
+  test('Phase 34 response_document source chip tooltip stays inside chat width at the right edge on small screens', async ({ page }) => {
+    test.setTimeout(45_000)
+    await page.setViewportSize({ width: 430, height: 760 })
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentOshaReenergizingPrompt)
+
+    await expect(page.getByText(/Before reenergizing, notify affected employees/i).first()).toBeVisible()
+    const sourceChip = page.locator('[data-source-chip][data-source-id="osha_3120_lockout_tagout#osha_3120_lockout_tagout_c0029"]').first()
+    await expect(sourceChip).toBeVisible()
+    await sourceChip.evaluate((chip) => {
+      const wrapper = chip.parentElement
+      if (!wrapper) return
+      wrapper.style.display = 'flex'
+      wrapper.style.justifyContent = 'flex-end'
+      wrapper.style.width = '100%'
+    })
+    await expect.poll(async () => sourceChip.evaluate((chip) => {
+      const root = chip.closest('[data-response-document-root]')
+      if (!root) return 999999
+      const chipRect = chip.getBoundingClientRect()
+      const rootRect = root.getBoundingClientRect()
+      const distance = rootRect.right - chipRect.right
+      return distance >= 0 ? distance : 999999
+    })).toBeLessThan(28)
+
+    await sourceChip.hover()
+    const tooltip = page.locator('[data-source-chip-hover]').filter({ hasText: 'Control of Hazardous Energy Lockout/Tagout' }).first()
+    await expect(tooltip).toBeVisible()
+    await expect(tooltip).toHaveAttribute('data-source-chip-hover-placement', /bottom-left|top-left|clamped/)
+    const metrics = await sourceTooltipMetrics(tooltip)
+    if (!metrics) throw new Error('Source tooltip metrics were not available')
+    expectBoxInside(metrics.tooltip, metrics.container, 'source chip tooltip in chat container')
+    expectBoxInside(metrics.tooltip, metrics.viewport, 'source chip tooltip in viewport')
+  })
+
+  test('Phase 34 response_document responsive chatbot resize increases assistant card width', async ({ page }) => {
+    test.setTimeout(45_000)
+    await page.setViewportSize({ width: 1500, height: 920 })
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentCascadePrompt)
+
+    const modal = page.locator('[data-ai-assistant-modal-window]').first()
+    const responseCard = page.locator('[data-response-block-type="approval_required"]').first()
+    await expect(responseCard).toBeVisible()
+    const initialModal = await elementBox(modal)
+    const initialCard = await elementBox(responseCard)
+    const handle = page.locator('[data-resize="e"]').first()
+    const handleBox = await handle.boundingBox()
+    if (!handleBox) throw new Error('East resize handle was not measurable')
+
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 360, handleBox.y + handleBox.height / 2, { steps: 8 })
+    await page.mouse.up()
+
+    await expect.poll(async () => {
+      const box = await elementBox(modal)
+      return box.width
+    }).toBeGreaterThan(initialModal.width + 240)
+
+    const widenedCard = await elementBox(responseCard)
+    expect(widenedCard.width).toBeGreaterThan(initialCard.width + 180)
+    const prose = await elementBox(page.locator('[data-response-document-prose]').first())
+    expect(prose.width).toBeLessThan(widenedCard.width - 80)
   })
 
   test('Phase 32 negative OSHA lockout before-starting notification returns insufficient context without machine ID', async ({ page }, testInfo) => {

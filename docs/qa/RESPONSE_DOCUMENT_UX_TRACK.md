@@ -41,7 +41,7 @@ Created: 2026-05-18
 | 31 | Backend RAG evidence truth cleanup | Done | Codex | Removed hardcoded runtime policy fallbacks/synthetic sources, required insufficient-context behavior for unsupported safety claims, stabilized source numbering, and added backend hardcode/citation guardrails. |
 | 32 | Live RAG positive and negative release proof | Done | Codex | Proved one PDF-backed OSHA reenergizing answer and one honest insufficient-context before-starting-lockout answer through backend contracts, mocked browser, and seeded response-document paths. |
 | 33 | Side evidence drawer and PDF panel UX | Done | Codex | Replaced metadata-only source interaction with a resizable side evidence drawer, cited/related source grouping, in-panel PDF view, back navigation, and no-PDF fallback. |
-| 34 | Source tooltip and responsive chat width | Planned | Codex | Fix source-hover collision near edges and make assistant response cards grow with wider chatbot/modal layouts while preserving readable prose widths. |
+| 34 | Source tooltip and responsive chat width | Done | Codex | Added collision-aware source hover placement and responsive assistant response card width, with prose width constraints and browser proofs for right-edge tooltip and modal resize behavior. |
 | 35 | Final RAG source UX release gate | Planned | Codex | Run the integrated backend/frontend/browser release proof after Phases 31-34, including positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrails. |
 
 ## Current Blockers
@@ -58,7 +58,7 @@ Created: 2026-05-18
 - Phase 27 fixed the post-Phase-26 RAG display regression: LOTO document-content answers no longer show raw `:::safety`, source-backed answer bodies render once, valid response-document turns do not get legacy ChatMessage source/safety chrome, and cited RAG sources carry minimum locator metadata.
 - Phase 30 reingested both local RAG stores from `rag_sources/00_metadata_templates/source_register.json`; current LOTO vector/BM25 chunks now carry source id, chunk id, snippet, page, safe PDF URL, text-search, and char-range metadata without raw `file_path`.
 - Phase 32 proved the post-cleanup RAG release behavior: the OSHA reenergizing prompt is source-backed by `osha_3120_lockout_tagout` with PDF locator metadata, and the before-starting-lockout prompt returns insufficient context with related OSHA sources checked instead of a policy fallback or machine-ID clarification.
-- Source evidence workspace is complete for Phase 33: source chips open a resizable side drawer, cited evidence appears before related supporting sources, PDF-backed sources open in-panel with back navigation, and true no-PDF sources keep drawer-only evidence. Phase 34 still fixes hover collision and responsive chat width; Phase 35 still runs the integrated release gate.
+- Source evidence workspace is complete through Phase 34: source chips open a resizable side drawer, cited evidence appears before related supporting sources, PDF-backed sources open in-panel with back navigation, true no-PDF sources keep drawer-only evidence, hover cards stay inside visible chat/evidence bounds, and wider chatbot/modal layouts give structured response content more usable width. Phase 35 still runs the integrated release gate.
 - Existing `PresentationResponse` remains in the API only for compatibility snapshots where `response_document` is absent.
 - Real LangGraph and seeded suites remain broader release gates; focused response-document mocked browser coverage is now the fast UX lane.
 
@@ -2539,6 +2539,43 @@ Results:
 - First direct Playwright command attempts hung in webServer startup/reuse before test execution; recent Node test server processes were stopped, the underlying jsdom assertion memory blow-up was fixed, and the matching browser tests passed once servers were already healthy.
 - `git diff --check`: passed with line-ending warnings only.
 
+## Phase 34 Implementation Notes
+
+Date: 2026-05-19
+
+Phase 34 is complete. The remaining layout work is isolated to frontend response-document/chat surfaces and does not change backend RAG behavior or the side evidence drawer contract.
+
+### Product Fix
+
+- Source-chip hover cards now measure their trigger and visible chat/evidence boundary before placement.
+- Tooltip placement prefers bottom-right when it fits, then chooses the least-overflowing safe fallback and clamps inside the visible boundary.
+- Hover cards render outside clipping contexts while still using the chip's chat/evidence container for collision bounds.
+- Assistant response cards now use the full available chat/modal width instead of the previous narrow assistant cap.
+- Plain prose keeps a readable `72ch` max width, while structured response-document cards, approvals, tables, source evidence, and PDF panels can use wider space.
+
+### Regression Coverage Added
+
+- Mocked browser coverage for a right-edge source chip on a small viewport proving the hover card remains inside the chat container and viewport.
+- Mocked browser coverage for widening the chatbot/modal and proving the assistant response/card width grows.
+
+### Phase 34 Verification
+
+```powershell
+Set-Location "eMas Front"
+npm test
+npm run test:e2e:response-document -- --grep "tooltip|responsive|resize|source chip|chat width"
+
+Set-Location ".."
+git diff --check
+git status --short --branch
+```
+
+Results:
+
+- Frontend unit/component lane: 121 passed.
+- Focused mocked browser Phase 34 grep: 2 passed.
+- App/test Node runners were checked after the browser run; no owned `eMas Front`, mock-server, Vite, or Playwright test Node processes remained.
+
 ## Commands Run
 
 ```powershell
@@ -2565,7 +2602,7 @@ rg -n "presentation|final response|session_completed|approval|required|pending|e
 
 ## Next Action
 
-Phase 33 is complete. Phase 34 is next and should fix source tooltip collision and responsive chat width. Do not start Phase 35 integrated release gating until Phase 34 is proven.
+Phase 34 is complete. Phase 35 is next and should run the final integrated RAG source UX release gate. Do not mark the RAG/source UX refactor complete until Phase 35 proves the positive/negative RAG, side evidence/PDF, tooltip, resize, and hardcode guardrail paths together.
 
 ## Post-Gate Regression: Approved Data But UI Still Shows Approval
 

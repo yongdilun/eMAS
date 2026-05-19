@@ -2105,6 +2105,8 @@ git status --short --branch
 
 ### Phase 34: Source Tooltip And Responsive Chat Width
 
+Status: Completed 2026-05-19. Source hover cards are collision-aware, right-edge hover stays inside the visible chat surface, and assistant response cards expand with resized chatbot/modal width while prose keeps a readable line length. Phase 35 remains planned.
+
 Goal: Fix the layout problems independently from RAG truth and source drawer behavior.
 
 Problem this phase targets:
