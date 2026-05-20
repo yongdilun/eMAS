@@ -121,13 +121,10 @@ export function useActivityStream(sessionId, onActivityStep, options = {}) {
 
     es.onerror = () => {
       if (!mountedRef.current) return
-      closeEs()
       const delay = retryDelayRef.current
       retryDelayRef.current = Math.min(delay * 2, 30000)
       emitDiagnostic('reconnecting', `Activity stream disconnected. Reconnecting in ${Math.round(delay / 1000)} seconds.`)
-      retryTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) connect()
-      }, delay)
+      // Keep the EventSource open so native reconnect can send Last-Event-ID.
     }
   }, [sessionId, enabled, closeEs, emitDiagnostic, processQueue])
 

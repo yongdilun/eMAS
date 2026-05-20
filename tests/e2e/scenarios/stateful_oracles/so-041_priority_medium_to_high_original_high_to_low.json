@@ -1,0 +1,306 @@
+{
+  "id": "SO-041",
+  "title": "Medium priority jobs to high, then original high priority jobs to low",
+  "risk": "Second approval can use current high-priority rows created by approval 1, or the final response can summarize only the last write set.",
+  "prompt": "Change all medium priority jobs to high, then change all original high priority jobs to low.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO041-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO041-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO041-MED-01",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO041-MED-02",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO041-LOW-01",
+        "priority": "low",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "source_set_semantics": "original_state_for_each_user_clause"
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-041-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "medium"
+      },
+      "new_values": {
+        "priority": "high"
+      },
+      "source_row_ids": [
+        "JOB-SO041-MED-01",
+        "JOB-SO041-MED-02"
+      ]
+    },
+    {
+      "intent_id": "SO-041-I2",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high",
+        "state_basis": "original"
+      },
+      "new_values": {
+        "priority": "low"
+      },
+      "source_row_ids": [
+        "JOB-SO041-HIGH-01",
+        "JOB-SO041-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-041-1",
+      "intent_id": "SO-041-I1",
+      "decision": "accepted",
+      "previous_priority": "medium",
+      "new_priority": "high",
+      "row_ids": [
+        "JOB-SO041-MED-01",
+        "JOB-SO041-MED-02"
+      ],
+      "row_count": 2
+    },
+    {
+      "approval_id": "approval-so-041-2",
+      "intent_id": "SO-041-I2",
+      "decision": "accepted",
+      "previous_priority": "high",
+      "new_priority": "low",
+      "row_ids": [
+        "JOB-SO041-HIGH-01",
+        "JOB-SO041-HIGH-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "approval-so-041-1 commit",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-041-2",
+      "jobs": [
+        {
+          "id": "JOB-SO041-HIGH-01",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO041-HIGH-02",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO041-MED-01",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO041-MED-02",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO041-LOW-01",
+          "priority": "low"
+        }
+      ],
+      "forbidden": [
+        "final_response_created",
+        "operation_completed"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO041-HIGH-01",
+        "priority": "low"
+      },
+      {
+        "id": "JOB-SO041-HIGH-02",
+        "priority": "low"
+      },
+      {
+        "id": "JOB-SO041-MED-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO041-MED-02",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO041-LOW-01",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-041-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO041-MED-01",
+        "JOB-SO041-MED-02"
+      ],
+      "from": "medium",
+      "to": "high",
+      "status": "success"
+    },
+    {
+      "approval_id": "approval-so-041-2",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO041-HIGH-01",
+        "JOB-SO041-HIGH-02"
+      ],
+      "from": "high",
+      "to": "low",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 2
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-041-1"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-041-1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-041-1"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-041-2"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-041-2",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-041-2"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_first_commit": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-041-2",
+      "must_not_include_events": [
+        "final_response_created",
+        "operation_completed"
+      ]
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": [
+        "approval-so-041-1",
+        "approval-so-041-2"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-041-2",
+    "must_include": [
+      "2 medium priority jobs changed to high",
+      "2 original high priority jobs changed to low"
+    ],
+    "must_not_include": [
+      "2 current high priority jobs changed to low",
+      "Updated 2 job(s).",
+      "newly high jobs changed to low"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-041-1",
+      "approval-so-041-2"
+    ],
+    "final_state_visible_only_after": "approval-so-041-2 accepted and committed",
+    "must_show": [
+      "Run complete",
+      "2 medium priority jobs changed to high",
+      "2 original high priority jobs changed to low"
+    ],
+    "must_not_show": [
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO041-LOW-01",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "approval_ids_are_distinct",
+    "original_state_semantics",
+    "no_final_before_terminal",
+    "pending_approval_matches_snapshot",
+    "commit_matches_approval_bundle",
+    "final_summary_matches_all_commits",
+    "timeline_contains_transition_chain",
+    "sse_matches_snapshot"
+  ],
+  "required_layers": [
+    "pytest_graph",
+    "summary_contract",
+    "seeded_full_stack",
+    "real_langgraph_browser"
+  ],
+  "weakness_from_phase0": "Existing final-response tests could pass when a multi-approval run listed affected rows from only the newest approval and failed to prove all committed write sets were represented.",
+  "manual_miss": {
+    "observed": "The final response listed only rows that were previous high and new low; those rows were original medium jobs, implying current-state cascade semantics or partial final evidence.",
+    "source": "docs/qa/manual_prompt_regression_bank.md#phase-11-aggregate-final-response-miss"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-041 scenario 119",
+      "eMas Front/e2e/specs/real-langgraph-critical.spec.js::SO-041 aggregates both real LangGraph write sets"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "tests/e2e/scenarios/manual_prompt_regressions.json::phase11-medium-high-high-low-final-response",
+      "docs/qa/manual_prompt_regression_bank.md#phase-11-aggregate-final-response-miss"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

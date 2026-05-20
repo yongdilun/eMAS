@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 
 EXPECTED_INDEXES: dict[str, set[str]] = {
-    "sessions": {"idx_sessions_user_id", "idx_sessions_status"},
+    "sessions": {
+        "idx_sessions_user_id",
+        "idx_sessions_user_updated_at",
+        "idx_sessions_updated_at",
+        "idx_sessions_status",
+    },
     "messages": {"idx_messages_session_id"},
     "plan_steps": {"idx_plan_steps_session_id", "idx_plan_steps_status", "idx_plan_steps_idempotency"},
     "approvals": {"idx_approvals_session_id", "idx_approvals_status"},

@@ -4,7 +4,7 @@ import UtilizationChart from '../components/features/machines/UtilizationChart'
 import AddMachineModal from '../components/features/machines/AddMachineModal'
 import RecordDowntimeModal from '../components/features/machines/RecordDowntimeModal'
 import PageHeader from '../components/shared/PageHeader'
-import { machinesApi, reportsApi, jobsApi, toList, toData, apiErrorMessage } from '../services/api'
+import { machinesApi, reportsApi, jobsApi, toList, toData, apiErrorMessage, apiErrorToastOptions } from '../services/api'
 import { normalizeMachine, normalizeMaintenanceAlert, debugResponse } from '../services/normalizers'
 import logger from '../services/logger'
 import { useToast } from '../context/ToastContext'
@@ -142,7 +142,7 @@ const MachineResources = () => {
             fetchMachines()
         } catch (err) {
             logger.error('Failed to decommission machine', err, { machineId: mid })
-            toast.error(apiErrorMessage(err, 'Failed to decommission machine.'))
+            toast.error(apiErrorMessage(err, 'Failed to decommission machine.'), apiErrorToastOptions(err))
         }
         setActionMenuOpen(null)
     }

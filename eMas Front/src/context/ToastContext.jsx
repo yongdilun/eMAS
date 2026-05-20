@@ -1,46 +1,103 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 const ToastContext = createContext(null)
 
 let _uid = 0
+const MAX_VISIBLE_TOASTS = 5
+const AUTH_EXPIRED_MESSAGE = 'Your session has expired. Please refresh and try again.'
+const AUTH_EXPIRED_DEDUPE_KEY = 'auth-expired'
 
 /**
  * Supported variants: 'success' | 'error' | 'warning' | 'info'
  */
 export function ToastProvider({ children }) {
     const [toasts, setToasts] = useState([])
+    const toastsRef = useRef([])
+    const suppressedToastsRef = useRef(new Set())
     const timers = useRef({})
+
+    const updateToasts = useCallback((updater) => {
+        const next = typeof updater === 'function' ? updater(toastsRef.current) : updater
+        toastsRef.current = next
+        setToasts(next)
+        return next
+    }, [])
 
     const dismiss = useCallback((id) => {
         clearTimeout(timers.current[id])
-        setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)))
+        updateToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)))
         // Remove from DOM after animation
         timers.current[`remove_${id}`] = setTimeout(() => {
-            setToasts((prev) => prev.filter((t) => t.id !== id))
+            updateToasts((prev) => prev.filter((t) => t.id !== id))
         }, 300)
-    }, [])
+    }, [updateToasts])
 
     const toast = useCallback(
         (variant, message, options = {}) => {
+            const dedupeMessage = String(message)
+            const dedupeKey =
+                options.dedupeKey ??
+                (dedupeMessage === AUTH_EXPIRED_MESSAGE ? AUTH_EXPIRED_DEDUPE_KEY : null)
+            const suppressAfterFirst =
+                options.suppressAfterFirst === true ||
+                (dedupeKey === AUTH_EXPIRED_DEDUPE_KEY && dedupeMessage === AUTH_EXPIRED_MESSAGE)
+            const suppressionKey = suppressAfterFirst && dedupeKey != null
+                ? `${dedupeKey}::${dedupeMessage}`
+                : null
+            if (suppressionKey && suppressedToastsRef.current.has(suppressionKey)) {
+                return null
+            }
+            if (dedupeKey != null) {
+                const existing = toastsRef.current.find((t) =>
+                    !t.leaving &&
+                    t.dedupeKey === dedupeKey &&
+                    t.dedupeMessage === dedupeMessage
+                )
+                if (existing) return existing.id
+            }
+
             const id = ++_uid
+            if (suppressionKey) suppressedToastsRef.current.add(suppressionKey)
             const duration = options.duration ?? (variant === 'error' ? 6000 : 4000)
-            setToasts((prev) => [...prev, { id, variant, message, leaving: false }])
+            const nextToast = {
+                id,
+                variant,
+                message,
+                dedupeKey,
+                dedupeMessage,
+                leaving: false,
+            }
+            const next = [...toastsRef.current, nextToast]
+            const visible = next.slice(-MAX_VISIBLE_TOASTS)
+            if (visible.length < next.length) {
+                next.slice(0, next.length - visible.length).forEach((removed) => {
+                    clearTimeout(timers.current[removed.id])
+                    clearTimeout(timers.current[`remove_${removed.id}`])
+                })
+            }
+            updateToasts(visible)
             if (duration > 0) {
                 timers.current[id] = setTimeout(() => dismiss(id), duration)
             }
             return id
         },
-        [dismiss],
+        [dismiss, updateToasts],
     )
 
-    const value = {
+    useEffect(() => {
+        return () => {
+            Object.values(timers.current).forEach((timerId) => clearTimeout(timerId))
+        }
+    }, [])
+
+    const value = useMemo(() => ({
         success: (msg, opts) => toast('success', msg, opts),
         error: (msg, opts) => toast('error', msg, opts),
         warning: (msg, opts) => toast('warning', msg, opts),
         info: (msg, opts) => toast('info', msg, opts),
         dismiss,
-    }
+    }), [dismiss, toast])
 
     return (
         <ToastContext.Provider value={value}>

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -112,7 +112,7 @@ AgentGraphRunStatus = Literal[
 ]
 MessageMode = Literal["normal", "plan"]
 PlanKind = Literal["execution", "discovery"]
-PlanStatus = Literal["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED", "INVALIDATED"]
+PlanStatus = Literal["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED", "FAILED", "INVALIDATED"]
 ApprovalSubjectType = Literal["step", "plan", "graph"]
 
 StepStatus = Literal[
@@ -333,6 +333,277 @@ class ApprovalResponse(BaseModel):
     created_at: datetime
 
 
+PresentationKind = Literal[
+    "answer",
+    "approval_required",
+    "mutation_result",
+    "partial_failure",
+    "diagnostic",
+    "cancelled",
+    "rejected",
+    "expired",
+    "knowledge_answer",
+]
+PresentationState = Literal[
+    "pending",
+    "completed",
+    "failed",
+    "blocked",
+    "rejected",
+    "expired",
+    "cancelled",
+]
+
+ResponseDocumentState = Literal[
+    "running",
+    "waiting_approval",
+    "waiting_confirmation",
+    "completed",
+    "failed",
+    "blocked",
+    "rejected",
+    "expired",
+    "cancelled",
+]
+RunStepKind = Literal[
+    "analysis",
+    "read",
+    "approval",
+    "mutation",
+    "knowledge",
+    "diagnostic",
+    "cancelled",
+    "completed",
+]
+RunStepState = Literal[
+    "pending",
+    "current",
+    "waiting",
+    "completed",
+    "failed",
+    "rejected",
+    "expired",
+    "cancelled",
+]
+
+
+class RunStep(BaseModel):
+    step_id: str = Field(min_length=1)
+    kind: RunStepKind
+    state: RunStepState
+    title: str = Field(min_length=1)
+    summary: str | None = None
+    approval_id: str | None = None
+    operation_id: str | None = None
+    record_count: int | None = Field(default=None, ge=0)
+    current: bool = False
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResponseBlockBase(BaseModel):
+    id: str = Field(min_length=1)
+
+
+class RunActivityBlock(ResponseBlockBase):
+    type: Literal["run_activity"] = "run_activity"
+    title: str = "Run activity"
+    step_ids: list[str] = Field(default_factory=list)
+
+
+class ShortMessageBlock(ResponseBlockBase):
+    type: Literal["short_message"] = "short_message"
+    message: str = Field(min_length=1)
+    status: ResponseDocumentState | None = None
+
+
+class ApprovalRequiredBlock(ResponseBlockBase):
+    type: Literal["approval_required"] = "approval_required"
+    contract: Literal["business_change_v1"] | None = None
+    approval_id: str = Field(min_length=1)
+    operation_id: str | None = None
+    args: dict[str, Any] | None = None
+    title: str = "Approval required"
+    summary: str = Field(min_length=1)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    details_collapsed: bool = True
+
+
+class MutationResultBlock(ResponseBlockBase):
+    type: Literal["mutation_result"] = "mutation_result"
+    contract: Literal["business_change_v1"] | None = None
+    operation_id: str | None = None
+    approval_id: str | None = None
+    title: str = "Mutation result"
+    summary: str = Field(min_length=1)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    groups: list[dict[str, Any]] = Field(default_factory=list)
+    preview_limit: int = Field(default=5, ge=1)
+    details_collapsed: bool = True
+    status: Literal["completed", "partial_failure", "failed"] = "completed"
+
+
+class CompletedStepBlock(ResponseBlockBase):
+    type: Literal["completed_step"] = "completed_step"
+    step_id: str | None = None
+    operation_id: str | None = None
+    approval_id: str | None = None
+    title: str = Field(default="Completed step", min_length=1)
+    summary: str = Field(min_length=1)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    details_collapsed: bool = True
+
+
+class ResultSummaryBlock(ResponseBlockBase):
+    type: Literal["result_summary"] = "result_summary"
+    operation_id: str | None = None
+    title: str = Field(default="Result summary", min_length=1)
+    summary: str = Field(min_length=1)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    total_count: int | None = Field(default=None, ge=0)
+    status: Literal["completed", "partial_failure", "failed", "empty"] = "completed"
+
+
+class ResultTableBlock(ResponseBlockBase):
+    type: Literal["result_table"] = "result_table"
+    contract: str | None = None
+    title: str = "Affected records"
+    rows: list[dict[str, Any]] = Field(min_length=1)
+    operation_id: str | None = None
+    approval_id: str | None = None
+    read_scope: str | None = None
+    requested_fields: list[str] = Field(default_factory=list)
+    display_mode: str | None = None
+    entity_type: str | None = None
+    entity_count: int | None = Field(default=None, ge=0)
+    preview_limit: int = Field(default=5, ge=1)
+    details_collapsed: bool = True
+
+
+class StatusResultBlock(ResponseBlockBase):
+    type: Literal["status_result"] = "status_result"
+    contract: Literal["entity_status_v1"] = "entity_status_v1"
+    operation_id: str | None = None
+    title: str = Field(default="Status", min_length=1)
+    summary: str = Field(min_length=1)
+    entity_type: str | None = None
+    entity_id: str | None = None
+    primary_status: str | None = None
+    fields: list[dict[str, Any]] = Field(default_factory=list)
+    secondary_fields: list[dict[str, Any]] = Field(default_factory=list)
+    read_scope: str | None = None
+    requested_fields: list[str] = Field(default_factory=list)
+    display_mode: str | None = None
+    entity_count: int | None = Field(default=None, ge=0)
+    preview_limit: int = Field(default=5, ge=1)
+    details_collapsed: bool = True
+
+
+class RecordPreviewBlock(ResponseBlockBase):
+    type: Literal["record_preview"] = "record_preview"
+    contract: str | None = None
+    title: str = Field(default="Records", min_length=1)
+    rows: list[dict[str, Any]] = Field(min_length=1)
+    operation_id: str | None = None
+    approval_id: str | None = None
+    read_scope: str | None = None
+    requested_fields: list[str] = Field(default_factory=list)
+    display_mode: str | None = None
+    entity_type: str | None = None
+    entity_count: int | None = Field(default=None, ge=0)
+    preview_limit: int = Field(default=5, ge=1)
+    details_collapsed: bool = True
+
+
+class KnowledgeAnswerBlock(ResponseBlockBase):
+    type: Literal["knowledge_answer"] = "knowledge_answer"
+    contract: Literal["knowledge_answer_v1"] | None = None
+    answer: str = Field(min_length=1)
+    operation_id: str | None = None
+    segments: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SafetyNoticeBlock(ResponseBlockBase):
+    type: Literal["safety_notice"] = "safety_notice"
+    contract: Literal["safety_notice_v1"] = "safety_notice_v1"
+    title: str = Field(default="Safety notice", min_length=1)
+    safety_content: str = Field(min_length=1)
+    severity: Literal["info", "warning"] = "warning"
+    operation_id: str | None = None
+
+
+class SourceListBlock(ResponseBlockBase):
+    type: Literal["source_list"] = "source_list"
+    contract: Literal["source_list_v1"] | None = None
+    sources: list[dict[str, Any]] = Field(min_length=1)
+    operation_id: str | None = None
+
+
+class DiagnosticBlock(ResponseBlockBase):
+    type: Literal["diagnostic"] = "diagnostic"
+    severity: Literal["info", "warning", "error"] = "error"
+    reason: str = Field(min_length=1)
+    title: str = "Needs attention"
+    user_message: str = Field(min_length=1)
+    cause: str | None = None
+    impact: dict[str, Any] = Field(default_factory=dict)
+    current_state: str | None = None
+    next_action: str | None = None
+    next_actions: list[dict[str, Any]] = Field(default_factory=list)
+    retry_safety: dict[str, Any] = Field(default_factory=dict)
+    technical_details: dict[str, Any] = Field(default_factory=dict)
+    details_collapsed: bool = True
+
+
+ResponseBlock = Annotated[
+    RunActivityBlock
+    | ShortMessageBlock
+    | ApprovalRequiredBlock
+    | MutationResultBlock
+    | CompletedStepBlock
+    | ResultSummaryBlock
+    | ResultTableBlock
+    | StatusResultBlock
+    | RecordPreviewBlock
+    | KnowledgeAnswerBlock
+    | SafetyNoticeBlock
+    | SourceListBlock
+    | DiagnosticBlock,
+    Field(discriminator="type"),
+]
+
+
+class ResponseDocument(BaseModel):
+    version: Literal[1] = 1
+    id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    turn_id: str | None = None
+    operation_id: str | None = None
+    revision: int = Field(ge=0)
+    revision_source: str = Field(min_length=1)
+    state: ResponseDocumentState
+    status: ResponseDocumentState
+    summary: str | None = None
+    message: str | None = None
+    current_step_id: str | None = None
+    run_steps: list[RunStep] = Field(default_factory=list)
+    blocks: list[ResponseBlock] = Field(default_factory=list)
+    invariants: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class PresentationResponse(BaseModel):
+    kind: PresentationKind
+    state: PresentationState
+    operation_id: str | None = None
+    approval_id: str | None = None
+    summary: str | None = None
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    invariants: dict[str, Any] = Field(default_factory=dict)
+
+
 class TimelineEventResponse(BaseModel):
     event_id: str
     event_type: Literal[
@@ -365,6 +636,10 @@ class TimelineEventResponse(BaseModel):
     tool_name: str | None = None
     status: str | None = None
     details: dict[str, Any] | None = None
+    presentation: PresentationResponse | None = Field(
+        default=None,
+        description="Typed display contract for this event. Legacy content/details remain for compatibility.",
+    )
 
 
 class ActivityStepResponse(BaseModel):
@@ -388,6 +663,10 @@ class SessionSnapshotResponse(BaseModel):
     steps: list[PlanStepResponse] = Field(default_factory=list)
     pending_approval: ApprovalResponse | None = None
     timeline: list[TimelineEventResponse] = Field(default_factory=list)
+    snapshot_revision: int = Field(
+        default=0,
+        description="Monotonic session snapshot revision. Mirrors event_seq during the response-document migration.",
+    )
     cursor: int = Field(
         default=0,
         description="Monotonic event_seq cursor. Advances on every state-changing write. Used by the notification SSE stream to detect staleness.",
@@ -403,6 +682,19 @@ class SessionSnapshotResponse(BaseModel):
     activity_steps: list[ActivityStepResponse] = Field(
         default_factory=list,
         description="Server-rendered activity timeline steps. Stable ids act:{event_id}. Clients should prefer these over client-side derivation.",
+    )
+    presentation: PresentationResponse = Field(
+        default_factory=lambda: PresentationResponse(
+            kind="diagnostic",
+            state="blocked",
+            summary="Snapshot presentation has not been derived.",
+            diagnostics={"reason": "presentation_not_derived"},
+        ),
+        description="Authoritative typed presentation for the current snapshot/final response.",
+    )
+    response_document: ResponseDocument | None = Field(
+        default=None,
+        description="Additive typed response document. Frontend rendering continues to use presentation until migration phases enable this contract.",
     )
 
 

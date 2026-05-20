@@ -137,6 +137,8 @@ def main() -> int:
     )
 
     payload = {
+        "architecture": "planner_owned_v2",
+        "retrieval_contract": "capability_need_to_tool_selector_adapter",
         "source": str(swagger_path),
         "tool_count": len(tools),
         "generic_threshold": args.generic_threshold,

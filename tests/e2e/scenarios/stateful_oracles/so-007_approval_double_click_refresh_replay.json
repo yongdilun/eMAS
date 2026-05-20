@@ -1,0 +1,265 @@
+{
+  "id": "SO-007",
+  "title": "Approval double-click and refresh replay",
+  "risk": "A repeated approve action can execute the same approved write more than once, append duplicate audit rows, or render duplicate terminal activity after browser refresh.",
+  "prompt": "Change all high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO007-HIGH-01",
+        "priority": "high",
+        "status": "open",
+        "updated_version": 1
+      },
+      {
+        "id": "JOB-SO007-HIGH-02",
+        "priority": "high",
+        "status": "open",
+        "updated_version": 1
+      },
+      {
+        "id": "JOB-SO007-LOW-01",
+        "priority": "low",
+        "status": "open",
+        "updated_version": 1
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "client_actions": [
+      {
+        "action": "approve",
+        "approval_id": "approval-so-007-1",
+        "idempotency_key": "idem-so-007-approve"
+      },
+      {
+        "action": "approve_replay_after_double_click",
+        "approval_id": "approval-so-007-1",
+        "idempotency_key": "idem-so-007-approve"
+      },
+      {
+        "action": "approve_replay_after_refresh",
+        "approval_id": "approval-so-007-1",
+        "idempotency_key": "idem-so-007-approve"
+      }
+    ]
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-007-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO007-HIGH-01",
+        "JOB-SO007-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-007-1",
+      "intent_id": "SO-007-I1",
+      "decision": "accepted",
+      "previous_priority": "high",
+      "new_priority": "medium",
+      "row_ids": [
+        "JOB-SO007-HIGH-01",
+        "JOB-SO007-HIGH-02"
+      ],
+      "row_count": 2,
+      "duplicate_submissions": [
+        {
+          "source": "double_click",
+          "expected_result": "already_processed_noop"
+        },
+        {
+          "source": "refresh_replay",
+          "expected_result": "already_processed_noop"
+        }
+      ]
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "first approve request accepted",
+      "session_phase": "EXECUTING",
+      "pending_approval_id": null,
+      "approval_status": "accepted",
+      "commit_attempts_for_approval": 1
+    },
+    {
+      "after": "double-click approve replay",
+      "session_phase": "COMPLETED",
+      "pending_approval_id": null,
+      "commit_attempts_for_approval": 1,
+      "audit_row_count_for_approval": 1,
+      "forbidden": [
+        "second commit_started for approval-so-007-1",
+        "second audit_recorded for approval-so-007-1"
+      ]
+    },
+    {
+      "after": "browser refresh and stale approve replay",
+      "session_phase": "COMPLETED",
+      "pending_approval_id": null,
+      "approval_status": "accepted",
+      "replay_response": "already_processed_noop"
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO007-HIGH-01",
+        "priority": "medium",
+        "updated_version": 2
+      },
+      {
+        "id": "JOB-SO007-HIGH-02",
+        "priority": "medium",
+        "updated_version": 2
+      },
+      {
+        "id": "JOB-SO007-LOW-01",
+        "priority": "low",
+        "updated_version": 1
+      }
+    ],
+    "pending_approval_id": null,
+    "commit_count_by_approval": {
+      "approval-so-007-1": 1
+    }
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-007-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO007-HIGH-01",
+        "JOB-SO007-HIGH-02"
+      ],
+      "from": "high",
+      "to": "medium",
+      "status": "success",
+      "idempotency_key": "idem-so-007-approve",
+      "must_exist_once": true
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-007-1"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-007-1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_started",
+      "approval_id": "approval-so-007-1"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-007-1"
+    },
+    {
+      "event": "approval_replay_ignored",
+      "approval_id": "approval-so-007-1",
+      "source": "double_click"
+    },
+    {
+      "event": "approval_replay_ignored",
+      "approval_id": "approval-so-007-1",
+      "source": "refresh_replay"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_double_click": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "must_not_duplicate_activity_events": [
+        "commit_started approval-so-007-1",
+        "commit_completed approval-so-007-1"
+      ]
+    },
+    "after_refresh": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_once": [
+        "approval-so-007-1",
+        "commit_completed approval-so-007-1"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-007-1",
+    "must_include": [
+      "2 high priority jobs changed to medium"
+    ],
+    "must_not_include": [
+      "4 high priority jobs changed",
+      "change applied twice",
+      "duplicate approval processed"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-007-1"
+    ],
+    "must_show": [
+      "Run complete",
+      "2 high priority jobs changed to medium"
+    ],
+    "must_not_show": [
+      "two Run complete rows",
+      "duplicate approval",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO007-LOW-01",
+      "priority": "low",
+      "updated_version": 1
+    }
+  ],
+  "invariants": [
+    "approval_replay_is_idempotent",
+    "one_commit_per_approval",
+    "one_audit_row_per_approval_commit",
+    "pending_approval_matches_snapshot",
+    "timeline_contains_transition_chain",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": [
+    "pytest_api",
+    "seeded_full_stack"
+  ],
+  "weakness_from_phase0": "Phase 0 found approval resume tests that prove a happy path only; this oracle requires duplicate approve submissions and refresh replays to be no-ops with one mutation and one audit row.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-007/SO-018 scenario 88"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

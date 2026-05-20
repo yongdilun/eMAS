@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -75,6 +76,7 @@ EXPECTED_PATH_METHODS = {
     "/dlq/{dlq_id}/dismiss": ["post"],
     "/dlq/{dlq_id}/replay": ["post"],
     "/dlq/{dlq_id}/replay-request": ["post"],
+    "/documents/{doc_id}/pdf": ["get"],
     "/metrics": ["get"],
     "/sessions": ["get", "post"],
     "/sessions/{session_id}": ["delete", "get", "patch"],
@@ -121,6 +123,7 @@ USER_AUTH_CONTRACTS = [
     ("post", "/dlq/{dlq_id}/replay"),
     ("post", "/dlq/{dlq_id}/replay-request"),
     ("post", "/dlq/{dlq_id}/dismiss"),
+    ("get", "/documents/{doc_id}/pdf"),
 ]
 
 
@@ -187,6 +190,58 @@ async def test_openapi_documents_sensitive_endpoint_auth_contracts(sessionmaker_
 
     for method, path in ADMIN_AUTH_CONTRACTS:
         assert "X-Admin-Key" in _operation_parameters(spec, method, path)
+
+
+@pytest.mark.asyncio
+async def test_documents_pdf_route_serves_inline_pdf_from_source_register(
+    sessionmaker_override,
+    tmp_path,
+    monkeypatch,
+):
+    source_root = tmp_path / "rag_sources"
+    register_dir = source_root / "00_metadata_templates"
+    pdf_dir = source_root / "03_safety_and_maintenance"
+    register_dir.mkdir(parents=True)
+    pdf_dir.mkdir(parents=True)
+    pdf_path = pdf_dir / "osha_lockout_tagout_guide.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
+    register_path = register_dir / "source_register.json"
+    register_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "doc_id": "osha_3120_lockout_tagout",
+                        "title": "Control of Hazardous Energy Lockout/Tagout",
+                        "file_path": "03_safety_and_maintenance/osha_lockout_tagout_guide.pdf",
+                        "source_type": "official_public_pdf",
+                        "organization": "OSHA",
+                        "domain": "safety_maintenance",
+                        "subdomain": "lockout_tagout",
+                        "authority_level": "official_public_guidance",
+                        "use_for": ["explain lockout tagout"],
+                        "do_not_use_for": ["legal or compliance certification"],
+                        "related_entities": ["lockout", "tagout"],
+                        "risk_level": "high",
+                        "license": "public",
+                        "version": "2002 (Revised)",
+                        "retrieved_date": "2026-05-10",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAG_SOURCE_REGISTER_PATH", str(register_path))
+    app = await _make_app(sessionmaker_override)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/documents/osha_3120_lockout_tagout/pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["content-disposition"].lower().startswith("inline;")
+    assert response.content.startswith(b"%PDF")
 
 
 def _approval_row(*, approval_id: str, session_id: str, subject_type: str) -> Approval:

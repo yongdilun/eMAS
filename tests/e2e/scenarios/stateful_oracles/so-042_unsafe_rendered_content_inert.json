@@ -1,0 +1,153 @@
+{
+  "id": "SO-042",
+  "title": "Unsafe rendered content remains inert",
+  "risk": "Backend/model markdown, script-like content, image handlers, or unsafe links can execute in the chatbot or break layout if rendered as HTML.",
+  "prompt": "Phase 16 large unsafe markdown input should render as inert text",
+  "initial_state": {
+    "session": {
+      "status": "IDLE",
+      "window_flags": [
+        "__phase16_xss",
+        "__phase17_xss"
+      ]
+    },
+    "unsafe_content": [
+      "script tag",
+      "image onerror",
+      "html javascript link",
+      "markdown javascript link"
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "render_security_fixture",
+    "must_not_route_to": [
+      "html_interpreter",
+      "unsafe_markdown_renderer"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "unsafe prompt submitted",
+      "session_phase": "EXECUTING",
+      "window_xss_flags": "undefined"
+    },
+    {
+      "after": "unsafe answer rendered",
+      "session_phase": "COMPLETED",
+      "unsafe_content_rendered_as_text": true
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "pending_approval_id": null,
+    "window_xss_flags": "undefined"
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "tool_read_completed",
+      "tool": "render_security_fixture"
+    },
+    {
+      "event": "snapshot_terminal_persisted",
+      "status": "COMPLETED"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_terminal_persisted COMPLETED",
+    "must_include": [
+      "Phase 16 unsafe markdown was rendered as text, not executable content.",
+      "<script>window.__phase16_xss",
+      "<a href=\"javascript:window.__phase17_xss"
+    ],
+    "must_not_include": [
+      "Factory Agent needs attention",
+      "script-executed",
+      "link-executed"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Run complete",
+      "Phase 16 unsafe markdown was rendered as text, not executable content.",
+      "<script>window.__phase16_xss",
+      "[unsafe markdown link](javascript:window.__phase17_xss"
+    ],
+    "must_not_show": [
+      "Factory Agent needs attention"
+    ],
+    "must_not_have_selectors": [
+      "script containing phase16_xss",
+      "a[href^=\"javascript:\"]",
+      "a[target=\"_blank\"] without rel noopener"
+    ]
+  },
+  "expected_unchanged_rows": [],
+  "invariants": [
+    "no_approval_required",
+    "unsafe_content_is_text",
+    "no_script_execution",
+    "no_unsafe_link_behavior",
+    "layout_remains_stable"
+  ],
+  "required_layers": [
+    "mocked_browser",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Prior answer rendering checks did not combine model-provided script-like content, image handlers, unsafe HTML links, unsafe markdown links, and mobile layout constraints.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A future markdown/rendering change can execute backend-provided script/link content or create unsafe target-blank links.",
+    "existing_test_that_would_miss_it": "Backend tests cannot observe DOM execution or unsafe anchor attributes, and earlier browser checks did not include unsafe link behavior.",
+    "lowest_useful_layer": "mocked_browser",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is needed because the fixture models backend/model text and the risk is the browser renderer.",
+    "required_positive_evidence": [
+      "unsafe script text is visible as text",
+      "unsafe html link text is visible as text",
+      "unsafe markdown link text is visible as text",
+      "Run complete is visible",
+      "window XSS flags remain undefined"
+    ],
+    "required_forbidden_stale_evidence": [
+      "script element injected from answer",
+      "javascript href anchor",
+      "target blank anchor without noopener",
+      "layout overflow",
+      "Factory Agent needs attention"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_stateful_oracle_schema.py"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/security-privacy.spec.js::scenario 99"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-17-security-privacy-and-abuse-hardening"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-17-security-privacy-and-abuse-hardening"
+  }
+}

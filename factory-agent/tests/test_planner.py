@@ -1387,6 +1387,45 @@ def test_langgraph_repair_does_not_force_single_entity_followup_for_multi_entity
     assert [step.tool_name for step in repaired.steps] == ["get__jobs_{id}_slots"]
 
 
+def test_langgraph_repair_prefers_metadata_matched_child_read_before_generic_lookup():
+    tools = [
+        ToolInfo(
+            name="work_order_reader",
+            description="Read work order",
+            endpoint="/work-orders/{id}",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            path_params=["id"],
+            is_read_only=True,
+            requires_approval=False,
+            side_effect_level="NONE",
+            is_concurrency_safe=True,
+            is_strongly_idempotent=False,
+            capability_tags=["job", "lookup"],
+        ),
+        ToolInfo(
+            name="work_order_window_reader",
+            description="Read inspection windows for a work order",
+            endpoint="/work-orders/{id}/inspection-windows",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            path_params=["id"],
+            is_read_only=True,
+            requires_approval=False,
+            side_effect_level="NONE",
+            is_concurrency_safe=True,
+            is_strongly_idempotent=False,
+            capability_tags=["job", "inspection", "window", "lookup", "list"],
+        ),
+    ]
+
+    repaired = _deterministic_plan_repair("show inspection windows for job JOB-SEED-001", tools)
+
+    assert repaired is not None
+    assert [step.tool_name for step in repaired.steps] == ["work_order_window_reader"]
+    assert repaired.steps[0].args == {"id": "JOB-SEED-001"}
+
+
 @pytest.mark.asyncio
 async def test_planner_service_strips_ungrounded_args_via_contract(monkeypatch):
     settings = _settings()

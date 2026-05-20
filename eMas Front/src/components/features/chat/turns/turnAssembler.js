@@ -1,4 +1,16 @@
 import { compactInterruptApprovalHeadline } from '../factory-agent/approvalInterruptDisplay.js'
+import {
+  diagnosticFactsForPresentation,
+  normalizeTypedPresentation,
+  summaryFromTypedPresentation,
+  tablePresentationFromTypedPresentation,
+  typedPresentationIsAuthoritative,
+} from '../factory-agent/presentationContract.js'
+import {
+  normalizeResponseDocument,
+  responseDocumentMessage,
+  sourcesFromResponseDocument,
+} from '../factory-agent/responseDocumentContract.js'
 
 export const getReadableAction = (toolName) => {
   const raw = String(toolName || '').trim()
@@ -45,6 +57,17 @@ function isPlanLikeAnswer(value) {
     normalized.includes('risk summary:') ||
     normalized.includes('before executing') ||
     /^operators can\b/.test(normalized)
+  )
+}
+
+function isApprovalWaitText(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return false
+  return (
+    normalized.includes('waiting for your approval') ||
+    normalized.includes('please approve') ||
+    normalized.includes('will be updated from') ||
+    normalized.includes('change list is shown')
   )
 }
 
@@ -178,6 +201,15 @@ function latestToolSummary(turn) {
   return null
 }
 
+function latestToolHasResultRows(turn) {
+  const tools = Array.isArray(turn?.tools) ? turn.tools : []
+  for (let i = tools.length - 1; i >= 0; i -= 1) {
+    const result = toolResultObject(tools[i])
+    if (resultRows(result).length > 0) return true
+  }
+  return false
+}
+
 function latestPlanForAnswer(turn) {
   const thinking = Array.isArray(turn?.thinking) ? turn.thinking : []
   if (!thinking.length) return null
@@ -187,6 +219,24 @@ function latestPlanForAnswer(turn) {
     if (status === 'COMPLETED') return row
   }
   return thinking[thinking.length - 1]
+}
+
+function visiblePlanText(plan) {
+  const explanation = String(plan?.details?.plan_explanation || '').trim()
+  if (explanation) return explanation
+  const content = String(plan?.content || '').trim()
+  return content || null
+}
+
+function diagnosticSummaryForFailedTurn(turn) {
+  const lastPlan = latestPlanForAnswer(turn)
+  const planText = visiblePlanText(lastPlan)
+  if (planText && !isPlanLikeAnswer(planText) && !looksLikeRawJsonText(planText)) {
+    return stripApprovalWaitPhrases(planText)
+  }
+  const toolSummary = latestToolSummary(turn)
+  if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
+  return null
 }
 
 function nonGenericToolLines(turn) {
@@ -216,7 +266,40 @@ function pickLatestTurnIdByTime(userEvents, atIso) {
   return fallback.turn_id || fallback.event_id || null
 }
 
-export function assembleFactoryAgentTurns(timeline = []) {
+function timelineOrderKey(item) {
+  const createdAt = new Date(item?.created_at || 0).getTime()
+  const safeTime = Number.isFinite(createdAt) ? createdAt : 0
+  const stepIndex = Number(item?.step_context?.step_index ?? item?.details?.step_index ?? -1)
+  return [safeTime, Number.isFinite(stepIndex) ? stepIndex : -1]
+}
+
+function presentationMergeRank(presentation, source) {
+  if (!presentation) return 0
+  if (source === 'snapshot') return 120
+  if (['session_completed', 'session_failed', 'session_blocked'].includes(source)) return 100
+  if (presentation.kind === 'approval_required' && presentation.state === 'pending') return 80
+  if (['rejected', 'expired', 'cancelled', 'partial_failure', 'diagnostic'].includes(presentation.kind)) return 75
+  if (presentation.state === 'failed') return 75
+  if (source === 'tool_result' || source === 'tool_started') return 40
+  if (source === 'plan_created') return 20
+  return 10
+}
+
+function mergeTypedPresentationIntoTurn(turn, rawPresentation, source = null) {
+  const presentation = normalizeTypedPresentation(rawPresentation)
+  if (!presentation) return
+  const nextRank = presentationMergeRank(presentation, source)
+  const currentRank = Number.isFinite(turn.presentationRank) ? turn.presentationRank : 0
+  if (turn.presentation && nextRank < currentRank) return
+  turn.presentation = presentation
+  turn.presentationRank = nextRank
+  turn.typedTablePresentation = tablePresentationFromTypedPresentation(presentation)
+  turn.diagnostics = presentation.diagnostics || {}
+  turn.invariants = presentation.invariants || {}
+  if (presentation.sources.length) turn.sources = presentation.sources
+}
+
+export function assembleFactoryAgentTurns(timeline = [], options = {}) {
   const events = Array.isArray(timeline) ? timeline : []
   const userEvents = events.filter((e) => e?.event_type === 'user_message')
 
@@ -239,6 +322,14 @@ export function assembleFactoryAgentTurns(timeline = []) {
       debug: [],
       sources: [],
       safetyContent: null,
+      presentation: null,
+      presentationRank: 0,
+      typedTablePresentation: null,
+      responseDocument: null,
+      responseDocumentStatus: 'absent',
+      responseDocumentViolations: [],
+      diagnostics: {},
+      invariants: {},
     }
     turnsById.set(key, next)
     return next
@@ -265,6 +356,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
         ? (e.event_id || e.id)
         : pickLatestTurnIdByTime(userEvents, e.created_at))
     const turn = getOrCreateTurn(turnId, e.created_at)
+    mergeTypedPresentationIntoTurn(turn, e.presentation, e.event_type)
 
     if (e.event_type === 'user_message') {
       turn.user = {
@@ -281,8 +373,9 @@ export function assembleFactoryAgentTurns(timeline = []) {
         content: e.content,
         created_at: e.created_at,
         details: e.details || null,
+        presentation: normalizeTypedPresentation(e.presentation),
       })
-      if (e.details?.sources) turn.sources = e.details.sources
+      if (e.details?.sources && !normalizeTypedPresentation(e.presentation)?.sources?.length) turn.sources = e.details.sources
       if (e.details?.safety_content) turn.safetyContent = e.details.safety_content
       continue
     }
@@ -296,7 +389,9 @@ export function assembleFactoryAgentTurns(timeline = []) {
         status: e.status || 'IN_PROGRESS',
         content: e.content,
         created_at: e.created_at,
+        step_context: e.step_context || null,
         details: e.details || null,
+        presentation: normalizeTypedPresentation(e.presentation),
       })
       continue
     }
@@ -310,7 +405,9 @@ export function assembleFactoryAgentTurns(timeline = []) {
         status: e.status || null,
         content: e.content,
         created_at: e.created_at,
+        step_context: e.step_context || null,
         details: e.details || null,
+        presentation: normalizeTypedPresentation(e.presentation),
       })
       continue
     }
@@ -326,6 +423,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
         content: e.content,
         created_at: e.created_at,
         details: e.details || null,
+        presentation: normalizeTypedPresentation(e.presentation),
       })
       continue
     }
@@ -350,6 +448,7 @@ export function assembleFactoryAgentTurns(timeline = []) {
         created_at: e.created_at,
         status: e.status || null,
         details: e.details || null,
+        presentation: normalizeTypedPresentation(e.presentation),
       }
       turn.status.push(item)
       if (e.event_type === 'session_blocked' || e.event_type === 'session_failed' || e.event_type === 'session_completed') {
@@ -360,7 +459,10 @@ export function assembleFactoryAgentTurns(timeline = []) {
       // of the timeline by the backend).
       if (e.event_type === 'session_completed') {
         const detailSources = Array.isArray(e.details?.sources) ? e.details.sources : null
-        if (detailSources && detailSources.length && (!turn.sources || turn.sources.length === 0)) {
+        const typedSources = normalizeTypedPresentation(e.presentation)?.sources || []
+        if (typedSources.length) {
+          turn.sources = typedSources
+        } else if (detailSources && detailSources.length && (!turn.sources || turn.sources.length === 0)) {
           turn.sources = detailSources
         }
         if (e.details?.safety_content && !turn.safetyContent) {
@@ -374,6 +476,11 @@ export function assembleFactoryAgentTurns(timeline = []) {
   }
 
   const turns = Array.from(turnsById.values()).map(turn => {
+    turn.tools.sort((a, b) => {
+      const [aTime, aStep] = timelineOrderKey(a)
+      const [bTime, bStep] = timelineOrderKey(b)
+      return aTime - bTime || aStep - bStep
+    })
     // Inject legacy-compatible structure for older assistant turn renderers.
     const lastThinking = turn.thinking?.[turn.thinking.length - 1]
     const content = turn.terminal?.content || lastThinking?.content || ""
@@ -389,6 +496,23 @@ export function assembleFactoryAgentTurns(timeline = []) {
   })
 
   turns.sort((a, b) => safeStr(a.user?.created_at || a.created_at).localeCompare(safeStr(b.user?.created_at || b.created_at)))
+
+  const snapshotDocumentResult = normalizeResponseDocument(options.snapshotResponseDocument)
+  const snapshotResponseDocument = snapshotDocumentResult.document
+  const snapshotPresentation = snapshotResponseDocument
+    ? null
+    : normalizeTypedPresentation(options.snapshotPresentation || options.presentation)
+  if (snapshotPresentation && turns.length) {
+    mergeTypedPresentationIntoTurn(turns[turns.length - 1], snapshotPresentation, 'snapshot')
+  }
+  if (snapshotResponseDocument && turns.length) {
+    const latest = turns[turns.length - 1]
+    latest.responseDocument = snapshotResponseDocument
+    latest.responseDocumentStatus = snapshotDocumentResult.status
+    latest.responseDocumentViolations = snapshotDocumentResult.violations || []
+    const documentSources = sourcesFromResponseDocument(snapshotResponseDocument)
+    if (documentSources.length) latest.sources = documentSources
+  }
 
   return turns
 }
@@ -411,6 +535,24 @@ function stripApprovalWaitPhrases(text) {
 
 export function computeFactoryAgentTurnSummary(turn) {
   if (!turn) return 'Working...'
+  const documentSummary = responseDocumentMessage(turn.responseDocument)
+  if (documentSummary) return documentSummary
+  const typedSummary = summaryFromTypedPresentation(turn.presentation)
+  const typedKind = String(turn.presentation?.kind || '')
+  const typedState = String(turn.presentation?.state || '')
+  if (typedSummary && typedPresentationIsAuthoritative(turn.presentation)) {
+    if (typedKind === 'diagnostic' || typedKind === 'partial_failure' || typedState === 'failed') {
+      const richerDiagnostic = diagnosticSummaryForFailedTurn(turn)
+      if (
+        richerDiagnostic
+        && richerDiagnostic.length > typedSummary.length
+        && /could not|failed|unavailable|retry|no .*changed|no .*created/i.test(richerDiagnostic)
+      ) {
+        return richerDiagnostic
+      }
+    }
+    return typedSummary
+  }
 
   const toTs = (value) => {
     const ts = Date.parse(value || '')
@@ -427,19 +569,46 @@ export function computeFactoryAgentTurnSummary(turn) {
   const latestProgressTs = Math.max(toTs(lastTool?.created_at), toTs(terminal?.created_at))
   const waitingOnApproval = latestProgressTs <= approvalTs
   const waitingOnConfirmation = latestProgressTs <= confirmationTs
+  const approvalSupersedesTerminal =
+    lastApproval
+    && waitingOnApproval
+    && approvalTs >= toTs(terminal?.created_at)
 
   if (lastConfirmation?.event_type === 'confirmation_required' && waitingOnConfirmation) {
     return lastConfirmation.content || 'Please confirm the filter.'
+  }
+
+  if (lastApproval?.event_type === 'approval_required' && approvalSupersedesTerminal) {
+    const bui = lastApproval.details?.args?.bundle_ui
+    if (bui && typeof bui === 'object' && bui.headline) return String(bui.headline)
+    const raw = lastApproval.content || ''
+    const compact = compactInterruptApprovalHeadline(raw)
+    if (compact) return compact
+    return raw || 'Waiting for approval.'
+  }
+  if (lastApproval?.event_type === 'approval_decided' && approvalSupersedesTerminal && !terminal) {
+    return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
   }
 
   // Terminal outcomes before approval heuristics: `waitingOnApproval` stays true after approve
   // when tool/checkpoint timestamps precede `approval_decided`, which wrongly surfaced
   // interrupt-era "Please approve…" copy even after `session_completed`.
   if (terminal?.event_type === 'session_blocked' || terminal?.event_type === 'session_failed') {
-    return terminal.content || lastTool?.content || 'Execution stopped.'
+    if (typedSummary) return typedSummary
+    if (String(terminal?.details?.reason || '').toLowerCase() === 'cancelled_by_user') {
+      return terminal.content || 'Run cancelled by operator request.'
+    }
+    return diagnosticSummaryForFailedTurn(turn) || terminal.content || lastTool?.content || 'Execution stopped.'
   }
   if (terminal?.event_type === 'session_completed') {
+    if (typedSummary) return typedSummary
     const lastPlan = latestPlanForAnswer(turn)
+    const planText = visiblePlanText(lastPlan)
+    const terminalContent = String(terminal.content || '').trim()
+
+    if (!terminalContent) {
+      return 'Unable to render final response. The run completed, but the backend returned empty assistant content.'
+    }
 
     // RAG / Conversation Support: If no tools were executed, the plan explanation IS the answer.
     if (lastPlan?.content && (!turn.tools || turn.tools.length === 0)) {
@@ -447,19 +616,21 @@ export function computeFactoryAgentTurnSummary(turn) {
     }
 
     // Prefer the last tool result when completion is a generic status line.
-    const isGenericComplete = String(terminal.content || '').toLowerCase().includes('execution completed successfully')
+    const isGenericComplete = terminalContent.toLowerCase().includes('execution completed successfully')
     const terminalIsPlanLike = isPlanLikeAnswer(terminal.content) || looksLikeRawJsonText(terminal.content)
-    if (isGenericComplete || terminalIsPlanLike) {
+    const terminalIsApprovalWait = isApprovalWaitText(terminal.content)
+    if (isGenericComplete || terminalIsPlanLike || terminalIsApprovalWait) {
+      if (toolSummary && latestToolHasResultRows(turn)) return stripApprovalWaitPhrases(toolSummary)
+      if (planText && !isPlanLikeAnswer(planText)) {
+        return stripApprovalWaitPhrases(planText)
+      }
       if (toolSummary) return stripApprovalWaitPhrases(toolSummary)
       const deduped = nonGenericToolLines(turn)
       if (deduped.length >= 2) return stripApprovalWaitPhrases(deduped.join('\n'))
       if (deduped.length === 1) return stripApprovalWaitPhrases(deduped[0])
-      if (lastPlan?.content && !isPlanLikeAnswer(lastPlan.content)) {
-        return stripApprovalWaitPhrases(lastPlan.content)
-      }
       if (lastTool?.content) return stripApprovalWaitPhrases(lastTool.content)
     }
-    return stripApprovalWaitPhrases(terminal.content || 'Execution completed.')
+    return stripApprovalWaitPhrases(terminalContent)
   }
 
   if (lastApproval?.event_type === 'approval_required' && waitingOnApproval) {
@@ -470,7 +641,7 @@ export function computeFactoryAgentTurnSummary(turn) {
     if (compact) return compact
     return raw || 'Waiting for approval.'
   }
-  if (lastApproval?.event_type === 'approval_decided' && waitingOnApproval) {
+  if (lastApproval?.event_type === 'approval_decided' && waitingOnApproval && !terminal) {
     return lastApproval.content || (String(lastApproval.status || '').toUpperCase() === 'REJECTED' ? 'Approval rejected.' : 'Approval decided.')
   }
 
@@ -502,6 +673,7 @@ export function computeFactoryAgentTurnSummary(turn) {
     return stripApprovalWaitPhrases(lastPlan.content)
   }
 
+  if (lastToolDone && typedSummary) return typedSummary
   if (lastToolDone && toolSummary) return stripApprovalWaitPhrases(toolSummary)
   if (lastTool || turn.status?.length) {
     const label = readableToolTarget(lastTool?.tool_name)
@@ -512,6 +684,11 @@ export function computeFactoryAgentTurnSummary(turn) {
   if (turn.user?.content) return 'Understanding your request...'
 
   return 'Working...'
+}
+
+export function typedPresentationDetails(turn) {
+  const facts = diagnosticFactsForPresentation(turn?.presentation)
+  return facts.length ? facts : []
 }
 
 export function assembleLegacyTurns(messages = []) {

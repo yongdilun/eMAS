@@ -20,25 +20,6 @@ from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.registry.tool_registry import ToolRegistry
 
 
-LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.xfail(
-    reason=(
-        "Legacy compatibility expectation from the pre-Phase-9 create-plan/execute "
-        "contract; graph-native execution no longer treats auto-created PlanStep rows "
-        "as execution truth."
-    ),
-    strict=True,
-)
-
-LEGACY_RUNTIME_RETIRED_XFAIL = pytest.mark.xfail(
-    reason=(
-        "Legacy relational PlanStep execution, step approvals, DLQ replay, and "
-        "background worker execution are retired; graph-native checkpoint execution "
-        "is now the only active runtime."
-    ),
-    strict=True,
-)
-
-
 class FakeEventBus:
     def __init__(self):
         self.published = []
@@ -82,7 +63,11 @@ async def _make_app(
     min_healthy_tool_count=20,
     tool_selector_backend="auto",
     openai_base_url=None,
+    openai_api_key=None,
+    force_llm_trace_all=False,
+    tool_selector_openai_base_url=None,
     rag_pipeline_adapter=None,
+    factory_agent_engine=None,
 ):
     worker_count = 1 if enqueue_session is not None else 0
     settings = Settings(
@@ -106,6 +91,10 @@ async def _make_app(
         min_healthy_tool_count=min_healthy_tool_count,
         tool_selector_backend=tool_selector_backend,
         openai_base_url=openai_base_url,
+        openai_api_key=openai_api_key,
+        force_llm_trace_all=force_llm_trace_all,
+        tool_selector_openai_base_url=tool_selector_openai_base_url,
+        factory_agent_engine=factory_agent_engine or "v2",
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()
@@ -237,6 +226,49 @@ async def test_create_session_and_message_updates_intent(sessionmaker_override, 
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_is_bounded_and_recent_for_user(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    db_session.add_all(
+        [
+            Session(
+                session_id=f"recent-{index}",
+                user_id="u1",
+                name=f"Chat {index}",
+                status="IDLE",
+                updated_at=base + timedelta(minutes=index),
+            )
+            for index in range(120)
+        ]
+        + [
+            Session(
+                session_id="other-user-session",
+                user_id="u2",
+                name="Other user",
+                status="IDLE",
+                updated_at=base + timedelta(minutes=999),
+            )
+        ]
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        default_response = await client.get("/sessions?user_id=u1")
+        assert default_response.status_code == 200
+        default_rows = default_response.json()
+        assert len(default_rows) == 100
+        assert default_rows[0]["session_id"] == "recent-119"
+        assert default_rows[-1]["session_id"] == "recent-20"
+        assert "other-user-session" not in {row["session_id"] for row in default_rows}
+
+        limited_response = await client.get("/sessions?user_id=u1&limit=3")
+        assert limited_response.status_code == 200
+        assert [row["session_id"] for row in limited_response.json()] == ["recent-119", "recent-118", "recent-117"]
+
+
+@pytest.mark.asyncio
 async def test_create_plan_rejects_tool_not_in_scope(sessionmaker_override, db_session):
     # Seed 8 machine tools + 1 inventory tool (should be excluded once picked>=8 and score==0)
     machine_schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
@@ -365,47 +397,373 @@ async def test_create_plan_rolls_back_when_plan_message_persistence_fails(
 
 
 @pytest.mark.asyncio
-async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
+async def test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orphan_idle(
+    sessionmaker_override,
+    db_session,
+):
     await _seed_tool(
         db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine"]',
-        is_read_only=True,
+        name="patch__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PATCH",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
+            "required": ["id", "priority"],
+        },
+        capability_tags='["job","priority","update"]',
+        is_read_only=False,
+        requires_approval=True,
     )
 
-    class FakePlanner:
+    class EmptyActionPlanner:
         async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del scoped_tools, context
+            del intent, scoped_tools, context
             return type(
                 "X",
                 (),
                 {
                     "draft": PlanDraft(
-                        plan_explanation=f"Auto plan for {intent}",
-                        risk_summary="read-only",
-                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
+                        plan_explanation="No safe execution step could be produced.",
+                        risk_summary="No approved action can be started.",
+                        steps=[],
                     ),
-                    "backend_used": "langgraph",
-                    "llm_calls": 0,
+                    "backend_used": "langchain",
+                    "llm_calls": 1,
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=EmptyActionPlanner())
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        r = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = r.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": "change all medium priority job to high then change all high priority job to low",
+                "mode": "normal",
+            },
+        )
 
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
-        assert created.json()["created_by"] == "langgraph"
+        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+
+    assert snapshot["session"]["status"] == "BLOCKED"
+    assert snapshot["pending_approval"] is None
+    document = snapshot["response_document"]
+    assert document["state"] == "blocked"
+    assert document["diagnostics"]["reason"] == "planner_no_action"
+    assert "non_terminal_snapshot" not in json.dumps(document)
+    diagnostic = next(block for block in document["blocks"] if block["type"] == "diagnostic")
+    assert diagnostic["reason"] == "planner_no_action"
+    assert diagnostic["title"] == "Request could not start"
+    assert "planner" in diagnostic["cause"].lower()
 
 
 @pytest.mark.asyncio
-async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override):
+async def test_phase14_active_pending_approval_uses_actionable_write_set_and_rejects_noop_stale_approval(
+    sessionmaker_override,
+    db_session,
+):
+    from factory_agent.persistence.models import Approval, PlanStep, Session
+
+    session_id = "api-phase14-zero-match"
+    active_approval_id = "api-phase14-medium-high"
+    stale_noop_approval_id = "api-phase14-low-medium-noop"
+    now = datetime.utcnow()
+    medium_rows = [
+        {"job_id": "JOB-API-MED-001", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-API-MED-002", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+    ]
+    no_op = {
+        "entity_type": "job",
+        "selector_summary": "priority = low",
+        "change_summary": "priority -> medium",
+        "matched_count": 0,
+        "changed_count": 0,
+        "status": "not_changed",
+        "reason": "no_matching_records",
+    }
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            name="Phase 14 zero-match approval",
+            status="WAITING_APPROVAL",
+            current_intent="change all low priority job to medium, then change all medium priority job to high",
+            plan_version=1,
+            version=1,
+            event_seq=4,
+            session_started_at=now,
+            created_at=now,
+            updated_at=now,
+            replan_context={
+                "langgraph_pending_approval": {"approval_id": active_approval_id, "thread_id": session_id},
+                "no_op_mutations": [no_op],
+            },
+        )
+    )
+    db_session.add_all(
+        [
+            Approval(
+                approval_id=stale_noop_approval_id,
+                session_id=session_id,
+                subject_type="graph",
+                tool_name="__langgraph_commit__",
+                args={"count": 0, "no_op_mutations": [no_op], "bundle_ui": {"rows": []}},
+                risk_summary="No low-priority jobs were found.",
+                side_effect_level="HIGH",
+                status="PENDING",
+                expires_at=now + timedelta(hours=1),
+                created_at=now,
+            ),
+            Approval(
+                approval_id=active_approval_id,
+                session_id=session_id,
+                subject_type="graph",
+                tool_name="__langgraph_commit__",
+                args={
+                    "summary": "Update 2 jobs from medium to high.",
+                    "count": 2,
+                    "no_op_mutations": [no_op],
+                    "bundle_ui": {
+                        "kind": "phase14_zero_match_first",
+                        "headline": "Update 2 jobs from medium to high",
+                        "rows": medium_rows,
+                    },
+                },
+                risk_summary="Update 2 jobs from medium to high.",
+                side_effect_level="HIGH",
+                status="PENDING",
+                expires_at=now + timedelta(hours=1),
+                created_at=now + timedelta(seconds=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert snapshot["pending_approval"]["approval_id"] == active_approval_id
+        assert [row["job_id"] for row in snapshot["pending_approval"]["args"]["bundle_ui"]["rows"]] == [
+            "JOB-API-MED-001",
+            "JOB-API-MED-002",
+        ]
+        assert "priority = low" not in json.dumps(snapshot["pending_approval"]["args"]["bundle_ui"]["rows"])
+
+        stale = await client.post(f"/approvals/{stale_noop_approval_id}/approve", json={"decided_by": "u1"})
+        assert stale.status_code == 409
+        assert "stale" in stale.text.lower()
+
+    stale_row = await db_session.get(Approval, stale_noop_approval_id)
+    active_row = await db_session.get(Approval, active_approval_id)
+    session = await db_session.get(Session, session_id)
+    assert stale_row.status == "EXPIRED"
+    assert active_row.status == "PENDING"
+    assert session.status == "WAITING_APPROVAL"
+    committed_steps = (
+        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
+    ).scalars().all()
+    assert committed_steps == []
+
+
+@pytest.mark.asyncio
+async def test_phase14_direct_v2_resume_queues_second_actionable_approval(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Approval, PlanStep, Session
+
+    session_id = "api-phase14-followup-approval"
+    first_approval_id = "api-phase14-low-medium"
+    now = datetime.utcnow()
+    low_rows = [
+        {"job_id": "JOB-LOW-001", "priority": "low", "previous_priority": "low", "new_priority": "medium"},
+        {"job_id": "JOB-LOW-002", "priority": "low", "previous_priority": "low", "new_priority": "medium"},
+    ]
+    medium_rows = [
+        {"job_id": "JOB-MED-001", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-MED-002", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-MED-003", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+    ]
+    remaining_medium_high = {
+        "summary": "Update 3 jobs from medium to high.",
+        "count": 3,
+        "rows": medium_rows,
+        "excluded_rows": [],
+        "preview": [
+            {"tool_name": "put__jobs_{id}", "args": {"id": row["job_id"], "priority": "high"}}
+            for row in medium_rows
+        ],
+        "locked_constraints": {"priority": "medium", "new_priority": "high"},
+        "current_requirement_id": "req-medium-high",
+        "entity_type": "job",
+        "previous_priority": "medium",
+        "new_priority": "high",
+        "source_priority": "medium",
+        "business_change_id": "job-priority-medium-to-high",
+        "business_change": "Medium -> High",
+        "selector_summary": "priority = medium",
+    }
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            name="Phase 14 chained approvals",
+            status="WAITING_APPROVAL",
+            current_intent="change all low priority job to medium, then change all medium priority job to high",
+            plan_version=1,
+            version=1,
+            event_seq=4,
+            session_started_at=now,
+            created_at=now,
+            updated_at=now,
+            replan_context={
+                "langgraph_pending_approval": {"approval_id": first_approval_id, "thread_id": session_id},
+            },
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=first_approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__langgraph_commit__",
+            args={
+                "summary": "Update 2 jobs from low to medium.",
+                "count": 2,
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": row["job_id"], "priority": "medium"}}
+                    for row in low_rows
+                ],
+                "remaining_business_changes": [remaining_medium_high],
+                "actionable_business_change_count": 2,
+                "bundle_ui": {
+                    "kind": "v2_planner_owned_approval_preview",
+                    "write_set": "job-priority-low-to-medium",
+                    "headline": "Update 2 jobs from low to medium",
+                    "rows": low_rows,
+                    "excluded_rows": [],
+                    "previous_priority": "low",
+                    "new_priority": "medium",
+                    "source_priority": "low",
+                    "locked_constraints": {"priority": "low", "new_priority": "medium"},
+                    "source_intent": "change all low priority job to medium, then change all medium priority job to high",
+                    "write_tool_name": "put__jobs_{id}",
+                    "business_change_id": "job-priority-low-to-medium",
+                    "business_change": "Low -> Medium",
+                    "selector_summary": "priority = low",
+                },
+                "current_requirement_id": "req-low-medium",
+                "mutation_requirements": [
+                    {
+                        "id": "req-low-medium",
+                        "goal": "change all low priority job to medium",
+                        "constraints": {"priority": "low", "new_priority": "medium"},
+                        "entity": "job",
+                        "requirement_type": "mutation_request",
+                    },
+                    {
+                        "id": "req-medium-high",
+                        "goal": "change all medium priority job to high",
+                        "constraints": {"priority": "medium", "new_priority": "high"},
+                        "entity": "job",
+                        "requirement_type": "mutation_request",
+                    },
+                ],
+                "locked_constraints": {"priority": "low", "new_priority": "medium"},
+                "commit_state": "not_committed",
+                "session_id": session_id,
+            },
+            risk_summary="Update 2 jobs from low to medium.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=now + timedelta(hours=1),
+            created_at=now,
+        )
+    )
+    await db_session.commit()
+    await _seed_tool(
+        db_session,
+        name="put__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
+            "required": ["id", "priority"],
+        },
+        capability_tags='["job","update"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    committed_args = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, tool, idempotency_key, extra_headers
+        committed_args.append(dict(args))
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": {"job_id": args["id"], "priority": args["priority"]}},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.services.approval_resume_service.execute_tool_http",
+        fake_execute_tool_http,
+    )
+    app, _ = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(f"/approvals/{first_approval_id}/approve", json={"decided_by": "u1"})
+        assert first.status_code == 200
+        assert first.json()["status"] == "APPROVED"
+
+        after_first = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert after_first["session"]["status"] == "WAITING_APPROVAL"
+        pending = after_first["pending_approval"]
+        assert pending["approval_id"] != first_approval_id
+        assert pending["args"]["bundle_ui"]["business_change_id"] == "job-priority-medium-to-high"
+        assert pending["args"]["bundle_ui"]["headline"] == "Update 3 jobs from medium to high"
+        assert [row["job_id"] for row in pending["args"]["bundle_ui"]["rows"]] == [
+            "JOB-MED-001",
+            "JOB-MED-002",
+            "JOB-MED-003",
+        ]
+        assert {args["priority"] for args in committed_args} == {"medium"}
+
+        second_approval_id = pending["approval_id"]
+        second = await client.post(f"/approvals/{second_approval_id}/approve", json={"decided_by": "u1"})
+        assert second.status_code == 200
+        assert second.json()["status"] == "APPROVED"
+
+        final = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert final["session"]["status"] == "COMPLETED"
+        assert final["pending_approval"] is None
+
+    assert [args["priority"] for args in committed_args] == ["medium", "medium", "high", "high", "high"]
+    session = await db_session.get(Session, session_id)
+    committed_steps = (
+        await db_session.execute(
+            select(PlanStep)
+            .where(PlanStep.plan_id == session.plan_id)
+            .order_by(PlanStep.step_index.asc())
+        )
+    ).scalars().all()
+    assert len(committed_steps) == 5
+    assert [step.args["priority"] for step in committed_steps] == ["medium", "medium", "high", "high", "high"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
     class FakeRAGPipeline:
         def __init__(self):
             self.calls = []
@@ -420,20 +778,27 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
                 }
             )
             return type(
-                "Result",
-                (),
-                {
-                    "answer": (
-                        "According to OSHA, Lockout/Tagout procedures control hazardous energy so "
-                        "machines are isolated and rendered safe before servicing or maintenance."
-                    ),
-                    "sources": [
-                        {
-                            "source_number": 1,
+                    "Result",
+                    (),
+                    {
+                        "answer": (
+                            "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                            "hazardous energy during servicing and maintenance [^1]."
+                        ),
+                        "sources": [
+                            {
+                                "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#purpose-standard",
                             "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "purpose-standard",
                             "title": "Control of Hazardous Energy Lockout/Tagout",
                             "organization": "OSHA",
                             "authority_level": "official_public_guidance",
+                            "snippet": (
+                                "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                                "hazardous energy during servicing and maintenance and helps prevent unexpected "
+                                "energization, startup, or release of stored energy."
+                            ),
                         }
                     ],
                     "safety_content": (
@@ -463,9 +828,13 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
         assert created.status_code == 200
         body = created.json()
         assert body["status"] == "COMPLETED"
-        assert body["created_by"] == "system"
+        assert body["created_by"] == "v2_rag_tool"
+        assert not body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "29 CFR 1910.147" in body["plan_explanation"]
         assert body["sources"][0]["organization"] == "OSHA"
+        assert {source["doc_id"] for source in body["sources"]} == {"osha_3120_lockout_tagout"}
+        assert body["sources"][0]["chunk_id"] == "purpose-standard"
+        assert "approved SOP" in body["safety_content"]
 
         steps = await client.get(f"/sessions/{session_id}/steps")
         assert steps.status_code == 200
@@ -473,466 +842,210 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
 
     assert rag.calls
     assert rag.calls[0]["route"] == "RAG_ONLY"
+    session_row = await db_session.get(Session, session_id)
+    contract = (session_row.replan_context or {})["intent_contract"]
+    trace = contract["execution_trace"]
+    evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
+    assert contract["engine_version"] == "v2"
+    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
+    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["tool_name"] == "rag_search_documents"
+    assert "29 CFR 1910.147" in evidence[0]["normalized_result"]["answer"]
 
 
 @pytest.mark.asyncio
-async def test_legacy_planner_prefers_entity_machine_tool_when_id_present(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
+async def test_create_plan_does_not_recover_uncited_osha_loto_answer_from_source_excerpt(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
 
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check machine 5 status"})
-
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (
-        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
-    ).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__machines_{id}"
-    assert step_row.args == {"id": "5"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_returns_clarification_when_required_args_missing(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Plan
-
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check machine status"})
-
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 400
-        assert "Need id" in json.dumps(plan.json())
-
-    rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
-    assert rows == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_PLAN_STEP_PROJECTION_XFAIL
-async def test_legacy_planner_allows_partial_args_for_write_tool_and_waits_approval(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Approval, PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="post__inventory_update",
-        endpoint="/inventory",
-        method="POST",
-        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
-        capability_tags='["inventory", "update"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "Update inventory"},
-        )
-
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-        execute = await client.post(f"/sessions/{session_id}/execute")
-        assert execute.status_code == 200
-        assert execute.json()["status"] == "WAITING_APPROVAL"
-
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        body = snapshot.json()
-        missing = [
-            event.get("details", {}).get("missing_required")
-            for event in body.get("timeline", [])
-            if event.get("event_type") == "approval_required"
-        ]
-        assert any(isinstance(v, list) and "id" in v for v in missing)
-
-    step = (
-        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
-    ).scalars().first()
-    assert step is not None
-    assert step.args == {}
-    assert step.requires_approval is True
-    approvals = (await db_session.execute(select(Approval).where(Approval.session_id == session_id))).scalars().all()
-    assert len(approvals) == 1
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check machine M-LTH-02 status"})
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__machines_{id}"
-    assert step_row.args == {"id": "M-LTH-02"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__jobs",
-        endpoint="/jobs",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["job","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__jobs_{id}",
-        endpoint="/jobs/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["job","status"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check job JOB-SEED-001 status"})
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__jobs_{id}"
-    assert step_row.args == {"id": "JOB-SEED-001"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__jobs_{id}",
-        endpoint="/jobs/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["job","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__jobs_{id}_slots",
-        endpoint="/jobs/{id}/slots",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["job","schedule","slot"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Show slots for job JOB-SEED-001"})
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__jobs_{id}_slots"
-    assert step_row.args == {"id": "JOB-SEED-001"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_prefers_resource_create_over_specialized_subresource(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="post__machines",
-        endpoint="/machines",
-        method="POST",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "machine_id": {"type": "string"},
-                "machine_name": {"type": "string"},
-                "machine_type": {"type": "string"},
-            },
-            "required": ["machine_id", "machine_name", "machine_type"],
-        },
-        capability_tags='["machine","create"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="post__machines_downtime",
-        endpoint="/machines/downtime",
-        method="POST",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "machine_id": {"type": "string"},
-            },
-            "required": ["machine_id"],
-        },
-        capability_tags='["machine","create","downtime"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "create new machine"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "post__machines"
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__products",
-        endpoint="/products",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"fields": {"type": "string"}},
-            "x-query-params": ["fields"],
-            "x-param-sources": {"fields": "query"},
-        },
-        capability_tags='["product","list"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "get all product id"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__products"
-    assert step_row.args == {"fields": "product_id"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_prefers_products_list_over_product_process_lookup_when_id_missing(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__products",
-        endpoint="/products",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"fields": {"type": "string"}},
-            "x-query-params": ["fields"],
-            "x-param-sources": {"fields": "query"},
-        },
-        capability_tags='["product","list"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__processes_product_{id}",
-        endpoint="/processes/product/{id}",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"id": {"type": "string"}},
-            "required": ["id"],
-            "x-path-params": ["id"],
-            "x-param-sources": {"id": "path"},
-        },
-        capability_tags='["product","process","lookup"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "give me a product id"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__products"
-    assert step_row.args == {"fields": "product_id"}
-
-
-@pytest.mark.asyncio
-async def test_llm_structured_tool_selection_contract_is_applied(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.persistence.models import PlanStep
-
-    class _FakeResponse:
-        def __init__(self, content: str):
-            self.content = content
-
-    class _FakeChatOpenAI:
-        def __init__(self, **kwargs):
-            del kwargs
-
-        async def ainvoke(self, prompt: str):
-            if "Select one best tool for this user clause" in prompt:
-                return _FakeResponse(
-                    json.dumps(
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": (
+                        "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                        "hazardous energy during servicing and maintenance."
+                    ),
+                    "sources": [
                         {
-                            "tool_name": "get__products",
-                            "args": {"fields": "product_id"},
-                            "confidence": 0.98,
-                            "missing_args": [],
-                            "reason": "IDs requested without specific process id.",
+                            "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#purpose-standard",
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "purpose-standard",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "authority_level": "official_public_guidance",
+                            "snippet": (
+                                "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                                "hazardous energy during servicing and maintenance."
+                            ),
                         }
-                    )
-                )
-            if "Generate plan explainability as strict JSON" in prompt:
-                return _FakeResponse(
-                    json.dumps(
-                        {
-                            "plan_explanation": "Use products list to return product IDs.",
-                            "risk_summary": "Read-only retrieval with no write side effects.",
-                        }
-                    )
-                )
-            return _FakeResponse(json.dumps({"message": "ok"}))
+                    ],
+                    "safety_content": "This topic involves high-risk industrial procedures.",
+                },
+            )()
 
-    fake_langchain = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
-    monkeypatch.setitem(sys.modules, "langchain_openai", fake_langchain)
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
 
-    await _seed_tool(
-        db_session,
-        name="get__products",
-        endpoint="/products",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"fields": {"type": "string"}},
-            "x-query-params": ["fields"],
-            "x-param-sources": {"fields": "query"},
-        },
-        capability_tags='["product","list"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__processes_product_{id}",
-        endpoint="/processes/product/{id}",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"id": {"type": "string"}},
-            "required": ["id"],
-            "x-path-params": ["id"],
-            "x-param-sources": {"id": "path"},
-        },
-        capability_tags='["product","process","lookup"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url="http://fake-llm")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
             f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "give me a product id"},
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
         )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
 
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__products"
-    assert step_row.args == {"fields": "product_id"}
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["created_by"] == "v2_rag_tool"
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
+
+    session_row = await db_session.get(Session, session_id)
+    evidence = (session_row.replan_context or {})["intent_contract"]["v2_state"]["evidence_ledger"]["evidence"]
+    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["tool_name"] == "rag_search_documents"
+    assert evidence[0]["normalized_result"]["answer"].startswith("I do not have enough retrieved evidence")
+
+
+@pytest.mark.asyncio
+async def test_create_plan_uses_insufficient_context_when_osha_loto_rag_is_empty(sessionmaker_override):
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": "No relevant documents or data found for this query.",
+                    "sources": [],
+                    "safety_content": None,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"] == []
+        assert "consult your safety officer" in body["safety_content"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_uses_insufficient_context_when_osha_loto_sources_do_not_prove_claim(sessionmaker_override):
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": "The OSHA guide describes general energy-control responsibilities [^1].",
+                    "sources": [
+                        {
+                            "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#general-energy-control",
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "general-energy-control",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "snippet": "The guide describes energy-control program responsibilities for employers.",
+                        }
+                    ],
+                    "safety_content": None,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["created_by"] == "v2_rag_tool"
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "related sources checked" in body["plan_explanation"]
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
+        assert "consult your safety officer" in body["safety_content"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_unknown_non_loto_procedure_does_not_borrow_osha_policy(sessionmaker_override):
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": "No relevant documents or data found for this query.",
+                    "sources": [],
+                    "safety_content": None,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": "What SOP applies before cleaning Line 2?",
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert "Lockout/Tagout" not in body["plan_explanation"]
+        assert body["sources"] == []
+        assert body["safety_content"] is None
 
 
 @pytest.mark.asyncio
@@ -973,176 +1086,6 @@ async def test_plan_creation_survives_summary_model_failure(sessionmaker_overrid
 
     rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
     assert len(rows) == 1
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_splits_compound_intent_into_multiple_steps(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__jobs_{id}_slots",
-        endpoint="/jobs/{id}/slots",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["job","schedule","slot"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "Check machine M-LTH-02 status and then show slots for JOB-SEED-001"},
-        )
-
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-        body = plan.json()
-        assert body["created_by"] == "langgraph"
-        assert "machine" in body["plan_explanation"].lower()
-        assert "slots" in body["plan_explanation"].lower()
-
-    step_rows = (
-        await db_session.execute(
-            select(PlanStep)
-            .where(PlanStep.session_id == session_id)
-            .order_by(PlanStep.step_index.asc())
-        )
-    ).scalars().all()
-    assert len(step_rows) == 2
-    assert step_rows[0].tool_name == "get__machines_{id}"
-    assert step_rows[0].args == {"id": "M-LTH-02"}
-    assert step_rows[1].tool_name == "get__jobs_{id}_slots"
-    assert step_rows[1].args == {"id": "JOB-SEED-001"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__inventory_materials",
-        endpoint="/inventory/materials",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["inventory","material"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__inventory_materials_{id}",
-        endpoint="/inventory/materials/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["inventory","material"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check material MAT-010 stock"})
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__inventory_materials_{id}"
-    assert step_row.args == {"id": "MAT-010"}
-
-
-@pytest.mark.asyncio
-async def test_legacy_planner_extracts_seed_proposal_id(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__ai_scheduling_proposals",
-        endpoint="/ai/scheduling/proposals",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["proposal","scheduling"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="get__ai_scheduling_proposals_{id}",
-        endpoint="/ai/scheduling/proposals/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
-        capability_tags='["proposal","scheduling"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Open proposal AIPROP-SEED-001"})
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.tool_name == "get__ai_scheduling_proposals_{id}"
-    assert step_row.args == {"id": "AIPROP-SEED-001"}
-
-
-@pytest.mark.asyncio
-async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Plan
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
-        capability_tags='["machine"]',
-        is_read_only=True,
-    )
-
-    class FakePlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            return type(
-                "X",
-                (),
-                {
-                    "draft": PlanDraft(
-                        plan_explanation="bad schema args",
-                        risk_summary="read-only",
-                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
-                    ),
-                    "backend_used": "langchain",
-                    "llm_calls": 1,
-                },
-            )()
-
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        r = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = r.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
-        res = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert res.status_code == 400
-
-    plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
-    assert len(plan_rows) == 0
 
 
 @pytest.mark.asyncio
@@ -1263,47 +1206,8 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
 
 
 @pytest.mark.asyncio
-async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine","list"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="post__machines",
-        endpoint="/machines",
-        method="POST",
-        input_schema={"type": "object", "properties": {"machine_name": {"type": "string"}}, "required": ["machine_name"]},
-        capability_tags='["machine","create"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "create new machine", "mode": "normal"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step is not None
-    assert step.tool_name == "post__machines"
-
-
-@pytest.mark.asyncio
 async def test_conversation_message_returns_completed_empty_plan(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
+    from factory_agent.persistence.models import PlanStep, Session
 
     await _seed_tool(
         db_session,
@@ -1328,12 +1232,15 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
         snapshot = await client.get(f"/sessions/{session_id}/snapshot")
         assert snapshot.status_code == 200
-        assert snapshot.json()["plan"] is None
-        assert all(event["event_type"] != "plan_created" for event in snapshot.json()["timeline"])
+        snapshot_body = snapshot.json()
+        assert snapshot_body["plan"]["status"] == "COMPLETED"
+        assert snapshot_body["plan"]["created_by"] == "v2_planner_loop"
+        assert any(event["event_type"] == "plan_created" for event in snapshot_body["timeline"])
         assert any(
             event["event_type"] == "session_completed" and "factory operations" in event["content"]
-            for event in snapshot.json()["timeline"]
+            for event in snapshot_body["timeline"]
         )
+        assert snapshot_body["response_document"]["state"] == "completed"
 
         executed = await client.post(f"/sessions/{session_id}/execute", json={})
         assert executed.status_code == 200
@@ -1341,267 +1248,10 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
     steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
     assert steps == []
-
-
-@pytest.mark.asyncio
-async def test_planner_clarification_returns_message_not_error(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Message, Session
-    from factory_agent.planner import PlannerClarificationError
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["idle", "running", "maintenance", "offline"]},
-            },
-        },
-        capability_tags='["machine","list"]',
-        is_read_only=True,
-    )
-
-    class FakePlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            raise PlannerClarificationError(
-                'I found machines, but I could not safely map "broke" to a valid status. '
-                "Allowed status values are: idle, running, maintenance, offline.",
-                negative_bindings=[
-                    {
-                        "term": "broke",
-                        "normalized_term": "broke",
-                        "entity": "machine",
-                        "field": "status",
-                        "reason": "semantic enum mapping was not an allowed value",
-                    }
-                ],
-            )
-
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "find all broke machine", "mode": "normal"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-        assert plan.json()["status"] == "COMPLETED"
-
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        assert any(
-            event["event_type"] == "session_completed" and "could not safely map" in event["content"]
-            for event in snapshot.json()["timeline"]
-        )
-
-    messages = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "assistant")
-            .order_by(Message.created_at.asc())
-        )
-    ).scalars().all()
-    session = (
-        await db_session.execute(select(Session).where(Session.session_id == session_id))
-    ).scalars().one()
-    memory = (session.replan_context or {}).get("intent_memory", {})
-    assert memory["negative_bindings"][0]["field"] == "status"
-    assert any("Allowed status values are: idle, running, maintenance, offline." in msg.content for msg in messages)
-
-
-@pytest.mark.asyncio
-async def test_langgraph_read_only_not_found_plan_returns_200_not_400(
-    sessionmaker_override,
-    db_session,
-):
-    from factory_agent.planner import PlannerClarificationError
-
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-
-    class FakePlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            raise PlannerClarificationError("Is there any specific information you need about machine 5, given that it does not exist?")
-
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "Check machine 5 status", "mode": "normal"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-
-    assert plan.status_code == 200
-    assert plan.json()["status"] == "COMPLETED"
-
-
-@pytest.mark.asyncio
-async def test_planner_unknown_term_clarification_returns_message_not_error(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.persistence.models import Message
-    from factory_agent.planning.reasoning_pipeline import ReasoningPipeline
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "enum": ["idle", "running", "maintenance", "offline"]},
-            },
-        },
-        capability_tags='["machine","list"]',
-        is_read_only=True,
-    )
-
-    async def _fake_classify_unknown_term(self, *, clause, term, entity, tool):
-        del self, clause, entity, tool
-        assert term == "bsn"
-        return {"field_name": None, "confidence": 0.0, "reason": "no matching schema field"}
-
-    monkeypatch.setattr(ReasoningPipeline, "classify_unknown_term", _fake_classify_unknown_term)
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "find all bsn machine", "mode": "normal"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-        assert plan.json()["status"] == "COMPLETED"
-
-    messages = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "assistant")
-            .order_by(Message.created_at.asc())
-        )
-    ).scalars().all()
-    assert any('couldn\'t match "bsn" to any supported machine field or filter' in msg.content.lower() for msg in messages)
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_PLAN_STEP_PROJECTION_XFAIL
-async def test_predicate_confirmation_round_trip_resumes_with_selected_filter(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep, Session
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "machine_type": {"type": "string"},
-                "location": {"type": "string"},
-            },
-        },
-        capability_tags='["machine","list"]',
-        is_read_only=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "find all CNC machine", "mode": "normal"},
-        )
-        plan = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan.status_code == 200
-
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        body = snapshot.json()
-        assert body["session"]["status"] == "WAITING_CONFIRMATION"
-        confirmation_event = next(event for event in body["timeline"] if event["event_type"] == "confirmation_required")
-        assert {opt["field"] for opt in confirmation_event["details"]["confirmation"]["options"]} >= {"machine_type", "location"}
-
-        confirmed = await client.post(f"/sessions/{session_id}/confirm", json={"field": "machine_type", "value": "CNC"})
-        assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "IDLE"
-
-        plan2 = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert plan2.status_code == 200
-
-    sess = await db_session.get(Session, session_id)
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert sess.status == "PLANNING"
-    assert step.args == {"machine_type": "CNC"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_PLAN_STEP_PROJECTION_XFAIL
-async def test_plan_mode_creates_plan_level_approval_after_discovery(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Approval, Plan
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine","list"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="post__machines",
-        endpoint="/machines",
-        method="POST",
-        input_schema={"type": "object", "properties": {"machine_name": {"type": "string"}}, "required": ["machine_name"]},
-        capability_tags='["machine","create"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-    respx_mock.get("http://testserver/machines").respond(200, json={"items": []})
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "create new machine", "mode": "plan"},
-        )
-        created = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert created.status_code == 200
-        assert created.json()["kind"] == "discovery"
-
-        executed = await client.post(f"/sessions/{session_id}/execute", json={})
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "WAITING_APPROVAL"
-
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        assert snapshot.json()["pending_approval"]["subject_type"] == "plan"
-        assert snapshot.json()["plan"]["kind"] == "execution"
-        assert snapshot.json()["plan"]["status"] == "PENDING_APPROVAL"
-
-    approvals = (await db_session.execute(select(Approval).where(Approval.session_id == session_id))).scalars().all()
-    assert any(a.subject_type == "plan" for a in approvals)
-    plans = (await db_session.execute(select(Plan).where(Plan.session_id == session_id).order_by(Plan.created_at.asc()))).scalars().all()
-    assert len(plans) == 2
+    session_row = await db_session.get(Session, session_id)
+    contract = (session_row.replan_context or {})["intent_contract"]
+    assert contract["engine_version"] == "v2"
+    assert contract["execution_trace"]["generated_by"] == "v2_planner_loop"
 
 
 @pytest.mark.asyncio
@@ -1638,149 +1288,98 @@ async def test_tool_registry_load_normalizes_legacy_string_tags(sessionmaker_ove
 
 
 @pytest.mark.asyncio
-async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_override, db_session, monkeypatch):
-    from factory_agent.registry.tool_registry import ToolRegistry
-    from factory_agent.persistence.models import Tool
-    from factory_agent.persistence.models import PlanStep
-
-    for idx in range(5):
-        await _seed_tool(
-            db_session,
-            name=f"legacy_tool_{idx}",
-            endpoint=f"/legacy/{idx}",
-            method="GET",
-            input_schema={"type": "object", "properties": {}},
-            capability_tags='["machine"]' if idx == 0 else '["legacy"]',
-            is_read_only=True,
-        )
-
-    async def fake_regenerate(self, db, *, openapi_url, local_swagger_json_path, force_local=False, replace_db=True):
-        del openapi_url, local_swagger_json_path, force_local, replace_db
-        await _seed_tool(
-            db,
-            name="get__machines_{id}",
-            endpoint="/machines/{id}",
-            method="GET",
-            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-            capability_tags='["machine","status"]',
-            is_read_only=True,
-        )
-        await _seed_tool(
-            db,
-            name="post__machines",
-            endpoint="/machines",
-            method="POST",
-            input_schema={"type": "object", "properties": {"machine_name": {"type": "string"}}, "required": ["machine_name"]},
-            capability_tags='["machine","create"]',
-            is_read_only=False,
-            requires_approval=True,
-        )
-        await _seed_tool(
-            db,
-            name="get__chatbot_approval_pending",
-            endpoint="/chatbot/approval/pending",
-            method="GET",
-            input_schema={"type": "object", "properties": {}},
-            capability_tags='["approval","pending","list"]',
-            is_read_only=True,
-        )
-        rows = (await db.execute(select(Tool))).scalars().all()
-        for idx in range(20 - len(rows)):
-            await _seed_tool(
-                db,
-                name=f"extra_tool_{idx}",
-                endpoint=f"/extra/{idx}",
-                method="GET",
-                input_schema={"type": "object", "properties": {}},
-                capability_tags='["extra"]',
-                is_read_only=True,
-            )
-
-        class Result:
-            tool_count = 20
-            tools_md_hash = "test-hash"
-
-        await self.refresh(db)
-        return Result()
-
-    monkeypatch.setattr(ToolRegistry, "regenerate_from_openapi", fake_regenerate)
-
-    app, _ = await _make_app(
-        sessionmaker_override,
-        database_url="mysql+aiomysql://test",
-        enforce_tool_registry_health=True,
-        auto_repair_tool_registry=True,
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "check machine 5 status", "mode": "normal"},
-        )
-        created = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert created.status_code == 200
-
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step is not None
-    assert step.tool_name == "get__machines_{id}"
-    assert step.args == {"id": "5"}
-
-
-@pytest.mark.asyncio
-async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker_override, db_session, monkeypatch):
+async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Session
     from factory_agent.planning.tool_selector import ToolSelector
-    from factory_agent.persistence.models import PlanStep
 
     await _seed_tool(
         db_session,
-        name="get__machines",
-        endpoint="/machines",
+        name="get__machines_{id}",
+        endpoint="/machines/{id}",
         method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine","list"]',
+        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+        capability_tags='["machine","lookup","status"]',
         is_read_only=True,
     )
     await _seed_tool(
         db_session,
-        name="post__machines",
-        endpoint="/machines",
-        method="POST",
-        input_schema={"type": "object", "properties": {"machine_name": {"type": "string"}}, "required": ["machine_name"]},
-        capability_tags='["machine","create"]',
-        is_read_only=False,
-        requires_approval=True,
+        name="get__machines_status",
+        endpoint="/machines/status",
+        method="GET",
+        input_schema={"type": "object", "properties": {}},
+        capability_tags='["machine","status","list"]',
+        is_read_only=True,
     )
+
+    called = {"count": 0}
 
     async def fake_invoke(self, *, prompt):
         del self, prompt
+        called["count"] += 1
         return {
-            "primary_tool": "post__machines",
-            "additional_tools": ["get__machines"],
-            "confidence": 0.91,
-            "missing_fields": ["machine_name"],
-            "reason": "Create action aligns with POST /machines.",
+            "primary_tool": "get__machines_{id}",
+            "additional_tools": ["get__machines_status"],
+            "confidence": 1.0,
+            "missing_fields": [],
+            "reason": "forced trace accounting",
         }
 
-    monkeypatch.setattr(ToolSelector, "_should_rerank", lambda self, intent, candidates, tools_by_name: True)
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, tool, idempotency_key, extra_headers
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {
+                "data": {
+                    "machineID": str(args.get("id") or "5"),
+                    "status": "RUNNING",
+                }
+            },
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
     monkeypatch.setattr(ToolSelector, "_invoke_reranker", fake_invoke)
+    monkeypatch.setattr(
+        ToolSelector,
+        "_top_candidates",
+        lambda self, **kwargs: [
+            ("get__machines_{id}", 100),
+            ("get__machines_status", 1),
+        ],
+    )
+    monkeypatch.setattr(
+        "factory_agent.services.plan_creation_service.execute_tool_http",
+        fake_execute_tool_http,
+    )
 
     app, _ = await _make_app(
         sessionmaker_override,
-        tool_selector_backend="langchain",
-        openai_base_url="http://fake-llm",
+        force_llm_trace_all=True,
+        tool_selector_openai_base_url="http://fake-selector",
+        openai_api_key="test-key",
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
             f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "create new machine", "mode": "normal"},
+            json={"role": "user", "content": "Check machine 5 status", "mode": "normal"},
         )
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
+        assert created.json()["created_by"] == "v2_planner_loop"
 
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step is not None
-    assert step.tool_name == "post__machines"
+    session_row = await db_session.get(Session, session_id)
+    assert called["count"] == 1
+    assert session_row.llm_call_count == 1
+    trace = (session_row.replan_context or {})["intent_contract"]["execution_trace"]
+    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["tool_retrieval"]["reranker"]["call_count"] == 1
+    assert "get__machines_{id}" in trace["tool_retrieval"]["selected_candidate_tool_names"]
 
 
 @pytest.mark.asyncio
@@ -1836,108 +1435,6 @@ async def test_create_plan_falls_back_when_tool_selector_reranker_errors(session
 
 
 @pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_generated_write_plan_sets_requires_approval_and_waits_approval(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Approval, PlanStep
-
-    await _seed_tool(
-        db_session,
-        name="post__inventory_update",
-        endpoint="/inventory",
-        method="POST",
-        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
-        capability_tags='["inventory", "update"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    class FakePlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            return type(
-                "X",
-                (),
-                {
-                    "draft": PlanDraft(
-                        plan_explanation="write inventory",
-                        risk_summary="write op",
-                        steps=[PlanStepDraft(step_index=0, tool_name="post__inventory_update", args={"id": 9})],
-                    ),
-                    "backend_used": "langchain",
-                    "llm_calls": 1,
-                },
-            )()
-
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "update inventory"})
-        created = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert created.status_code == 200
-
-        execute = await client.post(f"/sessions/{session_id}/execute")
-        assert execute.status_code == 200
-        assert execute.json()["status"] == "WAITING_APPROVAL"
-
-    step = (
-        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
-    ).scalars().first()
-    assert step is not None
-    assert step.requires_approval is True
-    approvals = (await db_session.execute(select(Approval).where(Approval.session_id == session_id))).scalars().all()
-    assert len(approvals) == 1
-
-
-@pytest.mark.asyncio
-async def test_langchain_invalid_output_fallback_disabled_rejected_and_not_executable(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Plan
-
-    await _seed_tool(
-        db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
-        capability_tags='["machine"]',
-        is_read_only=True,
-    )
-
-    class FakePlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            return type(
-                "X",
-                (),
-                {
-                    "draft": PlanDraft(
-                        plan_explanation="invalid langchain",
-                        risk_summary="bad",
-                        steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
-                    ),
-                    "backend_used": "langchain",
-                    "llm_calls": 1,
-                },
-            )()
-
-    app, _ = await _make_app(
-        sessionmaker_override,
-        planner_adapter=FakePlanner(),
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "machine"})
-        created = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert created.status_code == 400
-
-        execute = await client.post(f"/sessions/{session_id}/execute")
-        assert execute.status_code == 400
-
-    plan_rows = (await db_session.execute(select(Plan).where(Plan.session_id == session_id))).scalars().all()
-    assert len(plan_rows) == 0
-
-
-@pytest.mark.asyncio
 async def test_get_tools_lists_and_scopes(sessionmaker_override, db_session):
     await _seed_tool(
         db_session,
@@ -1973,73 +1470,6 @@ async def test_get_tools_lists_and_scopes(sessionmaker_override, db_session):
 
 
 @pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_reject_approval_sets_session_idle_and_step_skipped(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Approval, PlanStep, Session, generate_uuid
-
-    step_id = generate_uuid()
-    approval_id = generate_uuid()
-    await _seed_session_plan_with_steps(
-        db_session,
-        session_id="sess-reject",
-        plan_id="plan-reject",
-        plan_hash="hash-reject",
-        plan_version=1,
-        steps=[
-            {
-                "step_id": step_id,
-                "step_index": 0,
-                "tool_name": "post__inventory_update",
-                "args": {"id": 1},
-                "status": "NOT_STARTED",
-                "requires_approval": True,
-                "approval_id": approval_id,
-            }
-        ],
-    )
-    db_session.add(
-        Approval(
-            approval_id=approval_id,
-            session_id="sess-reject",
-            step_id=step_id,
-            tool_name="post__inventory_update",
-            args={"id": 1},
-            risk_summary="write op",
-            side_effect_level="HIGH",
-            status="PENDING",
-            expires_at=datetime.utcnow(),
-        )
-    )
-    await db_session.commit()
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post(
-            f"/approvals/{approval_id}/reject",
-            json={"decided_by": "u1", "rejection_reason": "Not safe"},
-        )
-        assert res.status_code == 200
-
-        snapshot = await client.get("/sessions/sess-reject/snapshot")
-        assert snapshot.status_code == 200
-        approval_events = [event for event in snapshot.json()["timeline"] if event["event_type"].startswith("approval_")]
-        assert len([event for event in approval_events if event["event_type"] == "approval_required"]) == 0
-        assert any(
-            event["event_type"] == "approval_decided" and event["status"] == "REJECTED"
-            for event in approval_events
-        )
-        decided = next(event for event in approval_events if event["event_type"] == "approval_decided")
-        assert decided["content"] == "Rejected request to change inventory item 1: Not safe"
-        assert "post__inventory_update" not in decided["content"]
-
-    sess = await db_session.get(Session, "sess-reject")
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.step_id == step_id))).scalars().first()
-    assert sess.status == "IDLE"
-    assert step.status == "SKIPPED"
-
-
-@pytest.mark.asyncio
 async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep, Session
 
@@ -2072,71 +1502,37 @@ async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_se
 
 
 @pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_end_to_end_state_progression_with_approval_resume(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import PlanStep
+async def test_late_plan_or_execute_after_cancel_does_not_revive_session(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
 
-    await _seed_tool(
+    await _seed_session_plan_with_steps(
         db_session,
-        name="get__machines",
-        endpoint="/machines",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["machine"]',
-        is_read_only=True,
+        session_id="sess-cancel-late",
+        plan_id="plan-cancel-late",
+        plan_hash="hash-cancel-late",
+        plan_version=1,
+        steps=[
+            {"step_index": 0, "tool_name": "get__machines", "args": {}, "status": "NOT_STARTED"},
+        ],
     )
-    await _seed_tool(
-        db_session,
-        name="post__inventory_update",
-        endpoint="/inventory",
-        method="POST",
-        input_schema={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
-        capability_tags='["inventory"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    respx_mock.get("http://testserver/machines").respond(200, json={"items": []})
-    respx_mock.post("http://testserver/inventory").respond(200, json={"ok": True})
 
     app, _ = await _make_app(sessionmaker_override)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "check machine then write inventory"})
-        draft = PlanDraft(
-            plan_explanation="Read machines then update inventory",
-            risk_summary="Second step writes inventory",
-            steps=[
-                PlanStepDraft(step_index=0, tool_name="get__machines", args={}),
-                PlanStepDraft(step_index=1, tool_name="post__inventory_update", args={"id": 1}),
-            ],
-        )
-        created = await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        assert created.status_code == 200
+        cancel = await client.post("/sessions/sess-cancel-late/cancel")
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] == "IDLE"
 
-        execute1 = await client.post(f"/sessions/{session_id}/execute")
-        assert execute1.status_code == 200
-        assert execute1.json()["status"] == "WAITING_APPROVAL"
+        late_plan = await client.post("/sessions/sess-cancel-late/plans", json={})
+        assert late_plan.status_code == 200
+        assert late_plan.json()["status"] == "COMPLETED"
 
-        pending = await client.get("/approvals/pending")
-        assert pending.status_code == 200
-        approval_id = pending.json()[0]["approval_id"]
-        rejected = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
-        assert rejected.status_code == 200
+        late_execute = await client.post("/sessions/sess-cancel-late/execute?background=true", json={})
+        assert late_execute.status_code == 200
+        assert late_execute.json()["status"] == "IDLE"
 
-        execute2 = await client.post(f"/sessions/{session_id}/execute")
-        assert execute2.status_code == 200
-        assert execute2.json()["status"] == "COMPLETED"
-
-    steps = (
-        await db_session.execute(
-            select(PlanStep)
-            .where(PlanStep.session_id == session_id)
-            .order_by(PlanStep.step_index.asc())
-        )
-    ).scalars().all()
-    assert [s.status for s in steps] == ["DONE", "DONE"]
+    sess = await db_session.get(Session, "sess-cancel-late")
+    assert sess.status == "IDLE"
+    assert sess.error == "Cancelled"
 
 
 @pytest.mark.asyncio
@@ -2383,6 +1779,11 @@ async def test_graph_approval_returns_before_resume_and_keeps_one_activity_opera
         during = (await client.get(f"/sessions/{session_id}/snapshot")).json()
         assert during["session"]["status"] == "EXECUTING"
         assert during["pending_approval"] is None
+        during_doc = during["response_document"]
+        assert during_doc["revision_source"] == "event_seq"
+        assert during_doc["revision"] >= 1
+        assert during_doc["state"] == "running"
+        assert "approval_required" not in {block["type"] for block in during_doc["blocks"]}
         during_events = [event["event_type"] for event in during["timeline"]]
         assert "approval_required" in during_events
         assert "approval_decided" in during_events
@@ -2398,6 +1799,14 @@ async def test_graph_approval_returns_before_resume_and_keeps_one_activity_opera
 
     assert final_body is not None
     assert final_body["session"]["status"] == "COMPLETED"
+    final_doc = final_body["response_document"]
+    assert final_doc["revision"] > during_doc["revision"]
+    assert final_doc["state"] == "completed"
+    assert "approval_required" not in {block["type"] for block in final_doc["blocks"]}
+    assert not any(
+        step["kind"] == "approval" and step["state"] in {"waiting", "current"}
+        for step in final_doc["run_steps"]
+    )
     event_types = [event["event_type"] for event in final_body["timeline"]]
     assert event_types.index("plan_created") < event_types.index("approval_required")
     assert event_types.index("approval_required") < event_types.index("approval_decided")
@@ -2416,95 +1825,6 @@ async def test_graph_approval_returns_before_resume_and_keeps_one_activity_opera
     ]
     operation_ids = {event.get("operation_id") for event in operation_events}
     assert operation_ids == {final_body["session"]["operation_id"]}
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_approve_endpoint_allows_overriding_args_before_execution(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import Approval as ApprovalRow, PlanStep as PlanStep
-
-    schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
-    await _seed_tool(
-        db_session,
-        name="post__inventory_update",
-        endpoint="/inventory",
-        method="POST",
-        input_schema=schema,
-        capability_tags='["inventory"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    draft = PlanDraft(
-        plan_explanation="update inventory",
-        risk_summary="write op",
-        steps=[PlanStepDraft(step_index=0, tool_name="post__inventory_update", args={"id": 1})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        assert created.status_code == 200
-        session_id = created.json()["session_id"]
-
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "update inventory"})
-        plan_created = await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        assert plan_created.status_code == 200
-
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "WAITING_APPROVAL"
-
-        pending = await client.get("/approvals/pending", params={"session_id": session_id})
-        assert pending.status_code == 200
-        approval_id = pending.json()[0]["approval_id"]
-
-        approved = await client.post(
-            f"/approvals/{approval_id}/approve",
-            json={"decided_by": "u1", "args": {"id": 2}},
-        )
-        assert approved.status_code == 200
-        assert approved.json()["status"] == "APPROVED"
-        assert approved.json()["args"] == {"id": 2}
-
-    approval_row = await db_session.get(ApprovalRow, approval_id)
-    assert approval_row is not None
-    assert approval_row.args == {"id": 2}
-
-    step_row = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
-    assert step_row is not None
-    assert step_row.args == {"id": 2}
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_dlq_dismiss_and_replay_endpoints(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import DeadLetter, generate_uuid
-
-    dlq_id = generate_uuid()
-    db_session.add(
-        DeadLetter(
-            dlq_id=dlq_id,
-            session_id="sess-dlq",
-            step_id=None,
-            failure_type="unrecoverable_error",
-            reason="boom",
-            payload={},
-            status="PENDING",
-        )
-    )
-    await db_session.commit()
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        dismissed = await client.post(f"/dlq/{dlq_id}/dismiss", json={"dismissed_reason": "handled", "dismissed_by": "ops"})
-        assert dismissed.status_code == 200
-        replayed = await client.post(f"/dlq/{dlq_id}/replay", json={"replayed_by": "ops"})
-        assert replayed.status_code == 200
-        listed = await client.get("/dlq", params={"status": "REPLAYED"})
-        assert listed.status_code == 200
-        assert any(row["dlq_id"] == dlq_id for row in listed.json())
 
 
 @pytest.mark.asyncio
@@ -2557,59 +1877,6 @@ async def test_waiting_approval_user_message_triggers_replan_context(sessionmake
         body = session.json()
         assert body["status"] == "PLANNING"
         assert body["replan_context"] is not None
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_dlq_replay_resets_step_and_marks_session_executing(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import DeadLetter, PlanStep, Session, generate_uuid
-
-    session_id = "sess-replay-reset"
-    plan_id = "plan-replay-reset"
-    step_id = generate_uuid()
-    await _seed_session_plan_with_steps(
-        db_session,
-        session_id=session_id,
-        plan_id=plan_id,
-        plan_hash="hash-replay-reset",
-        plan_version=1,
-        steps=[
-            {
-                "step_id": step_id,
-                "step_index": 0,
-                "tool_name": "post__inventory_update",
-                "args": {"id": 1},
-                "status": "AMBIGUOUS",
-            }
-        ],
-    )
-    sess = await db_session.get(Session, session_id)
-    sess.status = "BLOCKED"
-    dlq_id = generate_uuid()
-    db_session.add(
-        DeadLetter(
-            dlq_id=dlq_id,
-            session_id=session_id,
-            step_id=step_id,
-            failure_type="ambiguous_execution",
-            reason="timeout",
-            payload={},
-            status="PENDING",
-        )
-    )
-    await db_session.commit()
-
-    app, _ = await _make_app(sessionmaker_override)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        replayed = await client.post(f"/dlq/{dlq_id}/replay", json={"replayed_by": "ops"})
-        assert replayed.status_code == 200
-
-    db_session.expire_all()
-    sess2 = await db_session.get(Session, session_id)
-    step = (await db_session.execute(select(PlanStep).where(PlanStep.step_id == step_id))).scalars().first()
-    assert sess2.status == "EXECUTING"
-    assert step.status == "NOT_STARTED"
 
 
 @pytest.mark.asyncio
@@ -2740,47 +2007,6 @@ async def test_admin_dashboard_html_renders(sessionmaker_override):
 
 
 @pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_background_execute_returns_429_when_enqueue_fails(sessionmaker_override):
-    async def fail_enqueue(_session_id: str) -> None:
-        raise RuntimeError("session queue full")
-
-    app, _ = await _make_app(sessionmaker_override, enqueue_session=fail_enqueue)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        create = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = create.json()["session_id"]
-
-        res = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
-        assert res.status_code == 429
-        assert "queue full or enqueue failed" in res.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_background_execute_rejects_duplicate_enqueue_for_same_session(sessionmaker_override):
-    queued: set[str] = set()
-
-    async def dedupe_enqueue(session_id: str) -> None:
-        if session_id in queued:
-            raise RuntimeError("session already queued or in progress")
-        queued.add(session_id)
-
-    app, _ = await _make_app(sessionmaker_override, enqueue_session=dedupe_enqueue)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        create = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = create.json()["session_id"]
-
-        first = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
-        assert first.status_code == 200
-
-        second = await client.post(f"/sessions/{session_id}/execute", params={"background": "true"})
-        assert second.status_code == 429
-        assert "already queued or in progress" in second.text
-
-
-@pytest.mark.asyncio
 async def test_tampered_jwt_rejected_with_401(sessionmaker_override):
     secret = "phase4-secret"
     app, _ = await _make_app(sessionmaker_override, jwt_required=True, jwt_secret=secret)
@@ -2854,604 +2080,6 @@ async def test_pending_approval_read_endpoints_require_jwt_and_support_session_f
         body = authorized.json()
         assert len(body) == 1
         assert body[0]["session_id"] == "sess-2"
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_machine_tool_result_summary_is_operator_readable(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Message
-
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/machines/5").respond(200, json={"id": "5", "name": "Machine 5", "status": "Idle"})
-
-    app, _ = await _make_app(sessionmaker_override)
-    draft = PlanDraft(
-        plan_explanation="Read machine 5",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__machines_{id}", args={"id": "5"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check machine 5 status"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    assert "Idle" in tool_message.content
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_product_ids_result_summary_returns_ids_not_generic_record_count(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from factory_agent.persistence.models import Message
-
-    class _FakeResponse:
-        def __init__(self, content: str):
-            self.content = content
-
-    class _FakeChatOpenAI:
-        def __init__(self, **kwargs):
-            del kwargs
-
-        async def ainvoke(self, prompt: str):
-            if "tool result" in prompt.lower():
-                return _FakeResponse("Found 3 IDs: P-001, P-002, P-003.")
-            return _FakeResponse("Completed.")
-
-    fake_langchain = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
-    monkeypatch.setitem(sys.modules, "langchain_openai", fake_langchain)
-
-    await _seed_tool(
-        db_session,
-        name="get__products",
-        endpoint="/products",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"fields": {"type": "string"}},
-            "x-query-params": ["fields"],
-            "x-param-sources": {"fields": "query"},
-        },
-        capability_tags='["product","list"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/products").respond(
-        200,
-        json={
-            "success": True,
-            "data": [
-                {"ProductID": "P-001"},
-                {"ProductID": "P-002"},
-                {"ProductID": "P-003"},
-            ],
-        },
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url="http://fake-llm")
-    draft = PlanDraft(
-        plan_explanation="List product IDs",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__products", args={"fields": "product_id"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "get all product id"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    assert "found 3 id(s)" in tool_message.content.lower()
-    assert "p-001" in tool_message.content.lower()
-    assert "record(s)" not in tool_message.content.lower()
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_product_ids_result_summary_works_without_llm(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Message
-
-    await _seed_tool(
-        db_session,
-        name="get__products",
-        endpoint="/products",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {"fields": {"type": "string"}},
-            "x-query-params": ["fields"],
-            "x-param-sources": {"fields": "query"},
-        },
-        capability_tags='["product","list"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/products").respond(
-        200,
-        json={
-            "success": True,
-            "data": [
-                {"product_id": "P-001"},
-                {"product_id": "P-002"},
-                {"product_id": "P-003"},
-            ],
-        },
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url=None)
-    draft = PlanDraft(
-        plan_explanation="List product IDs",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__products", args={"fields": "product_id"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "give me allthe product id"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    assert "found 3 id(s)" in tool_message.content.lower()
-    assert "p-001" in tool_message.content.lower()
-    assert "record(s)" not in tool_message.content.lower()
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_job_list_result_summary_uses_llm_in_hybrid_mode(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from factory_agent.persistence.models import Message
-
-    class _FakeResponse:
-        def __init__(self, content: str):
-            self.content = content
-
-    class _FakeChatOpenAI:
-        def __init__(self, **kwargs):
-            del kwargs
-
-        async def ainvoke(self, prompt: str):
-            lowered = prompt.lower()
-            if '"message"' in prompt or "write a concise user-facing response" in lowered:
-                return _FakeResponse('{"message":"Retrieved 4 jobs. Sample statuses include planned, scheduled, and done."}')
-            if '"grounded"' in prompt or "verify whether the response is fully grounded" in lowered:
-                return _FakeResponse('{"grounded": true, "issues": []}')
-            if '"answer_type"' in prompt or "extract grounded facts" in lowered:
-                return _FakeResponse(
-                    '{"answer_type":"summary","facts":["Retrieved 4 jobs. Sample statuses include planned, scheduled, and done."],"ids":[],"counts":{"records":4},"warnings":[],"grounding_refs":["$.data[0].job_id"]}'
-                )
-            return _FakeResponse("Completed.")
-
-    fake_langchain = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
-    monkeypatch.setitem(sys.modules, "langchain_openai", fake_langchain)
-
-    await _seed_tool(
-        db_session,
-        name="get__jobs",
-        endpoint="/jobs",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["job","list"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/jobs").respond(
-        200,
-        json={
-            "success": True,
-            "data": [
-                {"job_id": "JOB-001", "product_id": "P-100", "status": "planned", "quantity_total": 40},
-                {"job_id": "JOB-002", "product_id": "P-200", "status": "scheduled", "quantity_total": 25},
-                {"job_id": "JOB-003", "product_id": "P-300", "status": "done", "quantity_total": 10},
-                {"job_id": "JOB-004", "product_id": "P-400", "status": "planned", "quantity_total": 15},
-            ],
-        },
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url="http://fake-llm")
-    draft = PlanDraft(
-        plan_explanation="List jobs",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__jobs", args={})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "list all job"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    content_lower = tool_message.content.lower()
-    assert "retrieved 4 records" in content_lower
-    assert "table" in content_lower
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_job_list_result_summary_recovers_from_structured_fact_dump(sessionmaker_override, db_session, respx_mock, monkeypatch):
-    from factory_agent.persistence.models import Message
-
-    class _FakeResponse:
-        def __init__(self, content: str):
-            self.content = content
-
-    class _FakeChatOpenAI:
-        def __init__(self, **kwargs):
-            del kwargs
-
-        async def ainvoke(self, prompt: str):
-            lowered = prompt.lower()
-            if '"message"' in prompt or "write a concise user-facing response" in lowered:
-                return _FakeResponse('{"message":"Retrieved 26 jobs. One example is JOB-SEED-001, a high-priority planned job for product P-001 with quantity 320 due on 2026-05-12."}')
-            if '"grounded"' in prompt or "verify whether the response is fully grounded" in lowered:
-                return _FakeResponse('{"grounded": true, "issues": []}')
-            if '"answer_type"' in prompt or "extract grounded facts" in lowered:
-                return _FakeResponse(
-                    '{"answer_type":"summary","facts":["{\\"job_id\\": \\"JOB-SEED-001\\", \\"product_id\\": \\"P-001\\", \\"quantity_total\\": 320, \\"quantity_completed\\": 0, \\"priority\\": \\"high\\", \\"deadline\\": \\"2026-05-12T08:00:00+08:00\\", \\"status\\": \\"planned\\"}"],"ids":[],"counts":{"records":26},"warnings":[],"grounding_refs":["$.data[0].job_id"]}'
-                )
-            return _FakeResponse("Completed.")
-
-    fake_langchain = types.SimpleNamespace(ChatOpenAI=_FakeChatOpenAI)
-    monkeypatch.setitem(sys.modules, "langchain_openai", fake_langchain)
-
-    await _seed_tool(
-        db_session,
-        name="get__jobs",
-        endpoint="/jobs",
-        method="GET",
-        input_schema={"type": "object", "properties": {}},
-        capability_tags='["job","list"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/jobs").respond(
-        200,
-        json={
-            "success": True,
-            "data": [
-                {"job_id": "JOB-SEED-001", "product_id": "P-001", "quantity_total": 320, "quantity_completed": 0, "priority": "high", "deadline": "2026-05-12T08:00:00+08:00", "status": "planned"},
-                {"job_id": "JOB-SEED-002", "product_id": "P-002", "quantity_total": 420, "quantity_completed": 0, "priority": "medium", "deadline": "2026-05-12T08:00:00+08:00", "status": "planned"},
-            ],
-        },
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url="http://fake-llm")
-    draft = PlanDraft(
-        plan_explanation="List jobs",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__jobs", args={})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "list all job"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    content_lower = tool_message.content.lower()
-    assert "retrieved 2 records" in content_lower
-    assert "table" in content_lower
-    assert "{" not in tool_message.content
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        timeline = snapshot.json()["timeline"]
-
-    tool_event = next(event for event in timeline if event["event_type"] == "tool_result")
-    presentation = tool_event["details"]["presentation"]
-    assert presentation["render_hint"] == "table"
-    assert presentation["table"]["total_rows"] == 2
-    assert len(presentation["table"]["rows"]) == 2
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_job_list_result_summary_deterministically_extracts_analysis_intent(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Message
-
-    await _seed_tool(
-        db_session,
-        name="get__jobs",
-        endpoint="/jobs",
-        method="GET",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "priority": {"type": "string"},
-                "status": {"type": "string"},
-            },
-            "x-query-params": ["priority", "status"],
-            "x-param-sources": {"priority": "query", "status": "query"},
-        },
-        capability_tags='["job","list"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/jobs", params={"priority": "low", "status": "planned"}).respond(
-        200,
-        json={
-            "success": True,
-            "data": [
-                {"job_id": "JOB-SEED-005", "product_id": "P-005", "quantity_total": 520, "deadline": "2026-05-19T08:00:00+08:00", "priority": "low", "status": "planned"},
-                {"job_id": "JOB-SEED-009", "product_id": "P-003", "quantity_total": 140, "deadline": "2026-05-19T08:00:00+08:00", "priority": "low", "status": "planned"},
-                {"job_id": "JOB-SEED-012", "product_id": "P-009", "quantity_total": 240, "deadline": "2026-05-19T08:00:00+08:00", "priority": "low", "status": "planned"},
-                {"job_id": "JOB-SEED-017", "product_id": "P-004", "quantity_total": 180, "deadline": "2026-05-19T08:00:00+08:00", "priority": "low", "status": "planned"},
-                {"job_id": "JOB-SEED-024", "product_id": "P-002", "quantity_total": 480, "deadline": "2026-05-07T08:00:00+08:00", "priority": "low", "status": "planned"},
-            ],
-        },
-    )
-
-    app, _ = await _make_app(sessionmaker_override, openai_base_url=None)
-    draft = PlanDraft(
-        plan_explanation="List low-priority planned jobs",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__jobs", args={"priority": "low", "status": "planned"})],
-    )
-    prompt = "Show low-priority planned jobs and highlight the earliest deadline and largest quantity."
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": prompt})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-        snapshot = await client.get(f"/sessions/{session_id}/snapshot")
-        assert snapshot.status_code == 200
-        timeline = snapshot.json()["timeline"]
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    content = tool_message.content.lower()
-    assert "retrieved 5 records" in content
-    assert "earliest deadline: job-seed-024" in content
-    assert "largest quantity: job-seed-005" in content
-
-    tool_event = next(event for event in timeline if event["event_type"] == "tool_result")
-    result = tool_event["details"]["result"]
-    assert result["_analysis"]["dataset"]["row_count"] == 5
-    assert "earliest deadline: job-seed-024" in tool_event["details"]["presentation"]["analysis"]["facts"][0].lower()
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_read_only_machine_not_found_returns_operator_friendly_completion(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Message, Session
-
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    respx_mock.get("http://testserver/machines/5").respond(404, json={"detail": "machine not found"})
-
-    app, _ = await _make_app(sessionmaker_override)
-    draft = PlanDraft(
-        plan_explanation="Read machine 5",
-        risk_summary="read-only",
-        steps=[PlanStepDraft(step_index=0, tool_name="get__machines_{id}", args={"id": "5"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Check machine 5 status"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-    session_row = await db_session.get(Session, session_id)
-    assert session_row is not None
-    assert session_row.status == "COMPLETED"
-    assert session_row.replan_count == 0
-    assert session_row.error in (None, "")
-
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    assert "not found" in tool_message.content.lower()
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_write_machine_not_found_is_checked_before_approval(sessionmaker_override, db_session, respx_mock):
-    from factory_agent.persistence.models import Approval, Message
-
-    read_schema = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
-    write_schema = {
-        "type": "object",
-        "properties": {"id": {"type": "string"}, "status": {"type": "string"}},
-        "required": ["id", "status"],
-    }
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema=read_schema,
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="put__machines_{id}",
-        endpoint="/machines/{id}",
-        method="PUT",
-        input_schema=write_schema,
-        capability_tags='["machine","update"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-    respx_mock.get("http://testserver/machines/5").respond(404, json={"detail": "machine not found"})
-
-    app, _ = await _make_app(sessionmaker_override)
-    draft = PlanDraft(
-        plan_explanation="Update machine 5",
-        risk_summary="write",
-        steps=[PlanStepDraft(step_index=0, tool_name="put__machines_{id}", args={"id": "5", "status": "maintenance"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={"role": "user", "content": "Update machine 5 to maintenance"},
-        )
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "COMPLETED"
-
-        pending = await client.get("/approvals/pending", params={"session_id": session_id})
-        assert pending.status_code == 200
-        assert pending.json() == []
-
-    approvals = (await db_session.execute(select(Approval).where(Approval.session_id == session_id))).scalars().all()
-    assert approvals == []
-    tool_message = (
-        await db_session.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .where(Message.role == "tool_result")
-        )
-    ).scalars().first()
-    assert tool_message is not None
-    assert "not found" in tool_message.content.lower()
-    assert "No changes were made." in tool_message.content
-
-
-@pytest.mark.asyncio
-@pytest.mark.legacy_compatibility
-@LEGACY_RUNTIME_RETIRED_XFAIL
-async def test_write_machine_approval_includes_target_preview(sessionmaker_override, db_session, respx_mock):
-    read_schema = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
-    write_schema = {
-        "type": "object",
-        "properties": {"id": {"type": "string"}, "status": {"type": "string"}},
-        "required": ["id", "status"],
-    }
-    await _seed_tool(
-        db_session,
-        name="get__machines_{id}",
-        endpoint="/machines/{id}",
-        method="GET",
-        input_schema=read_schema,
-        capability_tags='["machine","status"]',
-        is_read_only=True,
-    )
-    await _seed_tool(
-        db_session,
-        name="put__machines_{id}",
-        endpoint="/machines/{id}",
-        method="PUT",
-        input_schema=write_schema,
-        capability_tags='["machine","update"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-    respx_mock.get("http://testserver/machines/5").respond(
-        200,
-        json={"id": "5", "name": "Machine 5", "status": "Idle"},
-    )
-
-    app, _ = await _make_app(sessionmaker_override)
-    draft = PlanDraft(
-        plan_explanation="Update machine 5",
-        risk_summary="write",
-        steps=[PlanStepDraft(step_index=0, tool_name="put__machines_{id}", args={"id": "5", "status": "maintenance"})],
-    )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post("/sessions", json={"user_id": "u1"})
-        session_id = created.json()["session_id"]
-        await client.post(f"/sessions/{session_id}/messages", json={"role": "user", "content": "Update machine 5 to maintenance"})
-        await client.post(f"/sessions/{session_id}/plans", json={"draft": draft.model_dump()})
-        executed = await client.post(f"/sessions/{session_id}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "WAITING_APPROVAL"
-
-        pending = await client.get("/approvals/pending", params={"session_id": session_id})
-        assert pending.status_code == 200
-        rows = pending.json()
-        assert len(rows) == 1
-        assert "Target check" in rows[0]["risk_summary"]
-        assert "Idle" in rows[0]["risk_summary"]
 
 
 @pytest.mark.asyncio

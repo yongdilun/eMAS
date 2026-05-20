@@ -1,12 +1,14 @@
 import logger from './logger'
 import { normalizeFactoryAgentError } from './factoryAgentErrors'
 
-const FACTORY_AGENT_BASE_URL = (
+export const FACTORY_AGENT_BASE_URL = (
   import.meta.env?.VITE_FACTORY_AGENT_BASE_URL ||
   'http://127.0.0.1:8000'
 ).replace(/\/+$/, '')
 
 const STATIC_BEARER = import.meta.env?.VITE_FACTORY_AGENT_BEARER_TOKEN || ''
+const REQUEST_TIMEOUT_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_REQUEST_TIMEOUT_MS || 75_000)
+const FACTORY_AGENT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend-operator'
 
 export const factoryAgentStreamAuth = {
   hasBearerToken: Boolean(STATIC_BEARER),
@@ -16,9 +18,26 @@ export const factoryAgentStreamAuth = {
     : '',
 }
 
+export function buildFactoryAgentUrl(path) {
+  const value = String(path || '').trim()
+  if (!value) return FACTORY_AGENT_BASE_URL
+  try {
+    return new URL(value).toString()
+  } catch {
+    // Relative Factory Agent deployments usually mount the API behind /agent.
+  }
+  if (!value.startsWith('/')) return `${FACTORY_AGENT_BASE_URL}/${value}`
+  if (
+    FACTORY_AGENT_BASE_URL.startsWith('/') &&
+    (value === FACTORY_AGENT_BASE_URL || value.startsWith(`${FACTORY_AGENT_BASE_URL}/`))
+  ) {
+    return value
+  }
+  return `${FACTORY_AGENT_BASE_URL}${value}`
+}
+
 function buildUrl(path) {
-  if (!path.startsWith('/')) return `${FACTORY_AGENT_BASE_URL}/${path}`
-  return `${FACTORY_AGENT_BASE_URL}${path}`
+  return buildFactoryAgentUrl(path)
 }
 
 async function parseErrorBody(res) {
@@ -41,6 +60,7 @@ async function parseErrorBody(res) {
 async function request(method, path, body, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
+    'X-User-Id': FACTORY_AGENT_USER_ID,
     ...(options.headers || {}),
   }
 
@@ -52,16 +72,36 @@ async function request(method, path, body, options = {}) {
 
   const startedAt = Date.now()
   const url = buildUrl(path)
+  let timeoutId = null
+  if (Number.isFinite(REQUEST_TIMEOUT_MS) && REQUEST_TIMEOUT_MS > 0) {
+    const controller = new AbortController()
+    init.signal = controller.signal
+    timeoutId = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  }
   logger.debug(`[factory-agent] -> ${method} ${path}`, body)
 
   let response
   try {
     response = await fetch(url, init)
   } catch (err) {
-    const e = new Error(normalizeFactoryAgentError(err, `Cannot connect to factory-agent: ${err?.message || 'network error'}`))
+    if (err?.name === 'AbortError') {
+      const e = new Error(`Factory Agent request timed out after ${REQUEST_TIMEOUT_MS} ms. Retry or cancel the current run.`)
+      e.type = 'TIMEOUT'
+      e.path = path
+      e.original = err
+      throw e
+    }
+    const e = new Error(
+      normalizeFactoryAgentError(
+        err,
+        `Cannot reach Factory Agent backend at ${FACTORY_AGENT_BASE_URL}. ${err?.message || 'Network error.'}`,
+      ),
+    )
     e.type = 'NETWORK'
     e.original = err
     throw e
+  } finally {
+    if (timeoutId) globalThis.clearTimeout(timeoutId)
   }
 
   logger.apiRequest(method, `factory-agent${path}`, Date.now() - startedAt, response.status)

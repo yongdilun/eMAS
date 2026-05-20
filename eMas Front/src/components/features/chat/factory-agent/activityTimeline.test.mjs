@@ -10,6 +10,7 @@ import {
   normalizeActivityStep,
   shouldAutoCollapseActivity,
   shouldShowActivityTimeline,
+  stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils.js'
 
 test('assistantAnswerAllowed: defers until activity terminal when steps exist', () => {
@@ -337,6 +338,177 @@ test('builds current activity from session status when timeline is delayed', () 
   const waitingLabels = waitingDup.filter((s) => s.label === 'Waiting for approval')
   assert.equal(waitingLabels.length, 1)
   assert.equal(waitingLabels[0].detail, null)
+})
+
+test('active approval resume suppresses stale completion rows before the next approval', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'EXECUTING' },
+    steps: [],
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change high to low then low to medium',
+        created_at: '2026-05-16T09:00:00Z',
+        turn_id: 't1',
+      },
+      {
+        event_type: 'approval_decided',
+        content: 'Approved request to change record.',
+        created_at: '2026-05-16T09:00:01Z',
+        turn_id: 't1',
+        status: 'APPROVED',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'Execution completed successfully.',
+        created_at: '2026-05-16T09:00:02Z',
+        turn_id: 't1',
+        status: 'COMPLETED',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.at(-1).label, 'Applying approved changes')
+  assert.equal(steps.at(-1).state, 'running')
+})
+
+test('second approval keeps activity waiting despite stale completion after approval one', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'WAITING_APPROVAL', plan_id: 'plan-so-001', operation_id: 'plan-so-001' },
+    plan: { plan_id: 'plan-so-001' },
+    pending_approval: { approval_id: 'approval-so-001-2' },
+    steps: [],
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change all medium priority job to high then change all high priority job to medium',
+        created_at: '2026-05-16T10:00:00.000Z',
+        turn_id: 't1',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_required',
+        content: '2 medium priority jobs need approval.',
+        created_at: '2026-05-16T10:00:01.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-1',
+        status: 'PENDING',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_decided',
+        content: 'Approval approval-so-001-1 accepted.',
+        created_at: '2026-05-16T10:00:02.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-1',
+        status: 'APPROVED',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'All requested changes completed.',
+        created_at: '2026-05-16T10:00:03.000Z',
+        turn_id: 't1',
+        status: 'COMPLETED',
+        operation_id: 'plan-so-001',
+      },
+      {
+        event_type: 'approval_required',
+        content: '1 original high priority job needs approval.',
+        created_at: '2026-05-16T10:00:04.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-001-2',
+        status: 'PENDING',
+        operation_id: 'plan-so-001',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.at(-1).label, 'Waiting for approval')
+  assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('pending approval suppresses later retry rows from stale snapshot projection', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'WAITING_APPROVAL', plan_id: 'plan-so-041', operation_id: 'plan-so-041' },
+    plan: { plan_id: 'plan-so-041' },
+    pending_approval: { approval_id: 'approval-so-041-2' },
+    steps: [],
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change all medium priority job to high then change all high priority job to low',
+        created_at: '2026-05-16T10:00:00.000Z',
+        turn_id: 't1',
+        operation_id: 'plan-so-041',
+      },
+      {
+        event_type: 'approval_required',
+        content: '10 medium jobs need approval.',
+        created_at: '2026-05-16T10:00:01.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-041-1',
+        status: 'PENDING',
+        operation_id: 'plan-so-041',
+      },
+      {
+        event_type: 'approval_decided',
+        content: 'Approval approval-so-041-1 accepted.',
+        created_at: '2026-05-16T10:00:02.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-041-1',
+        status: 'APPROVED',
+        operation_id: 'plan-so-041',
+      },
+      {
+        event_type: 'approval_required',
+        content: '11 high jobs need approval.',
+        created_at: '2026-05-16T10:00:03.000Z',
+        turn_id: 't1',
+        approval_id: 'approval-so-041-2',
+        status: 'PENDING',
+        operation_id: 'plan-so-041',
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'Refining after approval 1.',
+        created_at: '2026-05-16T10:00:04.000Z',
+        turn_id: 't1',
+        operation_id: 'plan-so-041',
+      },
+    ],
+  })
+
+  assert.equal(steps.at(-1).label, 'Waiting for approval')
+  assert.equal(steps.at(-1).state, 'waiting')
+  assert.equal(steps.some((step) => step.label === 'Improving the response' && step.state === 'retry'), false)
+})
+
+test('server activity label for pending approval suppresses later retry rows', () => {
+  const steps = stripPrematureTerminalActivitySteps([
+    {
+      id: 'activity-1',
+      timestamp: 1,
+      group: 'approval',
+      label: 'Waiting for your approval',
+      detail: 'Reviewing approval requirements',
+      state: 'waiting',
+    },
+    {
+      id: 'activity-2',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Improving the response',
+      detail: 'Refining the response with updated information',
+      state: 'retry',
+    },
+  ], 'WAITING_APPROVAL')
+
+  assert.equal(steps.length, 1)
+  assert.equal(steps.at(-1).label, 'Waiting for your approval')
+  assert.equal(steps.at(-1).state, 'waiting')
 })
 
 test('uses full operation-scoped timeline across turns when operation_id matches plan', () => {
@@ -715,4 +887,70 @@ test('terminal snapshot fallback uses full timeline across user turns', () => {
   assert.ok(steps.some((s) => s.label === 'Understanding your request'))
   assert.equal(steps.at(-1).label, 'Run complete')
   assert.equal(steps.at(-1).state, 'complete')
+})
+
+test('typed rejected presentation suppresses stale completion activity', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'COMPLETED' },
+    presentation: {
+      kind: 'rejected',
+      state: 'rejected',
+      summary: 'Operator rejected the pending priority change.',
+    },
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change priority',
+        created_at: '2026-05-16T10:00:00Z',
+        turn_id: 't1',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'All requested changes completed.',
+        created_at: '2026-05-16T10:00:02Z',
+        turn_id: 't1',
+        status: 'COMPLETED',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.at(-1).label, 'Approval declined')
+  assert.equal(steps.at(-1).state, 'error')
+})
+
+test('typed pending presentation keeps timeline waiting despite stale success and retry rows', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: { status: 'COMPLETED' },
+    presentation: {
+      kind: 'approval_required',
+      state: 'pending',
+      summary: 'Approval is still pending.',
+    },
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'change priority',
+        created_at: '2026-05-16T10:00:00Z',
+        turn_id: 't1',
+      },
+      {
+        event_type: 'session_completed',
+        content: 'Run complete.',
+        created_at: '2026-05-16T10:00:01Z',
+        turn_id: 't1',
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'Improving stale response.',
+        created_at: '2026-05-16T10:00:02Z',
+        turn_id: 't1',
+      },
+    ],
+  })
+
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.some((step) => step.label === 'Improving the response'), false)
+  assert.equal(steps.at(-1).label, 'Waiting for approval')
+  assert.equal(steps.at(-1).state, 'waiting')
 })

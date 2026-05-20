@@ -179,3 +179,79 @@ async def test_completed_job_recap_prefers_write_results_over_stale_read_table()
     assert "seed:P-002" not in r.text
     assert "| priority" not in r.text.lower()
 
+
+@pytest.mark.asyncio
+async def test_phase11_completed_job_recap_aggregates_all_priority_write_sets() -> None:
+    adapter = SummaryAdapter(_settings(summary_backend="deterministic"))
+    facts = {
+        "intent": "change all medium priority job to high then change all high priority job to low",
+        "tool_outputs": [
+            {
+                "tool_name": "put__jobs_{id}",
+                "args": {"id": "JOB-SO041-MED-01", "priority": "high"},
+                "result_excerpt": json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "job_id": "JOB-SO041-MED-01",
+                            "previous_priority": "medium",
+                            "priority": "high",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "tool_name": "put__jobs_{id}",
+                "args": {"id": "JOB-SO041-MED-02", "priority": "high"},
+                "result_excerpt": json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "job_id": "JOB-SO041-MED-02",
+                            "previous_priority": "medium",
+                            "priority": "high",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "tool_name": "put__jobs_{id}",
+                "args": {"id": "JOB-SO041-HIGH-01", "priority": "low"},
+                "result_excerpt": json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "job_id": "JOB-SO041-HIGH-01",
+                            "previous_priority": "high",
+                            "priority": "low",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "tool_name": "put__jobs_{id}",
+                "args": {"id": "JOB-SO041-HIGH-02", "priority": "low"},
+                "result_excerpt": json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "job_id": "JOB-SO041-HIGH-02",
+                            "previous_priority": "high",
+                            "priority": "low",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    }
+
+    r = await adapter.synthesize_bundle_markdown(intent=facts["intent"], kind="completed", facts=facts)
+
+    assert r.backend_used == "deterministic"
+    assert "2 medium priority jobs changed to high" in r.text
+    assert "2 original high priority jobs changed to low" in r.text
+    assert "Updated **2** job(s)" not in r.text

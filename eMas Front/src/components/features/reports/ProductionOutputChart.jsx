@@ -1,17 +1,18 @@
-// Accepts data from GET /reports/production-output
-// Expected shape: { data: [{ label, units, planned? }] }
-// Shows an explicit unavailable state when API data is unavailable.
+import { formatReportValue, toReportNumber } from './reportValueFormatter'
 
 const ProductionOutputChart = ({ data }) => {
-    // Normalise API response into { label, planned, units }
     const rows = (() => {
         const arr = Array.isArray(data) ? data : (data?.data ?? null)
         if (!arr || arr.length === 0) return []
-        return arr.map(d => ({
-            label: d.label ?? d.day ?? d.date ?? '—',
-            units: d.units ?? d.actual ?? d.qty_produced ?? 0,
-            planned: d.planned ?? d.target ?? null,
-        }))
+        return arr.map((d) => {
+            const label = d.label ?? d.day ?? d.date ?? d.period ?? d.date_range ?? d.range ?? '-'
+            const planned = d.planned ?? d.target ?? null
+            return {
+                label: formatReportValue(label),
+                units: toReportNumber(d.units ?? d.actual ?? d.qty_produced ?? 0),
+                planned: planned == null ? null : toReportNumber(planned, null),
+            }
+        })
     })()
 
     if (rows.length === 0) {
@@ -32,7 +33,7 @@ const ProductionOutputChart = ({ data }) => {
         <div className="w-full min-h-[240px] flex flex-col">
             <div className="flex items-center justify-between mb-4 shrink-0">
                 <h3 className="text-base font-semibold text-ink">
-                    Production Output — Planned vs Actual
+                    Production Output - Planned vs Actual
                 </h3>
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1.5">
@@ -47,7 +48,6 @@ const ProductionOutputChart = ({ data }) => {
             </div>
 
             <div className="flex-1 relative min-h-[180px]">
-                {/* Grid Lines */}
                 <div className="absolute inset-0 flex flex-col justify-between py-2 pointer-events-none">
                     {[...gridLines].reverse().map((v, i) => (
                         <div key={i} className="flex items-center">
@@ -59,12 +59,14 @@ const ProductionOutputChart = ({ data }) => {
                     ))}
                 </div>
 
-                {/* Bars */}
                 <div className="absolute inset-0 pl-12 pt-2 pb-2 flex items-end gap-3">
                     {rows.map((item, i) => {
                         const actualH = (item.units / maxValue) * 100
                         const plannedH = item.planned != null ? (item.planned / maxValue) * 100 : null
                         const over = item.planned != null ? item.units > item.planned : null
+                        const variancePct = item.planned
+                            ? Math.abs(((item.units - item.planned) / item.planned * 100)).toFixed(1)
+                            : '0.0'
 
                         return (
                             <div key={i} className="flex-1 flex flex-col items-center gap-2">
@@ -97,7 +99,7 @@ const ProductionOutputChart = ({ data }) => {
                                     {over != null && (
                                         <span className={`text-[10px] font-medium flex items-center gap-0.5 ${over ? 'text-semantic-success ' : 'text-red-500 '}`}>
                                             <span className="material-symbols-outlined text-xs">{over ? 'trending_up' : 'trending_down'}</span>
-                                            {Math.abs(((item.units - item.planned) / item.planned * 100)).toFixed(1)}%
+                                            {variancePct}%
                                         </span>
                                     )}
                                 </div>

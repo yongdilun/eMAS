@@ -1,0 +1,211 @@
+{
+  "id": "SO-026",
+  "title": "Multi-turn LOTO follow-up after completion",
+  "risk": "After a completed machine-status turn, a follow-up LOTO question using 'it' can lose immediate context, ask a generic clarification, or reuse stale status text instead of routing to LOTO/RAG.",
+  "prompt": "What LOTO procedure applies before working on it?",
+  "prompt_sequence": [
+    {
+      "turn": 1,
+      "prompt": "What is the status of M-CNC-01?",
+      "expected_route": "tool.read.machine_status"
+    },
+    {
+      "turn": 2,
+      "prompt": "What LOTO procedure applies before working on it?",
+      "expected_route": "rag.loto_procedure"
+    }
+  ],
+  "initial_state": {
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "rag_sources": [
+      {
+        "source_id": "SRC-LOTO-CNC-01",
+        "machine_id": "M-CNC-01",
+        "title": "LOTO Procedure for CNC Cell"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "rag.loto_procedure",
+    "machine_id": "M-CNC-01",
+    "resolved_from": "immediately_previous_turn",
+    "must_not_route_to": [
+      "clarification.machine_id_missing",
+      "tool.read.machine_status"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "turn 1 completed",
+      "session_phase": "COMPLETED",
+      "route": "tool.read.machine_status",
+      "machine_id": "M-CNC-01",
+      "final_response_contains": [
+        "Machine M-CNC-01"
+      ]
+    },
+    {
+      "after": "turn 2 context resolution",
+      "session_phase": "EXECUTING",
+      "machine_id": "M-CNC-01",
+      "resolved_from": "immediately_previous_turn",
+      "forbidden": [
+        "stale_final_response_reused",
+        "stale_snapshot_reused",
+        "generic_machine_clarification"
+      ]
+    },
+    {
+      "after": "turn 2 rag retrieval",
+      "session_phase": "EXECUTING",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "previous_turn_context_resolved",
+      "machine_id": "M-CNC-01"
+    },
+    {
+      "event": "route_selected",
+      "route": "rag.loto_procedure"
+    },
+    {
+      "event": "rag_retrieval_completed",
+      "machine_id": "M-CNC-01",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "route": "rag.loto_procedure",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ],
+      "contextual_resolution": {
+        "machine_id": "M-CNC-01"
+      }
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "rag_retrieval_completed M-CNC-01",
+    "must_include": [
+      "M-CNC-01",
+      "LOTO",
+      "SRC-LOTO-CNC-01"
+    ],
+    "must_not_include": [
+      "Which machine",
+      "seeded Go API data",
+      "Machine M-CNC-01 is RUNNING",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Controlled seeded RAG answer",
+      "M-CNC-01",
+      "Knowledge sources",
+      "Seeded LOTO Procedure for M-CNC-01"
+    ],
+    "must_not_show_in_final_turn": [
+      "Which machine",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "previous_turn_context_resolves_pronoun",
+    "route_matches_operator_intent",
+    "no_stale_final_response_reuse",
+    "rag_sources_project_to_snapshot_and_ui",
+    "read_only_state_unchanged"
+  ],
+  "required_layers": [
+    "parser_context_route",
+    "seeded_browser",
+    "real_langgraph_browser"
+  ],
+  "weakness_from_phase0": "Single-turn parser and seeded RAG tests cannot prove that a completed previous turn supplies enough context for a pronoun follow-up before the LOTO short-circuit runs.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "The LOTO route can run before previous-turn context resolution, causing 'it' to clarify instead of using M-CNC-01 from the immediately previous machine-status turn.",
+    "existing_test_that_would_miss_it": "SO-021, SO-023, and SO-025 all include an explicit machine ID in the same prompt and would not catch stale final-response reuse or skipped context resolution.",
+    "lowest_useful_layer": "parser_context_route",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": true,
+    "real_langgraph_decision": "Real LangGraph coverage is required after seeded coverage passes because seeded adapters can hide multi-turn context resolution defects.",
+    "required_positive_evidence": [
+      "turn 1 identifies M-CNC-01",
+      "turn 2 resolves 'it' to M-CNC-01 from the immediately previous context",
+      "LOTO/RAG route selected",
+      "source-backed LOTO answer is the latest assistant response",
+      "snapshot and visible UI show terminal completion for the second turn"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Which machine",
+      "stale machine-status final answer as latest response",
+      "stale snapshot reused for turn 2",
+      "tool.read.machine_status route on turn 2",
+      "Factory Agent needs attention"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_phase19_prompt_workflow_regression.py::test_so026_loto_followup_resolves_machine_id_from_immediately_previous_turn",
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-026",
+      "eMas Front/e2e/specs/real-langgraph-critical.spec.js::SO-026"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-16-remaining-normal-use-breakage-scenarios"
+  }
+}

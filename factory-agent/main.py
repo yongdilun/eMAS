@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import os
+from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +28,7 @@ from factory_agent.observability.events import AgentEvent, EventBus
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event, log_step_status_changed, setup_logging
 from factory_agent.registry.tool_registry import ToolRegistry
+from factory_agent.testing.tool_faults import clear_tool_faults, configure_tool_faults, list_tool_faults
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,25 @@ def _schema_compatibility_actions(sync_conn) -> list[_SchemaCompatibilityAction]
             )
         )
 
+    def ensure_index(table: str, index_name: str, columns: tuple[str, ...]) -> None:
+        if table not in tables:
+            return
+        indexes = {index["name"] for index in inspector.get_indexes(table)}
+        if index_name in indexes:
+            return
+        quoted_columns = ", ".join(columns)
+        actions.append(
+            _SchemaCompatibilityAction(
+                table=table,
+                column=index_name,
+                statement=f"CREATE INDEX {index_name} ON {table} ({quoted_columns})",
+                reason="missing compatibility index",
+            )
+        )
+
     ensure_column("sessions", "name", "VARCHAR(255)")
+    ensure_index("sessions", "idx_sessions_user_updated_at", ("user_id", "updated_at"))
+    ensure_index("sessions", "idx_sessions_updated_at", ("updated_at",))
     ensure_column("messages", "mode", "VARCHAR(20) NOT NULL DEFAULT 'normal'")
     ensure_column("plans", "kind", "VARCHAR(20) NOT NULL DEFAULT 'execution'")
     ensure_column("plans", "status", "VARCHAR(30) NOT NULL DEFAULT 'DRAFT'")
@@ -169,7 +189,7 @@ async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
-    tool_registry = ToolRegistry()
+    tool_registry = ToolRegistry(tools_md_path=os.getenv("FACTORY_AGENT_TOOLS_MD_PATH") or None)
     event_bus = EventBus(redis_url=settings.redis_url)
     setattr(event_bus, "_fault_injected", False)
 
@@ -201,6 +221,24 @@ async def lifespan(app: FastAPI):
         pass
 
     async with AsyncSessionLocal() as db:
+        seeded_mode = os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
+        preload_openapi_tools = os.getenv("FACTORY_AGENT_PRELOAD_OPENAPI_TOOLS", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if seeded_mode or preload_openapi_tools:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            local_swagger = os.path.abspath(os.path.join(repo_root, "..", "emas", "docs", "swagger.json"))
+            await tool_registry.regenerate_from_openapi(
+                db,
+                openapi_url=os.getenv("OPENAPI_URL", "http://localhost:8080/swagger/doc.json"),
+                local_swagger_json_path=local_swagger,
+                force_local=False,
+                replace_db=True,
+            )
+            if preload_openapi_tools and not seeded_mode:
+                log_event("playwright_real_langgraph_openapi_tools_preloaded")
         await tool_registry.load_from_db(db)
 
     async def refresh_operational_gauges(db) -> None:
@@ -764,12 +802,27 @@ async def lifespan(app: FastAPI):
     app.state.session_queue = session_queue
     app.state.worker_tasks = worker_tasks
 
+    planner_adapter = None
+    rag_pipeline_adapter = None
+    if os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}:
+        from factory_agent.testing_seeded_adapters import (
+            SeededPlaywrightPlanner,
+            SeededPlaywrightRAGPipeline,
+        )
+
+        planner_adapter = SeededPlaywrightPlanner(settings)
+        rag_pipeline_adapter = SeededPlaywrightRAGPipeline()
+        log_event("playwright_seeded_mode_enabled")
+    app.state.playwright_seeded_planner = planner_adapter
+
     app.include_router(
         build_router(
             settings=settings,
             tool_registry=tool_registry,
             event_bus=event_bus,
             enqueue_session=enqueue_session,
+            planner_adapter=planner_adapter,
+            rag_pipeline_adapter=rag_pipeline_adapter,
         )
     )
     log_event("agent_server_started", worker_count=settings.worker_count, session_queue_size=settings.session_queue_size)
@@ -874,6 +927,67 @@ async def ready(request: Request):
 async def mock_slow(ms: int = 1000):
     await asyncio.sleep(max(0, min(ms, 15000)) / 1000.0)
     return {"ok": True, "slept_ms": ms}
+
+
+def _playwright_seeded_mode() -> bool:
+    return os.getenv("FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE", "0").strip().lower() in {"1", "true", "yes"}
+
+
+@app.get("/_playwright/data-integrity/audit")
+async def playwright_data_integrity_audit(request: Request, session_id: str | None = None):
+    if not _playwright_seeded_mode():
+        return {"entries": []}
+    planner = getattr(request.app.state, "playwright_seeded_planner", None)
+    read_audit = getattr(planner, "data_integrity_audit", None)
+    entries = read_audit(session_id=session_id) if callable(read_audit) else []
+    if not entries and session_id:
+        entries = await _playwright_data_integrity_audit_from_steps(session_id)
+    return {"entries": entries}
+
+
+async def _playwright_data_integrity_audit_from_steps(session_id: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(PlanStepRow.result)
+                .where(PlanStepRow.session_id == session_id)
+                .order_by(PlanStepRow.step_index.asc())
+            )
+        ).all()
+    for (result,) in rows:
+        if not isinstance(result, dict):
+            continue
+        outcomes = result.get("outcomes")
+        if not isinstance(outcomes, list):
+            continue
+        entries.extend(dict(row) for row in outcomes if isinstance(row, dict))
+    return entries
+
+
+@app.get("/_playwright/tool-faults")
+async def playwright_tool_faults():
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    return {"rules": list_tool_faults()}
+
+
+@app.post("/_playwright/tool-faults")
+async def playwright_configure_tool_faults(payload: dict[str, Any]):
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    rules = payload.get("rules") if isinstance(payload, dict) else []
+    if not isinstance(rules, list):
+        raise HTTPException(status_code=400, detail="rules must be a list")
+    return {"ok": True, "rules": configure_tool_faults([rule for rule in rules if isinstance(rule, dict)])}
+
+
+@app.delete("/_playwright/tool-faults")
+async def playwright_clear_tool_faults():
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    clear_tool_faults()
+    return {"ok": True, "rules": []}
 
 
 # Serve the Factory Agent Wiki

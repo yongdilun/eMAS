@@ -22,6 +22,7 @@ from factory_agent.persistence import database as persistence_database
 from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, Session, WorkflowCheckpoint
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanResponse, PlanStepResponse, SessionSnapshotResponse, TimelineEventResponse
+from tests.support.stateful_oracle_harness import load_oracle
 
 
 class _FakeEventBus:
@@ -460,6 +461,321 @@ async def test_phase7_completed_session_without_completed_at_gets_terminal_timel
 
 
 @pytest.mark.asyncio
+async def test_phase7_snapshot_steps_are_scoped_to_current_plan_after_followup(sessionmaker_override, db_session):
+    session_id = "phase7-followup-current-plan-steps"
+    old_plan_id = "phase7-followup-old-plan"
+    new_plan_id = "phase7-followup-new-plan"
+    created_at = datetime(2026, 5, 17, 9, 0, 0)
+    old_plan_at = created_at + timedelta(seconds=1)
+    new_plan_at = created_at + timedelta(seconds=5)
+
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="COMPLETED",
+            current_intent="What LOTO procedure applies before working on it?",
+            replan_context={
+                "contextual_resolution": {
+                    "entity_type": "machine",
+                    "machine_id": "M-CNC-01",
+                    "source": "previous_turn",
+                    "original_intent": "What LOTO procedure applies before working on it?",
+                    "rag_query": (
+                        "What LOTO procedure applies before working on it?\n\n"
+                        "Resolved context from the immediately previous turn: machine M-CNC-01."
+                    ),
+                }
+            },
+            plan_id=new_plan_id,
+            plan_version=2,
+            plan_hash="phase7-followup-new-hash",
+            current_step_index=0,
+            step_count=0,
+            llm_call_count=0,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=new_plan_at,
+            completed_at=new_plan_at,
+        )
+    )
+    db_session.add_all(
+        [
+            Plan(
+                plan_id=old_plan_id,
+                session_id=session_id,
+                version=1,
+                kind="execution",
+                status="INVALIDATED",
+                dependency_graph={"0": []},
+                parallel_groups=[],
+                plan_hash="phase7-followup-old-hash",
+                plan_explanation="Machine M-CNC-01 status lookup.",
+                risk_summary="Read-only machine status.",
+                created_at=old_plan_at,
+                created_by="langgraph",
+                invalidated_at=new_plan_at,
+                invalidated_reason="Replanned",
+            ),
+            Plan(
+                plan_id=new_plan_id,
+                session_id=session_id,
+                version=2,
+                kind="execution",
+                status="COMPLETED",
+                dependency_graph={},
+                parallel_groups=[],
+                plan_hash="phase7-followup-new-hash",
+                plan_explanation="Controlled seeded RAG answer for M-CNC-01 LOTO.",
+                risk_summary="No tool execution required.",
+                created_at=new_plan_at,
+                created_by="system",
+                sources=[{"machine_id": "M-CNC-01", "procedure_id": "LOTO-M-CNC-01"}],
+            ),
+        ]
+    )
+    db_session.add(
+        PlanStep(
+            step_id="phase7-followup-stale-step",
+            plan_id=old_plan_id,
+            session_id=session_id,
+            step_index=0,
+            tool_name="get__machines_{id}",
+            args={"id": "M-CNC-01"},
+            bindings=[],
+            status="DONE",
+            idempotency_key="phase7-followup-stale-idempotency",
+            requires_approval=False,
+            retry_count=0,
+            max_retries=3,
+            completed_at=old_plan_at,
+            result_summary="Machine M-CNC-01 is running in the seeded Go API data.",
+        )
+    )
+    db_session.add_all(
+        [
+            Message(
+                message_id="phase7-followup-user-1",
+                session_id=session_id,
+                role="user",
+                content="What is the status of M-CNC-01?",
+                mode="normal",
+                created_at=created_at,
+            ),
+            Message(
+                message_id="phase7-followup-user-2",
+                session_id=session_id,
+                role="user",
+                content="What LOTO procedure applies before working on it?",
+                mode="normal",
+                created_at=new_plan_at - timedelta(milliseconds=20),
+            ),
+            Message(
+                message_id="phase7-followup-assistant-2",
+                session_id=session_id,
+                role="assistant",
+                content="Controlled seeded RAG answer for M-CNC-01 LOTO.",
+                mode="normal",
+                tool_name="__conversation__",
+                created_at=new_plan_at,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    app = await _make_phase7_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["current_intent"] == "What LOTO procedure applies before working on it?"
+    assert body["session"]["replan_context"]["contextual_resolution"]["machine_id"] == "M-CNC-01"
+    assert body["plan"] is None
+    assert body["steps"] == []
+    assert "seeded Go API data" not in json.dumps(body["steps"])
+
+
+@pytest.mark.asyncio
+async def test_phase7_cancelled_idle_session_projects_terminal_cancel_event(sessionmaker_override, db_session):
+    session_id = "phase7-cancelled-idle-terminal"
+    plan_id = "phase7-cancelled-plan"
+    created_at = datetime(2026, 5, 17, 10, 0, 0)
+    cancelled_at = created_at + timedelta(seconds=3)
+
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="IDLE",
+            current_intent="Start a seeded cancel jobs run and keep it executing",
+            plan_id=plan_id,
+            plan_version=1,
+            plan_hash="phase7-cancelled-hash",
+            current_step_index=0,
+            step_count=1,
+            llm_call_count=0,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=cancelled_at,
+            completed_at=None,
+            error="Cancelled",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-cancelled-user",
+            session_id=session_id,
+            role="user",
+            content="Start a seeded cancel jobs run and keep it executing",
+            mode="normal",
+            created_at=created_at,
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="DRAFT",
+            dependency_graph={"0": []},
+            parallel_groups=[],
+            plan_hash="phase7-cancelled-hash",
+            plan_explanation="Seeded cancellable run is staged and ready to execute.",
+            risk_summary="Seeded L3 test draft; execution is intentionally backgrounded.",
+            created_at=created_at + timedelta(seconds=1),
+            created_by="seeded-fake",
+        )
+    )
+    await db_session.commit()
+
+    app = await _make_phase7_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    cancelled_events = [event for event in body["timeline"] if event["event_type"] == "session_failed"]
+    assert cancelled_events
+    assert cancelled_events[-1]["content"] == "Run cancelled by operator request."
+    assert cancelled_events[-1]["details"]["reason"] == "cancelled_by_user"
+    assert body["activity_steps"][-1]["label"] == "Run cancelled"
+    assert body["activity_steps"][-1]["detail"] == "Cancelled by operator request"
+
+
+@pytest.mark.asyncio
+async def test_phase7_failed_session_plan_event_uses_failure_guidance_not_stale_success(sessionmaker_override, db_session):
+    session_id = "phase7-failed-no-stale-success"
+    plan_id = "phase7-failed-plan"
+    step_id = "phase7-failed-step"
+    created_at = datetime(2026, 5, 16, 10, 0, 0)
+    plan_at = created_at + timedelta(seconds=1)
+    failed_at = created_at + timedelta(seconds=3)
+    safe_guidance = (
+        "Could not complete the requested job priority change because the Go API returned "
+        "database unavailable. No job rows were changed and no audit rows were created. "
+        "Please retry after the backend recovers."
+    )
+
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="FAILED",
+            current_intent="Run Phase 14 Go API 500 commit failure for JOB-SEED-001",
+            plan_id=plan_id,
+            plan_version=1,
+            plan_hash="phase7-failed-hash",
+            current_step_index=0,
+            step_count=1,
+            llm_call_count=0,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=failed_at,
+            completed_at=None,
+            error="HTTP 500: database unavailable",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-failed-user",
+            session_id=session_id,
+            role="user",
+            content="Run Phase 14 Go API 500 commit failure for JOB-SEED-001",
+            mode="normal",
+            created_at=created_at,
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="COMPLETED",
+            dependency_graph={"0": []},
+            parallel_groups=[],
+            plan_hash="phase7-failed-hash",
+            plan_explanation=safe_guidance,
+            risk_summary="Seeded Go API 500 failure must fail safely.",
+            created_at=plan_at,
+            created_by="seeded-fake",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-failed-stale-plan-message",
+            session_id=session_id,
+            role="assistant",
+            content="**Success**\n\nUpdated **1** job(s).\n\nPriority: **medium**",
+            mode="normal",
+            tool_name="__plan__",
+            step_id=plan_id,
+            created_at=plan_at,
+        )
+    )
+    db_session.add(
+        PlanStep(
+            step_id=step_id,
+            plan_id=plan_id,
+            session_id=session_id,
+            step_index=0,
+            tool_name="put__jobs_{id}",
+            args={"id": "JOB-SEED-001", "priority": "medium"},
+            bindings=[],
+            status="FAILED",
+            idempotency_key="phase7-failed-idempotency",
+            requires_approval=True,
+            retry_count=0,
+            max_retries=3,
+            completed_at=failed_at,
+            last_error="HTTP 500: database unavailable",
+            result={"error": "database unavailable"},
+            result_summary=safe_guidance,
+        )
+    )
+    await db_session.commit()
+
+    app = await _make_phase7_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["status"] == "FAILED"
+    plan_events = [event for event in body["timeline"] if event["event_type"] == "plan_created"]
+    assert plan_events
+    assert "Could not complete" in plan_events[-1]["content"]
+    assert "database unavailable" in plan_events[-1]["content"]
+    assert "Please retry" in plan_events[-1]["content"]
+    assert "**Success**" not in plan_events[-1]["content"]
+    assert "Updated **1** job" not in plan_events[-1]["content"]
+    failed_events = [event for event in body["timeline"] if event["event_type"] == "session_failed"]
+    assert failed_events[-1]["content"] == "HTTP 500: database unavailable"
+
+
+@pytest.mark.asyncio
 async def test_phase7_completed_graph_checkpoint_prefers_result_summary_over_plan_prose(sessionmaker_override, db_session):
     session_id = "phase7-completed-result-summary"
     created_at = datetime(2026, 5, 13, 10, 44, 22)
@@ -575,6 +891,144 @@ async def test_phase7_completed_graph_checkpoint_prefers_result_summary_over_pla
     assert "Operators can" not in completed_events[-1]["content"]
 
 
+@pytest.mark.asyncio
+async def test_phase7_completed_mutation_keeps_rich_final_summary_over_read_tool_summary(sessionmaker_override, db_session):
+    session_id = "phase7-rich-mutation-final"
+    plan_id = "phase7-rich-mutation-plan"
+    created_at = datetime(2026, 5, 17, 17, 42, 12)
+    final_summary = (
+        "**Success**\n\n"
+        "Updated **21** job(s) across **2** write set(s).\n\n"
+        "- 10 medium priority jobs changed to high\n"
+        "- 11 original high priority jobs changed to low\n\n"
+        "No jobs were created or deleted."
+    )
+    stale_read_summary = (
+        "Found 11 high-priority jobs: JOB-SEED-001, JOB-SEED-003, +9 more. "
+        "Details are shown in the table below."
+    )
+
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="COMPLETED",
+            current_intent="change all medium priority job to high then change all high priority job to low",
+            plan_id=plan_id,
+            plan_version=1,
+            plan_hash="phase7-rich-mutation-hash",
+            current_step_index=0,
+            step_count=2,
+            llm_call_count=0,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at + timedelta(seconds=3),
+            completed_at=created_at + timedelta(seconds=3),
+            replan_context={"intent_contract": {"backend": "langgraph"}},
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="COMPLETED",
+            dependency_graph={"0": [], "1": [0]},
+            parallel_groups=[],
+            plan_hash="phase7-rich-mutation-hash",
+            plan_explanation="Stage priority update for high-priority jobs.",
+            risk_summary="Review tool calls before execution.",
+            created_at=created_at + timedelta(seconds=1),
+            created_by="langgraph",
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-rich-user",
+            session_id=session_id,
+            role="user",
+            content="change all medium priority job to high then change all high priority job to low",
+            created_at=created_at + timedelta(milliseconds=100),
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="phase7-rich-final",
+            session_id=session_id,
+            role="assistant",
+            content=final_summary,
+            tool_name="__plan__",
+            step_id=plan_id,
+            created_at=created_at + timedelta(seconds=3, milliseconds=1),
+        )
+    )
+    db_session.add_all(
+        [
+            PlanStep(
+                step_id="phase7-rich-read",
+                plan_id=plan_id,
+                session_id=session_id,
+                step_index=0,
+                tool_name="get__jobs",
+                args={"priority": "high"},
+                bindings=[],
+                status="DONE",
+                idempotency_key="phase7-rich-read-key",
+                requires_approval=False,
+                retry_count=0,
+                max_retries=0,
+                result={
+                    "success": True,
+                    "data": [
+                        {"job_id": "JOB-SEED-001", "priority": "high"},
+                        {"job_id": "JOB-SEED-003", "priority": "high"},
+                    ],
+                },
+                result_summary=stale_read_summary,
+                completed_at=created_at + timedelta(seconds=3),
+            ),
+            PlanStep(
+                step_id="phase7-rich-write",
+                plan_id=plan_id,
+                session_id=session_id,
+                step_index=1,
+                tool_name="put__jobs_{id}",
+                args={"id": "JOB-SEED-001", "priority": "low"},
+                bindings=[],
+                status="DONE",
+                idempotency_key="phase7-rich-write-key",
+                requires_approval=True,
+                retry_count=0,
+                max_retries=0,
+                result={
+                    "success": True,
+                    "data": {
+                        "job_id": "JOB-SEED-001",
+                        "priority": "low",
+                        "previous_priority": "high",
+                    },
+                },
+                result_summary='{"success": true}',
+                completed_at=created_at + timedelta(seconds=3),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    app = await _make_phase7_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    completed_events = [event for event in body["timeline"] if event["event_type"] == "session_completed"]
+    assert completed_events[-1]["content"] == final_summary
+    assert body["presentation"]["kind"] == "mutation_result"
+    assert body["presentation"]["summary"] == final_summary
+    assert stale_read_summary not in completed_events[-1]["content"]
+
+
 def test_phase7_semantic_skips_non_pending_approval_required_event():
     ev = TimelineEventResponse(
         event_id="ar:x",
@@ -634,6 +1088,77 @@ def test_phase7_activity_adapter_skips_non_pending_approval_required():
     labels = [s.label for s in steps]
     assert "Waiting for your approval" not in labels
     assert "Approval received" in labels
+
+
+def test_phase7_activity_waiting_approval_trims_later_replan_noise():
+    created_at = datetime(2026, 5, 13, 10, 0, 0)
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-waiting-trim",
+            "user_id": "u1",
+            "status": "WAITING_APPROVAL",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=5),
+        },
+        pending_approval={
+            "approval_id": "approval-2",
+            "session_id": "activity-waiting-trim",
+            "subject_type": "graph",
+            "subject_id": "tool-2",
+            "tool_name": "__langgraph_commit__",
+            "args": {},
+            "risk_summary": "11 jobs will be updated from high to low priority.",
+            "side_effect_level": "HIGH",
+            "status": "PENDING",
+            "expires_at": created_at + timedelta(hours=1),
+            "created_at": created_at + timedelta(seconds=3),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="ar:one",
+                event_type="approval_required",
+                content="Waiting for your approval: 10 jobs will be updated from medium to high priority.",
+                created_at=created_at + timedelta(seconds=1),
+                approval_id="approval-1",
+                status="PENDING",
+            ),
+            TimelineEventResponse(
+                event_id="ad:one",
+                event_type="approval_decided",
+                content="Approved request to change record.",
+                created_at=created_at + timedelta(seconds=2),
+                approval_id="approval-1",
+                status="APPROVED",
+            ),
+            TimelineEventResponse(
+                event_id="ar:two",
+                event_type="approval_required",
+                content="Waiting for your approval: 11 jobs will be updated from high to low priority.",
+                created_at=created_at + timedelta(seconds=3),
+                approval_id="approval-2",
+                status="PENDING",
+            ),
+            TimelineEventResponse(
+                event_id="replan:after-second-approval",
+                event_type="replan_requested",
+                content="Refining response copy after approval projection.",
+                created_at=created_at + timedelta(seconds=4),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+
+    assert steps[-1].label == "Waiting for your approval"
+    assert steps[-1].state == "waiting"
+    assert "Improving the response" not in [step.label for step in steps]
 
 
 def test_phase7_activity_does_not_merge_plan_created_across_different_plan_ids():
@@ -755,3 +1280,88 @@ def test_phase7_activity_injects_plan_execution_when_timeline_omits_tool_rows():
     assert "Understanding your request" in labels
     assert "Updating job records" in labels
     assert labels[-1] == "Run complete"
+
+
+def test_so012_semantic_timeline_projection_keeps_both_approval_ids():
+    oracle = load_oracle("SO-012")
+    created_at = datetime(2026, 5, 13, 13, 0, 0)
+    approval_events = [
+        TimelineEventResponse(
+            event_id=f"so012:{index}",
+            event_type="approval_required" if row["event"] == "approval_requested" else "approval_decided",
+            content=f"{row['event']} {row['approval_id']}",
+            created_at=created_at + timedelta(seconds=index),
+            approval_id=row["approval_id"],
+            status="PENDING" if row["event"] == "approval_requested" else "APPROVED",
+        )
+        for index, row in enumerate(oracle["expected_timeline"])
+        if row.get("event") in {"approval_requested", "approval_decided"}
+    ]
+
+    payloads = [
+        _semantic_payload_for_timeline_event(event, session_id="so012-session")
+        for event in approval_events
+        if not _should_skip_semantic_timeline_event(event)
+    ]
+
+    assert [payload["approval_id"] for payload in payloads] == [
+        "approval-so-012-1",
+        "approval-so-012-1",
+        "approval-so-012-2",
+        "approval-so-012-2",
+    ]
+    assert [payload["type"] for payload in payloads] == [
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DECIDED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DECIDED",
+    ]
+
+
+def test_so013_activity_suppresses_completion_until_terminal_snapshot():
+    oracle = load_oracle("SO-013")
+    created_at = datetime(2026, 5, 13, 14, 0, 0)
+    active = SessionSnapshotResponse(
+        session={
+            "session_id": "so013-active",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=3),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="so013:approval",
+                event_type="approval_decided",
+                content="Approved.",
+                created_at=created_at + timedelta(seconds=1),
+                approval_id="approval-so-013-1",
+                status="APPROVED",
+            ),
+            TimelineEventResponse(
+                event_id="so013:premature-complete",
+                event_type="session_completed",
+                content="2 high priority jobs changed to medium",
+                created_at=created_at + timedelta(seconds=2),
+                status="COMPLETED",
+            ),
+        ],
+    )
+    terminal = active.model_copy(
+        deep=True,
+        update={
+            "session": {
+                **active.session.model_dump(),
+                "status": oracle["expected_final_state"]["session_phase"],
+            }
+        },
+    )
+
+    assert "Run complete" not in [step.label for step in _activity_steps_for_snapshot(active)]
+    assert _activity_steps_for_snapshot(terminal)[-1].label == "Run complete"

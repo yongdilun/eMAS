@@ -19,6 +19,16 @@ const stateTone = {
     complete: 'text-primary bg-primary/10',
 }
 
+function MaterialActivityIcon({ icon, className = '' }) {
+    return (
+        <span
+            aria-hidden="true"
+            className={`material-symbols-outlined ${className}`}
+            data-icon={icon}
+        />
+    )
+}
+
 function latestStep(steps) {
     if (!Array.isArray(steps) || !steps.length) return null
     return steps[steps.length - 1]
@@ -30,14 +40,23 @@ function findActiveStepIndex(rows) {
         const st = rows[i]?.state
         if (st === 'running' || st === 'retry' || st === 'waiting') return i
     }
+    const latest = rows[rows.length - 1]
+    if (latest?.state === 'success') return rows.length - 1
     return -1
 }
 
-/** Marks the last in-progress row (running / retry / waiting), even if ids differ (e.g. server + client rows). */
+/** Marks the row still representing the active action, even if ids differ (e.g. server + client rows). */
 function isCurrentStep(step, rows) {
     const idx = Array.isArray(rows) ? rows.indexOf(step) : -1
     if (idx < 0) return false
     return idx === findActiveStepIndex(rows)
+}
+
+function visualStateForStep(step, rows, isTerminal) {
+    if (!isTerminal && isCurrentStep(step, rows) && step?.state === 'success') {
+        return 'running'
+    }
+    return step?.state
 }
 
 const ActivityTimeline = ({ steps = [] }) => {
@@ -50,27 +69,33 @@ const ActivityTimeline = ({ steps = [] }) => {
     // still expand to review the full list).
     const [expanded, setExpanded] = useState(false)
     const wasTerminalRef = useRef(isTerminal)
+    const userCollapsedRef = useRef(false)
 
     useEffect(() => {
         const becameTerminal = isTerminal && !wasTerminalRef.current
         wasTerminalRef.current = isTerminal
 
         if (becameTerminal) {
+            userCollapsedRef.current = false
             setExpanded(false)
-        } else if (!isTerminal && rows.length > 1) {
+        } else if (!isTerminal && rows.length > 1 && !userCollapsedRef.current) {
             // While several steps are arriving (SSE + poll), keep the list open so
             // intermediates are visible; the header alone only reflects `latest`.
             setExpanded(true)
         } else if (!isTerminal && shouldAutoCollapseActivity(rows)) {
+            userCollapsedRef.current = false
             setExpanded(false)
+        } else if (rows.length <= 1) {
+            userCollapsedRef.current = false
         }
     }, [isTerminal, rows])
 
     if (!rows.length || !latest || !shouldShowActivityTimeline(rows)) return null
 
-    const icon = stateIcon[latest.state] || 'progress_activity'
-    const tone = stateTone[latest.state] || stateTone.running
-    const iconMotion = latest.state === 'running' || latest.state === 'retry' ? 'animate-spin' : ''
+    const latestVisualState = visualStateForStep(latest, rows, isTerminal)
+    const icon = stateIcon[latestVisualState] || 'progress_activity'
+    const tone = stateTone[latestVisualState] || stateTone.running
+    const iconMotion = latestVisualState === 'running' || latestVisualState === 'retry' ? 'animate-spin' : ''
     // Collapsed: mirror the latest row. Expanded: generic header so the list is not a duplicate of the title.
     const summaryLabel = expanded ? 'Session activity' : latest.label
     const summaryDetail = expanded ? null : latest.detail
@@ -79,13 +104,17 @@ const ActivityTimeline = ({ steps = [] }) => {
         <div className="mb-3 rounded-md border border-hairline bg-surface-2/70 px-3 py-2 text-xs text-ink-muted">
             <button
                 type="button"
-                onClick={() => setExpanded((prev) => !prev)}
+                onClick={() => setExpanded((prev) => {
+                    const next = !prev
+                    userCollapsedRef.current = !next
+                    return next
+                })}
                 className="flex w-full items-center justify-between gap-3 text-left"
                 aria-expanded={expanded}
             >
                 <span className="flex min-w-0 items-center gap-2">
                     <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${tone}`}>
-                        <span className={`material-symbols-outlined text-[14px] ${iconMotion}`}>{icon}</span>
+                        <MaterialActivityIcon icon={icon} className={`text-[14px] ${iconMotion}`} />
                     </span>
                     <span className="min-w-0">
                         <span className="block truncate font-medium text-ink-muted">{summaryLabel}</span>
@@ -96,9 +125,7 @@ const ActivityTimeline = ({ steps = [] }) => {
                 </span>
                 <span className="flex shrink-0 items-center gap-1 text-[11px] text-ink-subtle">
                     {rows.length} update{rows.length === 1 ? '' : 's'}
-                    <span className="material-symbols-outlined text-base">
-                        {expanded ? 'expand_less' : 'expand_more'}
-                    </span>
+                    <MaterialActivityIcon icon={expanded ? 'expand_less' : 'expand_more'} className="text-base" />
                 </span>
             </button>
 
@@ -106,10 +133,11 @@ const ActivityTimeline = ({ steps = [] }) => {
                 <div className="mt-2 border-t border-hairline pt-2">
                     <ol className="space-y-2">
                         {rows.map((step) => {
-                            const stepTone = stateTone[step.state] || stateTone.running
-                            const stepIcon = stateIcon[step.state] || 'progress_activity'
-                            const stepMotion = step.state === 'running' || step.state === 'retry' ? 'animate-spin' : ''
                             const current = isCurrentStep(step, rows)
+                            const stepVisualState = visualStateForStep(step, rows, isTerminal)
+                            const stepTone = stateTone[stepVisualState] || stateTone.running
+                            const stepIcon = stateIcon[stepVisualState] || 'progress_activity'
+                            const stepMotion = stepVisualState === 'running' || stepVisualState === 'retry' ? 'animate-spin' : ''
                             return (
                                 <li
                                     key={step.id}
@@ -117,7 +145,7 @@ const ActivityTimeline = ({ steps = [] }) => {
                                         }`}
                                 >
                                     <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${stepTone}`}>
-                                        <span className={`material-symbols-outlined text-[11px] ${stepMotion}`}>{stepIcon}</span>
+                                        <MaterialActivityIcon icon={stepIcon} className={`text-[11px] ${stepMotion}`} />
                                     </span>
                                     <span className="min-w-0 flex-1">
                                         <span className="flex items-center gap-2 text-ink-muted">

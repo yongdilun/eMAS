@@ -1,5 +1,11 @@
 export const ACTIVITY_STATES = ['running', 'success', 'retry', 'waiting', 'error', 'complete']
 
+import {
+  activityStepFromTypedPresentation,
+  normalizeTypedPresentation,
+  typedPresentationIsAuthoritative,
+} from './presentationContract.js'
+
 /**
  * When the activity timeline is enabled for the latest turn, defer assistant
  * prose, tables, and stream-gated extras until the strip shows a terminal step,
@@ -73,8 +79,41 @@ export function shouldShowActivityTimeline(steps) {
   return Array.isArray(steps) && steps.length > 0
 }
 
+export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = '') {
+  const status = String(sessionStatus || '').toUpperCase()
+  const rows = Array.isArray(steps) ? steps : []
+  if (!ACTIVE_SESSION_STATUSES.has(status)) return rows
+  const withoutTerminal = rows.filter((step) => {
+    const label = String(step?.label || '').toLowerCase()
+    const group = String(step?.group || '').toLowerCase()
+    return !(step?.state === 'complete' && group === 'response') && label !== 'run complete'
+  })
+  if (status !== 'WAITING_APPROVAL') return withoutTerminal
+
+  let latestWaitingApproval = -1
+  for (let i = withoutTerminal.length - 1; i >= 0; i -= 1) {
+    const step = withoutTerminal[i]
+    const label = String(step?.label || '').toLowerCase()
+    if (
+      step?.group === 'approval'
+      && (label === 'waiting for approval' || label === 'waiting for your approval')
+      && step?.state === 'waiting'
+    ) {
+      latestWaitingApproval = i
+      break
+    }
+  }
+  if (latestWaitingApproval < 0) return withoutTerminal
+
+  return withoutTerminal.slice(0, latestWaitingApproval + 1).map((step, index) => {
+    if (index >= latestWaitingApproval || !FINALIZED_STATES.has(step?.state)) return step
+    return { ...step, state: 'success' }
+  })
+}
+
 const FINALIZED_STATES = new Set(['running', 'retry', 'waiting'])
 const MERGEABLE_STATES = new Set(['running', 'success'])
+const ACTIVE_SESSION_STATUSES = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
 
 const SAFE_DOMAIN_LABELS = [
   ['approval', 'approval requests'],
@@ -106,6 +145,8 @@ function safeDomainLabel(event) {
 }
 
 function activityBaseForEvent(event) {
+  const typedStep = typedActivityStepForEvent(event)
+  if (typedStep) return [typedStep.group, typedStep.label, typedStep.state]
   const type = event?.event_type || event?.eventType
   const status = String(event?.status || '').toUpperCase()
   if (type === 'plan_created') return ['planning', 'Understanding your request', 'success']
@@ -133,6 +174,8 @@ function activityBaseForEvent(event) {
 }
 
 function detailForEvent(event, label) {
+  const typedStep = typedActivityStepForEvent(event)
+  if (typedStep) return typedStep.detail
   const type = event?.event_type || event?.eventType
   const domain = safeDomainLabel(event)
   if (type === 'plan_created') return 'Reviewing your request and recent context'
@@ -159,6 +202,19 @@ function toEventTime(event) {
 
 function getEventType(event) {
   return event?.event_type || event?.eventType || ''
+}
+
+function typedActivityStepForEvent(event) {
+  const presentation = normalizeTypedPresentation(event?.presentation)
+  if (!typedPresentationIsAuthoritative(presentation)) return null
+  const type = getEventType(event)
+  if (!['session_completed', 'session_failed', 'session_blocked', 'approval_required', 'approval_decided'].includes(type)) {
+    return null
+  }
+  return activityStepFromTypedPresentation(presentation, {
+    id: `typed:${event?.event_id || event?.id || type}`,
+    timestamp: toEventTime(event) / 1000,
+  })
 }
 
 export function resolveOperationIdFromSnapshot(snapshot = {}) {
@@ -425,6 +481,12 @@ function buildStepsFromEventsOperational(events) {
 
     if (t === 'user_message') continue
     if (t === 'tool_started') continue
+
+    const typedStep = typedActivityStepForEvent(event)
+    if (typedStep) {
+      push(typedStep.group, typedStep.label, typedStep.state, typedStep.detail, ts)
+      continue
+    }
 
     if (t === 'plan_created') {
       if (!seenUnderstanding) {
@@ -711,10 +773,14 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
   const planSteps = Array.isArray(snapshot?.steps) ? snapshot.steps : []
   const status = String(session?.status || '').toUpperCase()
   const hasPendingApproval = Boolean(snapshot?.pending_approval)
+  const snapshotPresentation = normalizeTypedPresentation(snapshot?.presentation)
+  const typedAuthoritative = typedPresentationIsAuthoritative(snapshotPresentation)
+  const typedIsNonCompletedTerminal = Boolean(typedAuthoritative && snapshotPresentation?.state !== 'completed')
 
-  // Suppress session_completed timeline events while an approval is still pending —
-  // showing "Run complete" while the approval card is open is misleading.
-  const timeline = hasPendingApproval
+  // Suppress session_completed timeline events while the session is still active.
+  // showing "Run complete" before the session is terminal is misleading.
+  const suppressCompletion = hasPendingApproval || ACTIVE_SESSION_STATUSES.has(status) || typedIsNonCompletedTerminal
+  const timeline = suppressCompletion
     ? rawTimeline.filter((e) => (e?.event_type || e?.eventType) !== 'session_completed')
     : rawTimeline
 
@@ -786,7 +852,7 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
     })
   }
 
-  if (status === 'FAILED' || status === 'BLOCKED') {
+  if ((status === 'FAILED' || status === 'BLOCKED') && !typedIsNonCompletedTerminal) {
     steps = appendStep(steps, {
       id: `snapshot_activity_${steps.length + 1}`,
       timestamp: now,
@@ -797,7 +863,7 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
     })
   }
 
-  if (status === 'COMPLETED') {
+  if (status === 'COMPLETED' && !typedIsNonCompletedTerminal) {
     steps = appendStep(steps, {
       id: `snapshot_activity_${steps.length + 1}`,
       timestamp: now,
@@ -808,10 +874,25 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
     })
   }
 
-  if (['COMPLETED', 'FAILED', 'BLOCKED'].includes(status)) {
+  if (typedIsNonCompletedTerminal) {
+    const typedStep = activityStepFromTypedPresentation(snapshotPresentation, {
+      id: `snapshot_activity_typed_${snapshotPresentation.kind}_${snapshotPresentation.state}`,
+      timestamp: now,
+    })
+    if (typedStep) {
+      steps = steps.filter((step) => {
+        const label = String(step?.label || '')
+        return label !== 'Run complete' && label !== 'Improving the response'
+      })
+      steps = appendStep(steps, typedStep)
+    }
+  }
+
+  if (['COMPLETED', 'FAILED', 'BLOCKED'].includes(status) && !typedIsNonCompletedTerminal) {
     steps = injectExecutionSummaryFromPlanSteps(steps, planSteps, plan)
   }
 
+  steps = stripPrematureTerminalActivitySteps(steps, status)
   return capActivitySteps(finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(steps)))
 }
 

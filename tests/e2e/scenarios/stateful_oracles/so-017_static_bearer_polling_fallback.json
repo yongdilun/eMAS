@@ -1,0 +1,140 @@
+{
+  "id": "SO-017",
+  "title": "Static bearer polling fallback",
+  "risk": "Auth modes that disable EventSource can leave the browser without polling fallback, or can render final text before the polled snapshot is terminal.",
+  "prompt": "Show the status for machine M-CNC-01.",
+  "initial_state": {
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC",
+        "updated_at": "2026-05-16T00:00:00Z"
+      }
+    ],
+    "auth_mode": "static_bearer",
+    "eventsource_allowed": false,
+    "polling_interval_ms": 1000
+  },
+  "expected_route": {
+    "route": "tool.read.machine_status",
+    "machine_id": "M-CNC-01",
+    "transport": "polling_snapshot_fallback"
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "prompt accepted",
+      "session_phase": "EXECUTING",
+      "transport": "polling",
+      "eventsource_opened": false,
+      "forbidden": [
+        "browser_final_response_before_terminal_snapshot"
+      ]
+    },
+    {
+      "after": "first non-terminal poll",
+      "snapshot_status": "EXECUTING",
+      "must_not_show_final_response": true
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "tool_read_started",
+      "tool": "machine_status",
+      "machine_id": "M-CNC-01"
+    },
+    {
+      "event": "tool_read_completed",
+      "tool": "machine_status",
+      "machine_id": "M-CNC-01"
+    },
+    {
+      "event": "snapshot_terminal_persisted",
+      "status": "COMPLETED"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "transport": "polling",
+    "must_not_open_eventsource": true,
+    "terminal_poll": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "machine_id": "M-CNC-01"
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_status COMPLETED",
+    "must_include": [
+      "M-CNC-01",
+      "running"
+    ],
+    "must_not_include": [
+      "stream unavailable",
+      "Factory Agent needs attention",
+      "Run complete before terminal snapshot"
+    ]
+  },
+  "expected_ui": {
+    "transport_indicator": "polling",
+    "must_show": [
+      "M-CNC-01",
+      "running"
+    ],
+    "must_not_show": [
+      "EventSource",
+      "Factory Agent needs attention",
+      "stuck"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "polling_fallback_reaches_terminal_snapshot",
+    "no_final_before_terminal",
+    "read_only_state_unchanged",
+    "final_summary_matches_tool_result"
+  ],
+  "required_layers": [
+    "playwright_release"
+  ],
+  "weakness_from_phase0": "Release static bearer tests checked that EventSource was absent and final UI appeared, but did not prove polling snapshot progression gated the final response.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/release-validation.spec.js::SO-017 scenario 55"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

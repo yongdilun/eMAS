@@ -1,0 +1,178 @@
+{
+  "id": "SO-022",
+  "title": "LOTO missing machine ID",
+  "risk": "A LOTO prompt that names only a generic CNC machine can silently default to M-CNC-01, claim source evidence, or show a generic failure instead of asking for the required machine ID.",
+  "prompt": "What LOTO procedure applies before working on the CNC machine?",
+  "initial_state": {
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "rag_sources": [
+      {
+        "source_id": "SRC-LOTO-CNC-01",
+        "machine_id": "M-CNC-01",
+        "title": "LOTO Procedure for CNC Cell"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "clarification.machine_id_missing",
+    "machine_id": null,
+    "must_not_route_to": [
+      "rag.loto_procedure",
+      "tool.read.machine_status"
+    ],
+    "must_not_invent": [
+      "M-CNC-01",
+      "SRC-LOTO-CNC-01",
+      "LOTO-M-CNC-01"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "entity extraction",
+      "session_phase": "EXECUTING",
+      "machine_id": null,
+      "missing_required_entities": [
+        "machine_id"
+      ],
+      "forbidden": [
+        "default_machine_id",
+        "rag_retrieval_started",
+        "machine_status_tool_call"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 1
+    },
+    {
+      "event": "clarification_requested",
+      "missing": "machine_id"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "route": "clarification.machine_id_missing",
+      "source_ids": []
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "clarification_requested machine_id",
+    "must_include": [
+      "Which machine ID",
+      "exact machine ID"
+    ],
+    "must_not_include": [
+      "M-CNC-01",
+      "SRC-LOTO-CNC-01",
+      "Controlled seeded RAG answer",
+      "Knowledge sources",
+      "Factory Agent needs attention",
+      "LOTO-M-CNC-01"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Which machine ID",
+      "exact machine ID"
+    ],
+    "must_not_show": [
+      "M-CNC-01",
+      "Knowledge sources",
+      "Controlled seeded RAG answer",
+      "Factory Agent needs attention",
+      "successful LOTO answer"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "missing_machine_id_blocks_loto_success",
+    "no_default_machine_id",
+    "no_source_claim_without_entity",
+    "read_only_state_unchanged"
+  ],
+  "required_layers": [
+    "parser_route",
+    "seeded_browser"
+  ],
+  "weakness_from_phase0": "Existing LOTO tests emphasized successful M-CNC-01 extraction; they did not prove a generic CNC prompt avoids defaulting to a source-backed machine answer.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A missing machine-id LOTO prompt can invent M-CNC-01 and complete as a plausible source-backed safety answer.",
+    "existing_test_that_would_miss_it": "SO-021 and LOTO wording variants all provide a machine id, so they would pass while the missing-entity branch still defaults to a seeded machine.",
+    "lowest_useful_layer": "parser_route",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "Seeded coverage represents the real missing-entity short-circuit; real LangGraph is not needed because no planner or tool execution should run.",
+    "required_positive_evidence": [
+      "missing machine_id detected",
+      "clarification route selected",
+      "visible response asks for the exact machine ID",
+      "snapshot has no sources or steps",
+      "machine state unchanged"
+    ],
+    "required_forbidden_stale_evidence": [
+      "M-CNC-01",
+      "SRC-LOTO-CNC-01",
+      "Controlled seeded RAG answer",
+      "Knowledge sources",
+      "Factory Agent needs attention",
+      "successful LOTO answer"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_phase19_prompt_workflow_regression.py::test_so022_prompt_oracle_clarifies_missing_loto_machine_without_default_id",
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-intent-entity.spec.js::SO-022 scenario 109"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "tests/e2e/scenarios/manual_prompt_regressions.json::phase16-so022-loto-missing-machine-id",
+      "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-16-remaining-normal-use-breakage-scenarios"
+  }
+}

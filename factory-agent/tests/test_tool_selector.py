@@ -2,7 +2,7 @@ import pytest
 
 from factory_agent.config import Settings
 from factory_agent.schemas import ToolInfo
-from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.tool_selector import CapabilitySelectionRequest, ToolSelector
 
 
 def _settings(**overrides):
@@ -22,6 +22,33 @@ def _settings(**overrides):
     values = base.__dict__.copy()
     values.update(overrides)
     return Settings(**values)
+
+
+def _tool(
+    name: str,
+    *,
+    endpoint: str,
+    method: str = "GET",
+    tags: list[str] | None = None,
+    description: str | None = None,
+    requires_approval: bool | None = None,
+) -> ToolInfo:
+    read_only = method == "GET"
+    return ToolInfo(
+        name=name,
+        description=description or name.replace("_", " "),
+        endpoint=endpoint,
+        method=method,
+        input_schema={"type": "object", "properties": {}},
+        path_params=["id"] if "{id}" in endpoint else [],
+        is_read_only=read_only,
+        requires_approval=(not read_only) if requires_approval is None else requires_approval,
+        capability_tags=tags or [],
+    )
+
+
+def _semantic_selector() -> ToolSelector:
+    return ToolSelector(_settings(tool_selector_backend="retrieval", tool_selector_top_k=10))
 
 
 @pytest.mark.asyncio
@@ -754,6 +781,258 @@ async def test_selector_skips_reranker_when_clear_winner_exists(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_selector_force_llm_trace_uses_reranker_when_enabled(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+        "get__equipment_utilization": ToolInfo(
+            name="get__equipment_utilization",
+            description="Equipment utilization",
+            endpoint="/equipment/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["equipment", "utilization"],
+        ),
+        "get__reports_utilization": ToolInfo(
+            name="get__reports_utilization",
+            description="Utilization report",
+            endpoint="/reports/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["utilization", "report"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {"primary_tool": "get__machines_utilization", "additional_tools": [], "confidence": 1.0, "reason": "forced"}
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="show utilization",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "langchain"
+    assert result.llm_calls == 1
+    assert result.tool_names[0] == "get__machines_utilization"
+
+
+@pytest.mark.asyncio
+async def test_selector_force_llm_trace_uses_reranker_for_clear_winner(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__reports_machine-utilization": ToolInfo(
+            name="get__reports_machine-utilization",
+            description="Machine utilization report",
+            endpoint="/reports/machine-utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization", "report"],
+        ),
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {
+            "primary_tool": "get__reports_machine-utilization",
+            "additional_tools": [],
+            "confidence": 1.0,
+            "reason": "forced trace",
+        }
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+    monkeypatch.setattr(
+        selector,
+        "_top_candidates",
+        lambda **kwargs: [
+            ("get__reports_machine-utilization", 100),
+            ("get__machines_utilization", 1),
+        ],
+    )
+
+    result = await selector.select_tools(
+        intent="show machine utilization report",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "langchain"
+    assert result.llm_calls == 1
+    assert result.tool_names[0] == "get__reports_machine-utilization"
+
+
+@pytest.mark.asyncio
+async def test_selector_force_llm_trace_uses_reranker_for_semantic_shortcut(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__jobs_{id}": ToolInfo(
+            name="get__jobs_{id}",
+            description="Get a job by ID",
+            endpoint="/jobs/{id}",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["job", "lookup"],
+        ),
+        "get__ai_scheduling_jobs_{id}_explanation": ToolInfo(
+            name="get__ai_scheduling_jobs_{id}_explanation",
+            description="Explanation",
+            endpoint="/ai/scheduling/jobs/{id}/explanation",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["ai", "scheduling", "job", "explanation"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {
+            "primary_tool": "get__ai_scheduling_jobs_{id}_explanation",
+            "additional_tools": ["get__jobs_{id}"],
+            "confidence": 1.0,
+            "reason": "forced trace",
+        }
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="explain schedule for job JOB-SEED-003",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "langchain"
+    assert result.llm_calls == 1
+    assert result.tool_names[0] == "get__ai_scheduling_jobs_{id}_explanation"
+
+
+@pytest.mark.asyncio
+async def test_selector_force_llm_trace_reranker_exception_records_attempt(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+        "get__reports_utilization": ToolInfo(
+            name="get__reports_utilization",
+            description="Utilization report",
+            endpoint="/reports/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["utilization", "report"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        raise RuntimeError("reranker unavailable")
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="show utilization",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "retrieval"
+    assert result.llm_calls == 1
+    assert result.tool_names
+
+
+@pytest.mark.asyncio
 async def test_selector_respects_disabled_reranker_even_when_trace_forced(monkeypatch):
     selector = ToolSelector(
         _settings(
@@ -872,6 +1151,32 @@ async def test_selector_prefers_feature_specific_job_explanation_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_semantic_job_id_read_prefers_metadata_matched_child_endpoint():
+    selector = _semantic_selector()
+    tools = {
+        "work_order_reader": _tool(
+            "work_order_reader",
+            endpoint="/work-orders/{id}",
+            tags=["job", "lookup"],
+        ),
+        "work_order_window_reader": _tool(
+            "work_order_window_reader",
+            endpoint="/work-orders/{id}/inspection-windows",
+            tags=["job", "inspection", "window", "lookup", "list"],
+        ),
+    }
+
+    result = await selector.select_tools(
+        intent="show inspection windows for job JOB-SEED-001",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert result.tool_names[:2] == ["work_order_window_reader", "work_order_reader"]
+
+
+@pytest.mark.asyncio
 async def test_selector_prefers_create_job_tool_when_prompt_mentions_reject_after_create():
     selector = ToolSelector(_settings(tool_selector_backend="retrieval", tool_selector_top_k=5))
     tools = {
@@ -911,4 +1216,202 @@ async def test_selector_prefers_create_job_tool_when_prompt_mentions_reject_afte
     )
 
     assert result.tool_names[0] == "post__jobs"
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_select_expected_real_tools_by_capability():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines": _tool("get__machines", endpoint="/machines", tags=["machine", "list"]),
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=["machine", "lookup"]),
+        "get__jobs": _tool("get__jobs", endpoint="/jobs", tags=["job", "list"]),
+        "get__jobs_{id}": _tool("get__jobs_{id}", endpoint="/jobs/{id}", tags=["job", "lookup"]),
+        "put__jobs_{id}": _tool("put__jobs_{id}", endpoint="/jobs/{id}", method="PUT", tags=["job", "update"]),
+        "post__jobs": _tool("post__jobs", endpoint="/jobs", method="POST", tags=["job", "create"]),
+        "get__ai_chats_{id}_approvals": _tool(
+            "get__ai_chats_{id}_approvals",
+            endpoint="/ai/chats/{id}/approvals",
+            tags=["ai", "chat", "approval", "list", "pending"],
+        ),
+        "post__ai_chatbot_approvals_{id}_approve": _tool(
+            "post__ai_chatbot_approvals_{id}_approve",
+            endpoint="/ai/chatbot/approvals/{id}/approve",
+            method="POST",
+            tags=["ai", "chatbot", "approval", "approve"],
+        ),
+        "post__ai_chatbot_approvals_{id}_reject": _tool(
+            "post__ai_chatbot_approvals_{id}_reject",
+            endpoint="/ai/chatbot/approvals/{id}/reject",
+            method="POST",
+            tags=["ai", "chatbot", "approval", "reject"],
+        ),
+        "post__sessions_{id}_cancel": _tool(
+            "post__sessions_{id}_cancel",
+            endpoint="/sessions/{id}/cancel",
+            method="POST",
+            tags=["session", "cancel"],
+        ),
+    }
+
+    machine = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+    jobs = await selector.select_tools(intent="show jobs", tools_by_name=tools)
+    job_write = await selector.select_tools(intent="change high priority jobs to medium", tools_by_name=tools)
+    approvals = await selector.select_tools(intent="show pending approvals", tools_by_name=tools)
+    cancel = await selector.select_tools(intent="cancel the current run", tools_by_name=tools)
+
+    assert machine.tool_names == ["get__machines_{id}"]
+    assert jobs.tool_names[:2] == ["get__jobs", "get__jobs_{id}"]
+    assert job_write.tool_names[:2] == ["get__jobs", "put__jobs_{id}"]
+    assert approvals.tool_names == [
+        "get__ai_chats_{id}_approvals",
+        "post__ai_chatbot_approvals_{id}_approve",
+        "post__ai_chatbot_approvals_{id}_reject",
+    ]
+    assert cancel.tool_names == ["post__sessions_{id}_cancel"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_select_renamed_tools_with_matching_capabilities():
+    selector = _semantic_selector()
+    tools = {
+        "machine_detail_v2": _tool("machine_detail_v2", endpoint="/assets/{id}", tags=["machine", "lookup"]),
+        "job_search_v2": _tool("job_search_v2", endpoint="/work-orders", tags=["job", "list"]),
+        "job_priority_mutation_v2": _tool(
+            "job_priority_mutation_v2",
+            endpoint="/work-orders/{id}",
+            method="PATCH",
+            tags=["job", "update", "priority"],
+        ),
+    }
+
+    machine = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+    job_write = await selector.select_tools(intent="set low priority jobs to high", tools_by_name=tools)
+
+    assert machine.tool_names == ["machine_detail_v2"]
+    assert job_write.tool_names[:2] == ["job_search_v2", "job_priority_mutation_v2"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_routes_do_not_prefer_endpoint_name_with_wrong_metadata():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=["job", "lookup"]),
+        "machine_status_reader": _tool("machine_status_reader", endpoint="/assets/{id}", tags=["machine", "lookup"]),
+    }
+
+    result = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+
+    assert result.tool_names == ["machine_status_reader"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_route_endpoint_fallback_remains_for_missing_metadata():
+    selector = _semantic_selector()
+    tools = {
+        "get__machines_{id}": _tool("get__machines_{id}", endpoint="/machines/{id}", tags=[]),
+        "delete__jobs_{id}": _tool("delete__jobs_{id}", endpoint="/jobs/{id}", method="DELETE", tags=[]),
+    }
+
+    result = await selector.select_tools(intent="check machine M-CNC-01 status", tools_by_name=tools)
+
+    assert result.tool_names == ["get__machines_{id}"]
+
+
+def test_capability_metadata_selects_generic_response_contract_tools():
+    selector = _semantic_selector()
+    tools = {
+        "product_status_reader_v2": _tool(
+            "product_status_reader_v2",
+            endpoint="/assets/products/{id}",
+            tags=["product", "read", "lookup", "status", "entity_status_v1"],
+        ),
+        "material_status_reader_v2": _tool(
+            "material_status_reader_v2",
+            endpoint="/assets/materials/{id}",
+            tags=["inventory", "material", "read", "lookup", "status", "entity_status_v1"],
+        ),
+        "job_business_change_writer_v2": _tool(
+            "job_business_change_writer_v2",
+            endpoint="/work-orders/{id}",
+            method="PUT",
+            tags=["job", "update", "business_change_v1", "field_change", "approval_required"],
+        ),
+        "product_no_match_reader_v2": _tool(
+            "product_no_match_reader_v2",
+            endpoint="/assets/products",
+            tags=["product", "read", "list", "filter", "entity_agnostic_no_matching_records_v1"],
+        ),
+    }
+
+    product_status = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="product",
+                actions=("read", "lookup", "status"),
+                safety="read_only",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="status for product P-001",
+    )
+    material_status = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="inventory",
+                actions=("read", "lookup", "status"),
+                safety="read_only",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="status for material MAT-002",
+    )
+    business_change = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="job",
+                actions=("update", "business_change_v1"),
+                safety="approval_required",
+                endpoint_shape="item",
+            )
+        ],
+        tools,
+        intent="change high priority jobs to medium",
+    )
+    no_match = selector._select_capability_tools(
+        [
+            CapabilitySelectionRequest(
+                entity="product",
+                actions=("read", "list", "entity_agnostic_no_matching_records_v1"),
+                safety="read_only",
+                endpoint_shape="collection",
+            )
+        ],
+        tools,
+        intent="show products matching an impossible status",
+    )
+
+    assert product_status == ["product_status_reader_v2"]
+    assert material_status == ["material_status_reader_v2"]
+    assert business_change == ["job_business_change_writer_v2"]
+    assert no_match == ["product_no_match_reader_v2"]
+
+
+@pytest.mark.asyncio
+async def test_clarification_and_unsupported_routes_do_not_select_mutating_tools():
+    selector = _semantic_selector()
+    tools = {
+        "post__jobs": _tool("post__jobs", endpoint="/jobs", method="POST", tags=["job", "create"]),
+        "put__jobs_{id}": _tool("put__jobs_{id}", endpoint="/jobs/{id}", method="PUT", tags=["job", "update"]),
+        "delete__jobs_{id}": _tool("delete__jobs_{id}", endpoint="/jobs/{id}", method="DELETE", tags=["job", "delete"]),
+    }
+
+    missing_machine = await selector.select_tools(intent="what is the LOTO procedure?", tools_by_name=tools)
+    incomplete_write = await selector.select_tools(intent="change jobs to urgent priority", tools_by_name=tools)
+    dangerous = await selector.select_tools(intent="delete all production jobs without approval", tools_by_name=tools)
+
+    assert missing_machine.tool_names == []
+    assert incomplete_write.tool_names == []
+    assert dangerous.tool_names == []
 

@@ -13,9 +13,11 @@ from factory_agent.graph.builder import compile_planner_graph
 from factory_agent.graph.nodes.planner_loop import make_planner_node
 from factory_agent.graph.nodes.planner_loop import decision_guard_node
 from factory_agent.graph.nodes.planner_loop import _bulk_job_priority_decision
+from factory_agent.graph.nodes.planner_loop import _bulk_job_selection_ids
 from factory_agent.graph.planner_graph import _initial_planner_state
 from factory_agent.graph.state import AgentState
 from factory_agent.schemas import ToolInfo
+from tests.support.stateful_oracle_harness import StatefulOracleHarness
 
 
 def _settings():
@@ -256,6 +258,37 @@ def test_bulk_job_priority_lookup_uses_filter_and_minimal_fields():
         "fields": "job_id,priority",
         "limit": 500,
     }
+
+
+def test_bulk_job_selection_uses_captured_snapshot_rows_after_backend_mutates():
+    harness = StatefulOracleHarness.from_oracle_id("SO-001")
+    original_high_rows = harness.read_jobs({"priority": "high"}, state_basis="original")["data"]
+
+    harness.dry_run_oracle_intent(0)
+    assert harness.approve("approval-so-001-1", auto_complete=False).ok is True
+
+    state: AgentState = {
+        "tool_outputs": [
+            {
+                "tool_name": "get__jobs",
+                "args": {"priority": "high"},
+                "http_status": 200,
+                "result": {"data": original_high_rows},
+            }
+        ],
+        "tool_outputs_truncated_at": 0,
+    }
+
+    assert _bulk_job_selection_ids(state, source_priority="high") == [
+        "JOB-SO001-HIGH-01",
+        "JOB-SO001-HIGH-02",
+    ]
+    assert harness.select_job_ids({"priority": "high"}, state_basis="current") == [
+        "JOB-SO001-HIGH-01",
+        "JOB-SO001-HIGH-02",
+        "JOB-SO001-MED-01",
+        "JOB-SO001-MED-02",
+    ]
 
 
 def test_decision_guard_passes_machine_ref_constraint_for_machine_id_path_arg():

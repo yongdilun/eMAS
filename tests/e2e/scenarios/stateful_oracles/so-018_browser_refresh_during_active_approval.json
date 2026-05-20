@@ -1,0 +1,237 @@
+{
+  "id": "SO-018",
+  "title": "Browser refresh during active approval",
+  "risk": "Refreshing while an approval is pending can lose the approval card, create a duplicate approval, or allow duplicate execution after the operator approves.",
+  "prompt": "Change all high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO018-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO018-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO018-LOW-01",
+        "priority": "low",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "browser_actions": [
+      {
+        "action": "refresh_page",
+        "when": "WAITING_APPROVAL"
+      },
+      {
+        "action": "approve_after_refresh",
+        "approval_id": "approval-so-018-1"
+      }
+    ]
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-018-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO018-HIGH-01",
+        "JOB-SO018-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-018-1",
+      "intent_id": "SO-018-I1",
+      "decision": "accepted_after_refresh",
+      "row_ids": [
+        "JOB-SO018-HIGH-01",
+        "JOB-SO018-HIGH-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "approval requested before refresh",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-018-1"
+    },
+    {
+      "after": "page refresh restored session",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-018-1",
+      "approval_row_count": 1,
+      "forbidden": [
+        "new approval id after refresh",
+        "lost pending approval"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO018-HIGH-01",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO018-HIGH-02",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO018-LOW-01",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null,
+    "commit_count_by_approval": {
+      "approval-so-018-1": 1
+    }
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-018-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO018-HIGH-01",
+        "JOB-SO018-HIGH-02"
+      ],
+      "from": "high",
+      "to": "medium",
+      "status": "success",
+      "must_exist_once": true
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-018-1"
+    },
+    {
+      "event": "browser_refreshed",
+      "session_restored": true
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-018-1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-018-1"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_refresh": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-018-1",
+      "approval_card_restored": true
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_once": [
+        "approval-so-018-1",
+        "commit_completed approval-so-018-1"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-018-1",
+    "must_include": [
+      "2 high priority jobs changed to medium"
+    ],
+    "must_not_include": [
+      "4 high priority jobs changed",
+      "duplicate approval"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-018-1"
+    ],
+    "after_refresh_must_show": [
+      "approval-so-018-1",
+      "2 high priority jobs"
+    ],
+    "must_show": [
+      "Run complete",
+      "2 high priority jobs changed to medium"
+    ],
+    "must_not_show": [
+      "Factory Agent needs attention",
+      "duplicate approval"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO018-LOW-01",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "pending_approval_restores_after_refresh",
+    "approval_replay_is_idempotent",
+    "one_commit_per_approval",
+    "pending_approval_matches_snapshot",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": [
+    "playwright_seeded"
+  ],
+  "weakness_from_phase0": "Browser refresh tests can pass on visible completion while missing lost approval state, duplicate approval rows, or duplicate commits after reload.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "Refreshing while an approval is pending can restore the wrong pending approval id, duplicate approval cards, lose the staged bundle, or mutate before approval.",
+    "existing_test_that_would_miss_it": "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-007/SO-018 scenario 88 only proved post-completion replay/idempotency, not active-refresh restoration before approval.",
+    "lowest_useful_layer": "seeded_browser",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "required_positive_evidence": [
+      "same pending approval id before and after refresh",
+      "exactly one visible approval card/button after refresh",
+      "same staged bundle rows after refresh",
+      "no DB or audit mutation before approval",
+      "one commit and one audit row set after approval"
+    ],
+    "required_forbidden_stale_evidence": [
+      "duplicate approval card",
+      "new approval id after refresh",
+      "lost pending approval",
+      "pre-approval DB mutation",
+      "duplicate audit rows"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-018 active approval survives refresh with the same staged bundle"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

@@ -3,7 +3,7 @@ import { useThemeContext } from '../context/ThemeContext'
 import SettingRow from '../components/features/settings/SettingRow'
 import ThemeToggle from '../components/features/settings/ThemeToggle'
 import PageHeader from '../components/shared/PageHeader'
-import { settingsApi, schedulingApi, toData, apiErrorMessage } from '../services/api'
+import { settingsApi, schedulingApi, toData, apiErrorMessage, apiErrorToastOptions } from '../services/api'
 import logger from '../services/logger'
 import { useToast } from '../context/ToastContext'
 
@@ -165,11 +165,11 @@ const Settings = () => {
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current()
+      handleSaveRef.current({ quietAuthInline: true, quietAuthToast: true })
     }, 1200)
   }, [])
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (options = {}) => {
     setSaveMsg(''); setSaveErr('')
     // PUT /settings: theme, language, notifications (bool), ai_enabled — SETTINGS_FRONTEND.md
     const payload = {
@@ -199,8 +199,12 @@ const Settings = () => {
     } catch (err) {
       logger.error('Failed to save settings', err)
       const msg = apiErrorMessage(err, 'Failed to save settings.')
-      setSaveErr(msg)
-      toast.error(msg)
+      if (!(options.quietAuthInline === true && err?.type === 'AUTH')) {
+        setSaveErr(msg)
+      }
+      if (!(options.quietAuthToast === true && err?.type === 'AUTH')) {
+        toast.error(msg, apiErrorToastOptions(err))
+      }
     }
   }, [
     aiEnabled,
@@ -231,7 +235,7 @@ const Settings = () => {
       await schedulingApi.refreshWorkCalendars()
       toast.success('Work calendars refreshed.')
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Failed to refresh work calendars.'))
+      toast.error(apiErrorMessage(err, 'Failed to refresh work calendars.'), apiErrorToastOptions(err))
     } finally {
       setRefreshCalendarsLoading(false)
     }

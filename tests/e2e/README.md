@@ -2,6 +2,30 @@
 
 This folder contains the shared scenario contract for backend, chatbot, scheduling, approval, and `factory-agent` testing.
 
+## Relationship to Playwright Browser E2E
+
+The deterministic browser replacement for manual chatbot typing, waiting, and DOM checking lives in `eMas Front/e2e`:
+
+```powershell
+Set-Location "eMas Front"
+npm run test:e2e -- --project=chromium
+```
+
+That Playwright suite opens the real frontend in Chromium and validates the visible Factory Agent chat modal against a mocked Factory Agent REST/SSE server. It replaces manual browser validation for deterministic frontend behavior only.
+
+This seed pipeline is still the place for non-browser and optional full-stack coverage. Keep `tests/e2e/run_seed_pipeline.ps1` for:
+
+- Go API seed and backend E2E checks.
+- Factory Agent pytest/API checks.
+- Seed manifest and scenario contract validation.
+- Promptfoo and scenario-driven prompt/rubric checks when enabled.
+- Optional real Factory Agent API scenarios with `-AgentApi`.
+- Optional full-stack/live checks that require real services or configured model/RAG backends.
+
+Phase 12 governance retires routine manual browser chatbot regression only. It does not remove, replace, or deprecate this Go/Python seed pipeline, and it does not remove `tests/e2e/run_seed_pipeline.ps1`.
+
+Real LLM and RAG checks remain opt-in and non-deterministic. They should not be treated as replacements for the mocked Playwright PR gate, and the mocked Playwright PR gate should not be treated as a replacement for API contract, seed, reliability, Promptfoo, or live evaluation coverage.
+
 ## Fast Checks
 
 From repo root:

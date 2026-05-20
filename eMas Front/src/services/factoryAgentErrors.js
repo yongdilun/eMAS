@@ -11,7 +11,7 @@ export function normalizeFactoryAgentError(err, fallback = 'Request failed.') {
   if (typeof err === 'string') return err
   const msg = String(err.message || '').toLowerCase()
   if (msg.includes('failed to fetch') || msg.includes('networkerror')) {
-    return 'Cannot reach factory-agent backend at http://127.0.0.1:8000. Start the backend server and retry.'
+    return fallback || 'Cannot reach Factory Agent backend. Start the backend server and retry.'
   }
   if (err.message && typeof err.message === 'string') return err.message
   if (err.status && STATUS_FALLBACKS[err.status]) return STATUS_FALLBACKS[err.status]

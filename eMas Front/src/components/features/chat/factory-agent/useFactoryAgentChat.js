@@ -2,12 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { classifyFactoryAgentError, normalizeFactoryAgentError } from '../../../../services/factoryAgentErrors'
 import { FACTORY_AGENT_STATUS, factoryAgentApi } from '../../../../services/factoryAgentApi'
 import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../turns/turnAssembler'
-import { buildActivityStepsFromSnapshot, finalizeHistoricalActivityStates } from './activityTimelineUtils'
+import {
+  buildActivityStepsFromSnapshot,
+  finalizeHistoricalActivityStates,
+  stripPrematureTerminalActivitySteps,
+} from './activityTimelineUtils'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
 import { useActivityStream } from './useActivityStream.js'
 import { useFactoryAgentClientProgress } from './useFactoryAgentClientProgress.js'
 import { useSessionEvents } from './useSessionEvents.js'
+import {
+  applyResponseDocumentSnapshotUpdate,
+  createResponseDocumentReducerState,
+} from './responseDocumentReducer.js'
 
 const DEFAULT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend-operator'
 const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
@@ -16,8 +24,10 @@ const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
 const ACTIVE_SESSION_KEY = 'factory_agent_active_session_id'
 const SESSION_COUNTER_KEY = 'factory_agent_session_counter'
 const MESSAGE_MODE_KEY = 'factory_agent_message_mode'
+const DEFAULT_MESSAGE_MODE = 'normal'
 
 const hasStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -106,6 +116,8 @@ export function useFactoryAgentChat() {
   const [plan, setPlan] = useState(null)
   const [steps, setSteps] = useState([])
   const [timeline, setTimeline] = useState([])
+  const [presentation, setPresentation] = useState(null)
+  const [responseDocument, setResponseDocument] = useState(null)
   const [activitySteps, setActivitySteps] = useState([])
   const [sessionList, setSessionList] = useState([])
   const [input, setInput] = useState('')
@@ -122,15 +134,16 @@ export function useFactoryAgentChat() {
   const [lastSyncedAt, setLastSyncedAt] = useState(null)
   const [streamDiagnosticsBySource, setStreamDiagnosticsBySource] = useState({})
   const [optimisticMessages, setOptimisticMessages] = useState([])
-  const [messageMode, setMessageMode] = useState(() => {
-    if (!hasStorage()) return 'normal'
-    return localStorage.getItem(MESSAGE_MODE_KEY) || 'normal'
-  })
+  const messageMode = DEFAULT_MESSAGE_MODE
+  const setMessageMode = useCallback(() => {}, [])
 
   const sessionPollTimerRef = useRef(null)
+  const sendingGuardRef = useRef(false)
+  const cancelRequestedSessionIdsRef = useRef(new Set())
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
+  const responseDocumentStateRef = useRef(createResponseDocumentReducerState())
   const {
     clientProgress,
     clearClientProgress,
@@ -186,6 +199,21 @@ export function useFactoryAgentChat() {
     if (switchedSession) {
       bundleTableByApprovalIdRef.current.clear()
     }
+
+    const responseDocumentUpdate = applyResponseDocumentSnapshotUpdate(responseDocumentStateRef.current, snapshot, {
+      requestedSessionId,
+      sessionId: sid,
+      transport: meta?.transport || 'snapshot',
+    })
+    responseDocumentStateRef.current = responseDocumentUpdate.state
+    const canApplySnapshotWithCurrentDocument = [
+      'ignored_duplicate_revision',
+      'ignored_absent_after_response_document',
+    ].includes(responseDocumentUpdate.decision)
+    if (!responseDocumentUpdate.accepted && !canApplySnapshotWithCurrentDocument) {
+      return null
+    }
+
     lastSnapshotSessionIdRef.current = sid
 
     setSession(nextSession)
@@ -193,6 +221,8 @@ export function useFactoryAgentChat() {
     setSteps(Array.isArray(snapshot?.steps) ? snapshot.steps : [])
     const nextTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
     setTimeline(nextTimeline)
+    setPresentation(snapshot?.presentation || null)
+    setResponseDocument(responseDocumentUpdate.state.document)
 
     if (ACTIVITY_TIMELINE_ENABLED) {
       setActivitySteps((prev) => {
@@ -207,6 +237,8 @@ export function useFactoryAgentChat() {
           : Array.isArray(snapshot?.activitySteps)
             ? snapshot.activitySteps
             : []
+        const visibleServerSteps = stripPrematureTerminalActivitySteps(serverSteps, nextSession?.status)
+        const visibleWithoutClient = stripPrematureTerminalActivitySteps(withoutClient, nextSession?.status)
 
         const isStreamActive = [
           'PLANNING',
@@ -216,16 +248,16 @@ export function useFactoryAgentChat() {
         ].includes(nextSession?.status)
 
         let result
-        if (serverSteps.length) {
+        if (visibleServerSteps.length) {
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be
             // ahead on some ids - only updating `withoutClient` in place drops rows
             // that exist only on the server (looks like "first and last" only).
             const byId = new Map()
-            for (const s of withoutClient) {
+            for (const s of visibleWithoutClient) {
               if (s?.id) byId.set(s.id, { ...s })
             }
-            for (const s of serverSteps) {
+            for (const s of visibleServerSteps) {
               if (!s?.id) continue
               const existing = byId.get(s.id)
               byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
@@ -240,7 +272,7 @@ export function useFactoryAgentChat() {
             // Session no longer in an active stream: drop client placeholder rows so a
             // stale `client_activity_pending` "Reviewing results..." cannot sit after
             // server "Run complete" and block the assistant body gate.
-            result = finalizeHistoricalActivityStates(serverSteps.map((s) => ({ ...s })))
+            result = finalizeHistoricalActivityStates(visibleServerSteps.map((s) => ({ ...s })))
           }
         } else {
           const built = buildActivityStepsFromSnapshot({
@@ -249,6 +281,7 @@ export function useFactoryAgentChat() {
             steps: Array.isArray(snapshot?.steps) ? snapshot.steps : [],
             timeline: nextTimeline,
             pending_approval: snapshot?.pending_approval || null,
+            presentation: snapshot?.presentation || null,
           })
           if (built.length) {
             result = finalizeHistoricalActivityStates(built)
@@ -258,7 +291,7 @@ export function useFactoryAgentChat() {
           } else if (isStreamActive) {
             // IDLE and similar snapshots often omit activity_steps; built can still be empty
             // while the UI already showed rows during the run - keep them.
-            result = [...clientOnly, ...withoutClient].sort(
+            result = [...clientOnly, ...visibleWithoutClient].sort(
               (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
             )
           } else {
@@ -287,14 +320,17 @@ export function useFactoryAgentChat() {
   }, [mergeSessionSummary])
 
   useEffect(() => {
-    if (hasStorage()) localStorage.setItem(MESSAGE_MODE_KEY, messageMode)
-  }, [messageMode])
+    if (hasStorage()) localStorage.setItem(MESSAGE_MODE_KEY, DEFAULT_MESSAGE_MODE)
+  }, [])
 
   const clearSnapshotState = useCallback(() => {
     setSession(null)
     setPlan(null)
     setSteps([])
     setTimeline([])
+    setPresentation(null)
+    setResponseDocument(null)
+    responseDocumentStateRef.current = createResponseDocumentReducerState()
     setActivitySteps([])
     setPendingApproval(null)
     setResumeHint(null)
@@ -313,21 +349,30 @@ export function useFactoryAgentChat() {
     return rows
   }, [])
 
-  const refreshSnapshot = useCallback(async (sessionId) => {
+  const refreshSnapshot = useCallback(async (sessionId, meta = {}) => {
     if (!sessionId) return null
     const snapshot = await factoryAgentApi.getSnapshot(sessionId)
-    applySnapshot(snapshot, { requestedSessionId: sessionId })
+    applySnapshot(snapshot, { requestedSessionId: sessionId, transport: meta.transport || 'polling' })
     return snapshot
   }, [applySnapshot])
 
-  const safelyRefreshSnapshot = useCallback(async (sessionId) => {
+  const safelyRefreshSnapshot = useCallback(async (sessionId, meta = {}) => {
     try {
-      return await refreshSnapshot(sessionId)
+      return await refreshSnapshot(sessionId, meta)
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
-      if (kind === 'not_found') {
-        if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
-        clearSnapshotState()
+      if (kind === 'not_found' || kind === 'auth') {
+        const currentStoredId = hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null
+        const currentSnapshotId = lastSnapshotSessionIdRef.current
+        if (
+          kind === 'auth' ||
+          !currentStoredId ||
+          String(currentStoredId) === String(sessionId) ||
+          String(currentSnapshotId || '') === String(sessionId)
+        ) {
+          if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+          clearSnapshotState()
+        }
       }
       throw err
     }
@@ -411,10 +456,10 @@ export function useFactoryAgentChat() {
     setIsPollingSession(false)
   }, [])
 
-  const pollSnapshot = useCallback(async () => {
+  const pollSnapshot = useCallback(async (meta = {}) => {
     if (!session?.session_id) return
     try {
-      await safelyRefreshSnapshot(session.session_id)
+      await safelyRefreshSnapshot(session.session_id, { transport: meta.transport || 'polling' })
     } catch (err) {
       setError(normalizeFactoryAgentError(err, 'Failed to refresh session'))
     }
@@ -447,7 +492,7 @@ export function useFactoryAgentChat() {
   useSessionEvents(
     session?.session_id || null,
     useCallback(() => {
-      if (session?.session_id) pollSnapshot()
+      if (session?.session_id) pollSnapshot({ transport: 'sse' })
     }, [pollSnapshot, session?.session_id]),
     { enabled: sessionEventsEnabled, fallbackMs: 4000, onDiagnostic: updateStreamDiagnostic },
   )
@@ -498,12 +543,16 @@ export function useFactoryAgentChat() {
         user_id: DEFAULT_USER_ID,
         name: nextSessionName(),
       })
+      if (hasStorage()) localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
       mergeSessionSummary(created)
       await refreshSessionList()
       await safelyRefreshSnapshot(created.session_id)
       return created
     } catch (err) {
-      setError(normalizeFactoryAgentError(err, 'Failed to create session'))
+      setError(normalizeFactoryAgentError(
+        err,
+        'Could not start a Factory Agent chat session. Check that the Factory Agent backend is running, then try again.',
+      ))
       return null
     } finally {
       setLoading(false)
@@ -538,6 +587,9 @@ export function useFactoryAgentChat() {
   }, [mergeSessionSummary, session?.session_id])
 
   const executeWithRetry = useCallback(async (sessionId, options = {}) => {
+    if (cancelRequestedSessionIdsRef.current.has(sessionId)) {
+      return safelyRefreshSnapshot(sessionId)
+    }
     const preferBackground = options.background ?? true
     try {
       // Prefer background execution so the UI can stream progress via polling
@@ -560,6 +612,9 @@ export function useFactoryAgentChat() {
     await factoryAgentApi.addMessage(sessionId, { role: 'user', content: text, mode })
     await safelyRefreshSnapshot(sessionId)
     const planResp = await factoryAgentApi.createPlan(sessionId)
+    if (cancelRequestedSessionIdsRef.current.has(sessionId)) {
+      return safelyRefreshSnapshot(sessionId)
+    }
     if (!(planResp?.status === 'COMPLETED')) {
       await executeWithRetry(sessionId, { background: mode !== 'plan' })
     }
@@ -568,7 +623,8 @@ export function useFactoryAgentChat() {
 
   const handleSend = useCallback(async (overrideText) => {
     const text = (overrideText ?? input).trim()
-    if (!text || isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING) return
+    if (!text || sendingGuardRef.current || isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING) return
+    sendingGuardRef.current = true
 
     const optimisticId = appendOptimisticUserMessage(text)
     setInput('')
@@ -580,6 +636,7 @@ export function useFactoryAgentChat() {
       // Keep one session as the chat "thread" until the user explicitly starts a new one.
       if (!current) current = await startNewSession()
       if (!current) return
+      cancelRequestedSessionIdsRef.current.delete(current.session_id)
       startClientProgress(current.session_id, text)
 
       if ([FACTORY_AGENT_STATUS.IDLE, FACTORY_AGENT_STATUS.BLOCKED, FACTORY_AGENT_STATUS.FAILED, FACTORY_AGENT_STATUS.COMPLETED].includes(current.status)) {
@@ -605,6 +662,7 @@ export function useFactoryAgentChat() {
       removeOptimisticMessage(optimisticId)
       clearClientProgress()
       setIsSending(false)
+      sendingGuardRef.current = false
     }
   }, [
     appendOptimisticUserMessage,
@@ -642,6 +700,7 @@ export function useFactoryAgentChat() {
 
   const handleCancel = useCallback(async () => {
     if (!session?.session_id) return
+    cancelRequestedSessionIdsRef.current.add(session.session_id)
     setIsCancelling(true)
     setError(null)
     try {
@@ -655,8 +714,9 @@ export function useFactoryAgentChat() {
     }
   }, [refreshSessionList, safelyRefreshSnapshot, session?.session_id])
 
-  const decideApproval = useCallback(async (decision, argsOverride) => {
-    if (!pendingApproval?.approval_id || isDecidingApproval) return
+  const decideApproval = useCallback(async (decision, argsOverride, approvalOverride = null) => {
+    const activeApproval = approvalOverride?.approval_id ? approvalOverride : pendingApproval
+    if (!activeApproval?.approval_id || isDecidingApproval) return
     setIsDecidingApproval(true)
     setError(null)
 
@@ -677,7 +737,7 @@ export function useFactoryAgentChat() {
       if (decision === 'approve') {
         const payload = { decided_by: DEFAULT_USER_ID }
         if (argsOverride && typeof argsOverride === 'object') payload.args = argsOverride
-        const snapshotApproval = pendingApproval
+        const snapshotApproval = activeApproval
         const resolvedId = snapshotApproval.approval_id
         // Optimistically clear the pending approval card immediately so the UI
         // does not re-show the stale card while the next snapshot arrives.
@@ -688,11 +748,38 @@ export function useFactoryAgentChat() {
             : snapshotApproval.args || {}
         stashBundle(snapshotApproval, mergedArgs)
         await factoryAgentApi.approve(resolvedId, payload)
-        await safelyRefreshSnapshot(session?.session_id)
+        if (session?.session_id) {
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const snapshot = await safelyRefreshSnapshot(session.session_id)
+            const status = snapshot?.session?.status
+            const nextPendingApproval = snapshot?.pending_approval || snapshot?.pendingApproval || null
+            if (
+              status === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
+              nextPendingApproval?.approval_id &&
+              nextPendingApproval.approval_id !== resolvedId
+            ) {
+              break
+            }
+            const snapshotTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
+            const hasApprovalDecision = snapshotTimeline.some(
+              (event) => event?.event_type === 'approval_decided' && event?.approval_id === resolvedId,
+            )
+            const hasPostApprovalResult = snapshotTimeline.some((event) => event?.event_type === 'tool_result')
+            if (
+              status &&
+              ![FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(status) &&
+              !snapshot?.pending_approval &&
+              (status !== FACTORY_AGENT_STATUS.COMPLETED || !hasApprovalDecision || hasPostApprovalResult)
+            ) {
+              break
+            }
+            await wait(250)
+          }
+        }
       } else {
-        const rejectId = pendingApproval.approval_id
+        const rejectId = activeApproval.approval_id
         setPendingApproval(null)
-        stashBundle(pendingApproval, pendingApproval.args || {})
+        stashBundle(activeApproval, activeApproval.args || {})
         await factoryAgentApi.reject(rejectId, {
           decided_by: DEFAULT_USER_ID,
           rejection_reason: approvalReason?.trim() || undefined,
@@ -768,7 +855,10 @@ export function useFactoryAgentChat() {
   }, [optimisticMessages, timeline])
 
   const turns = useMemo(() => {
-    const assembled = assembleFactoryAgentTurns(Array.isArray(timeline) ? timeline : [])
+    const assembled = assembleFactoryAgentTurns(Array.isArray(timeline) ? timeline : [], {
+      snapshotPresentation: presentation,
+      snapshotResponseDocument: responseDocument,
+    })
     const mapped = assembled.map((t) => ({
       ...t,
       summary: computeFactoryAgentTurnSummary(t),
@@ -795,7 +885,7 @@ export function useFactoryAgentChat() {
       }
     }
     return mapped
-  }, [clientProgress, isSending, session?.session_id, timeline])
+  }, [clientProgress, isSending, presentation, responseDocument, session?.session_id, timeline])
 
   const activeSessionName = useMemo(() => {
     if (session?.name) return session.name
@@ -807,6 +897,8 @@ export function useFactoryAgentChat() {
     plan,
     steps,
     timeline,
+    presentation,
+    responseDocument,
     activitySteps,
     messages,
     turns,

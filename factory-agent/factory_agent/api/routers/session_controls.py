@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from factory_agent.api.dependencies import require_session_owner
 from factory_agent.api.response_mappers import session_to_response
 from factory_agent.graph.session_detection import is_graph_native_session
 from factory_agent.observability.events import AgentEvent, EventBus
@@ -47,12 +48,13 @@ def build_session_controls_router(
     async def confirm_predicate(
         session_id: str,
         req: ConfirmationDecisionRequest,
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
+        require_session_owner(sess, user)
         context = dict(sess.replan_context or {})
         confirmation = context.get("confirmation_request")
         if sess.status != "WAITING_CONFIRMATION" or not isinstance(confirmation, dict):
@@ -118,12 +120,13 @@ def build_session_controls_router(
     @router.get("/sessions/{session_id}/steps", response_model=list[PlanStepResponse])
     async def list_steps(
         session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
+        require_session_owner(sess, user)
         rows = (
             await db.execute(
                 select(PlanStepRow)
@@ -136,12 +139,13 @@ def build_session_controls_router(
     @router.post("/sessions/{session_id}/cancel", response_model=SessionResponse)
     async def cancel_session(
         session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         sess = await session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
+        require_session_owner(sess, user)
         current_plan = await _load_current_plan(db=db, session_id=session_id)
         if await is_graph_native_session(db, sess, plan=current_plan):
             pending_graph_approvals = (

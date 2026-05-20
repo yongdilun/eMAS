@@ -1,0 +1,182 @@
+{
+  "id": "SO-021",
+  "title": "LOTO with M-CNC-01",
+  "risk": "The planner can extract the machine id but still ask for it again, route to generic machine status, or omit RAG/source evidence for the LOTO procedure.",
+  "prompt": "What is the LOTO procedure for M-CNC-01?",
+  "initial_state": {
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "rag_sources": [
+      {
+        "source_id": "SRC-LOTO-CNC-01",
+        "machine_id": "M-CNC-01",
+        "title": "LOTO Procedure for CNC Cell"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "rag.loto_procedure",
+    "machine_id": "M-CNC-01",
+    "must_not_route_to": [
+      "tool.read.machine_status",
+      "clarification.machine_id_missing"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "entity extraction",
+      "session_phase": "EXECUTING",
+      "machine_id": "M-CNC-01",
+      "missing_required_entities": []
+    },
+    {
+      "after": "rag retrieval",
+      "session_phase": "EXECUTING",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ],
+      "forbidden": [
+        "ask_for_machine_id_again",
+        "generic_no_tools_allowed_message"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 1
+    },
+    {
+      "event": "rag_retrieval_started",
+      "machine_id": "M-CNC-01"
+    },
+    {
+      "event": "rag_retrieval_completed",
+      "machine_id": "M-CNC-01",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "route": "rag.loto_procedure",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "rag_retrieval_completed M-CNC-01",
+    "must_include": [
+      "M-CNC-01",
+      "LOTO",
+      "SRC-LOTO-CNC-01"
+    ],
+    "must_not_include": [
+      "Which machine",
+      "provide the machine ID",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "M-CNC-01",
+      "LOTO",
+      "SRC-LOTO-CNC-01"
+    ],
+    "must_not_show": [
+      "Which machine",
+      "No tools allowed",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "machine_id_extracted_from_prompt",
+    "route_matches_operator_intent",
+    "rag_sources_project_to_snapshot_and_ui",
+    "read_only_state_unchanged"
+  ],
+  "required_layers": [
+    "parser",
+    "route",
+    "seeded_browser"
+  ],
+  "weakness_from_phase0": "LOTO wording regressions were covered mostly by seeded parser/browser paths; this oracle requires exact machine-id extraction, RAG routing, source projection, and no repeat clarification.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "LOTO prompts that include M-CNC-01 can still ask for the machine id again, route to machine status, or omit RAG/source evidence.",
+    "existing_test_that_would_miss_it": "A browser-only wording variant can pass on controlled text while parser/route extraction regresses; generic source rendering checks can miss repeated machine-id clarification.",
+    "lowest_useful_layer": "parser_route",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No new real LangGraph coverage in this batch because the current parser/route tests exercise the actual deterministic route extraction, and the seeded browser proof covers source projection; a wording-only variant would be a duplicate candidate until a planner/tool-selection miss escapes.",
+    "required_positive_evidence": [
+      "M-CNC-01 extracted",
+      "LOTO/RAG route selected",
+      "source id projects to snapshot and UI",
+      "no approval required",
+      "machine state unchanged"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Which machine",
+      "provide the machine ID",
+      "machine status-only route",
+      "No tools allowed"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract",
+      "factory-agent/tests/test_phase19_prompt_workflow_regression.py::test_so021_so023_so025_prompt_oracles_route_loto_to_rag_with_machine_id"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-021 scenario 116/124/125"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "tests/e2e/scenarios/manual_prompt_regressions.json::phase18-loto-m-cnc-01",
+      "docs/qa/manual_prompt_regression_bank.md#phase-18-seed"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

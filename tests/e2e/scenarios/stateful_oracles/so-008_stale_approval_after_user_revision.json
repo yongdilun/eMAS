@@ -1,0 +1,308 @@
+{
+  "id": "SO-008",
+  "title": "Stale approval after new user revision",
+  "risk": "An old pending approval can survive a superseding user message and mutate rows that the operator no longer intended to change.",
+  "prompt": "First ask: Change all high priority jobs to medium. Before approving, revise to: Actually change all low priority jobs to high instead.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO008-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO008-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO008-LOW-01",
+        "priority": "low",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO008-MED-01",
+        "priority": "medium",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "turns": [
+      {
+        "turn_id": "SO-008-T1",
+        "message": "Change all high priority jobs to medium."
+      },
+      {
+        "turn_id": "SO-008-T2",
+        "message": "Actually change all low priority jobs to high instead."
+      }
+    ]
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-008-I1",
+      "turn_id": "SO-008-T1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO008-HIGH-01",
+        "JOB-SO008-HIGH-02"
+      ],
+      "expected_status_after_revision": "superseded"
+    },
+    {
+      "intent_id": "SO-008-I2",
+      "turn_id": "SO-008-T2",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "low"
+      },
+      "new_values": {
+        "priority": "high"
+      },
+      "source_row_ids": [
+        "JOB-SO008-LOW-01"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-008-old",
+      "intent_id": "SO-008-I1",
+      "decision": "superseded",
+      "replay_attempt_after_revision": "rejected_409_stale_approval",
+      "row_ids": [
+        "JOB-SO008-HIGH-01",
+        "JOB-SO008-HIGH-02"
+      ],
+      "row_count": 2
+    },
+    {
+      "approval_id": "approval-so-008-new",
+      "intent_id": "SO-008-I2",
+      "decision": "accepted",
+      "previous_priority": "low",
+      "new_priority": "high",
+      "row_ids": [
+        "JOB-SO008-LOW-01"
+      ],
+      "row_count": 1
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "first approval requested",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-008-old",
+      "jobs": [
+        {
+          "id": "JOB-SO008-HIGH-01",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO008-HIGH-02",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO008-LOW-01",
+          "priority": "low"
+        },
+        {
+          "id": "JOB-SO008-MED-01",
+          "priority": "medium"
+        }
+      ]
+    },
+    {
+      "after": "revision message accepted",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-008-new",
+      "invalidated_approval_ids": [
+        "approval-so-008-old"
+      ],
+      "forbidden": [
+        "commit_started approval-so-008-old",
+        "commit_completed approval-so-008-old"
+      ]
+    },
+    {
+      "after": "old approval replay attempted",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-008-new",
+      "replay_response": "409 stale_approval",
+      "audit_rows_for_old_approval": 0
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO008-HIGH-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO008-HIGH-02",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO008-LOW-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO008-MED-01",
+        "priority": "medium"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-008-new",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO008-LOW-01"
+      ],
+      "from": "low",
+      "to": "high",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started",
+      "turn_id": "SO-008-T1"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-008-old"
+    },
+    {
+      "event": "user_revision_received",
+      "turn_id": "SO-008-T2"
+    },
+    {
+      "event": "approval_invalidated",
+      "approval_id": "approval-so-008-old",
+      "reason": "superseded_by_user_revision"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-008-new"
+    },
+    {
+      "event": "stale_approval_rejected",
+      "approval_id": "approval-so-008-old"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-008-new",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-008-new"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_revision": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-008-new",
+      "must_not_show_pending_approval_ids": [
+        "approval-so-008-old"
+      ]
+    },
+    "after_stale_replay": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-008-new",
+      "must_include_events": [
+        "stale_approval_rejected approval-so-008-old"
+      ]
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": [
+        "approval-so-008-old",
+        "approval-so-008-new"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-008-new",
+    "must_include": [
+      "1 low priority job changed to high"
+    ],
+    "must_not_include": [
+      "2 high priority jobs changed to medium",
+      "old approval was applied"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-008-old",
+      "approval-so-008-new"
+    ],
+    "after_revision_must_show": [
+      "Superseded",
+      "1 low priority job"
+    ],
+    "must_show_after_terminal": [
+      "Run complete",
+      "1 low priority job changed to high"
+    ],
+    "must_not_show": [
+      "2 high priority jobs changed to medium",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO008-HIGH-01",
+      "priority": "high"
+    },
+    {
+      "id": "JOB-SO008-HIGH-02",
+      "priority": "high"
+    },
+    {
+      "id": "JOB-SO008-MED-01",
+      "priority": "medium"
+    }
+  ],
+  "invariants": [
+    "stale_approval_cannot_commit",
+    "user_revision_invalidates_pending_approval",
+    "pending_approval_matches_snapshot",
+    "commit_matches_current_approval_bundle",
+    "timeline_contains_transition_chain",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": [
+    "pytest_api",
+    "browser"
+  ],
+  "weakness_from_phase0": "Phase 0 identified approval and browser tests that do not prove superseding turns invalidate old approval ids; this oracle requires a stale approval replay to fail without mutation or audit rows.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-006/SO-008/SO-027 scenario 89"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

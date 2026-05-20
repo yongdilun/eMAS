@@ -53,6 +53,11 @@ export async function render(element) {
   return {
     container,
     text: () => normalizeText(container.textContent),
+    rerender: async (nextElement) => {
+      await act(async () => {
+        root.render(nextElement)
+      })
+    },
     unmount: async () => {
       await act(async () => {
         root.unmount()

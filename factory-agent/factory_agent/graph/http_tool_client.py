@@ -12,6 +12,7 @@ import httpx
 
 from ..config import Settings
 from ..schemas import ToolInfo
+from ..testing.tool_faults import maybe_inject_tool_fault
 from ..tools.arguments import normalize_tool_args
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
@@ -71,6 +72,10 @@ async def execute_tool_http(
 
     Returns a normalized envelope (never raises for HTTP 4xx — caller uses ``http_status``).
     """
+    injected_fault = maybe_inject_tool_fault(tool=tool, args=args)
+    if injected_fault is not None:
+        return injected_fault
+
     path_args, query_args, body_args = normalize_tool_args(tool, args)
     rendered_endpoint, leftover_path = materialize_tool_endpoint(endpoint=tool.endpoint, args=path_args)
     if leftover_path:

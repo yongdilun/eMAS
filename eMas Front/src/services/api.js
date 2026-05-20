@@ -229,11 +229,14 @@ export function augmentScheduleBatchMessage(message) {
  * @param {Error} err
  * @param {string} fallback
  */
+export const AUTH_EXPIRED_MESSAGE = 'Your session has expired. Please refresh and try again.'
+export const AUTH_EXPIRED_TOAST_DEDUPE_KEY = 'auth-expired'
+
 export function apiErrorMessage(err, fallback = 'An unexpected error occurred.') {
   if (!err) return fallback
   if (err.type === 'NETWORK') return 'Cannot connect to the eMAS server. Please check that the backend is running.'
   if (err.type === 'TIMEOUT') return err.message || 'Request timed out. Batch proposals can take 90+ seconds. Please try again.'
-  if (err.type === 'AUTH') return 'Your session has expired. Please refresh and try again.'
+  if (err.type === 'AUTH') return AUTH_EXPIRED_MESSAGE
   if (err.type === 'NOT_FOUND') return 'The requested resource was not found.'
   if (err.type === 'SERVER') return `Server error: ${err.message}`
   if (isStaleProposalError(err)) return 'Proposal is stale. Use Reschedule All to regenerate fresh proposals.'
@@ -242,6 +245,17 @@ export function apiErrorMessage(err, fallback = 'An unexpected error occurred.')
   }
   if (err.message) return err.message
   return fallback
+}
+
+export function apiErrorToastOptions(err, options = {}) {
+  if (err?.type === 'AUTH') {
+    return {
+      ...options,
+      dedupeKey: AUTH_EXPIRED_TOAST_DEDUPE_KEY,
+      suppressAfterFirst: true,
+    }
+  }
+  return options
 }
 
 /** Returns true if the error indicates a stale proposal (409 or message contains stale/regenerate). */

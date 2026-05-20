@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from factory_agent.api.dependencies import require_session_owner
 from factory_agent.persistence.database import get_db
 from factory_agent.schemas import SessionSnapshotResponse
 
@@ -23,12 +24,13 @@ def build_snapshots_router(
     @router.get("/sessions/{session_id}/snapshot", response_model=SessionSnapshotResponse)
     async def get_session_snapshot(
         session_id: str,
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         snapshot = await load_session_snapshot(db=db, session_id=session_id)
         if not snapshot:
             raise HTTPException(status_code=404, detail="session not found")
+        require_session_owner(snapshot.session, user)
         return snapshot
 
     return router

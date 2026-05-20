@@ -1,0 +1,281 @@
+{
+  "id": "SO-012",
+  "title": "Timeline omits approval 2",
+  "risk": "Backend state can execute two approvals while snapshot or frontend timeline projection drops the second approval, hiding an important operator decision.",
+  "prompt": "Change all medium priority jobs to high, then change all original high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO012-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO012-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO012-MED-01",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO012-LOW-01",
+        "priority": "low",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "timeline_projection_mode": "operation_id_scoped_ordered_events"
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-012-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "medium"
+      },
+      "new_values": {
+        "priority": "high"
+      },
+      "source_row_ids": [
+        "JOB-SO012-MED-01"
+      ]
+    },
+    {
+      "intent_id": "SO-012-I2",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high",
+        "state_basis": "original"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO012-HIGH-01",
+        "JOB-SO012-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-012-1",
+      "intent_id": "SO-012-I1",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO012-MED-01"
+      ],
+      "row_count": 1
+    },
+    {
+      "approval_id": "approval-so-012-2",
+      "intent_id": "SO-012-I2",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO012-HIGH-01",
+        "JOB-SO012-HIGH-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "approval-so-012-1 commit",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-012-2",
+      "timeline_must_include": [
+        "approval_requested approval-so-012-1",
+        "commit_completed approval-so-012-1"
+      ]
+    },
+    {
+      "after": "approval-so-012-2 requested",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-012-2",
+      "timeline_must_include": [
+        "approval_requested approval-so-012-2"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO012-HIGH-01",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO012-HIGH-02",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO012-MED-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO012-LOW-01",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-012-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO012-MED-01"
+      ],
+      "from": "medium",
+      "to": "high",
+      "status": "success"
+    },
+    {
+      "approval_id": "approval-so-012-2",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO012-HIGH-01",
+        "JOB-SO012-HIGH-02"
+      ],
+      "from": "high",
+      "to": "medium",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started",
+      "sequence": 1
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 2,
+      "sequence": 2
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-012-1",
+      "sequence": 3
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-012-1",
+      "decision": "accepted",
+      "sequence": 4
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-012-1",
+      "sequence": 5
+    },
+    {
+      "event": "next_intent_started",
+      "intent_id": "SO-012-I2",
+      "sequence": 6
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-012-2",
+      "sequence": 7
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-012-2",
+      "decision": "accepted",
+      "sequence": 8
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-012-2",
+      "sequence": 9
+    },
+    {
+      "event": "final_response_created",
+      "sequence": 10
+    },
+    {
+      "event": "operation_completed",
+      "sequence": 11
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "terminal_snapshot": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": [
+        "approval-so-012-1",
+        "approval-so-012-2"
+      ],
+      "timeline_contains_events_in_order": [
+        "approval_requested approval-so-012-1",
+        "commit_completed approval-so-012-1",
+        "approval_requested approval-so-012-2",
+        "commit_completed approval-so-012-2"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-012-2",
+    "must_include": [
+      "1 medium priority job changed to high",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_include": [
+      "single approval",
+      "approval 2 skipped"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-012-1",
+      "approval-so-012-2"
+    ],
+    "timeline_must_show": [
+      "Approval requested",
+      "approval-so-012-1",
+      "approval-so-012-2"
+    ],
+    "must_show": [
+      "Run complete",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_show": [
+      "only one approval",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO012-LOW-01",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "approval_ids_are_distinct",
+    "timeline_contains_both_approval_ids",
+    "timeline_contains_transition_chain",
+    "pending_approval_matches_snapshot",
+    "operation_id_scoped_timeline",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": [
+    "pytest_snapshot",
+    "frontend_unit"
+  ],
+  "weakness_from_phase0": "Phase 0 found timeline assembly tests that can synthesize or omit activity rows; this oracle requires approval 2 to be projected from durable backend evidence into snapshot and frontend timeline.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract",
+      "factory-agent/tests/test_phase7_api_ui_alignment.py::test_so012_semantic_timeline_projection_keeps_both_approval_ids"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/real-langgraph-critical.spec.js::SO-041 approval timeline DOM assertions"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

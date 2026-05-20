@@ -94,6 +94,56 @@ class TestLLMReranker(unittest.TestCase):
         self.assertIn("safety_id", ids)
         self.assertIn("other_id", ids)
 
+    def test_rr6_safety_retention_does_not_reorder_already_safe_ranked_results(self):
+        """RR6: Safety retention must not rotate same-risk OSHA chunks after reranking."""
+        candidates = [
+            ScoredChunk(
+                chunk=Chunk(
+                    chunk_id="osha_3120_lockout_tagout_c0029",
+                    text="After removing devices but before reenergizing, employees must know.",
+                    metadata={"risk_level": "high"},
+                ),
+                boosted_score=10.0,
+            ),
+            ScoredChunk(
+                chunk=Chunk(
+                    chunk_id="osha_3120_lockout_tagout_c0036",
+                    text="Tagout devices are warning devices.",
+                    metadata={"risk_level": "high"},
+                ),
+                boosted_score=9.0,
+            ),
+            ScoredChunk(
+                chunk=Chunk(
+                    chunk_id="osha_3120_lockout_tagout_c0028",
+                    text="Workers can be injured if devices are removed without knowledge.",
+                    metadata={"risk_level": "high"},
+                ),
+                boosted_score=8.0,
+            ),
+            ScoredChunk(
+                chunk=Chunk(
+                    chunk_id="osha_3120_lockout_tagout_c0027",
+                    text="Appendix A contains a typical minimal lockout procedure.",
+                    metadata={"risk_level": "high"},
+                ),
+                boosted_score=7.0,
+            ),
+        ]
+
+        result = self.reranker._process_candidates(
+            "LOTO hazard before reenergizing",
+            "RAG_ONLY",
+            candidates,
+            top_k=3,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in result], [
+            "osha_3120_lockout_tagout_c0029",
+            "osha_3120_lockout_tagout_c0036",
+            "osha_3120_lockout_tagout_c0028",
+        ])
+
     def test_rr5_fallback_on_timeout(self):
         """RR5: Timeout triggers fallback to boosted scores."""
         chunk1 = Chunk(chunk_id="id1", text="t1", metadata={})

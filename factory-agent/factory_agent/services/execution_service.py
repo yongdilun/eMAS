@@ -8,14 +8,16 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from factory_agent.api.dependencies import require_session_owner
 from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.orchestration.session_manager import SessionManager, TransitionError
 from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
 from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.v2_interrupts import execution_result_is_stale_after_interrupt
 from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
-from factory_agent.services.plan_creation_service import PlanCreationService
+from factory_agent.services.plan_creation_service import PlanCreationService, _bump_session_revision
 
 
 class ExecutionService:
@@ -59,8 +61,11 @@ class ExecutionService:
             context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
         )
         scoped_tools = [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
-        if mode == "plan":
+        seeded_planner_handles_intent = self._plan_service._seeded_planner_handles_intent(intent)
+        if mode == "plan" and not seeded_planner_handles_intent:
             scoped_tools = [tool for tool in scoped_tools if tool.is_read_only]
+        if seeded_planner_handles_intent and not scoped_tools:
+            scoped_tools = list(tools_by_name.values())
         try:
             planner_context = await self._memory_manager.build_planner_context(
                 db,
@@ -85,27 +90,51 @@ class ExecutionService:
         except PlannerClarificationError as e:
             sess.status = "BLOCKED"
             sess.error = str(e)
-            sess.version += 1
+            _bump_session_revision(sess)
             await db.commit()
             return sess
         except PlannerPlanRejected as e:
             sess.status = "BLOCKED"
             sess.error = str(e)
-            sess.version += 1
+            _bump_session_revision(sess)
             await db.commit()
             raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
         except PlannerBackendError as e:
             sess.status = "FAILED"
             sess.error = str(e)
-            sess.version += 1
+            _bump_session_revision(sess)
             await db.commit()
             raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
 
-        context = dict(sess.replan_context or {})
         intent_contract = getattr(generated, "intent_contract", None)
-        if intent_contract:
-            context["intent_contract"] = intent_contract
+        context = await self._plan_service._context_with_engine_trace(
+            intent=intent,
+            tools_by_name=tools_by_name,
+            mode=mode,
+            base_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+            base_intent_contract=intent_contract if isinstance(intent_contract, dict) else None,
+        )
         context.pop("langgraph_pending_approval", None)
+        await db.refresh(sess)
+        if self._plan_service._is_cancelled_session(sess):
+            log_event(
+                "background_execution_result_ignored_after_cancel",
+                session_id=sess.session_id,
+            )
+            return sess
+        if execution_result_is_stale_after_interrupt(
+            session_status=sess.status,
+            current_intent=sess.current_intent,
+            started_intent=intent,
+            replan_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+        ):
+            log_event(
+                "background_execution_result_ignored_after_interrupt",
+                session_id=sess.session_id,
+                started_intent=intent,
+                current_intent=sess.current_intent,
+            )
+            return sess
         sess.replan_context = context
         sess.llm_call_count += selection.llm_calls + generated.llm_calls
         await self._plan_service._persist_plan(
@@ -121,11 +150,15 @@ class ExecutionService:
             tool_outputs=getattr(generated, "tool_outputs", None),
         )
         sess = await self._session_mgr.get_session(db, session_id=sess.session_id) or sess
-        sess.status = "COMPLETED"
-        sess.completed_at = datetime.utcnow()
-        sess.error = None
-        sess.version += 1
-        await db.commit()
+        await db.refresh(sess)
+        if self._plan_service._is_cancelled_session(sess):
+            return sess
+        if sess.status != "FAILED":
+            sess.status = "COMPLETED"
+            sess.completed_at = datetime.utcnow()
+            sess.error = None
+            _bump_session_revision(sess)
+            await db.commit()
         return sess
 
     async def execute(
@@ -140,6 +173,9 @@ class ExecutionService:
         sess = await self._session_mgr.get_session(db, session_id=session_id)
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
+        require_session_owner(sess, user)
+        if self._plan_service._is_cancelled_session(sess):
+            return sess
         if expected_version is not None and sess.version != expected_version:
             raise HTTPException(status_code=409, detail=f"version_conflict expected={expected_version} actual={sess.version}")
         current_plan = await self._plan_service._load_current_plan(db=db, session_id=session_id)
@@ -152,6 +188,9 @@ class ExecutionService:
             return sess
         if sess.status == "WAITING_APPROVAL":
             return sess
+        if sess.status in {"BLOCKED", "FAILED"}:
+            detail = sess.error or f"session is {sess.status.lower()}"
+            raise HTTPException(status_code=400, detail={"errors": [detail]})
         if current_plan and current_plan.status == "COMPLETED" and sess.status == "COMPLETED":
             return sess
         if sess.status == "COMPLETED":
@@ -173,9 +212,21 @@ class ExecutionService:
                             await self.run_langgraph_session(db=bg_db, sess=bg_sess, user=user)
                 except Exception as e:
                     log_event("background_execute_failed", session_id=session_id, error=str(e))
+                    async with bg_sessionmaker() as bg_db:
+                        failed_sess = await self._session_mgr.get_session(bg_db, session_id=session_id)
+                        if failed_sess and failed_sess.status not in {"COMPLETED", "WAITING_APPROVAL", "BLOCKED", "FAILED"}:
+                            failed_sess.status = "FAILED"
+                            failed_sess.error = (
+                                "unable_to_start_request: Background execution stopped before a terminal result. "
+                                "Current state: failed. Next action: check diagnostics and retry if it is safe."
+                            )
+                            failed_sess.completed_at = None
+                            _bump_session_revision(failed_sess)
+                            await bg_db.commit()
 
             asyncio.create_task(_runner())
             sess.status = "EXECUTING"
+            _bump_session_revision(sess)
             await db.commit()
             return sess
 

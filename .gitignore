@@ -27,6 +27,7 @@ emas/.cache/
 # Local pytest output dirs (ad-hoc runs)
 .pytest-phase6/
 factory-agent/.pytest-phase6/
+factory-agent/.pytest-*-tmp/
 # ChromaDB / local vector database artifacts
 **/chroma.sqlite3
 **/data_level0.bin

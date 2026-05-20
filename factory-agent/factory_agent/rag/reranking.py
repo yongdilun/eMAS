@@ -173,13 +173,15 @@ class LLMReranker:
                 
         # Safety retention fallback
         is_safety_query = any(term in query.lower() for term in ["safe", "loto", "guarding", "confined", "hazard"])
-        if is_safety_query:
-            high_risk_candidates = [sc.chunk for sc in candidates if sc.chunk.metadata.get("risk_level") == "high"]
-            for hr_chunk in high_risk_candidates:
-                if hr_chunk not in final_chunks:
-                    final_chunks.insert(0, hr_chunk) # Prioritize safety
-                    if len(final_chunks) > top_k + 1:
-                        final_chunks.pop()
+        if is_safety_query and not any(chunk.metadata.get("risk_level") == "high" for chunk in final_chunks):
+            high_risk_chunk = next(
+                (sc.chunk for sc in candidates if sc.chunk.metadata.get("risk_level") == "high"),
+                None,
+            )
+            if high_risk_chunk is not None:
+                final_chunks.insert(0, high_risk_chunk)
+                if len(final_chunks) > top_k + 1:
+                    final_chunks.pop()
 
         return final_chunks[:top_k+1]
 

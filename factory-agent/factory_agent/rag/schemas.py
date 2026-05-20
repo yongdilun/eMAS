@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -36,15 +36,26 @@ class ScoredChunk(BaseModel):
     boosted_score: Optional[float] = None
 
 class SourceCitation(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    source_id: str
     source_number: int
     doc_id: str
+    chunk_id: str
     title: str
     organization: str
+    snippet: str
     authority_level: str
     domain: str
     version: str
     license: str
     retrieved_date: str
+    page: Optional[int] = None
+    pdf_url: Optional[str] = None
+    page_label: Optional[str] = None
+    bbox: Optional[Any] = None
+    char_range: Optional[Any] = None
+    text_search: Optional[str] = None
 
 class AnswerResult(BaseModel):
     answer: str

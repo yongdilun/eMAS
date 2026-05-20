@@ -9,9 +9,11 @@ from typing import Any, Literal
 from ...config import Settings
 from ...llm.models import build_planner_chat_model
 from ...observability.telemetry import log_event, log_llm_prompt
+from ...planning.query_shape import infer_collection_query_args, infer_lookup_query_args, merge_inferred_read_args
 from ...schemas import ControlAction, PlannerDecision, ToolCall, ToolInfo
 from ...security.guardrails import promote_user_provenance, sanitize_tool_args_against_schema, strip_unsupported_optional_args
 from ..errors import LangGraphPlannerError
+from ..noop_mutations import no_op_mutation_for_selector
 from ..planner_graph_helpers import (
     _deterministic_plan_repair,
     _infer_bulk_job_priority_mutation,
@@ -274,11 +276,25 @@ def _constraints_violated(
     tool_calls: list[dict[str, Any]],
     tools_by_name: dict[str, ToolInfo] | None = None,
 ) -> bool:
-    """Each hard constraint must be satisfiable by at least one *applicable* tool, and no applicable tool may violate it."""
+    """Each hard constraint must be satisfiable by at least one applicable tool call.
+
+    Multiple hard constraints for the same field represent multi-entity reads, so
+    sibling read calls may satisfy different values without being treated as a loop
+    trigger for each other.
+    """
     tbn = tools_by_name or {}
+    hard_constraints = [c for c in constraints if isinstance(c, dict) and c.get("strength") != "soft"]
+    field_value_counts: dict[str, set[str]] = {}
+    for c in hard_constraints:
+        field = str(c.get("field") or "")
+        if not field:
+            continue
+        field_value_counts.setdefault(field, set()).add(json.dumps(c.get("value"), sort_keys=True, default=str))
     for c in constraints:
         if not isinstance(c, dict) or c.get("strength") == "soft":
             continue
+        field = str(c.get("field") or "")
+        allow_sibling_values = len(field_value_counts.get(field, set())) > 1
         applicable: list[dict[str, Any]] = []
         for tc in tool_calls:
             if not isinstance(tc, dict):
@@ -289,11 +305,18 @@ def _constraints_violated(
                 applicable.append(tc)
         if not applicable:
             return True
+        satisfied = False
         for tc in applicable:
             args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
             tool = tbn.get(str(tc.get("tool_name") or ""))
-            if _constraint_violated(constraint=c, tool_args=args, tool=tool):
+            violated = _constraint_violated(constraint=c, tool_args=args, tool=tool)
+            if not violated:
+                satisfied = True
+                continue
+            if not allow_sibling_values:
                 return True
+        if not satisfied:
+            return True
     return False
 
 
@@ -430,6 +453,76 @@ def _bulk_job_selection_ids(
     return None
 
 
+def _bulk_job_priority_snapshot_sources(
+    *,
+    state: AgentState,
+    current_intent: dict[str, Any],
+) -> list[str]:
+    """Return priority groups that must be read before a compound cascade writes.
+
+    Cascading prompts such as "medium -> high then high -> medium" are ambiguous if
+    the second read happens after the first write. Snapshotting all source groups
+    up front gives the workflow original-state semantics across approvals.
+    """
+
+    sources: list[str] = []
+    seen: set[str] = set()
+
+    def add_from_intent(intent: dict[str, Any]) -> None:
+        mutation = _infer_bulk_job_priority_mutation(str(intent.get("description") or ""))
+        if mutation is None:
+            return
+        source = str(mutation.get("source_priority") or "").strip().lower()
+        if source and source not in seen:
+            seen.add(source)
+            sources.append(source)
+
+    add_from_intent(current_intent)
+
+    working = [dict(x) for x in (state.get("working_intents") or []) if isinstance(x, dict)]
+    cursor = int(state.get("intent_cursor") or 0)
+    for item in working[max(0, cursor) :]:
+        if item.get("status") == "completed":
+            continue
+        add_from_intent(item)
+
+    return sources
+
+
+def _bulk_job_priority_snapshot_read_decision(
+    *,
+    state: AgentState,
+    current_intent: dict[str, Any],
+    tools_by_name: dict[str, ToolInfo],
+) -> PlannerDecision | None:
+    get_jobs = tools_by_name.get("get__jobs")
+    if get_jobs is None:
+        return None
+
+    missing_sources = [
+        source
+        for source in _bulk_job_priority_snapshot_sources(state=state, current_intent=current_intent)
+        if _bulk_job_selection_ids(state, source_priority=source) is None
+    ]
+    if not missing_sources:
+        return None
+
+    return PlannerDecision(
+        intent_id=str(current_intent.get("intent_id") or "unknown"),
+        kind="domain_tool",
+        tool_calls=[
+            ToolCall(tool_name="get__jobs", args=_bulk_job_priority_lookup_args(source, get_jobs))
+            for source in missing_sources
+        ],
+        decision_summary=(
+            "Snapshot original job priority groups before staging the requested cascade: "
+            + ", ".join(missing_sources)
+            + "."
+        ),
+        risk_level="read",
+    )
+
+
 def _bulk_job_priority_lookup_args(source_priority: str, tool: ToolInfo | None) -> dict[str, Any]:
     args: dict[str, Any] = {"priority": source_priority}
     if tool is None:
@@ -453,6 +546,14 @@ def _bulk_job_priority_decision(
     if mutation is None:
         return None
     source = mutation["source_priority"]
+    snapshot_read = _bulk_job_priority_snapshot_read_decision(
+        state=state,
+        current_intent=current_intent,
+        tools_by_name=tools_by_name,
+    )
+    if snapshot_read is not None:
+        return snapshot_read
+
     ids = _bulk_job_selection_ids(state, source_priority=source)
     if ids is None:
         get_jobs = tools_by_name.get("get__jobs")
@@ -468,12 +569,28 @@ def _bulk_job_priority_decision(
             risk_level="read",
         )
     if not ids:
+        if mutation["action"] == "delete":
+            change_summary = "delete matching records"
+        else:
+            target = str(mutation.get("target_priority") or "").strip()
+            change_summary = f"priority -> {target}" if target else "requested change"
+        no_op_mutation = no_op_mutation_for_selector(
+            entity_type="job",
+            selector_summary=f"priority = {source}",
+            change_summary=change_summary,
+            matched_count=0,
+            changed_count=0,
+        )
         return PlannerDecision(
             intent_id=str(current_intent.get("intent_id") or "unknown"),
             kind="intent_completed",
             tool_calls=[],
             decision_summary=f"No {source}-priority jobs were found to change.",
             risk_level="read",
+            control_action=ControlAction(
+                name="mark_intent_completed",
+                payload={"no_op_mutation": no_op_mutation},
+            ),
         )
 
     capped = ids[: max(1, int(getattr(settings, "max_foreach_items", 50) or 50))]
@@ -498,6 +615,25 @@ def _bulk_job_priority_decision(
         decision_summary=summary,
         risk_level="write_dry_run",
     )
+
+
+def _planner_trace_from_decision(decision: PlannerDecision, *, iteration: int) -> dict[str, Any]:
+    trace = {
+        "phase": "planner",
+        "intent_id": decision.intent_id,
+        "kind": decision.kind,
+        "summary": decision.decision_summary,
+        "iteration": iteration,
+    }
+    payload = (
+        decision.control_action.payload
+        if decision.control_action and isinstance(decision.control_action.payload, dict)
+        else {}
+    )
+    no_op_mutation = payload.get("no_op_mutation")
+    if isinstance(no_op_mutation, dict):
+        trace["no_op_mutation"] = no_op_mutation
+    return trace
 
 
 def _next_bundleable_write_intent_index(state: AgentState) -> int | None:
@@ -644,16 +780,100 @@ def _fallback_decision_from_repair(
     repaired = _deterministic_plan_repair(clause, scoped_tools, context={})
     if repaired is None or not repaired.steps:
         return None
-    first = repaired.steps[0]
     tools_by_name = {t.name: t for t in scoped_tools}
-    tcs = [ToolCall(tool_name=first.tool_name, args=dict(first.args or {}))]
+    repaired_steps = list(repaired.steps)
+    if not all(tools_by_name.get(step.tool_name) and tools_by_name[step.tool_name].is_read_only for step in repaired_steps):
+        repaired_steps = repaired_steps[:1]
+    tcs = [ToolCall(tool_name=step.tool_name, args=dict(step.args or {})) for step in repaired_steps]
     return PlannerDecision(
         intent_id=str(current_intent.get("intent_id") or "unknown"),
         kind="domain_tool",
         tool_calls=tcs,
-        decision_summary="Deterministic repair selected the first safe tool step.",
+        decision_summary="Deterministic repair selected safe tool step(s).",
         risk_level=_risk_for_tools(tcs, tools_by_name),
     )
+
+
+def _decision_guard_failure_count(
+    state: AgentState,
+    *,
+    intent_id: str,
+    reason: str = "constraint_violation",
+) -> int:
+    count = 0
+    for item in state.get("failed_strategies") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("phase") != "decision_guard":
+            continue
+        if item.get("reason") != reason:
+            continue
+        if intent_id and str(item.get("intent_id") or "") not in {"", intent_id}:
+            continue
+        count += 1
+    return count
+
+
+def _bounded_guard_failure_diagnostic(
+    *,
+    state: AgentState,
+    working: list[dict[str, Any]],
+    cursor: int,
+    current: dict[str, Any],
+    previous_decisions: list[dict[str, Any]],
+    settings: Settings,
+) -> dict[str, Any] | None:
+    intent_id = str(current.get("intent_id") or "unknown")
+    attempts = _decision_guard_failure_count(state, intent_id=intent_id)
+    limit = max(1, int(settings.max_repair_attempts or 3))
+    if attempts < limit:
+        return None
+
+    summary = (
+        "Decision guard rejected repeated planner repairs because the proposed "
+        "tool args did not preserve explicit user constraints."
+    )
+    current["status"] = "failed"
+    current["failure_reason"] = summary
+    working[cursor] = current
+    _cascade_cancel_dependents(working, intent_id, reason=summary)
+    later = _next_active_intent_index(working, 0)
+    diagnostic = {
+        "phase": "decision_guard",
+        "intent_id": intent_id,
+        "reason": "constraint_violation_loop",
+        "kind": "typed_diagnostic",
+        "attempts": attempts,
+        "limit": limit,
+        "detail": "Planner repair loop stopped before graph recursion timeout.",
+    }
+    decision = PlannerDecision(
+        intent_id=intent_id,
+        kind="intent_failed",
+        tool_calls=[],
+        decision_summary=summary,
+        risk_level="read",
+    )
+    out: dict[str, Any] = {
+        "working_intents": working,
+        "intent_cursor": later if later is not None else cursor,
+        "current_intent": working[later] if later is not None else current,
+        "pending_decision": None,
+        "decisions": previous_decisions + [decision.model_dump(mode="json")],
+        "failed_strategies": [diagnostic],
+        "completed_actions": [
+            {
+                "phase": "planner",
+                "intent_id": intent_id,
+                "kind": "typed_diagnostic",
+                "summary": summary,
+            }
+        ],
+        "errors": ["decision_guard_constraint_repair_limit"],
+        "next_route": "continue_planner" if later is not None else "synthesize_plan",
+        "status": "planning" if later is not None else "validating",
+    }
+    return out
 
 
 def make_planner_node(settings: Settings):
@@ -686,15 +906,7 @@ def make_planner_node(settings: Settings):
                         "current_intent": current_next,
                         "pending_decision": decision.model_dump(mode="json"),
                         "decisions": [decision.model_dump(mode="json")],
-                        "completed_actions": [
-                            {
-                                "phase": "planner",
-                                "intent_id": decision.intent_id,
-                                "kind": decision.kind,
-                                "summary": decision.decision_summary,
-                                "iteration": iteration,
-                            }
-                        ],
+                        "completed_actions": [_planner_trace_from_decision(decision, iteration=iteration)],
                         "next_route": "decision_guard",
                         "status": "planning",
                     }
@@ -769,6 +981,18 @@ def make_planner_node(settings: Settings):
         working[cursor] = current
         prev_decisions = list(state.get("decisions") or [])
 
+        bounded_diagnostic = _bounded_guard_failure_diagnostic(
+            state=state,
+            working=working,
+            cursor=cursor,
+            current=current,
+            previous_decisions=prev_decisions,
+            settings=settings,
+        )
+        if bounded_diagnostic is not None:
+            bounded_diagnostic["planner_iteration"] = iteration
+            return bounded_diagnostic
+
         bulk_decision = _bulk_job_priority_decision(
             state=state,
             current_intent=current,
@@ -787,15 +1011,7 @@ def make_planner_node(settings: Settings):
                     "current_intent": working[later] if later is not None else current,
                     "pending_decision": None,
                     "decisions": prev_decisions + [bulk_decision.model_dump(mode="json")],
-                    "completed_actions": [
-                        {
-                            "phase": "planner",
-                            "intent_id": bulk_decision.intent_id,
-                            "kind": bulk_decision.kind,
-                            "summary": bulk_decision.decision_summary,
-                            "iteration": iteration,
-                        }
-                    ],
+                    "completed_actions": [_planner_trace_from_decision(bulk_decision, iteration=iteration)],
                     "next_route": "continue_planner" if later is not None else "synthesize_plan",
                     "status": "planning" if later is not None else "validating",
                 }
@@ -806,15 +1022,7 @@ def make_planner_node(settings: Settings):
                 "current_intent": current,
                 "pending_decision": bulk_decision.model_dump(mode="json"),
                 "decisions": prev_decisions + [bulk_decision.model_dump(mode="json")],
-                "completed_actions": [
-                    {
-                        "phase": "planner",
-                        "intent_id": bulk_decision.intent_id,
-                        "kind": bulk_decision.kind,
-                        "summary": bulk_decision.decision_summary,
-                        "iteration": iteration,
-                    }
-                ],
+                "completed_actions": [_planner_trace_from_decision(bulk_decision, iteration=iteration)],
                 "next_route": "decision_guard",
                 "status": "planning",
             }
@@ -833,15 +1041,7 @@ def make_planner_node(settings: Settings):
                 "current_intent": current,
                 "pending_decision": direct_write_decision.model_dump(mode="json"),
                 "decisions": prev_decisions + [direct_write_decision.model_dump(mode="json")],
-                "completed_actions": [
-                    {
-                        "phase": "planner",
-                        "intent_id": direct_write_decision.intent_id,
-                        "kind": direct_write_decision.kind,
-                        "summary": direct_write_decision.decision_summary,
-                        "iteration": iteration,
-                    }
-                ],
+                "completed_actions": [_planner_trace_from_decision(direct_write_decision, iteration=iteration)],
                 "next_route": "decision_guard",
                 "status": "planning",
             }
@@ -1012,15 +1212,7 @@ def make_planner_node(settings: Settings):
             next_route = "decision_guard"
 
         prev_decisions = list(state.get("decisions") or [])
-        planner_trace = [
-            {
-                "phase": "planner",
-                "intent_id": decision.intent_id,
-                "kind": decision.kind,
-                "summary": decision.decision_summary,
-                "iteration": iteration,
-            }
-        ]
+        planner_trace = [_planner_trace_from_decision(decision, iteration=iteration)]
 
         new_cursor = int(extra.get("intent_cursor", cursor))
         if working and 0 <= new_cursor < len(working):
@@ -1103,6 +1295,16 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
     fixed_calls: list[dict[str, Any]] = []
     context = state.get("context") if isinstance(state.get("context"), dict) else {}
     intent_memory = context.get("intent_memory") if isinstance(context.get("intent_memory"), dict) else {}
+    user_text = user_query_text(state)
+    if isinstance(current, dict):
+        intent_description = str(current.get("description") or "").strip()
+        intent_text = (
+            f"{intent_description}\n{user_text}"
+            if intent_description and intent_description != user_text
+            else intent_description or user_text
+        )
+    else:
+        intent_text = user_text
     for item in raw_calls:
         if not isinstance(item, dict):
             continue
@@ -1111,16 +1313,28 @@ def decision_guard_node(state: AgentState) -> dict[str, Any]:
         if tool is not None:
             raw_args = fixed.get("args") if isinstance(fixed.get("args"), dict) else {}
             sanitized_args, _ = sanitize_tool_args_against_schema(tool, dict(raw_args))
+            inferred_read_args: dict[str, Any] = {}
+            if tool.is_read_only:
+                inferred_read_args = (
+                    infer_collection_query_args(intent_text, tool)
+                    if not (tool.path_params or (tool.input_schema or {}).get("required"))
+                    else infer_lookup_query_args(intent_text, tool)
+                )
+                sanitized_args = merge_inferred_read_args(intent_text, tool, sanitized_args)
+                sanitized_args, _ = sanitize_tool_args_against_schema(tool, dict(sanitized_args))
             provenance = promote_user_provenance(
                 tool=tool,
                 args=sanitized_args,
-                intent=user_query_text(state),
+                intent=intent_text,
                 evidence={},
             )
+            for key, value in inferred_read_args.items():
+                if key in sanitized_args:
+                    provenance[key] = {"value": value, "source": "user", "confidence": 0.95}
             clean_args, _ = strip_unsupported_optional_args(
                 tool=tool,
                 args=sanitized_args,
-                intent=user_query_text(state),
+                intent=intent_text,
                 intent_memory=intent_memory,
                 arg_provenance=provenance,
             )

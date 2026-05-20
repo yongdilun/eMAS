@@ -14,7 +14,7 @@ from ...config import Settings
 from ...llm.models import build_planner_chat_model
 from ...schemas import ToolInfo
 from ..http_tool_client import compute_planner_write_idempotency_key, execute_tool_http, stable_json
-from ..planner_graph_helpers import _message_content_text
+from ..planner_graph_helpers import _infer_bulk_job_priority_mutation, _message_content_text
 from .planner_loop import planner_tool_output_tail
 from ..state import AgentState, user_query_text
 
@@ -110,6 +110,32 @@ def _is_write_tool(tool: ToolInfo | None) -> bool:
     if tool is None:
         return True
     return not tool.is_read_only
+
+
+def _priority_write_evidence(state: AgentState, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    if "jobs" not in str(tool_name).lower():
+        return None
+    target = str(args.get("priority") or "").strip().lower()
+    if not target:
+        return None
+    cur = state.get("current_intent")
+    intent_text = ""
+    if isinstance(cur, dict):
+        intent_text = str(cur.get("description") or "").strip()
+    if not intent_text:
+        intent_text = user_query_text(state)
+    mutation = _infer_bulk_job_priority_mutation(intent_text)
+    if not isinstance(mutation, dict) or mutation.get("action") != "update_priority":
+        return None
+    source = str(mutation.get("source_priority") or "").strip().lower()
+    expected_target = str(mutation.get("target_priority") or "").strip().lower()
+    if not source or expected_target != target:
+        return None
+    return {
+        "previous_priority": source,
+        "new_priority": target,
+        "source_state_basis": str(args.get("source_state_basis") or "original").strip().lower(),
+    }
 
 
 def _bulk_item_count(body: Any) -> int:
@@ -266,19 +292,21 @@ def make_tool_execution_node(settings: Settings):
                         "output_ref": out_ref,
                     }
                 )
-                staged.append(
-                    {
-                        "intent_id": intent_id,
-                        "decision_id": decision_id,
-                        "tool_call_id": tcid,
-                        "tool_name": str(name),
-                        "args": dict(args),
-                        "output_ref": out_ref,
-                        "write_generation": new_wg,
-                        "idempotency_key": idem,
-                        "status": "staged",
-                    }
-                )
+                staged_write = {
+                    "intent_id": intent_id,
+                    "decision_id": decision_id,
+                    "tool_call_id": tcid,
+                    "tool_name": str(name),
+                    "args": dict(args),
+                    "output_ref": out_ref,
+                    "write_generation": new_wg,
+                    "idempotency_key": idem,
+                    "status": "staged",
+                }
+                evidence = _priority_write_evidence(state, tool_name=str(name), args=dict(args))
+                if evidence:
+                    staged_write["evidence"] = evidence
+                staged.append(staged_write)
                 done.append(
                     {
                         "phase": "tool_execution",
@@ -603,6 +631,6 @@ def route_after_commit(state: AgentState) -> str:
     if state.get("fatal_system_error"):
         return "fatal_end"
     commit = state.get("last_commit_result")
-    if isinstance(commit, dict) and commit.get("ok") is False:
+    if isinstance(commit, dict):
         return "final_validator"
     return "end"

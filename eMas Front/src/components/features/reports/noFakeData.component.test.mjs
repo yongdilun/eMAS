@@ -31,6 +31,28 @@ test('ReportPreview shows unavailable state instead of demo report rows', async 
   await view.unmount()
 })
 
+test('ReportPreview renders date range objects without raw object text', async () => {
+  const { default: ReportPreview } = await server.ssrLoadModule('/src/components/features/reports/ReportPreview.jsx')
+  const view = await render(React.createElement(ReportPreview, {
+    dateRange: { start: '2026-05-01', end: '2026-05-07' },
+    data: {
+      data: [
+        {
+          date: { start: '2026-05-01', end: '2026-05-07' },
+          units: 42,
+          planned: 50,
+        },
+      ],
+    },
+    loading: false,
+  }))
+
+  assert.match(view.text(), /2026-05-01 - 2026-05-07/)
+  assert.doesNotMatch(view.text(), /\[object Object\]/)
+
+  await view.unmount()
+})
+
 test('UtilizationChart shows unavailable state instead of demo utilization values', async () => {
   const { default: UtilizationChart } = await server.ssrLoadModule('/src/components/features/machines/UtilizationChart.jsx')
   const view = await render(React.createElement(UtilizationChart, { machines: [], utilizationData: null }))

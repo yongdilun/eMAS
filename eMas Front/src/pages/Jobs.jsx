@@ -4,7 +4,7 @@ import JobDetailsPanel from '../components/features/gantt/JobDetailsPanel'
 import CreateJobModal from '../components/features/gantt/CreateJobModal'
 import PageHeader from '../components/shared/PageHeader'
 import FilterSortPanel from '../components/shared/FilterSortPanel'
-import { jobsApi, machinesApi, toList, apiErrorMessage } from '../services/api'
+import { jobsApi, machinesApi, toList, apiErrorMessage, apiErrorToastOptions } from '../services/api'
 import { normalizeMachine, normalizeJob } from '../services/normalizers'
 import logger from '../services/logger'
 import { useToast } from '../context/ToastContext'
@@ -101,7 +101,7 @@ const Jobs = () => {
             fetchJobs()
         } catch (err) {
             logger.error('Failed to cancel job', err, { jobId })
-            toast.error(apiErrorMessage(err, 'Failed to cancel job.'))
+            toast.error(apiErrorMessage(err, 'Failed to cancel job.'), apiErrorToastOptions(err))
         }
     }
 

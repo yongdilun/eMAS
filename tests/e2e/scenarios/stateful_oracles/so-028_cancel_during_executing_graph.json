@@ -1,0 +1,182 @@
+{
+  "id": "SO-028",
+  "title": "Cancel during executing graph",
+  "risk": "Cancelling a long-running graph can clear the spinner while a hidden continuation later mutates state or fabricates a successful final response.",
+  "prompt": "Start a seeded cancel jobs run and keep it executing",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SEED-005",
+        "priority": "low",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SEED-009",
+        "priority": "low",
+        "status": "planned"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "fault_injection": {
+      "event": "operator_cancel",
+      "when": "while seeded planner run is sleeping"
+    }
+  },
+  "expected_route": {
+    "route": "tool.read.jobs.cancellable",
+    "must_not_route_to": [
+      "tool.write.jobs.bulk_update_priority",
+      "rag.loto_procedure"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "run started",
+      "session_phase": "EXECUTING",
+      "cancel_button_visible": true
+    },
+    {
+      "after": "cancel clicked",
+      "session_phase": "IDLE",
+      "cancellation_state": "cancelled",
+      "pending_approval_id": null,
+      "forbidden": [
+        "hidden_continuation",
+        "fake_success",
+        "later_mutation"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "IDLE",
+    "jobs": [
+      {
+        "id": "JOB-SEED-005",
+        "priority": "low"
+      },
+      {
+        "id": "JOB-SEED-009",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null,
+    "error": "Cancelled"
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "execution_started"
+    },
+    {
+      "event": "operation_cancelled",
+      "reason": "operator_cancel"
+    },
+    {
+      "event": "snapshot_terminal_persisted",
+      "status": "IDLE",
+      "error": "Cancelled"
+    },
+    {
+      "event": "final_response_created"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "IDLE",
+      "pending_approval_id": null,
+      "error": "Cancelled",
+      "must_not_later_change_to": "COMPLETED"
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "snapshot_terminal_persisted Cancelled",
+    "must_include": [
+      "Run cancelled by operator request",
+      "Cancelled"
+    ],
+    "must_not_include": [
+      "Run complete",
+      "Seeded cancellable run completed",
+      "low-priority jobs",
+      "all requested changes completed",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Run cancelled by operator request"
+    ],
+    "must_not_show": [
+      "Cancel current run",
+      "Run complete",
+      "low-priority jobs",
+      "Factory Agent needs attention"
+    ],
+    "must_not_have_busy_status": true
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SEED-005",
+      "priority": "low"
+    },
+    {
+      "id": "JOB-SEED-009",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "cancel_terminal_state_visible",
+    "no_hidden_continuation_after_cancel",
+    "no_audit_rows_after_cancel",
+    "timeline_snapshot_final_response_agree",
+    "unchanged_rows_remain_unchanged"
+  ],
+  "required_layers": [
+    "seeded_full_stack",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Existing cancel tests could stop at UI non-busy evidence; this oracle requires backend state, no audit/mutation, no later completion, and UI/snapshot agreement.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "A cancelled graph can keep running in the background and later replace the cancelled UI/state with a fake success.",
+    "existing_test_that_would_miss_it": "Mocked cancel/navigation coverage does not exercise the seeded long-running adapter or backend snapshot/audit after the hidden delay window.",
+    "lowest_useful_layer": "seeded_full_stack",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is required because the existing seeded cancellable fixture exercises the UI/backend cancel contract without relying on LLM behavior.",
+    "required_positive_evidence": [
+      "cancel button appears while executing",
+      "cancel request moves session to IDLE with Cancelled error",
+      "visible final UI says cancelled safely",
+      "snapshot remains cancelled after the long-running fixture would have completed",
+      "no audit rows or job mutations occur"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Run complete",
+      "low-priority jobs completion text",
+      "hidden continuation after cancel",
+      "successful audit rows",
+      "busy spinner or cancel button after terminal cancel"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-seeded.spec.js::SO-028 scenario 37"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-16-remaining-normal-use-breakage-scenarios"
+  }
+}

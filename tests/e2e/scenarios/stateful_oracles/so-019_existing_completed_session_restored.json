@@ -1,0 +1,211 @@
+{
+  "id": "SO-019",
+  "title": "Existing completed session restored",
+  "risk": "Reloading a completed session can attach stale terminal evidence to a new turn or make an old answer appear as the latest operation result.",
+  "prompt": "Restore existing completed session SO-019 and then send a new machine status prompt.",
+  "initial_state": {
+    "sessions": [
+      {
+        "session_id": "session-so-019",
+        "latest_completed_operation_id": "operation-so-019-old",
+        "latest_turn_id": "SO-019-T1",
+        "final_response": "1 high priority job changed to medium"
+      }
+    ],
+    "jobs": [
+      {
+        "id": "JOB-SO019-HIGH-01",
+        "priority": "medium",
+        "status": "open"
+      }
+    ],
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running"
+      }
+    ],
+    "approvals": [
+      {
+        "approval_id": "approval-so-019-old",
+        "status": "accepted",
+        "operation_id": "operation-so-019-old"
+      }
+    ],
+    "audit_rows": [
+      {
+        "approval_id": "approval-so-019-old",
+        "row_ids": [
+          "JOB-SO019-HIGH-01"
+        ],
+        "status": "success"
+      }
+    ]
+  },
+  "expected_route": {
+    "new_turn_id": "SO-019-T2",
+    "route": "tool.read.machine_status",
+    "machine_id": "M-CNC-01",
+    "operation_id": "operation-so-019-new"
+  },
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-019-old",
+      "intent_id": "SO-019-OLD-I1",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO019-HIGH-01"
+      ],
+      "row_count": 1,
+      "operation_id": "operation-so-019-old"
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "completed session restored",
+      "session_phase": "COMPLETED",
+      "current_operation_id": "operation-so-019-old",
+      "visible_final_response_turn_id": "SO-019-T1"
+    },
+    {
+      "after": "new turn starts",
+      "session_phase": "EXECUTING",
+      "current_operation_id": "operation-so-019-new",
+      "forbidden": [
+        "old final response rendered as new turn final"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "current_operation_id": "operation-so-019-new",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-019-old",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO019-HIGH-01"
+      ],
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started",
+      "operation_id": "operation-so-019-old"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-019-old",
+      "operation_id": "operation-so-019-old"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-019-old",
+      "operation_id": "operation-so-019-old"
+    },
+    {
+      "event": "operation_completed",
+      "operation_id": "operation-so-019-old"
+    },
+    {
+      "event": "session_restored",
+      "operation_id": "operation-so-019-old"
+    },
+    {
+      "event": "operation_started",
+      "operation_id": "operation-so-019-new"
+    },
+    {
+      "event": "tool_read_completed",
+      "operation_id": "operation-so-019-new",
+      "machine_id": "M-CNC-01"
+    },
+    {
+      "event": "final_response_created",
+      "operation_id": "operation-so-019-new"
+    },
+    {
+      "event": "operation_completed",
+      "operation_id": "operation-so-019-new"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "restored_session": {
+      "status": "COMPLETED",
+      "operation_id": "operation-so-019-old",
+      "final_response_turn_id": "SO-019-T1"
+    },
+    "new_turn_terminal": {
+      "status": "COMPLETED",
+      "operation_id": "operation-so-019-new",
+      "final_response_turn_id": "SO-019-T2"
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "operation_completed operation-so-019-new",
+    "must_include": [
+      "M-CNC-01",
+      "running"
+    ],
+    "must_not_include": [
+      "1 high priority job changed to medium",
+      "old completed answer"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-019-old"
+    ],
+    "must_show": [
+      "M-CNC-01",
+      "running"
+    ],
+    "must_not_show_as_latest_turn": [
+      "1 high priority job changed to medium",
+      "Run complete from previous turn"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO019-HIGH-01",
+      "priority": "medium"
+    },
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "operation_id_scoped_timeline",
+    "latest_turn_owns_final_response",
+    "no_stale_previous_answer",
+    "read_only_state_unchanged",
+    "final_summary_matches_tool_result"
+  ],
+  "required_layers": [
+    "frontend_unit",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Frontend turn assembly tests can merge terminal fallback across turns; this oracle requires restored sessions and new turns to stay scoped by operation and turn id.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/normal-use-hardening.spec.js::SO-019 scenario 82",
+      "eMas Front/e2e/specs/normal-use-hardening.spec.js::SO-019 scenario 83"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

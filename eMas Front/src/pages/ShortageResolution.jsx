@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext'
 import {
   aiApi,
   apiErrorMessage,
+  apiErrorToastOptions,
   mergeBatchSummaryWithAggregate,
   toData,
   unwrapSchedulingBatchPayload,
@@ -138,7 +139,7 @@ const ShortageResolution = ({
         )
       }
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Failed to load shortage proposals.'))
+      toast.error(apiErrorMessage(err, 'Failed to load shortage proposals.'), apiErrorToastOptions(err))
     } finally {
       setLoading(false)
     }
@@ -403,7 +404,10 @@ const ShortageResolution = ({
       setDrafts({})
       toast.success(`Applied selected arrivals and regenerated schedule.`)
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Failed to apply selected arrivals and reschedule.'))
+      toast.error(
+        apiErrorMessage(err, 'Failed to apply selected arrivals and reschedule.'),
+        apiErrorToastOptions(err),
+      )
     } finally {
       setActionLoading(false)
     }

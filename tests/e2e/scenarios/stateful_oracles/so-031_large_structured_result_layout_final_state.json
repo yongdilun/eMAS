@@ -1,0 +1,169 @@
+{
+  "id": "SO-031",
+  "title": "Large structured result layout and final state",
+  "risk": "A large deterministic read result can push the final response out of view, leave loading/current state stuck, or break details/table controls while the backend is already terminal.",
+  "prompt": "List jobs for Phase 9 large structured result",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SEED-LARGE-001",
+        "priority": "low",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SEED-LARGE-080",
+        "priority": "medium",
+        "status": "planned"
+      }
+    ],
+    "large_result": {
+      "row_count": 80,
+      "largest_deterministic_fixture": "phase_9_large_structured_result"
+    },
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "tool.read.jobs.large_structured_result",
+    "row_count": 80,
+    "must_not_route_to": [
+      "tool.write.jobs.bulk_update_priority",
+      "rag.loto_procedure"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "large result rendered",
+      "session_phase": "EXECUTING",
+      "row_count": 80,
+      "visible_page_rows": 20,
+      "controls": [
+        "table",
+        "activity_expand_collapse"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [],
+    "pending_approval_id": null,
+    "large_result": {
+      "row_count": 80
+    }
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "tool_read_completed",
+      "tool": "get__jobs",
+      "row_count": 80
+    },
+    {
+      "event": "snapshot_terminal_persisted",
+      "status": "COMPLETED"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "row_count": 80,
+      "activity_contains": [
+        "Run complete"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "tool_read_completed 80",
+    "must_include": [
+      "Phase 9 large structured result rendered 80 seeded rows",
+      "Run complete"
+    ],
+    "must_not_include": [
+      "Gathering information",
+      "Working...",
+      "Understanding your request...",
+      "Current",
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Phase 9 large structured result rendered 80 seeded rows",
+      "Showing 20 of 80 rows.",
+      "Run complete",
+      "JOB-SEED-LARGE-001",
+      "Show details"
+    ],
+    "must_not_show": [
+      "Gathering information...",
+      "Working...",
+      "Understanding your request...",
+      "Factory Agent needs attention"
+    ],
+    "must_have_usable_controls": [
+      "activity_expand",
+      "activity_collapse",
+      "table_scroll"
+    ]
+  },
+  "expected_unchanged_rows": [],
+  "invariants": [
+    "no_approval_required",
+    "large_result_does_not_hide_terminal_state",
+    "activity_expand_collapse_works",
+    "final_response_remains_visible",
+    "no_stale_loading_state"
+  ],
+  "required_layers": [
+    "seeded_full_stack",
+    "playwright"
+  ],
+  "weakness_from_phase0": "Existing large-result coverage lived in reliability specs and could miss the seeded-oracle release gate; this oracle ties the largest deterministic result to terminal UI and snapshot evidence.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "Large structured read-only results can obscure final completion, leave stale loading state visible, or make details/table controls unusable.",
+    "existing_test_that_would_miss_it": "Backend route tests cannot see layout breakage, and earlier reliability coverage was not part of the seeded oracle prompt-regression gate.",
+    "lowest_useful_layer": "seeded_full_stack",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "No real LangGraph coverage is required because the deterministic seeded fixture exercises the browser layout and final-state risk directly.",
+    "required_positive_evidence": [
+      "80-row deterministic fixture returned",
+      "20-row table page renders",
+      "final response remains visible",
+      "activity expand and collapse",
+      "snapshot and activity show COMPLETED/Run complete"
+    ],
+    "required_forbidden_stale_evidence": [
+      "stale Gathering information/Working/Current state",
+      "final response hidden by table/details",
+      "activity control stuck open or closed",
+      "Factory Agent needs attention"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-031"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-16-remaining-normal-use-breakage-scenarios"
+  }
+}

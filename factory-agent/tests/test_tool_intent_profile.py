@@ -154,6 +154,7 @@ def test_scoped_vocabulary_preserves_generated_entity_tokens():
 
 def test_generated_vocabulary_loads_from_package_generated_dir():
     vocabulary = load_generated_vocabulary()
-    assert "job" in vocabulary.entity_tokens
-    assert "product" in vocabulary.entity_tokens
+    assert {"inventory", "job", "machine", "product"} <= set(vocabulary.entity_tokens)
+    assert {"business", "change", "entity", "match", "record", "status"} <= set(vocabulary.known_tool_tokens)
+    assert "statu" not in vocabulary.known_tool_tokens
 

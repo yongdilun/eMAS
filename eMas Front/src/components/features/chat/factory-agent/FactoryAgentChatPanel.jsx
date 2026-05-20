@@ -5,11 +5,17 @@ import ActivityTimeline from './ActivityTimeline'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import FactoryAgentChatComposer from './FactoryAgentChatComposer'
 import FactoryAgentSessionSidebar from './FactoryAgentSessionSidebar'
+import ResponseDocumentRenderer, { SourceDrawer } from './ResponseDocumentRenderer'
 import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
-import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
+import { compactInterruptApprovalHeadline, resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { TablePresentation } from '../turns/TurnBlocks'
 import { assistantAnswerAllowed, friendlySessionStatus } from './activityTimelineUtils'
+import {
+  diagnosticFactsForPresentation,
+  tablePresentationFromTypedPresentation,
+} from './presentationContract.js'
+import { normalizeResponseDocument } from './responseDocumentContract.js'
 import {
   formatInlineCitationLabel,
   stripSourceFootnoteDefinitions,
@@ -22,6 +28,11 @@ const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
 )
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
 const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
+const STARTER_PROMPTS = Object.freeze([
+  'Change all low priority job to medium, then change all medium priority job to high',
+  'Find all low priority jobs',
+  'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
+])
 
 function isProgressSummary(text) {
   const normalized = String(text || '').trim()
@@ -121,6 +132,7 @@ function buildUserDetailLines(turn) {
   const terminal = turn?.terminal || null
 
   const lines = []
+  lines.push(...diagnosticFactsForPresentation(turn?.presentation))
   const planExplanation = thinking[thinking.length - 1]?.details?.plan_explanation || thinking[thinking.length - 1]?.content
   if (isUserVisibleDetailText(planExplanation)) {
     lines.push(planExplanation)
@@ -132,8 +144,12 @@ function buildUserDetailLines(turn) {
     }
   }
 
+  const completed = terminal?.event_type === 'session_completed'
   for (const approval of approvals) {
-    if (approval?.content) lines.push(approval.content)
+    if (!approval?.content) continue
+    if (completed && approvalWaitSummary(approval.content)) continue
+    if (completed && /approved request to change record/i.test(approval.content)) continue
+    lines.push(approval.content)
   }
 
   if (terminal?.details?.reason) lines.push(`Reason: ${terminal.details.reason}`)
@@ -328,6 +344,50 @@ function interruptStyleSummary(summaryText) {
   return s.includes('jobs affected:') || s.includes('current vs requested priority')
 }
 
+function approvalWaitSummary(summaryText) {
+  const s = String(summaryText || '').toLowerCase()
+  return (
+    s.includes('waiting for your approval') ||
+    s.includes('please approve') ||
+    s.includes('will be updated from') ||
+    s.includes('change list is shown')
+  )
+}
+
+function completedVisibleSummary(turn, rawSummary) {
+  if (turn?.terminal?.event_type !== 'session_completed' || !approvalWaitSummary(rawSummary)) {
+    return rawSummary
+  }
+  return buildUserDetailLines(turn).find((line) => !approvalWaitSummary(line)) || rawSummary
+}
+
+function pendingApprovalVisibleSummary(approval) {
+  if (!approval) return null
+  const bundleUi = approval.args?.bundle_ui
+  if (bundleUi && typeof bundleUi === 'object' && bundleUi.headline) {
+    return String(bundleUi.headline)
+  }
+  const risk = String(approval.risk_summary || '').trim()
+  const compact = compactInterruptApprovalHeadline(risk)
+  if (compact) return compact
+  if (risk) return risk
+  return 'Waiting for approval.'
+}
+
+function pendingApprovalFromResponseDocument(document) {
+  if (!document || document.state !== 'waiting_approval') return null
+  const blocks = Array.isArray(document.blocks) ? document.blocks : []
+  const block = [...blocks].reverse().find((item) => item?.type === 'approval_required' && item.approval_id)
+  if (!block) return null
+  return {
+    approval_id: block.approval_id,
+    operation_id: block.operation_id || document.operation_id || null,
+    risk_summary: block.summary || block.title || 'Review the proposed change before it is applied.',
+    status: 'PENDING',
+    ...(block.args && typeof block.args === 'object' ? { args: block.args } : {}),
+  }
+}
+
 /** Snapshot table still all "low" while the bubble text is the approval bundle or claims high - hide. */
 function targetPriorityFromSummary(summaryText) {
   const s = String(summaryText || '').toLowerCase()
@@ -387,11 +447,7 @@ function bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePre
   const approvals = Array.isArray(turn?.approvals) ? turn.approvals : []
   const completed = turn?.terminal?.event_type === 'session_completed'
 
-  if (completed) {
-    const fromDecided = bundleFromDecidedApprovals(approvals, getStashed)
-    if (fromDecided) return fromDecided
-    return null
-  }
+  if (completed) return null
 
   if (approvals.some((a) => a?.event_type === 'approval_decided')) {
     const fromDecided = bundleFromDecidedApprovals(approvals, getStashed)
@@ -410,6 +466,12 @@ function bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePre
 }
 
 function getLatestToolPresentation(turn) {
+  const typedPresentation = tablePresentationFromTypedPresentation(turn?.presentation)
+  const typedKind = String(turn?.presentation?.kind || '')
+  if (typedPresentation && ['mutation_result', 'partial_failure'].includes(typedKind)) {
+    return typedPresentation
+  }
+
   const bundle = turnHasLangGraphWriteBundle(turn)
   const completed = turn?.terminal?.event_type === 'session_completed'
   if (bundle && !completed) {
@@ -424,7 +486,22 @@ function getLatestToolPresentation(turn) {
       if (bundle && completed && tableContradictsSummary(presentation, summary)) {
         continue
       }
-      return presentation
+      const answerFields = Array.isArray(tools[index]?.details?.answer_model?.fields)
+        ? tools[index].details.answer_model.fields
+        : []
+      const tableColumns = new Set((presentation.table.columns || []).map((column) => String(column.key || column.label || '').toLowerCase()))
+      const facts = answerFields
+        .filter((field) => field?.label && field?.value != null)
+        .filter((field) => !tableColumns.has(String(field.key || field.label || '').toLowerCase()))
+        .map((field) => `${field.label}: ${field.value}`)
+      if (!facts.length) return presentation
+      return {
+        ...presentation,
+        analysis: {
+          ...(presentation.analysis || {}),
+          facts: [...(Array.isArray(presentation.analysis?.facts) ? presentation.analysis.facts : []), ...facts],
+        },
+      }
     }
   }
   return null
@@ -533,8 +610,24 @@ function AssistantTurnBubble({
   showResumeBanner,
   session,
   isLatestTurn,
+  onOpenSourceEvidence,
+  activeSourceEvidence,
 }) {
-  const rawSummary = turn?.summary || 'Working...'
+  const responseDocumentResult = normalizeResponseDocument(turn?.responseDocument)
+  const responseDocument = responseDocumentResult.document
+  const hasResponseDocument = responseDocumentResult.status !== 'absent'
+  const effectivePendingApproval = pendingApproval || pendingApprovalFromResponseDocument(responseDocument)
+  const showResponseDocumentApprovalActions = Boolean(
+    hasResponseDocument &&
+    isLatestTurn &&
+    effectivePendingApproval?.approval_id &&
+    responseDocument?.state === 'waiting_approval',
+  )
+  const rawSummary = hasResponseDocument
+    ? responseDocument?.message || responseDocument?.summary || 'Working...'
+    : turn?.presentation
+      ? completedVisibleSummary(turn, turn?.summary || 'Working...')
+      : pendingApprovalVisibleSummary(pendingApproval) || completedVisibleSummary(turn, turn?.summary || 'Working...')
   const summary = useStagedAssistantSummary(rawSummary)
   const summaryIsProgress = isProgressSummary(summary)
   const answerAllowed = assistantAnswerAllowed({
@@ -557,8 +650,10 @@ function AssistantTurnBubble({
     setTextStreamDone(true)
   }, [])
 
-  const bundlePresentation = bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePresentation)
-  const presentation = bundlePresentation || getLatestToolPresentation(turn)
+  const bundlePresentation = hasResponseDocument
+    ? null
+    : bundleUiPresentationFromTurn(turn, pendingApproval, getStashedBundlePresentation)
+  const presentation = hasResponseDocument ? null : (bundlePresentation || getLatestToolPresentation(turn))
   const tableAnimKey = `${turn?.id || 'turn'}:${presentation?.table?.total_rows || 0}:${summary}`
   // Collapse the bundle table only once the server confirms approval_decided in the
   // timeline. Do NOT use !pendingApproval - that can be optimistically null on click,
@@ -567,58 +662,76 @@ function AssistantTurnBubble({
     Array.isArray(turn?.approvals) &&
     turn.approvals.some((a) => a?.event_type === 'approval_decided'),
   )
-  const collapseBundleTable = Boolean(presentation && hasServerDecidedApproval)
+  const collapseBundleTable = Boolean(presentation && !pendingApproval && hasServerDecidedApproval)
+  const chatSources = hasResponseDocument ? [] : turn.sources
+  const chatSafetyContent = hasResponseDocument ? null : turn.safetyContent
 
   return (
     <ChatMessage
       message=""
       isUser={false}
       timestamp={timestamp}
-      sources={turn.sources}
-      safetyContent={turn.safetyContent}
+      sources={chatSources}
+      safetyContent={chatSafetyContent}
       showStreamGatedExtras={textStreamDone && answerAllowed}
       renderBlocks={() => (
         <>
-          <ActivityTimeline steps={activitySteps} />
-          {showResumeBanner ? (
-            <div className="mb-2 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-ink">
-              Applying approved changes{'\u2026'}
-            </div>
-          ) : null}
-          {showSummary ? (
-            <div className="whitespace-pre-wrap break-words text-ink">
-              <StreamedAssistantText
-                text={summary}
-                streamKey={`${turn?.id || 'turn'}:${summary}`}
-                enabled={streamEnabled}
-                sources={turn.sources}
-                onStreamComplete={handleAssistantTextStreamComplete}
-              />
-            </div>
-          ) : null}
-          {presentation && showDetails ? (
-            <TablePresentation
-              presentation={presentation}
-              animate={shouldAnimateText && showDetails}
-              animateKey={tableAnimKey}
-              defaultCollapsed={collapseBundleTable}
+          {hasResponseDocument ? (
+            <ResponseDocumentRenderer
+              document={responseDocument}
+              pendingApproval={effectivePendingApproval}
+              showApprovalActions={showApprovalCard || showResponseDocumentApprovalActions}
+              decideApproval={decideApproval}
+              isDecidingApproval={isDecidingApproval}
+              approvalReason={approvalReason}
+              setApprovalReason={setApprovalReason}
+              onOpenSourceEvidence={onOpenSourceEvidence}
+              selectedSourceEvidence={activeSourceEvidence}
             />
-          ) : null}
-          {showDetails && !showApprovalCard ? <TurnDetails mode={mode} turn={turn} /> : null}
-          <ConfirmationOptions turn={turn} onConfirm={decideConfirmation} disabled={isSending} />
-          {showApprovalCard ? (
-            <div className="mt-3">
-              <ApprovalCard
-                approval={pendingApproval}
-                mode={mode}
-                reason={approvalReason}
-                onReasonChange={setApprovalReason}
-                onApprove={(args) => decideApproval('approve', args)}
-                onReject={() => decideApproval('reject')}
-                deciding={isDecidingApproval}
-              />
-            </div>
-          ) : null}
+          ) : (
+            <>
+              <ActivityTimeline steps={activitySteps} />
+              {showResumeBanner ? (
+                <div className="mb-2 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-ink">
+                  Applying approved changes{'\u2026'}
+                </div>
+              ) : null}
+              {showSummary ? (
+                <div className="whitespace-pre-wrap break-words text-ink">
+                  <StreamedAssistantText
+                    text={summary}
+                    streamKey={`${turn?.id || 'turn'}:${summary}`}
+                    enabled={streamEnabled}
+                    sources={turn.sources}
+                    onStreamComplete={handleAssistantTextStreamComplete}
+                  />
+                </div>
+              ) : null}
+              {presentation && showDetails ? (
+                <TablePresentation
+                  presentation={presentation}
+                  animate={shouldAnimateText && showDetails}
+                  animateKey={tableAnimKey}
+                  defaultCollapsed={collapseBundleTable}
+                />
+              ) : null}
+              {showDetails && !pendingApproval ? <TurnDetails mode={mode} turn={turn} /> : null}
+              <ConfirmationOptions turn={turn} onConfirm={decideConfirmation} disabled={isSending} />
+              {showApprovalCard ? (
+                <div className="mt-3">
+                  <ApprovalCard
+                    approval={pendingApproval}
+                    mode={mode}
+                    reason={approvalReason}
+                    onReasonChange={setApprovalReason}
+                    onApprove={(args) => decideApproval('approve', args)}
+                    onReject={() => decideApproval('reject')}
+                    deciding={isDecidingApproval}
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
         </>
       )}
     />
@@ -635,12 +748,21 @@ function statusLoadingText(status) {
 
 function isBackendUnavailableError(error) {
   const text = String(error || '').toLowerCase()
-  return text.includes('cannot reach factory-agent') || text.includes('cannot connect to factory-agent') || text.includes('service temporarily unavailable')
+  return (
+    text.includes('cannot reach factory-agent') ||
+    text.includes('cannot reach factory agent') ||
+    text.includes('cannot connect to factory-agent') ||
+    text.includes('service temporarily unavailable') ||
+    text.includes('service unavailable') ||
+    text.includes('factoryagentunavailable') ||
+    text.includes('controlled release fault')
+  )
 }
 
 function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRetryConnection }) {
   const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
   if (!error && diagnostics.length === 0) return null
+  const backendUnavailable = isBackendUnavailableError(error)
 
   return (
     <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
@@ -648,7 +770,7 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-semibold text-ink">
-              {isBackendUnavailableError(error) ? 'Factory Agent backend unavailable' : 'Factory Agent needs attention'}
+              {backendUnavailable ? 'Factory Agent is disconnected' : 'Factory Agent chat could not start'}
             </div>
             <div className="mt-0.5">{error}</div>
           </div>
@@ -659,7 +781,7 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
               disabled={retrying}
               className="rounded-md border border-hairline bg-surface-1 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
             >
-              {retrying ? 'Retrying...' : 'Retry connection'}
+              {retrying ? 'Retrying...' : 'Try starting chat again'}
             </button>
           ) : null}
         </div>
@@ -678,9 +800,43 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
   )
 }
 
-const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useFactoryAgentChat }) => {
+function FullscreenWindowIcon({ isFullscreen }) {
+  return (
+    <span
+      className="material-symbols-outlined text-[13px] leading-none"
+      aria-hidden="true"
+      data-ai-assistant-fullscreen-icon={isFullscreen ? 'restore' : 'maximize'}
+    >
+      {isFullscreen ? 'filter_none' : 'check_box_outline_blank'}
+    </span>
+  )
+}
+
+function sourceEvidenceKey(evidence) {
+  const source = evidence?.source || {}
+  return [
+    evidence?.documentId,
+    evidence?.revision,
+    source.source_id,
+    source.doc_id,
+    source.chunk_id,
+    source.source_number,
+    source.title,
+  ]
+    .map((value) => String(value ?? '').trim())
+    .join('\u001f')
+}
+
+const FactoryAgentChatPanel = ({
+  onClose,
+  onHeaderMouseDown,
+  isFullscreen = false,
+  onToggleFullscreen,
+  useChatState = useFactoryAgentChat,
+}) => {
   const chatRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
+  const sourceEvidenceAutoCollapsedSidebarRef = useRef(false)
   const {
     session,
     messages,
@@ -698,12 +854,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
     streamDiagnostics,
     pendingApproval,
     approvalReason,
-    messageMode,
     clientProgress,
     setApprovalReason,
-    setMessageMode,
     isDecidingApproval,
-    isPollingSession,
     getStashedBundlePresentation,
     isResumingAfterApproval,
     handleSend,
@@ -721,6 +874,54 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
   const [editingName, setEditingName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [isDeletingSession, setIsDeletingSession] = useState(false)
+  const [sourceEvidence, setSourceEvidence] = useState(null)
+  const [sourceEvidencePdf, setSourceEvidencePdf] = useState(null)
+  const activeSourceEvidence = useMemo(() => {
+    if (!sourceEvidence) return null
+    return {
+      ...sourceEvidence,
+      source: sourceEvidencePdf || sourceEvidence.source,
+    }
+  }, [sourceEvidence, sourceEvidencePdf])
+  const latestResponseDocumentKey = useMemo(() => {
+    const turnWithDocument = [...(turns || [])].reverse().find((turn) => turn?.responseDocument)
+    const document = turnWithDocument?.responseDocument
+    if (!document) return null
+    return `${document.document_id || document.id || turnWithDocument.id || 'response-document'}:${document.revision ?? 'unknown'}`
+  }, [turns])
+
+  const closeSourceEvidence = useCallback(() => {
+    setSourceEvidence(null)
+    setSourceEvidencePdf(null)
+    if (sourceEvidenceAutoCollapsedSidebarRef.current) {
+      sourceEvidenceAutoCollapsedSidebarRef.current = false
+      setSidebarCollapsed(false)
+    }
+  }, [])
+
+  const handleOpenSourceEvidence = useCallback((payload) => {
+    if (!payload?.source) return
+    const nextEvidence = {
+      source: payload.source,
+      sources: Array.isArray(payload.sources) ? payload.sources : [],
+      documentId: payload.documentId || null,
+      revision: payload.revision ?? null,
+    }
+    if (sourceEvidence && sourceEvidenceKey(sourceEvidence) === sourceEvidenceKey(nextEvidence)) {
+      closeSourceEvidence()
+      return
+    }
+    if (!sourceEvidence && !sidebarCollapsed) {
+      sourceEvidenceAutoCollapsedSidebarRef.current = true
+      setSidebarCollapsed(true)
+    }
+    setSourceEvidence(nextEvidence)
+    setSourceEvidencePdf(null)
+  }, [closeSourceEvidence, sidebarCollapsed, sourceEvidence])
+
+  useEffect(() => {
+    closeSourceEvidence()
+  }, [closeSourceEvidence, latestResponseDocumentKey, session?.session_id])
 
   useEffect(() => {
     if (!chatRef.current) return
@@ -740,30 +941,34 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
   }, [session?.session_id])
 
   const inputDisabled =
+    loading ||
     isSending ||
     isDecidingApproval ||
     session?.status === FACTORY_AGENT_STATUS.PLANNING
+  const effectiveSessionStatus = pendingApproval
+    ? FACTORY_AGENT_STATUS.WAITING_APPROVAL
+    : session?.status
+  const sessionShowsActiveProgress = [
+    FACTORY_AGENT_STATUS.PLANNING,
+    FACTORY_AGENT_STATUS.EXECUTING,
+    FACTORY_AGENT_STATUS.WAITING_APPROVAL,
+    FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+  ].includes(effectiveSessionStatus)
 
   const showTopSessionProgress = Boolean(
     session?.session_id &&
     (isDecidingApproval ||
-      isPollingSession ||
       isSending ||
-      [
-        FACTORY_AGENT_STATUS.PLANNING,
-        FACTORY_AGENT_STATUS.EXECUTING,
-        FACTORY_AGENT_STATUS.WAITING_APPROVAL,
-        FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-      ].includes(session?.status)),
+      sessionShowsActiveProgress),
   )
-  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(session?.status)
+  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(effectiveSessionStatus)
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
   let placeholder = 'Ask factory agent...'
-  if (session?.status === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
-  if (session?.status === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
-  if (session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
-  const displayStatus = friendlySessionStatus(session?.status, isSending)
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
+  const displayStatus = friendlySessionStatus(effectiveSessionStatus, isSending)
 
   return (
     <div className="flex h-full relative">
@@ -801,14 +1006,17 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-hairline bg-surface-1">
+        <div
+          className="flex h-14 shrink-0 items-center justify-between border-b border-hairline bg-surface-1 px-4 py-2"
+          data-chatbot-topbar=""
+        >
           <div
             className="flex items-center gap-3 cursor-move select-none flex-1 min-w-0"
             onMouseDown={onHeaderMouseDown}
             data-drag-handle
             role="presentation"
           >
-            <h2 className="text-lg font-semibold text-ink truncate">
+            <h2 className="truncate text-base font-semibold text-ink">
               {activeSessionName || 'Factory Agent Chat'}
             </h2>
             <span className="flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-ink-subtle">
@@ -817,14 +1025,27 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
             </span>
           </div>
           <div className="flex items-center gap-1">
+            {onToggleFullscreen ? (
+              <button
+                type="button"
+                onClick={onToggleFullscreen}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-ink hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                data-ai-assistant-fullscreen-toggle=""
+                data-ai-assistant-fullscreen-state={isFullscreen ? 'fullscreen' : 'windowed'}
+              >
+                <FullscreenWindowIcon isFullscreen={isFullscreen} />
+              </button>
+            ) : null}
             {onClose && (
               <button
                 type="button"
                 onClick={onClose}
-                className="p-2 rounded-md hover:bg-surface-2 text-ink-subtle"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-ink-subtle hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 aria-label="Close"
               >
-                <span className="material-symbols-outlined">close</span>
+                <span className="material-symbols-outlined text-[17px] leading-none">close</span>
               </button>
             )}
           </div>
@@ -846,7 +1067,9 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           onRetryConnection={retryConnection}
         />
 
-        <div ref={chatRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto bg-canvas px-4 py-4">
+        <div className="flex min-h-0 flex-1 bg-canvas" data-chatbot-workspace="">
+          <div className="flex min-w-0 flex-1 flex-col" data-chatbot-workspace-main="">
+            <div ref={chatRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto px-4 py-4">
           {loading && (turns?.length || 0) === 0 && messages.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-ink-subtle text-sm">
               Loading...
@@ -863,11 +1086,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                 Ask for operations tasks requiring safe approvals.
               </p>
               <div className="flex flex-wrap justify-center gap-2 mt-4">
-                {[
-                  'Show status for machine with machine id M-CNC-01',
-                  'Find all low priority jobs',
-                  'According to the LOTO procedure, what notification is required before starting lockout',
-                ].map((prompt) => (
+                {STARTER_PROMPTS.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
@@ -883,27 +1102,37 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
           ) : (
             <>
               {(turns || []).map((turn, index) => {
-                const hasApprovalCard =
+                const isLatestTurn = index === turns.length - 1
+                const turnOwnsPendingApproval = Boolean(
                   pendingApproval &&
+                  (
+                    (
+                      Array.isArray(turn.approvals) &&
+                      turn.approvals.some((a) => a?.event_type === 'approval_required' && a?.approval_id === pendingApproval.approval_id)
+                    ) ||
+                    isLatestTurn
+                  ),
+                )
+                const pendingApprovalForTurn = turnOwnsPendingApproval ? pendingApproval : null
+                const hasApprovalCard =
+                  pendingApprovalForTurn &&
                   !isResumingAfterApproval &&
-                  session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
-                  Array.isArray(turn.approvals) &&
-                  turn.approvals.some((a) => a?.event_type === 'approval_required' && a?.approval_id === pendingApproval.approval_id)
+                  effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL &&
+                  turnOwnsPendingApproval
 
                 const userTs = turn.user?.created_at ? formatFactoryAgentTime(turn.user.created_at) : null
                 const assistantTs = turn.created_at ? formatFactoryAgentTime(turn.created_at) : null
-                const isLatestTurn = index === turns.length - 1
                 const shouldAnimateText =
                   isLatestTurn &&
-                  ![FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(session?.status)
+                  ![FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(effectiveSessionStatus)
                 const hideLegacyProgress = ACTIVITY_TIMELINE_ENABLED && isLatestTurn && isProgressSummary(turn?.summary)
                 const latestActivitySteps = isLatestTurn ? activitySteps : []
                 const shouldRenderAssistant =
-                  !hideLegacyProgress || latestActivitySteps.length > 0 || hasApprovalCard
+                  turn?.responseDocument != null || !hideLegacyProgress || latestActivitySteps.length > 0 || hasApprovalCard
                 const showResumeBanner =
                   isLatestTurn &&
                   isResumingAfterApproval &&
-                  session?.status === FACTORY_AGENT_STATUS.EXECUTING &&
+                  effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING &&
                   !hasApprovalCard
 
                 return (
@@ -917,7 +1146,7 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                         timestamp={assistantTs}
                         activitySteps={latestActivitySteps}
                         showApprovalCard={hasApprovalCard}
-                        pendingApproval={pendingApproval}
+                        pendingApproval={pendingApprovalForTurn}
                         getStashedBundlePresentation={getStashedBundlePresentation}
                         approvalReason={approvalReason}
                         setApprovalReason={setApprovalReason}
@@ -931,6 +1160,8 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
                         showResumeBanner={showResumeBanner}
                         session={session}
                         isLatestTurn={isLatestTurn}
+                        onOpenSourceEvidence={handleOpenSourceEvidence}
+                        activeSourceEvidence={activeSourceEvidence}
                       />
                     ) : null}
                   </Fragment>
@@ -952,27 +1183,29 @@ const FactoryAgentChatPanel = ({ onClose, onHeaderMouseDown, useChatState = useF
               timestamp={formatFactoryAgentTime(Date.now())}
             />
           )}
-        </div>
+            </div>
 
-        {session?.status === FACTORY_AGENT_STATUS.WAITING_APPROVAL && pendingApproval ? (
-          <div className="mx-4 mt-2 rounded-lg border border-hairline bg-surface-2 px-3 py-2 text-xs text-ink-subtle">
-            Follow-up messages can revise the plan, but the current approval remains pending until you approve, reject, or cancel it.
+            <FactoryAgentChatComposer
+              input={input}
+              onInputChange={setInput}
+              disabled={inputDisabled}
+              placeholder={placeholder}
+              canCancel={canCancel}
+              isCancelling={isCancelling}
+              isSending={isSending}
+              onCancel={handleCancel}
+              onSend={handleSend}
+            />
           </div>
-        ) : null}
-
-        <FactoryAgentChatComposer
-          input={input}
-          onInputChange={setInput}
-          messageMode={messageMode}
-          onMessageModeChange={setMessageMode}
-          disabled={inputDisabled}
-          placeholder={placeholder}
-          canCancel={canCancel}
-          isCancelling={isCancelling}
-          isSending={isSending}
-          onCancel={handleCancel}
-          onSend={handleSend}
-        />
+          <SourceDrawer
+            source={sourceEvidence?.source}
+            sources={sourceEvidence?.sources || []}
+            pdfSource={sourceEvidencePdf}
+            onOpenPdf={setSourceEvidencePdf}
+            onBack={() => setSourceEvidencePdf(null)}
+            onClose={closeSourceEvidence}
+          />
+        </div>
       </div>
     </div>
   )

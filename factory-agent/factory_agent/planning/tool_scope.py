@@ -28,7 +28,7 @@ _METHOD_HINTS = {
     "DELETE": {"delete"},
 }
 _COMPOUND_SEPARATOR_RE = re.compile(
-    r"\b(?:and then|then|next|after that|afterwards|finally)\b|[;\n.]+",
+    r"\b(?:and then|then|next(?!\s+\d)|after that|afterwards|finally)\b|[;\n.]+",
     re.IGNORECASE,
 )
 

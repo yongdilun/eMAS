@@ -46,7 +46,13 @@ export function TablePresentation({ presentation, animate = false, animateKey = 
   : 'overflow-hidden rounded-lg border border-hairline bg-surface-1'
 
  const tableBlock = (
- <div className={tableSurfaceClass}>
+ <div
+ className={tableSurfaceClass}
+ data-table-presentation=""
+ data-table-row-count={String(rows.length)}
+ data-table-rendered-row-count={String(renderedRows.length)}
+ data-table-column-count={String(columns.length)}
+ >
  {analysisFacts.length ? (
  <div className="border-b border-hairline bg-surface-2 px-3 py-2 text-[11px] text-ink-muted">
  <div className="space-y-1">
@@ -63,7 +69,11 @@ export function TablePresentation({ presentation, animate = false, animateKey = 
  <thead className="bg-surface-2 text-ink-muted">
  <tr>
  {columns.map((column) => (
- <th key={column.key} className="px-3 py-2 font-medium whitespace-nowrap">
+ <th
+ key={column.key}
+ className="px-3 py-2 font-medium whitespace-nowrap"
+ data-table-column-key={String(column.key || '')}
+ >
  {column.label || column.key}
  </th>
  ))}
@@ -71,7 +81,11 @@ export function TablePresentation({ presentation, animate = false, animateKey = 
  </thead>
  <tbody className="divide-y divide-hairline bg-surface-1 text-ink">
  {renderedRows.map((row, rowIndex) => (
- <tr key={`${rowIndex}-${String(row?.[columns[0]?.key] ?? rowIndex)}`}>
+ <tr
+ key={`${rowIndex}-${String(row?.[columns[0]?.key] ?? rowIndex)}`}
+ data-table-row=""
+ data-table-row-index={String(rowIndex)}
+ >
  {columns.map((column) => (
  <td key={column.key} className="px-3 py-2 align-top whitespace-nowrap">
  {row?.[column.key] == null ? '—' : String(row[column.key])}

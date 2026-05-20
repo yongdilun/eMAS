@@ -40,6 +40,30 @@ npm run dev
 npm run build
 ```
 
+### Tests
+
+Component and utility tests:
+
+```bash
+npm test
+```
+
+Deterministic browser chatbot validation:
+
+```bash
+npm run test:e2e -- --project=chromium
+```
+
+The Playwright chatbot suite replaces manual browser typing, waiting, and final DOM checking for the Factory Agent chat modal. It runs the Vite app against a mocked Factory Agent REST/SSE server, so it does not require the real Go API, real Factory Agent, Docker, RAG, or LLM calls.
+
+For a quick smoke against a real Factory Agent HTTP endpoint, use:
+
+```bash
+npm run factory-agent-smoke
+```
+
+That smoke script remains API-only. Use Playwright for browser/modal validation.
+
 ## Project Structure
 
 ```

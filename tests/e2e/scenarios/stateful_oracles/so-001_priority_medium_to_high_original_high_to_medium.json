@@ -1,0 +1,297 @@
+{
+  "id": "SO-001",
+  "title": "Medium priority jobs to high, then original high priority jobs to medium",
+  "risk": "Second approval can read the post-commit state from approval 1, mutate newly changed rows, or produce a final response before the second approval is complete.",
+  "prompt": "Change all medium priority jobs to high, then change all original high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO001-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO001-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO001-MED-01",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO001-MED-02",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO001-LOW-01",
+        "priority": "low",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "source_set_semantics": "original_state_for_each_user_clause"
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-001-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "medium"
+      },
+      "new_values": {
+        "priority": "high"
+      },
+      "source_row_ids": [
+        "JOB-SO001-MED-01",
+        "JOB-SO001-MED-02"
+      ]
+    },
+    {
+      "intent_id": "SO-001-I2",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high",
+        "state_basis": "original"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO001-HIGH-01",
+        "JOB-SO001-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-001-1",
+      "intent_id": "SO-001-I1",
+      "decision": "accepted",
+      "previous_priority": "medium",
+      "new_priority": "high",
+      "row_ids": [
+        "JOB-SO001-MED-01",
+        "JOB-SO001-MED-02"
+      ],
+      "row_count": 2
+    },
+    {
+      "approval_id": "approval-so-001-2",
+      "intent_id": "SO-001-I2",
+      "decision": "accepted",
+      "previous_priority": "high",
+      "new_priority": "medium",
+      "row_ids": [
+        "JOB-SO001-HIGH-01",
+        "JOB-SO001-HIGH-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "approval-so-001-1 commit",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-001-2",
+      "jobs": [
+        {
+          "id": "JOB-SO001-HIGH-01",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO001-HIGH-02",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO001-MED-01",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO001-MED-02",
+          "priority": "high"
+        },
+        {
+          "id": "JOB-SO001-LOW-01",
+          "priority": "low"
+        }
+      ],
+      "forbidden": [
+        "final_response_created",
+        "operation_completed"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO001-HIGH-01",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO001-HIGH-02",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO001-MED-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO001-MED-02",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO001-LOW-01",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-001-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO001-MED-01",
+        "JOB-SO001-MED-02"
+      ],
+      "from": "medium",
+      "to": "high",
+      "status": "success"
+    },
+    {
+      "approval_id": "approval-so-001-2",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO001-HIGH-01",
+        "JOB-SO001-HIGH-02"
+      ],
+      "from": "high",
+      "to": "medium",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 2
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-001-1"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-001-1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-001-1"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-001-2"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-001-2",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-001-2"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_first_commit": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-001-2",
+      "must_not_include_events": [
+        "final_response_created",
+        "operation_completed"
+      ]
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": [
+        "approval-so-001-1",
+        "approval-so-001-2"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-001-2",
+    "must_include": [
+      "2 medium priority jobs changed to high",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_include": [
+      "all high priority jobs changed to medium",
+      "Run complete before approval"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-001-1",
+      "approval-so-001-2"
+    ],
+    "final_state_visible_only_after": "approval-so-001-2 accepted and committed",
+    "must_show": [
+      "Run complete",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_show": [
+      "Factory Agent needs attention"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO001-LOW-01",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "approval_ids_are_distinct",
+    "original_state_semantics",
+    "no_final_before_terminal",
+    "pending_approval_matches_snapshot",
+    "commit_matches_approval_bundle",
+    "final_summary_matches_commits",
+    "timeline_contains_transition_chain",
+    "sse_matches_snapshot"
+  ],
+  "required_layers": [
+    "pytest_graph",
+    "seeded_full_stack",
+    "real_langgraph_browser"
+  ],
+  "weakness_from_phase0": "The existing cascade graph test uses monkeypatched in-memory state and can pass while real DB state, audit rows, timeline projection, SSE, or browser final response are wrong.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-data-integrity.spec.js::SO-001 scenario 86",
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-001 scenario 119",
+      "eMas Front/e2e/specs/real-langgraph-critical.spec.js::SO-001/SO-035"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

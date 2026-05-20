@@ -1,0 +1,68 @@
+name: Playwright Operational Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the Phase 17 gate matrix without executing child checks.
+        required: false
+        default: "false"
+
+jobs:
+  operational-readiness:
+    name: Phase 17 operational gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    defaults:
+      run:
+        working-directory: eMas Front
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: eMas Front/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Phase 17 operational scenario structure
+        run: npm run test:e2e:operational
+
+      - name: Run production-grade operational gate
+        run: npm run operational:gate -- ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Upload operational readiness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-operational-readiness
+          path: |
+            eMas Front/playwright-report/
+            eMas Front/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

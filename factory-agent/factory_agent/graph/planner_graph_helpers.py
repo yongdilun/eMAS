@@ -14,12 +14,14 @@ from ..security.guardrails import (
     strip_unsupported_optional_args,
 )
 from ..planning.plan_validator import validate_plan
+from ..planning.query_shape import infer_collection_query_args, merge_inferred_read_args
 from ..schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
 from ..observability.telemetry import log_event, log_llm_prompt
 from ..planning.tool_intent_profile import (
     build_tool_intent_profile,
     intent_feature_tokens,
     profile_match_score,
+    tokenize,
     tool_covers_descriptive_terms,
     vocabulary_for_tools,
 )
@@ -164,6 +166,23 @@ def _extract_entity_id(intent: str, entity: str) -> str | None:
     return None
 
 
+def _extract_entity_ids(intent: str, entity: str) -> list[str]:
+    prefixes = _generated_id_prefixes_by_entity().get(entity.lower(), [])
+    if not prefixes:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _TOKEN_ID_RE.finditer(intent or ""):
+        value = match.group(1).upper()
+        if not any(value.startswith(prefix) for prefix in prefixes):
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 def _schema_properties(tool: ToolInfo) -> dict[str, Any]:
     properties = (tool.input_schema or {}).get("properties")
     return properties if isinstance(properties, dict) else {}
@@ -271,6 +290,95 @@ def _is_collection_read_tool(tool: ToolInfo) -> bool:
     return tool.method == "GET" and not tool.path_params and "{" not in (tool.endpoint or "") and _collection_entity(tool) is not None
 
 
+def _item_lookup_entity_and_param(tool: ToolInfo) -> tuple[str, str] | None:
+    if tool.method != "GET" or not tool.is_read_only or tool.requires_approval:
+        return None
+    params = list(tool.path_params or re.findall(r"\{([a-zA-Z0-9_]+)\}", tool.endpoint or ""))
+    if len(params) != 1:
+        return None
+    param = params[0]
+    segments = [segment for segment in (tool.endpoint or "").split("/") if segment]
+    target = f"{{{param}}}"
+    for idx, segment in enumerate(segments):
+        if segment != target or idx == 0:
+            continue
+        prior = next((item for item in reversed(segments[:idx]) if not item.startswith("{")), "")
+        entity = _singularize_entity(prior)
+        if entity:
+            return entity, param
+    return None
+
+
+def _infer_multi_entity_lookup_plan(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
+    lowered = (intent or "").lower()
+    if not re.search(r"\b(?:status|state|health|condition|details?|lookup|read|show|get|find|view)\b", lowered):
+        return None
+    for tool in scoped_tools:
+        lookup = _item_lookup_entity_and_param(tool)
+        if lookup is None:
+            continue
+        entity, param = lookup
+        entity_ids = _extract_entity_ids(intent, entity)
+        if len(entity_ids) < 2:
+            continue
+        query_params = set(tool.query_params or [])
+        steps: list[AgentPlanStep] = []
+        for entity_id in entity_ids:
+            args = merge_inferred_read_args(intent, tool, {param: entity_id})
+            if (
+                "fields" in query_params
+                and "fields" not in args
+                and re.search(r"\b(?:status|state|health|condition)\b", lowered)
+            ):
+                args["fields"] = f"{entity}_id,status"
+            steps.append(
+                AgentPlanStep(
+                    tool_name=tool.name,
+                    args=args,
+                    evidence={param: entity_id},
+                    confidence=0.9,
+                )
+            )
+        return AgentPlanOutput(
+            plan_explanation=f"Look up {len(entity_ids)} {_pluralize_entity(entity, len(entity_ids))}.",
+            risk_summary="Read-only multi-record lookup.",
+            steps=steps,
+        )
+    return None
+
+
+def _infer_collection_query_shape(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
+    """Infer collection reads with explicit query shape such as fields, sort, limit, and enum filters."""
+    lowered = (intent or "").lower()
+    if not re.search(r"\b(?:show|list|get|view|find|return)\b", lowered):
+        return None
+    if re.search(r"\b(?:change|set|update|mark|make|delete|remove|create)\b", lowered):
+        return None
+
+    for tool in scoped_tools:
+        if not _is_collection_read_tool(tool):
+            continue
+        entity = _collection_entity(tool)
+        if not entity or not re.search(rf"\b{re.escape(entity)}s?\b", lowered):
+            continue
+        args = infer_collection_query_args(intent, tool)
+        if not args and not re.search(r"\b(?:all|records?|rows?)\b", lowered):
+            continue
+        return AgentPlanOutput(
+            plan_explanation=f"List {_pluralize_entity(entity, 2)} with the requested read shape.",
+            risk_summary="Read-only collection lookup with no data changes.",
+            steps=[
+                AgentPlanStep(
+                    tool_name=tool.name,
+                    args=args,
+                    evidence={key: str(value) for key, value in args.items()},
+                    confidence=0.93,
+                )
+            ],
+        )
+    return None
+
+
 def _infer_enum_collection_filter(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
     """Infer requests like "maintenance machines" as list(entity, status=value).
 
@@ -360,6 +468,54 @@ def _infer_enum_status_update(intent: str, scoped_tools: list[ToolInfo]) -> Agen
     return None
 
 
+def _infer_entity_lookup_read(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
+    """Infer an explicit entity-id lookup for the selected read-only item tool.
+
+    This is deliberately schema/profile driven: it only copies an ID that is
+    present in the user text into a required lookup arg for the same endpoint
+    entity. It does not invent fixture IDs and it does not choose broad reads.
+    """
+    bindings = _extract_intent_entity_bindings(intent)
+    if not bindings:
+        return None
+
+    for tool in scoped_tools:
+        if tool.method != "GET" or not tool.is_read_only or tool.requires_approval:
+            continue
+        required = [str(field) for field in ((tool.input_schema or {}).get("required") or [])]
+        if not required:
+            required = [str(field) for field in (tool.path_params or [])]
+        if not required:
+            continue
+
+        for entity, entity_id in bindings:
+            if not _is_entity_lookup_tool(tool, entity=entity):
+                continue
+            args, evidence = _inject_entity_id_required_args(
+                tool=tool,
+                entity=entity,
+                entity_id=entity_id,
+                args={},
+                evidence={},
+            )
+            args = merge_inferred_read_args(intent, tool, args)
+            if missing_required_fields(tool, args):
+                continue
+            return AgentPlanOutput(
+                plan_explanation=f"Look up {entity} `{entity_id}`.",
+                risk_summary="Read-only lookup with no data changes.",
+                steps=[
+                    AgentPlanStep(
+                        tool_name=tool.name,
+                        args=args,
+                        evidence=evidence or {next(iter(args.keys()), "id"): entity_id},
+                        confidence=0.94,
+                    )
+                ],
+            )
+    return None
+
+
 def _candidate_id_prefixes_for_path_arg(*, tool: ToolInfo, field: str, entity: str) -> list[str]:
     prefixes: list[str] = []
     properties = (tool.input_schema or {}).get("properties")
@@ -442,10 +598,33 @@ def _extract_context_entity_binding(context: dict[str, Any] | None, scoped_tools
 def _is_entity_lookup_tool(tool: ToolInfo, *, entity: str) -> bool:
     if tool.method != "GET" or not tool.is_read_only or tool.requires_approval:
         return False
-    for field in tool.path_params or []:
-        if _endpoint_entity_before_param(tool.endpoint, field) == entity:
+    for field in [*(tool.path_params or []), *((tool.input_schema or {}).get("required") or [])]:
+        if _tool_field_targets_entity(tool=tool, field=str(field), entity=entity):
             return True
     return False
+
+
+def _tool_capability_tokens(tool: ToolInfo) -> set[str]:
+    tokens: set[str] = set()
+    for tag in tool.capability_tags or []:
+        tokens.update(tokenize(str(tag)))
+    return tokens
+
+
+def _tool_field_targets_entity(*, tool: ToolInfo, field: str, entity: str) -> bool:
+    normalized_entity = _singularize_entity(entity)
+    normalized_field = str(field).strip().lower()
+    if normalized_field in {f"{normalized_entity}_id", f"{normalized_entity}s_id"}:
+        return True
+
+    endpoint_entity = _endpoint_entity_before_param(tool.endpoint, str(field))
+    if endpoint_entity == normalized_entity:
+        return True
+
+    tags = _tool_capability_tokens(tool)
+    if endpoint_entity and endpoint_entity in tags:
+        return False
+    return normalized_entity in tags
 
 
 def _inject_entity_id_required_args(
@@ -463,12 +642,72 @@ def _inject_entity_id_required_args(
         if merged_args.get(field) not in (None, ""):
             continue
         normalized = str(field).strip().lower()
-        from_endpoint = _endpoint_entity_before_param(tool.endpoint, str(field)) == entity
+        from_endpoint = _tool_field_targets_entity(tool=tool, field=str(field), entity=entity)
         from_name = normalized in {f"{entity}_id", f"{entity}s_id"}
         if from_endpoint or from_name:
             merged_args[str(field)] = entity_id
             merged_evidence[str(field)] = entity_id
     return merged_args, merged_evidence
+
+
+def _requested_read_discriminators(intent: str, *, entity: str, vocabulary: Any) -> set[str]:
+    tokens = tokenize(_TOKEN_ID_RE.sub(" ", intent or ""))
+    return tokens - set(vocabulary.generic_tokens) - set(vocabulary.operator_tokens) - {_singularize_entity(entity)}
+
+
+def _infer_feature_specific_entity_read(intent: str, scoped_tools: list[ToolInfo]) -> AgentPlanOutput | None:
+    bindings = _extract_intent_entity_bindings(intent)
+    if not bindings:
+        return None
+
+    vocabulary = vocabulary_for_tools(scoped_tools)
+    best: tuple[int, str, str, ToolInfo, dict[str, Any], dict[str, str]] | None = None
+    for entity, entity_id in bindings:
+        requested = _requested_read_discriminators(intent, entity=entity, vocabulary=vocabulary)
+        if not requested:
+            continue
+        for tool in scoped_tools:
+            if not _is_entity_lookup_tool(tool, entity=entity):
+                continue
+            args, evidence = _inject_entity_id_required_args(
+                tool=tool,
+                entity=entity,
+                entity_id=entity_id,
+                args={},
+                evidence={},
+            )
+            args = merge_inferred_read_args(intent, tool, args)
+            if missing_required_fields(tool, args):
+                continue
+
+            profile = build_tool_intent_profile(tool, vocabulary=vocabulary)
+            tool_tokens = set(profile.identity_tokens) | set(profile.endpoint_segments) | set(profile.field_tokens)
+            overlap = requested & tool_tokens
+            if not overlap:
+                continue
+
+            score = profile_match_score(intent, tool, vocabulary=vocabulary) + (25 * len(overlap))
+            if profile.endpoint_shape != "item":
+                score += 8
+            if best is None or score > best[0]:
+                best = (score, entity, entity_id, tool, args, evidence)
+
+    if best is None:
+        return None
+
+    _, entity, entity_id, tool, args, evidence = best
+    return AgentPlanOutput(
+        plan_explanation=f"Use `{tool.name}` for the requested {entity} read.",
+        risk_summary="Read-only lookup with no data changes.",
+        steps=[
+            AgentPlanStep(
+                tool_name=tool.name,
+                args=args,
+                evidence=evidence or {next(iter(args.keys()), "id"): entity_id},
+                confidence=0.9,
+            )
+        ],
+    )
 
 
 def _infer_compound_entity_followup_read(
@@ -604,6 +843,10 @@ def _deterministic_plan_repair(
     lowered = (intent or "").lower()
     tools = {tool.name: tool for tool in scoped_tools}
 
+    multi_lookup = _infer_multi_entity_lookup_plan(intent, scoped_tools)
+    if multi_lookup is not None:
+        return multi_lookup
+
     # Narrow catalog reads (avoid LLM clarification on optional sort/filter).
     if (
         re.search(r"\b(?:show|list|get|view)\s+products?\b", lowered)
@@ -716,8 +959,8 @@ def _deterministic_plan_repair(
             ],
         )
 
-    # Require the literal word "job" after show/get/view — do not use `\s+job\b` alone or it
-    # matches the `job` prefix inside lowercased IDs like `JOB-SEED-001` → `job-seed-001`.
+    # Require the literal word "job" after show/get/view; matching only the prefix can
+    # misread fixture-style job identifiers as a lookup command.
     if (
         job_lookup_id
         and re.search(r"\b(?:show|get|view)\s+job\s+", lowered)
@@ -784,11 +1027,23 @@ def _deterministic_plan_repair(
     if inferred is not None:
         return inferred
 
+    inferred = _infer_collection_query_shape(intent, scoped_tools)
+    if inferred is not None:
+        return inferred
+
     inferred = _infer_enum_collection_filter(intent, scoped_tools)
     if inferred is not None:
         return inferred
 
     inferred = _infer_compound_entity_followup_read(intent, scoped_tools, context=context)
+    if inferred is not None:
+        return inferred
+
+    inferred = _infer_feature_specific_entity_read(intent, scoped_tools)
+    if inferred is not None:
+        return inferred
+
+    inferred = _infer_entity_lookup_read(intent, scoped_tools)
     if inferred is not None:
         return inferred
 
@@ -816,21 +1071,6 @@ def _deterministic_plan_repair(
                     args={"id": "JOB-NOT-REAL"},
                     evidence={"id": "404 read soft diagnostic"},
                     confidence=0.9,
-                )
-            ],
-        )
-
-    job_id = _extract_entity_id(intent, "job")
-    if job_id and re.search(r"\bslots?\b", lowered) and "get__jobs_{id}_slots" in tools:
-        return AgentPlanOutput(
-            plan_explanation="Fetch scheduling slots for the requested job.",
-            risk_summary="Read-only lookup with no data changes.",
-            steps=[
-                AgentPlanStep(
-                    tool_name="get__jobs_{id}_slots",
-                    args={"id": job_id},
-                    evidence={"id": job_id},
-                    confidence=0.95,
                 )
             ],
         )
@@ -1201,6 +1441,15 @@ def _singularize_entity(segment: str) -> str:
     if cleaned.endswith("s") and len(cleaned) > 1:
         return cleaned[:-1]
     return cleaned
+
+
+def _pluralize_entity(entity: str, count: int) -> str:
+    cleaned = _singularize_entity(entity)
+    if count == 1:
+        return cleaned or "record"
+    if cleaned.endswith("y"):
+        return f"{cleaned[:-1]}ies"
+    return f"{cleaned or 'record'}s"
 
 
 def _endpoint_entity_before_param(endpoint: str, field: str) -> str | None:

@@ -9,6 +9,7 @@ import {
     augmentScheduleBatchMessage,
     aiApi,
     apiErrorMessage,
+    apiErrorToastOptions,
     isStaleProposalError,
     jobsApi,
     machinesApi,
@@ -515,7 +516,7 @@ const Scheduling = () => {
             if (err?.status === 409 && msg.includes('snapshot_conflict')) {
                 toast.error('Inventory changed, refresh analysis and try again.')
             } else {
-                toast.error(apiErrorMessage(err, 'Failed to apply recommendation.'))
+                toast.error(apiErrorMessage(err, 'Failed to apply recommendation.'), apiErrorToastOptions(err))
             }
         } finally {
             setShortageActionLoading('')
@@ -548,7 +549,7 @@ const Scheduling = () => {
             }))
             toast.success('Shortage analysis refreshed.')
         } catch (err) {
-            toast.error(apiErrorMessage(err, 'Failed to refresh shortage analysis.'))
+            toast.error(apiErrorMessage(err, 'Failed to refresh shortage analysis.'), apiErrorToastOptions(err))
         } finally {
             setShortageAnalysisLoading(false)
         }
@@ -579,7 +580,7 @@ const Scheduling = () => {
             if (err?.status === 409 && msg.includes('snapshot_conflict')) {
                 toast.error('Inventory changed, refresh analysis and try again.')
             } else {
-                toast.error(apiErrorMessage(err, 'Failed to apply replenishment.'))
+                toast.error(apiErrorMessage(err, 'Failed to apply replenishment.'), apiErrorToastOptions(err))
             }
         } finally {
             setShortageActionLoading('')
@@ -665,7 +666,7 @@ const Scheduling = () => {
                 }))
                 toast.error('Convergence failed. Manual intervention required.')
             } else {
-                toast.error(apiErrorMessage(err, 'Failed to run replenish + replan.'))
+                toast.error(apiErrorMessage(err, 'Failed to run replenish + replan.'), apiErrorToastOptions(err))
             }
         } finally {
             setShortageActionLoading('')
@@ -888,7 +889,7 @@ const Scheduling = () => {
             loadExistingProposals()
         } catch (err) {
             logger.error('Apply proposal failed', err, { proposalId })
-            toast.error(apiErrorMessage(err, 'Failed to apply proposal.'))
+            toast.error(apiErrorMessage(err, 'Failed to apply proposal.'), apiErrorToastOptions(err))
             if (isStaleProposalError(err)) {
                 setProposals((prev) => prev.filter((p) => p.proposal_id !== proposalId))
                 if (selectedJob?.job_id === jobId) setSelectedJob(null)
@@ -905,7 +906,7 @@ const Scheduling = () => {
             toast.success(`Proposal for ${jobId} rejected.`)
         } catch (err) {
             logger.error('Reject proposal failed', err, { proposalId })
-            toast.error(apiErrorMessage(err, 'Failed to reject proposal.'))
+            toast.error(apiErrorMessage(err, 'Failed to reject proposal.'), apiErrorToastOptions(err))
         }
     }
 
@@ -948,7 +949,7 @@ const Scheduling = () => {
         } catch (err) {
             logger.error('Reschedule all failed', err)
             setGenerateError(apiErrorMessage(err, 'Failed to reschedule.'))
-            toast.error(apiErrorMessage(err, 'Failed to reschedule.'))
+            toast.error(apiErrorMessage(err, 'Failed to reschedule.'), apiErrorToastOptions(err))
         } finally {
             setLoading(false)
         }
@@ -1044,7 +1045,7 @@ const Scheduling = () => {
                 await aiApi.scheduling.rejectProposal(p.proposal_id, {})
                 discarded++
             } catch (err) {
-                toast.error(apiErrorMessage(err, `Failed to discard ${p.job_id}.`))
+                toast.error(apiErrorMessage(err, `Failed to discard ${p.job_id}.`), apiErrorToastOptions(err))
             }
         }
         setPreviewLoading(false)
@@ -1074,7 +1075,7 @@ const Scheduling = () => {
                 rejected++
             } catch (err) {
                 failed++
-                toast.error(apiErrorMessage(err, `Failed to reject ${p.job_id}.`))
+                toast.error(apiErrorMessage(err, `Failed to reject ${p.job_id}.`), apiErrorToastOptions(err))
             }
         }
         setLoading(false)
@@ -1114,7 +1115,7 @@ const Scheduling = () => {
                 return
             }
         } catch (err) {
-            toast.error(apiErrorMessage(err, 'Failed to verify proposal overlaps before apply.'))
+            toast.error(apiErrorMessage(err, 'Failed to verify proposal overlaps before apply.'), apiErrorToastOptions(err))
             setLoading(false)
             return
         }
@@ -1126,6 +1127,7 @@ const Scheduling = () => {
         const failedIds = new Set()
         let hardError = null
         let firstSoftErrorMsg = null
+        let firstSoftErrorToastOptions = {}
         let skippedInfeasibleOnApprove = 0
         for (const p of feasibleCandidates) {
             try {
@@ -1158,7 +1160,10 @@ const Scheduling = () => {
                     hardError = { err, msg, isWorkCalendar, isStale, proposal: p }
                     break
                 }
-                if (!firstSoftErrorMsg) firstSoftErrorMsg = msg
+                if (!firstSoftErrorMsg) {
+                    firstSoftErrorMsg = msg
+                    firstSoftErrorToastOptions = apiErrorToastOptions(err)
+                }
             }
         }
         setLoading(false)
@@ -1168,7 +1173,7 @@ const Scheduling = () => {
         }
         if (hardError?.isWorkCalendar) {
             setHardBatchError({ type: 'work_calendar', message: hardError.msg })
-            toast.error(hardError.msg)
+            toast.error(hardError.msg, apiErrorToastOptions(hardError.err))
             try {
                 await schedulingApi.refreshWorkCalendars()
                 toast.info('A slot is outside work calendar. Refresh calendars and regenerate proposals.')
@@ -1191,6 +1196,7 @@ const Scheduling = () => {
                 failedIds.size === 1
                     ? firstSoftErrorMsg
                     : `${firstSoftErrorMsg} (${failedIds.size} proposal(s) failed; others may have applied.)`,
+                firstSoftErrorToastOptions,
             )
         }
         if (!hardError && applied === 0 && skippedInfeasibleOnApprove > 0 && failedIds.size === 0 && !firstSoftErrorMsg) {
@@ -1211,7 +1217,7 @@ const Scheduling = () => {
                 }
             } catch (err) {
                 postApplyVerifyOk = false
-                toast.error(apiErrorMessage(err, 'Failed to verify applied overlaps for this batch.'))
+                toast.error(apiErrorMessage(err, 'Failed to verify applied overlaps for this batch.'), apiErrorToastOptions(err))
             }
             setPreviewOpen(false)
             loadAppliedJobs()

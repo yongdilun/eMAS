@@ -1,0 +1,262 @@
+{
+  "id": "SO-035",
+  "title": "Real LangGraph no seeded adapter",
+  "risk": "Seeded Playwright adapters can pass while the real LangGraph planner splits, pauses, resumes, or finalizes the same workflow incorrectly.",
+  "prompt": "Change all medium priority jobs to high, then change all original high priority jobs to medium.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO035-HIGH-01",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO035-HIGH-02",
+        "priority": "high",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO035-MED-01",
+        "priority": "medium",
+        "status": "open"
+      },
+      {
+        "id": "JOB-SO035-LOW-01",
+        "priority": "low",
+        "status": "open"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "planner_mode": "real_langgraph",
+    "seeded_adapter_enabled": false
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-035-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "medium"
+      },
+      "new_values": {
+        "priority": "high"
+      },
+      "source_row_ids": [
+        "JOB-SO035-MED-01"
+      ]
+    },
+    {
+      "intent_id": "SO-035-I2",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "high",
+        "state_basis": "original"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO035-HIGH-01",
+        "JOB-SO035-HIGH-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-035-1",
+      "intent_id": "SO-035-I1",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO035-MED-01"
+      ],
+      "row_count": 1
+    },
+    {
+      "approval_id": "approval-so-035-2",
+      "intent_id": "SO-035-I2",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO035-HIGH-01",
+        "JOB-SO035-HIGH-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "real LangGraph first commit",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-035-2",
+      "planner_mode": "real_langgraph",
+      "seeded_adapter_enabled": false,
+      "forbidden": [
+        "SeededPlaywrightPlanner route",
+        "final_response_created"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO035-HIGH-01",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO035-HIGH-02",
+        "priority": "medium"
+      },
+      {
+        "id": "JOB-SO035-MED-01",
+        "priority": "high"
+      },
+      {
+        "id": "JOB-SO035-LOW-01",
+        "priority": "low"
+      }
+    ],
+    "pending_approval_id": null,
+    "planner_mode": "real_langgraph"
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-035-1",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO035-MED-01"
+      ],
+      "from": "medium",
+      "to": "high",
+      "status": "success"
+    },
+    {
+      "approval_id": "approval-so-035-2",
+      "action": "bulk_update_job_priority",
+      "row_ids": [
+        "JOB-SO035-HIGH-01",
+        "JOB-SO035-HIGH-02"
+      ],
+      "from": "high",
+      "to": "medium",
+      "status": "success"
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started",
+      "planner_mode": "real_langgraph"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 2
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-035-1"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-035-1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-035-1"
+    },
+    {
+      "event": "next_intent_started",
+      "intent_id": "SO-035-I2"
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-035-2"
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-035-2",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-035-2"
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "after_first_commit": {
+      "status": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-035-2",
+      "planner_mode": "real_langgraph"
+    },
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "timeline_contains_approval_ids": [
+        "approval-so-035-1",
+        "approval-so-035-2"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "commit_completed approval-so-035-2",
+    "must_include": [
+      "1 medium priority job changed to high",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_include": [
+      "seeded adapter",
+      "newly high jobs changed to medium",
+      "Run complete before approval"
+    ]
+  },
+  "expected_ui": {
+    "approval_cards_in_order": [
+      "approval-so-035-1",
+      "approval-so-035-2"
+    ],
+    "must_show": [
+      "Run complete",
+      "2 original high priority jobs changed to medium"
+    ],
+    "must_not_show": [
+      "Factory Agent needs attention",
+      "seeded adapter"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO035-LOW-01",
+      "priority": "low"
+    }
+  ],
+  "invariants": [
+    "no_seeded_adapter_in_real_langgraph_suite",
+    "approval_ids_are_distinct",
+    "original_state_semantics",
+    "no_final_before_terminal",
+    "commit_matches_approval_bundle",
+    "final_summary_matches_commits"
+  ],
+  "required_layers": [
+    "pytest_graph",
+    "real_langgraph_browser"
+  ],
+  "weakness_from_phase0": "Phase 0 found seeded adapter tests that can hide real LangGraph planner bugs; this oracle requires the non-seeded path to prove the same cascade state, approvals, audit, timeline, and UI.",
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract",
+      "factory-agent/tests/test_langgraph_state_machine_oracles.py::test_priority_cascade_oracles_use_original_state_for_second_write_set"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/real-langgraph-critical.spec.js::SO-001/SO-035"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-12-executable-enforcement-closure"
+  }
+}

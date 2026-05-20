@@ -12,11 +12,37 @@ from rank_bm25 import BM25Okapi
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 import fitz  # PyMuPDF
 
+from factory_agent.rag.document_registry import source_pdf_url
 from factory_agent.rag.schemas import DocumentEntry, SourceRegister, Chunk
+from factory_agent.rag.source_metadata import snippet_from_text
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _find_text_range(text: str, needle: str, start: int = 0) -> tuple[int, int] | None:
+    """Locate chunk text in extracted page text while tolerating whitespace normalization."""
+    if not needle:
+        return None
+
+    exact_start = text.find(needle, start)
+    if exact_start < 0 and start:
+        exact_start = text.find(needle)
+    if exact_start >= 0:
+        return exact_start, exact_start + len(needle)
+
+    tokens = [token for token in re.split(r"\s+", needle.strip()) if token]
+    if not tokens:
+        return None
+
+    pattern = r"\s+".join(re.escape(token) for token in tokens)
+    for lookup_start in (start, 0):
+        match = re.search(pattern, text[lookup_start:])
+        if match:
+            return lookup_start + match.start(), lookup_start + match.end()
+    return None
+
 
 class IngestionEngine:
     CHUNK_SIZE = 1000
@@ -40,7 +66,14 @@ class IngestionEngine:
         self.bm25_index = None
         self.bm25_chunks = [] # Store Chunk objects for BM25
         
-    def section_aware_split(self, text: str, doc_metadata: Dict[str, Any]) -> List[Chunk]:
+    def section_aware_split(
+        self,
+        text: str,
+        doc_metadata: Dict[str, Any],
+        *,
+        chunk_start_index: int = 0,
+        preserve_char_range: bool = False,
+    ) -> List[Chunk]:
         """
         Splits text by Markdown headers, then recursively splits sections.
         Prefixes each chunk with its section context.
@@ -60,6 +93,7 @@ class IngestionEngine:
             chunk_overlap=self.CHUNK_OVERLAP,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
+        search_cursor = 0
         
         for section in sections:
             # Determine section title and path
@@ -76,19 +110,35 @@ class IngestionEngine:
             
             for i, sub_text in enumerate(sub_chunks):
                 prefixed_text = f"[Section: {section_title}] {sub_text}"
-                chunk_id = f"{doc_metadata['doc_id']}_c{len(final_chunks):04d}"
+                chunk_index = chunk_start_index + len(final_chunks)
+                chunk_id = f"{doc_metadata['doc_id']}_c{chunk_index:04d}"
+                snippet = snippet_from_text(prefixed_text)
+                chunk_metadata = {
+                    **doc_metadata,
+                    **section.metadata,
+                    "source_id": f"{doc_metadata['doc_id']}#{chunk_id}",
+                    "chunk_id": chunk_id,
+                    "snippet": snippet,
+                    "section_title": section_title,
+                    "section_path": section_path,
+                    "chunk_index": chunk_index,
+                    "ingested_at": datetime.now().isoformat()
+                }
+                if preserve_char_range:
+                    needle = sub_text.strip()
+                    if needle:
+                        chunk_metadata["text_search"] = snippet_from_text(needle, limit=240)
+                    lookup_start = max(0, search_cursor - self.CHUNK_OVERLAP - 50)
+                    text_range = _find_text_range(text, needle, lookup_start)
+                    if text_range is not None:
+                        char_start, char_end = text_range
+                        chunk_metadata["char_range"] = [char_start, char_end]
+                        search_cursor = char_start + 1
                 
                 final_chunks.append(Chunk(
                     chunk_id=chunk_id,
                     text=prefixed_text,
-                    metadata={
-                        **doc_metadata,
-                        **section.metadata,
-                        "section_title": section_title,
-                        "section_path": section_path,
-                        "chunk_index": i,
-                        "ingested_at": datetime.now().isoformat()
-                    }
+                    metadata=chunk_metadata,
                 ))
         return final_chunks
 
@@ -102,19 +152,43 @@ class IngestionEngine:
             return False
             
         try:
-            text = ""
             file_ext = os.path.splitext(doc.file_path)[1].lower()
+            doc_metadata = doc.model_dump()
+            doc_metadata.pop("file_path", None)
             
             if file_ext == ".pdf":
                 logger.info(f"Extracting text from PDF: {doc.doc_id}")
+                chunks: list[Chunk] = []
                 with fitz.open(doc.file_path) as pdf:
-                    for page in pdf:
-                        text += page.get_text()
+                    for page_index, page in enumerate(pdf):
+                        page_text = page.get_text("text")
+                        if not page_text.strip():
+                            continue
+                        page_number = page_index + 1
+                        get_page_label = getattr(page, "get_label", None)
+                        page_label = get_page_label() if callable(get_page_label) else str(page_number)
+                        page_metadata = {
+                            **doc_metadata,
+                            "page": page_number,
+                            "page_index": page_index,
+                            "page_label": page_label or str(page_number),
+                            "pdf_url": source_pdf_url(doc.doc_id),
+                            "source_format": "pdf",
+                        }
+                        chunks.extend(
+                            self.section_aware_split(
+                                page_text,
+                                page_metadata,
+                                chunk_start_index=len(chunks),
+                                preserve_char_range=True,
+                            )
+                        )
             else:
                 with open(doc.file_path, 'r', encoding='utf-8') as f:
                     text = f.read()
+                chunks = self.section_aware_split(text, doc_metadata)
             
-            if not text.strip():
+            if not chunks:
                 logger.warning(f"No text extracted from {doc.doc_id}")
                 return False
                 
@@ -128,8 +202,6 @@ class IngestionEngine:
                 else:
                     logger.info(f"Updating {doc.doc_id} from {stored_version} to {doc.version}")
                     self.collection.delete(where={"doc_id": doc.doc_id})
-            
-            chunks = self.section_aware_split(text, doc.model_dump())
             
             # Prepare for ChromaDB
             ids = [c.chunk_id for c in chunks]

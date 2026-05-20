@@ -1,0 +1,590 @@
+{
+  "version": 2,
+  "phase": 19,
+  "description": "Manual chatbot prompt misses converted into deterministic parser, route, seeded workflow, and targeted browser coverage.",
+  "schema": {
+    "required_fields": [
+      "source_prompt",
+      "observed_failure",
+      "expected_behavior",
+      "artifact_link",
+      "selected_oracle",
+      "proposed_oracle",
+      "owner",
+      "severity",
+      "lowest_test_layer",
+      "browser_coverage",
+      "regression"
+    ],
+    "severity_values": ["critical", "high", "medium", "low"],
+    "coverage_categories": ["parser", "route", "pytest_snapshot", "pytest_api", "seeded-workflow", "mocked-browser", "seeded-browser", "real-langgraph-browser", "accepted-gap"],
+    "manual_screenshot_required_fields": [
+      "id",
+      "status",
+      "owner",
+      "severity",
+      "screenshot_symptom",
+      "user_prompt",
+      "observed_bad_state",
+      "expected_backend_session_state",
+      "expected_response_document",
+      "expected_visible_dom",
+      "forbidden_visible_text",
+      "reproducer",
+      "first_test_layer",
+      "linked_coverage",
+      "regression",
+      "verification_command"
+    ],
+    "manual_screenshot_first_test_layer_values": [
+      "backend_contract",
+      "reducer_component",
+      "mocked_playwright",
+      "seeded_playwright",
+      "real_langgraph"
+    ]
+  },
+  "promotion_workflow": {
+    "required_intake_fields": [
+      "exact_prompt_or_user_action",
+      "artifact_log_screenshot_or_trace_link",
+      "observed_behavior",
+      "expected_behavior",
+      "selected_existing_oracle_or_proposed_new_oracle",
+      "lowest_useful_test_layer",
+      "owner",
+      "severity"
+    ],
+    "closure_required_fields": [
+      "regression_test_file",
+      "failing_regression_command",
+      "failing_regression_evidence",
+      "passing_regression_command",
+      "tracker_update"
+    ],
+    "closure_rule": "Manual chatbot failures cannot close as tested manually only. Close with a promoted failing regression that failed before or with the fix and passed after the fix, or record an accepted gap with owner, severity, risk, workaround, target phase/date, reason, and blocking status.",
+    "lowest_layer_order": [
+      "parser",
+      "route",
+      "pytest_graph",
+      "pytest_api",
+      "pytest_snapshot",
+      "sse_pytest",
+      "frontend_unit",
+      "mocked-browser",
+      "seeded-workflow",
+      "seeded-browser",
+      "seeded_full_stack",
+      "real_langgraph_browser"
+    ]
+  },
+  "triage_rule": {
+    "coverage_categories": ["parser", "route", "seeded-workflow", "browser", "real-langgraph-browser", "accepted-gap"],
+    "closure_requirement": "Every new manual prompt or workflow miss must be mapped to parser, route, seeded-workflow, browser, or accepted-gap coverage before closure, with a failing regression before closure unless it is explicitly accepted as a gap.",
+    "accepted_gap_required_fields": ["owner", "severity", "risk", "target_date_or_phase", "reason", "temporary_workaround", "blocking_status"]
+  },
+  "manual_screenshot_workflow": {
+    "goal": "Manual screenshots are intake evidence only. Every screenshot/UI failure must be reproduced, classified by backend/frontend state, and closed through the smallest useful executable regression before scenario volume is increased.",
+    "future_agent_steps": [
+      "reproduce the screenshot failure or build the smallest seeded/backend fixture that represents it",
+      "classify expected backend session state and expected response_document state, revision, block types, and current step",
+      "add the failing executable regression at the first useful layer",
+      "fix any product bug before marking the phase or issue done",
+      "prove the fix with the semantic probe and transition oracle when browser state can diverge",
+      "commit only after verification commands pass and the structured bank entry is complete"
+    ],
+    "first_test_layer_order": [
+      "backend_contract",
+      "reducer_component",
+      "mocked_playwright",
+      "seeded_playwright",
+      "real_langgraph"
+    ],
+    "closure_rule": "A screenshot-only note is never a completed regression. Completed screenshot entries must include the prompt, observed bad state, expected backend state, expected response_document state, expected visible DOM, forbidden visible text, a reproducer or fixture, the first executable layer, owner/status, and verification command."
+  },
+  "manual_screenshot_regressions": [
+    {
+      "id": "phase13-chat514-non-terminal-snapshot-idle",
+      "status": "promoted_regression",
+      "owner": "qa",
+      "severity": "high",
+      "screenshot_symptom": "Manual Chat 514 screenshot shows the RD-001 prompt with header Ready, active sidebar WAITING FOR APPROVAL, assistant title Needs attention, message The request needs attention before it can continue, and technical details Reason: non_terminal_snapshot / Session status: IDLE.",
+      "user_prompt": "change all medium priority job to high then change all high priority job to low",
+      "observed_bad_state": {
+        "header_status": "Ready",
+        "active_sidebar_status": "WAITING FOR APPROVAL",
+        "visible_assistant_title": "Needs attention",
+        "visible_assistant_message": "The request needs attention before it can continue.",
+        "backend_session_status": "IDLE",
+        "response_document_reason": "non_terminal_snapshot"
+      },
+      "expected_backend_session_state": {
+        "allowed_statuses": ["WAITING_APPROVAL", "COMPLETED", "BLOCKED", "FAILED"],
+        "forbidden_statuses": ["IDLE"],
+        "pending_approval_rule": "WAITING_APPROVAL requires a pending_approval.approval_id; completed, blocked, or failed states must not expose active approval actions."
+      },
+      "expected_response_document": {
+        "allowed_states": ["waiting_approval", "completed", "blocked", "failed"],
+        "revision": "Monotonic event_seq-backed response_document.revision; the latest accepted revision wins across SSE and polling.",
+        "current_step": "Approval step while waiting, terminal result step when completed, or typed diagnostic step when blocked/failed; never non_terminal_snapshot for this actionable prompt.",
+        "required_block_types_any": ["approval_required", "result_summary", "diagnostic"],
+        "forbidden_reasons": ["non_terminal_snapshot"],
+        "forbidden_block_types_by_state": {
+          "completed": ["approval_required"]
+        }
+      },
+      "expected_visible_dom": {
+        "status_agreement": "Header and active sidebar status must match the backend session status mapping used by the response-document semantic probe.",
+        "required_visible_block_types_any": ["approval_required", "result_summary", "diagnostic"],
+        "required_text_any": ["Approval required", "Updated 21 jobs across 2 approved steps.", "Request could not start", "Run interrupted"]
+      },
+      "forbidden_visible_text": [
+        "non_terminal_snapshot",
+        "Session status: IDLE",
+        "The request needs attention before it can continue.",
+        "Needs attention The request needs attention before it can continue.",
+        "Header: Ready with sidebar WAITING FOR APPROVAL"
+      ],
+      "reproducer": {
+        "minimal_backend_fixture": "factory-agent/tests/test_response_document_contract.py::test_orphan_idle_after_actionable_prompt_becomes_typed_blocked_diagnostic",
+        "mocked_playwright_flow": "eMas Front/e2e/specs/final-response-quality.spec.js::RD-001 orphan/session state invariant forbids IDLE non_terminal_snapshot UI",
+        "real_flow_prompt": "RD-001 cascade prompt through the response-document transition oracle"
+      },
+      "first_test_layer": "backend_contract",
+      "linked_coverage": {
+        "RD-001_transition_oracle": "eMas Front/e2e/specs/final-response-quality.spec.js::RD-001 state transition oracle catches stale visible approval after backend advances",
+        "RD-002_transition_oracle": "eMas Front/e2e/specs/final-response-quality.spec.js::RD-002 state transition oracle covers reverse cascade without overfitting RD-001",
+        "semantic_probe": "eMas Front/e2e/specs/final-response-quality.spec.js::RD-001 response_document semantic probe artifact captures first state transition evidence",
+        "probe_support": "eMas Front/e2e/support/responseDocumentProbe.js",
+        "transition_oracle_support": "eMas Front/e2e/support/factoryAgentTransitionOracle.js"
+      },
+      "regression": {
+        "test_file": "factory-agent/tests/test_response_document_contract.py; factory-agent/tests/test_api_endpoints.py; eMas Front/e2e/specs/final-response-quality.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_response_document_contract.py::test_orphan_idle_after_actionable_prompt_becomes_typed_blocked_diagnostic tests/test_api_endpoints.py::test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orphan_idle -q; Set-Location \"..\\eMas Front\"; npm run test:e2e:response-document -- --grep \"manual regression|non_terminal|RD-001|Chat 514|state transition\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Phase 10 backend snapshot regression failed before the fix with session.status == IDLE; manual screenshot evidence is recorded in docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md#post-gate-regression-chat-514-orphan-idle-diagnostic.",
+        "passing_evidence": "Phase 13 verification reruns the manual bank gate, backend response-document contract/failure lane, frontend unit lane, and focused response-document Playwright grep."
+      },
+      "verification_command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q; python -m pytest tests/test_response_document_contract.py tests/test_response_document_failures.py -q; Set-Location \"..\\eMas Front\"; npm test; npm run test:e2e:response-document -- --grep \"manual regression|non_terminal|RD-001|Chat 514|state transition\""
+    }
+  ],
+  "prompts": [
+    {
+      "id": "phase18-loto-m-cnc-01",
+      "source_prompt": "What LOTO procedure applies before working on M-CNC-01?",
+      "prompt": "What LOTO procedure applies before working on M-CNC-01?",
+      "observed_failure": "The chatbot could ask for the machine ID even though M-CNC-01 was present in the prompt.",
+      "expected_behavior": "Extract M-CNC-01, route to the LOTO/RAG path, complete without asking for the machine ID again, and return source metadata tied to LOTO-M-CNC-01.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-18-seed",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this historical Phase 18 seed is preserved in the bank and parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
+      "test_layer": "parser+mocked-browser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "mocked-browser", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-before-service-m-cnc-01",
+      "source_prompt": "Before servicing M-CNC-01, which LOTO procedure applies?",
+      "prompt": "Before servicing M-CNC-01, which LOTO procedure applies?",
+      "observed_failure": "Natural LOTO wording variants could regress to the narrow exact Phase 18 phrase and ask for a machine ID.",
+      "expected_behavior": "Extract M-CNC-01 and use the same LOTO/RAG route and source metadata as the original manual miss.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-lockout-tagout-m-cnc-01",
+      "source_prompt": "Need the lockout/tagout SOP for m-cnc-01 before maintenance.",
+      "prompt": "Need the lockout/tagout SOP for m-cnc-01 before maintenance.",
+      "observed_failure": "Lowercase lockout/tagout wording could bypass the LOTO route or lose the machine ID.",
+      "expected_behavior": "Normalize m-cnc-01 to M-CNC-01 and route to the deterministic LOTO/RAG answer without clarification.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-parenthesized-m-cnc-01",
+      "source_prompt": "For machine (M-CNC-01), what lockout procedure should I follow?",
+      "prompt": "For machine (M-CNC-01), what lockout procedure should I follow?",
+      "observed_failure": "Parenthesized machine IDs could be missed and trigger an unnecessary clarification.",
+      "expected_behavior": "Extract the parenthesized M-CNC-01 ID and route to LOTO/RAG without asking which machine.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "medium",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-markdown-m-cnc-01",
+      "source_prompt": "### Safety check\nLOTO for `M-CNC-01` before touching the spindle.",
+      "prompt": "### Safety check\nLOTO for `M-CNC-01` before touching the spindle.",
+      "observed_failure": "Markdown-formatted IDs could be parsed differently from plain text and miss the LOTO/RAG route.",
+      "expected_behavior": "Extract M-CNC-01 through markdown formatting and return the same deterministic LOTO/RAG answer.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-021",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "medium",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py -q",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; this wording variant is promoted through the bank parser gate.",
+        "passing_evidence": "Phase 8 verification reruns the bank parser gate."
+      },
+      "test_layer": "parser+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase19-loto-route-confusion-m-cnc-01",
+      "source_prompt": "For M-CNC-01, tell me the lockout tagout steps, not the current machine status.",
+      "prompt": "For M-CNC-01, tell me the lockout tagout steps, not the current machine status.",
+      "observed_failure": "A safety-procedure prompt can be routed to machine status and return a plausible running-state answer instead of LOTO source evidence.",
+      "expected_behavior": "Extract M-CNC-01, choose the LOTO/RAG route, render lockout/tagout procedure source metadata, and avoid status-only copy or a repeat machine-ID clarification.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-19-loto-wording-matrix",
+      "selected_oracle": "SO-025",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "route",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase19_prompt_workflow_regression.py; eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase19_prompt_workflow_regression.py::test_so021_so023_so025_prompt_oracles_route_loto_to_rag_with_machine_id -q; Set-Location \"..\\eMas Front\"; npx playwright test e2e/specs/full-stack-prompt-workflow-regression.spec.js --project=chromium-seeded --grep \"SO-025\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required for new manual misses before closure; SO-025 is now tied to route pytest plus browser-visible seeded LOTO/source assertions.",
+        "passing_evidence": "Phase 12 executable enforcement reruns the SO-025 route pytest and seeded browser proof."
+      },
+      "test_layer": "route+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "lockout", "tagout"],
+        "forbidden_answer_terms": ["Status: running", "machine status only"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase16-so022-loto-missing-machine-id",
+      "source_prompt": "What LOTO procedure applies before working on the CNC machine?",
+      "prompt": "What LOTO procedure applies before working on the CNC machine?",
+      "observed_failure": "A missing-machine LOTO prompt could default to M-CNC-01, claim source metadata, or complete as a successful LOTO answer.",
+      "expected_behavior": "Ask for the specific machine ID without inventing M-CNC-01, without source metadata, and without generic failure copy.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios",
+      "selected_oracle": "SO-022",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "route",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase19_prompt_workflow_regression.py; eMas Front/e2e/specs/full-stack-intent-entity.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase19_prompt_workflow_regression.py::test_so022_prompt_oracle_clarifies_missing_loto_machine_without_default_id -q; Set-Location \"..\\eMas Front\"; npx playwright test e2e/specs/full-stack-intent-entity.spec.js --project=chromium-seeded --grep \"SO-022\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Phase 16 found the clarification copy named M-CNC-01 as an example, which violated the no-invented-machine evidence rule.",
+        "passing_evidence": "Required after Phase 16 focused route and seeded browser runs."
+      },
+      "test_layer": "route+seeded-browser",
+      "expected": {
+        "primary_route": "clarification",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": true,
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Which machine ID", "exact machine ID"],
+        "forbidden_answer_terms": [
+          "M-CNC-01",
+          "Controlled seeded RAG answer",
+          "Knowledge sources",
+          "Factory Agent needs attention",
+          "LOTO-M-CNC-01"
+        ]
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase16-so023-loto-lowercase-punctuation-m-cnc-01",
+      "source_prompt": "need lockout tagout for m-cnc-01 before service",
+      "prompt": "need lockout tagout for m-cnc-01 before service",
+      "observed_failure": "Plain lowercase lockout tagout wording could lose m-cnc-01 or ask for the machine ID again.",
+      "expected_behavior": "Normalize m-cnc-01 to M-CNC-01, choose the LOTO/RAG route, and return source metadata for LOTO-M-CNC-01 without clarification.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios",
+      "selected_oracle": "SO-023",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "parser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_phase18_manual_prompt_bank.py; factory-agent/tests/test_phase19_prompt_workflow_regression.py; eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase18_manual_prompt_bank.py tests/test_phase19_prompt_workflow_regression.py::test_so021_so023_so025_prompt_oracles_route_loto_to_rag_with_machine_id -q; Set-Location \"..\\eMas Front\"; npx playwright test e2e/specs/full-stack-prompt-workflow-regression.spec.js --project=chromium-seeded --grep \"SO-023\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Required before closure for future misses; Phase 16 promotes this phrase to parser, route, and seeded browser coverage.",
+        "passing_evidence": "Required after Phase 16 focused route and seeded browser runs."
+      },
+      "test_layer": "parser+route+seeded-browser",
+      "expected": {
+        "primary_route": "rag_loto",
+        "machine_ids": ["M-CNC-01"],
+        "job_ids": [],
+        "clarification_expected": false,
+        "forbidden_clarification_terms": ["which machine", "machine id", "provide the exact machine"],
+        "required_final_state": "COMPLETED",
+        "required_answer_terms": ["Controlled seeded RAG answer", "M-CNC-01", "LOTO procedure"],
+        "required_source": {
+          "machine_id": "M-CNC-01",
+          "procedure_id": "LOTO-M-CNC-01"
+        }
+      },
+      "coverage": ["parser", "route", "seeded-browser"]
+    },
+    {
+      "id": "phase11-medium-high-high-low-final-response",
+      "source_prompt": "change all medium priority job to high then change all high priority job to low",
+      "prompt": "change all medium priority job to high then change all high priority job to low",
+      "observed_failure": "The final response could show only the second write set, listing original medium jobs as previous high/new low and omitting the medium-to-high result. Later live UI projection misses showed approval 2's table while the activity timeline marked `Improving the response` as Current, the activity panel auto-expanded after manual collapse, and final completion still displayed stale approval-decision/waiting copy or an approval-2-only table.",
+      "expected_behavior": "Use original-state semantics for both clauses: original medium jobs become high, original high jobs become low, the pending approval view always matches the current pending approval id, the activity timeline current row remains Waiting for your approval while approval 2 is pending, manual collapse is respected across refreshes, and the final assistant response visibly summarizes both committed write sets without stale approval copy.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-11-aggregate-final-response-miss",
+      "selected_oracle": "SO-041",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "seeded-workflow",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_summary_bundle.py; factory-agent/tests/test_langgraph_state_machine_oracles.py; factory-agent/tests/test_phase7_api_ui_alignment.py; eMas Front/src/components/features/chat/factory-agent/activityTimeline.test.mjs; eMas Front/src/components/features/chat/factory-agent/ActivityTimeline.component.test.mjs; eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs; eMas Front/e2e/specs/real-langgraph-critical.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_phase7_api_ui_alignment.py tests/test_summary_bundle.py tests/test_langgraph_state_machine_oracles.py -q; Set-Location \"..\\eMas Front\"; npm test; npm run test:e2e:real-langgraph -- --grep \"SO-041\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Phase 11 manual miss: final response described only the last write set.",
+        "passing_evidence": "Required after Phase 11 fix."
+      },
+      "test_layer": "seeded-workflow+real-langgraph-browser",
+      "expected": {
+        "primary_route": "tool.write.jobs.bulk_update_priority",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": false,
+        "required_final_state": "COMPLETED",
+        "required_write_sets": [
+          { "source_priority": "medium", "target_priority": "high", "state_basis": "original" },
+          { "source_priority": "high", "target_priority": "low", "state_basis": "original" }
+        ],
+        "required_answer_terms": [
+          "medium priority jobs changed to high",
+          "original high priority jobs changed to low",
+          "current pending approval copy matches current pending approval id",
+          "Waiting for your approval"
+        ],
+        "forbidden_answer_terms": [
+          "Updated 10 job(s).",
+          "newly high jobs changed to low",
+          "Improving the response Current",
+          "Approved request to change record.",
+          "Please approve to continue"
+        ]
+      },
+      "coverage": ["seeded-workflow", "seeded-browser", "real-langgraph-browser"]
+    },
+    {
+      "id": "phase10-chat514-orphan-idle-non-terminal-snapshot",
+      "source_prompt": "change all medium priority job to high then change all high priority job to low",
+      "prompt": "change all medium priority job to high then change all high priority job to low",
+      "observed_failure": "Manual Chat 514 screenshot showed Header: Ready, sidebar: WAITING FOR APPROVAL, assistant card: Needs attention, message: The request needs attention before it can continue, and technical details Reason: non_terminal_snapshot / Session status: IDLE after a normal actionable prompt.",
+      "expected_behavior": "After the latest user message, the active chat must be running/planning/executing, waiting approval, waiting confirmation, completed, cancelled, or blocked/failed with a typed reason. It must never show IDLE plus non_terminal_snapshot plus generic Needs attention for RD-001.",
+      "artifact_link": "docs/qa/RESPONSE_DOCUMENT_UX_TRACK.md#post-gate-regression-chat-514-orphan-idle-diagnostic",
+      "selected_oracle": "SO-041",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "pytest_snapshot",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_response_document_contract.py; factory-agent/tests/test_api_endpoints.py; eMas Front/e2e/specs/final-response-quality.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_response_document_contract.py::test_orphan_idle_after_actionable_prompt_becomes_typed_blocked_diagnostic tests/test_api_endpoints.py::test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orphan_idle -q; Set-Location \"..\\eMas Front\"; npm run test:e2e:response-document -- --grep \"orphan|non_terminal|RD-001|session state\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Focused backend regressions failed before the fix with session.status == IDLE.",
+        "passing_evidence": "Required after Phase 10 focused backend and browser runs."
+      },
+      "test_layer": "pytest_snapshot+pytest_api+mocked-browser",
+      "expected": {
+        "primary_route": "tool.write.jobs.bulk_update_priority",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": false,
+        "required_final_state": "WAITING_APPROVAL|COMPLETED|BLOCKED|FAILED",
+        "required_answer_terms": ["Approval required", "Updated 21 jobs across 2 approved steps", "Request could not start"],
+        "forbidden_answer_terms": [
+          "non_terminal_snapshot",
+          "Session status: IDLE",
+          "The request needs attention before it can continue.",
+          "Header: Ready with sidebar WAITING FOR APPROVAL"
+        ]
+      },
+      "coverage": ["pytest_snapshot", "pytest_api", "mocked-browser"]
+    },
+    {
+      "id": "phase12-so005-medium-high-high-low-reject-approval-2",
+      "source_prompt": "change all medium priority job to high then change all high priority job to low",
+      "prompt": "change all medium priority job to high then change all high priority job to low",
+      "observed_failure": "SO-005 had backend rejection coverage, but browser enforcement pointed at a broader stale/expired approval spec and did not prove the visible rejection path for this cascade wording.",
+      "expected_behavior": "After approval 1 is accepted and approval 2 is rejected, original medium jobs are committed to high, original high jobs remain high instead of changing to low, approval 2 is REJECTED, the visible UI says the second approval was rejected or stopped, stale full-success text is absent, and no approval-2 audit rows are recorded.",
+      "artifact_link": "docs/qa/manual_prompt_regression_bank.md#phase-12-so-005-rejection-variant",
+      "selected_oracle": "SO-005",
+      "proposed_oracle": null,
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "seeded-browser",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "eMas Front/e2e/specs/full-stack-data-integrity.spec.js",
+        "command": "Set-Location \"eMas Front\"; npx playwright test e2e/specs/full-stack-data-integrity.spec.js --project=chromium-seeded --grep \"SO-005\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Before closure, SO-005 browser metadata referenced SO-006/SO-008/SO-027 scenario 89 instead of a dedicated second-approval rejection browser proof.",
+        "passing_evidence": "Focused seeded Playwright SO-005 run passed."
+      },
+      "test_layer": "seeded-browser",
+      "expected": {
+        "primary_route": "tool.write.jobs.bulk_update_priority",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": false,
+        "required_final_state": "IDLE",
+        "required_write_sets": [
+          { "source_priority": "medium", "target_priority": "high", "state_basis": "original", "decision": "approved" },
+          { "source_priority": "high", "target_priority": "low", "state_basis": "original", "decision": "rejected" }
+        ],
+        "required_answer_terms": ["second approval rejected", "Rejected"],
+        "forbidden_answer_terms": [
+          "Run complete",
+          "all changes succeeded",
+          "all requested changes completed",
+          "high->low 11",
+          "original high priority jobs changed to low"
+        ]
+      },
+      "coverage": ["seeded-workflow", "seeded-browser"]
+    }
+  ]
+}

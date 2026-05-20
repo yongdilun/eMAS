@@ -10,6 +10,7 @@ from .response_mappers import step_to_response
 from .routers.admin import build_admin_router
 from .routers.approvals import build_approvals_router
 from .routers.dlq import build_dlq_router
+from .routers.documents import build_documents_router
 from .routers.events import build_events_router
 from .routers.execution import build_execution_router
 from .routers.messages import build_messages_router
@@ -121,6 +122,7 @@ def build_router(
 
     router.include_router(build_admin_router(tool_registry=tool_registry, event_bus=event_bus, require_admin=require_admin))
     router.include_router(build_dlq_router(require_jwt=require_jwt))
+    router.include_router(build_documents_router(require_jwt=require_jwt))
     router.include_router(build_sessions_router(session_mgr=session_mgr, require_jwt=require_jwt))
     router.include_router(
         build_messages_router(

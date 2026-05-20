@@ -11,22 +11,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factory_agent.analysis.presentation import extract_table_from_result
 from factory_agent.analysis.result_normalizer import normalize_tool_result
 from factory_agent.api.response_mappers import approval_to_response, plan_to_response, session_to_response, step_to_response
-from factory_agent.graph.session_detection import is_graph_native_session, is_langgraph_plan
+from factory_agent.graph.session_detection import (
+    allows_persisted_step_projection,
+    is_graph_native_session,
+)
 from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import Message as MessageRow
 from factory_agent.persistence.models import Plan as PlanRow
 from factory_agent.persistence.models import PlanStep as PlanStepRow
+from factory_agent.planning.intent import assess_intent
 from factory_agent.planning.tool_output_alignment import summarize_tool_result
+from factory_agent.rag.source_metadata import normalize_source_locator, sanitize_rag_answer_text
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import (
     ActivityStepResponse,
+    ApprovalRequiredBlock,
+    ApprovalResponse,
+    DiagnosticBlock,
+    KnowledgeAnswerBlock,
+    MutationResultBlock,
+    PlanResponse,
     PlanStepResponse,
+    PresentationResponse,
+    ResponseBlock,
+    ResponseDocument,
+    ResultTableBlock,
     ResumeHintResponse,
+    RunActivityBlock,
+    RunStep,
+    ShortMessageBlock,
     SessionSnapshotResponse,
     TimelineEventResponse,
     ToolInfo,
+    SourceListBlock,
+)
+from factory_agent.services.response_document_service import compose_response_document
+from factory_agent.session_state import (
+    USER_CANCELLED_ACTIVITY_DETAIL,
+    USER_CANCELLED_ACTIVITY_LABEL,
+    USER_CANCELLED_REASON,
+    USER_CANCELLED_TIMELINE_CONTENT,
+    is_user_cancelled_session,
+    timeline_details_indicate_user_cancelled,
+)
+
+ORPHAN_TURN_REASON = "orphan_turn_state"
+ORPHAN_TURN_MESSAGE = (
+    "orphan_turn_state: The session has a user request but no running work, pending approval, or terminal result. "
+    "Current state: blocked for operator review. Next action: check current status and start a new request if needed."
 )
 
 def _timeline_event(
@@ -112,6 +146,18 @@ def _is_plan_like_completion_text(value: str | None) -> bool:
     )
 
 
+def _is_approval_wait_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "waiting for your approval" in text
+        or "please approve" in text
+        or "will be updated from" in text
+        or "change list is shown" in text
+    )
+
+
 def _is_operator_result_text(value: str | None) -> bool:
     text = (value or "").strip()
     if not text:
@@ -124,6 +170,85 @@ def _is_operator_result_text(value: str | None) -> bool:
     if lower.endswith(" completed.") and "__" in lower:
         return False
     return not _looks_like_raw_json_text(text) and not _is_plan_like_completion_text(text)
+
+
+def _operator_result_content_for_completion(event: TimelineEventResponse | None) -> str | None:
+    if event is None:
+        return None
+    details = event.details if isinstance(event.details, dict) else {}
+    presentation = details.get("presentation") if isinstance(details.get("presentation"), dict) else {}
+    presentation_message = str(presentation.get("message") or "").strip()
+    if _is_operator_result_text(presentation_message):
+        return presentation_message
+    content = str(event.content or "").strip()
+    return content if _is_operator_result_text(content) else None
+
+
+def _tool_result_completion_sort_key(event: TimelineEventResponse) -> tuple[datetime, int]:
+    step_context = event.step_context if isinstance(event.step_context, dict) else {}
+    try:
+        step_index = int(step_context.get("step_index"))
+    except (TypeError, ValueError):
+        step_index = -1
+    return event.created_at, step_index
+
+
+def _is_success_like_plan_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        text.startswith("**success**")
+        or "updated **" in text
+        or "all requested changes completed" in text
+        or "run complete" in text
+    )
+
+
+def _is_rich_operator_completion_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "write set" in text
+        or "affected records:" in text
+        or "changed to" in text
+        or "created or deleted" in text
+    )
+
+
+def _is_failure_guidance_text(value: str | None) -> bool:
+    text = (value or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "could not complete" in text
+        or "failed" in text
+        or "database unavailable" in text
+        or "please retry" in text
+    )
+
+
+def _plan_timeline_content(
+    *,
+    session_status: str | None,
+    plan_row: PlanRow,
+    plan_message: MessageRow | None,
+) -> str:
+    content = (
+        plan_message.content
+        if plan_message and plan_message.content
+        else (plan_row.plan_explanation or "Execution plan created.")
+    )
+    explanation = plan_row.plan_explanation or ""
+    if (
+        str(session_status or "").upper() == "FAILED"
+        and explanation
+        and _is_failure_guidance_text(explanation)
+        and _is_success_like_plan_text(content)
+    ):
+        return explanation
+    return content
 
 
 _TIMELINE_EVENT_PRIORITY = {
@@ -270,6 +395,9 @@ def _safe_activity_domain_label(ev: TimelineEventResponse) -> str:
 
 def _activity_detail_for_event(ev: TimelineEventResponse, *, label: str) -> str | None:
     domain = _safe_activity_domain_label(ev)
+    if ev.event_type == "session_failed" and isinstance(ev.details, dict):
+        if timeline_details_indicate_user_cancelled(ev.details):
+            return USER_CANCELLED_ACTIVITY_DETAIL
     if ev.event_type == "plan_created":
         return "Reviewing your request and recent context"
     if ev.event_type == "execution_started":
@@ -326,6 +454,9 @@ def _activity_base_for_timeline_event(ev: TimelineEventResponse) -> dict[str, st
     if event_type == "replan_requested":
         return {"group": "planning", "label": "Improving the response", "state": "retry"}
     if event_type in {"session_failed", "session_blocked"}:
+        if event_type == "session_failed" and isinstance(ev.details, dict):
+            if timeline_details_indicate_user_cancelled(ev.details):
+                return {"group": "system", "label": USER_CANCELLED_ACTIVITY_LABEL, "state": "complete"}
         return {"group": "system", "label": "Something needs attention", "state": "error"}
     if event_type == "session_completed":
         return {"group": "response", "label": "Run complete", "state": "complete"}
@@ -427,13 +558,20 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
     index_by_signature: dict[tuple[str, str, str, str, str], int] = {}
 
     has_pending_approval = snapshot.pending_approval is not None
+    session_status = str(getattr(snapshot.session, "status", "") or "").upper()
+    suppress_completion = has_pending_approval or session_status in {
+        "PLANNING",
+        "EXECUTING",
+        "WAITING_APPROVAL",
+        "WAITING_CONFIRMATION",
+    }
     for ev in snapshot.timeline:
         base = _activity_base_for_timeline_event(ev)
         if base is None:
             continue
-        # Suppress "Run complete" (session_completed) while an approval is
-        # still pending — the session hasn't truly finished from the user's perspective.
-        if has_pending_approval and ev.event_type == "session_completed":
+        # Suppress "Run complete" while the session is still active. A stale
+        # completion row between approval gates can hide the next pending write set.
+        if suppress_completion and ev.event_type == "session_completed":
             continue
         detail = _activity_detail_for_event(ev, label=base["label"])
         signature = _activity_merge_signature(ev, base, detail)
@@ -457,6 +595,21 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
                 "state": base["state"],
             }
         )
+
+    if session_status == "WAITING_APPROVAL":
+        latest_waiting_approval_index = -1
+        for idx in range(len(raw_steps) - 1, -1, -1):
+            step = raw_steps[idx]
+            if (
+                step.get("group") == "approval"
+                and step.get("state") == "waiting"
+                and str(step.get("label") or "").lower()
+                in {"waiting for approval", "waiting for your approval"}
+            ):
+                latest_waiting_approval_index = idx
+                break
+        if latest_waiting_approval_index >= 0:
+            raw_steps = raw_steps[: latest_waiting_approval_index + 1]
 
     # Find the LAST terminal step (complete/error), not the first.
     # Noise events (e.g. replan_requested) that arrive after session_completed
@@ -520,6 +673,7 @@ def _semantic_payload_for_timeline_event(ev: TimelineEventResponse, *, session_i
         "tool_name": ev.tool_name,
         "approval_id": ev.approval_id,
         "status": ev.status,
+        "presentation": ev.presentation.model_dump(mode="json") if ev.presentation is not None else None,
     }
 
 
@@ -529,6 +683,1197 @@ def _should_skip_semantic_timeline_event(ev: TimelineEventResponse) -> bool:
         return False
     st = str(ev.status or "").upper()
     return st not in {"", "PENDING"}
+
+
+_WRITE_TOOL_PREFIXES = ("post__", "put__", "patch__", "delete__")
+_SUCCESS_ROW_STATES = {"success", "succeeded", "done", "completed", "committed", "ok", "http_ok"}
+_FAILED_ROW_STATES = {"failed", "failure", "error", "errored", "version_conflict", "conflict", "rejected"}
+_PRESENTATION_TERMINAL_EVENTS = {"session_completed", "session_failed", "session_blocked"}
+_ROW_ID_KEYS = (
+    "row_id",
+    "job_id",
+    "machine_id",
+    "product_id",
+    "inventory_id",
+    "material_id",
+    "proposal_id",
+    "id",
+    "primary_id",
+)
+
+
+def _is_write_tool_name(tool_name: str | None) -> bool:
+    lower = str(tool_name or "").strip().lower()
+    return lower.startswith(_WRITE_TOOL_PREFIXES)
+
+
+def _trimmed(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _presentation_operation_id(
+    *,
+    session: Any,
+    plan: PlanResponse | None,
+    timeline: list[TimelineEventResponse],
+) -> str | None:
+    for candidate in (
+        getattr(session, "operation_id", None),
+        getattr(session, "plan_id", None),
+        getattr(plan, "plan_id", None),
+    ):
+        text = _trimmed(candidate)
+        if text:
+            return text
+    for event in reversed(timeline):
+        text = _trimmed(getattr(event, "operation_id", None))
+        if text:
+            return text
+    return None
+
+
+def _presentation_sources(
+    *,
+    plan: PlanResponse | None,
+    timeline: list[TimelineEventResponse],
+) -> list[dict[str, Any]]:
+    raw_sources: list[Any] = []
+    if plan and isinstance(plan.sources, list) and plan.sources:
+        raw_sources.extend(plan.sources)
+    for event in reversed(timeline):
+        details = event.details if isinstance(event.details, dict) else {}
+        sources = details.get("sources")
+        if isinstance(sources, list) and sources:
+            raw_sources.extend(sources)
+            break
+
+    sources: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, source in enumerate(raw_sources):
+        row = normalize_source_locator(source, index, fallback_snippet=getattr(plan, "plan_explanation", None))
+        key = (str(row.get("source_id") or ""), str(row.get("doc_id") or ""), str(row.get("chunk_id") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        row.setdefault("source_index", len(sources))
+        sources.append(row)
+    return sources
+
+
+def _row_identifier(row: dict[str, Any]) -> str | None:
+    for key in _ROW_ID_KEYS:
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _normalize_row_status(status: Any, *, default: str) -> str:
+    normalized = _trimmed(status).lower()
+    if normalized in _SUCCESS_ROW_STATES:
+        return "succeeded"
+    if normalized in _FAILED_ROW_STATES:
+        return "failed"
+    if normalized in {"pending", "staged", "dry_run"}:
+        return "pending"
+    if normalized in {"expired", "superseded", "stale"}:
+        return "expired"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized:
+        return normalized
+    return default
+
+
+def _presentation_row(
+    payload: dict[str, Any],
+    *,
+    default_status: str,
+    operation_id: str | None,
+    approval_id: str | None,
+    step_id: str | None = None,
+    tool_name: str | None = None,
+) -> dict[str, Any]:
+    row = dict(payload)
+    status = _normalize_row_status(row.get("status") or row.get("result") or row.get("outcome"), default=default_status)
+    row["status"] = status
+    row_id = _row_identifier(row)
+    if row_id:
+        row["row_id"] = row_id
+    if operation_id:
+        row.setdefault("operation_id", operation_id)
+    if approval_id:
+        row.setdefault("approval_id", approval_id)
+    if step_id:
+        row.setdefault("step_id", step_id)
+    if tool_name:
+        row.setdefault("tool_name", tool_name)
+    return row
+
+
+def _operation_rows_from_result(
+    result: dict[str, Any] | None,
+    *,
+    default_status: str,
+    operation_id: str | None,
+    approval_id: str | None,
+    step_id: str | None = None,
+    tool_name: str | None = None,
+    fallback_args: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        result = {}
+
+    rows: list[dict[str, Any]] = []
+    raw_outcomes = result.get("outcomes")
+    if isinstance(raw_outcomes, list):
+        for outcome in raw_outcomes:
+            if isinstance(outcome, dict):
+                rows.append(
+                    _presentation_row(
+                        outcome,
+                        default_status=default_status,
+                        operation_id=operation_id,
+                        approval_id=approval_id,
+                        step_id=step_id,
+                        tool_name=tool_name,
+                    )
+                )
+        if rows:
+            return rows
+
+    data = result.get("data")
+    raw_operations = result.get("operations")
+    if isinstance(data, dict) and isinstance(data.get("operations"), list):
+        raw_operations = data.get("operations")
+    if isinstance(raw_operations, list):
+        for operation in raw_operations:
+            if not isinstance(operation, dict):
+                continue
+            payload = operation.get("data") if isinstance(operation.get("data"), dict) else {}
+            row_payload = {**payload, **{k: v for k, v in operation.items() if k != "data"}}
+            rows.append(
+                _presentation_row(
+                    row_payload,
+                    default_status=default_status,
+                    operation_id=operation_id,
+                    approval_id=approval_id,
+                    step_id=step_id,
+                    tool_name=tool_name,
+                )
+            )
+        if rows:
+            return rows
+
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                rows.append(
+                    _presentation_row(
+                        item,
+                        default_status=default_status,
+                        operation_id=operation_id,
+                        approval_id=approval_id,
+                        step_id=step_id,
+                        tool_name=tool_name,
+                    )
+                )
+        if rows:
+            return rows
+
+    if isinstance(data, dict):
+        return [
+            _presentation_row(
+                data,
+                default_status=default_status,
+                operation_id=operation_id,
+                approval_id=approval_id,
+                step_id=step_id,
+                tool_name=tool_name,
+            )
+        ]
+
+    if fallback_args:
+        return [
+            _presentation_row(
+                dict(fallback_args),
+                default_status=default_status,
+                operation_id=operation_id,
+                approval_id=approval_id,
+                step_id=step_id,
+                tool_name=tool_name,
+            )
+        ]
+
+    if result:
+        return [
+            _presentation_row(
+                result,
+                default_status=default_status,
+                operation_id=operation_id,
+                approval_id=approval_id,
+                step_id=step_id,
+                tool_name=tool_name,
+            )
+        ]
+    return []
+
+
+def _approval_rows_from_args(
+    args: dict[str, Any] | None,
+    *,
+    default_status: str,
+    operation_id: str | None,
+    approval_id: str | None,
+    tool_name: str | None,
+) -> list[dict[str, Any]]:
+    payload = args if isinstance(args, dict) else {}
+    bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
+    candidate_lists = [
+        bundle_ui.get("rows"),
+        payload.get("preview"),
+        payload.get("staged_writes"),
+    ]
+    rows: list[dict[str, Any]] = []
+    for candidate in candidate_lists:
+        if not isinstance(candidate, list):
+            continue
+        for item in candidate:
+            if not isinstance(item, dict):
+                continue
+            row_payload = item.get("args") if isinstance(item.get("args"), dict) else item
+            row = _presentation_row(
+                dict(row_payload),
+                default_status=default_status,
+                operation_id=operation_id,
+                approval_id=approval_id,
+                tool_name=str(item.get("tool_name") or tool_name or ""),
+            )
+            if bundle_ui.get("write_set"):
+                row.setdefault("write_set", bundle_ui.get("write_set"))
+            if bundle_ui.get("kind"):
+                row.setdefault("bundle_kind", bundle_ui.get("kind"))
+            rows.append(row)
+        if rows:
+            return rows
+
+    if payload and not {"bundle_ui", "preview", "staged_writes"} & set(payload):
+        return [
+            _presentation_row(
+                payload,
+                default_status=default_status,
+                operation_id=operation_id,
+                approval_id=approval_id,
+                tool_name=tool_name,
+            )
+        ]
+    return []
+
+
+def _approval_is_expired(approval: ApprovalResponse, *, now: datetime | None = None) -> bool:
+    if str(approval.status or "").upper() == "EXPIRED":
+        return True
+    expires_at = approval.expires_at
+    if expires_at is None:
+        return False
+    current = now or datetime.utcnow()
+    try:
+        if expires_at.tzinfo is not None and current.tzinfo is None:
+            current = current.replace(tzinfo=expires_at.tzinfo)
+        if expires_at.tzinfo is None and current.tzinfo is not None:
+            current = current.replace(tzinfo=None)
+        return expires_at <= current and str(approval.status or "").upper() == "PENDING"
+    except TypeError:
+        return False
+
+
+def _latest_approval(approvals: list[ApprovalResponse]) -> ApprovalResponse | None:
+    if not approvals:
+        return None
+    return max(approvals, key=lambda row: row.decided_at or row.created_at)
+
+
+def _latest_terminal_event(timeline: list[TimelineEventResponse]) -> TimelineEventResponse | None:
+    terminal_events = [event for event in timeline if event.event_type in _PRESENTATION_TERMINAL_EVENTS]
+    if not terminal_events:
+        return None
+    return max(terminal_events, key=lambda event: event.created_at)
+
+
+def _latest_user_event(timeline: list[TimelineEventResponse]) -> TimelineEventResponse | None:
+    user_events = [event for event in timeline if event.event_type == "user_message"]
+    if not user_events:
+        return None
+    return max(user_events, key=lambda event: event.created_at)
+
+
+def _has_terminal_event_after_latest_user(timeline: list[TimelineEventResponse]) -> bool:
+    latest_user = _latest_user_event(timeline)
+    if latest_user is None:
+        return False
+    return any(
+        (
+            event.event_type in _PRESENTATION_TERMINAL_EVENTS
+            or (
+                event.event_type == "approval_decided"
+                and str(event.status or "").upper() in {"REJECTED", "EXPIRED"}
+            )
+        )
+        and event.created_at >= latest_user.created_at
+        and (not latest_user.turn_id or event.turn_id in {None, latest_user.turn_id})
+        for event in timeline
+    )
+
+
+def _is_actionable_prompt_text(text: str | None) -> bool:
+    if not text or not text.strip():
+        return False
+    try:
+        return assess_intent(text).kind == "operations"
+    except Exception:
+        return False
+
+
+def _is_orphan_turn_state(
+    *,
+    session: Any,
+    pending_approval: ApprovalResponse | None,
+    timeline: list[TimelineEventResponse],
+) -> bool:
+    session_status = str(getattr(session, "status", "") or "").upper()
+    if session_status != "IDLE" or pending_approval is not None or is_user_cancelled_session(session):
+        return False
+    latest_user = _latest_user_event(timeline)
+    if latest_user is None:
+        return False
+    if _has_terminal_event_after_latest_user(timeline):
+        return False
+    intent = getattr(session, "current_intent", None) or latest_user.content
+    return _is_actionable_prompt_text(intent)
+
+
+def _rows_from_steps(
+    steps: list[PlanStepResponse],
+    *,
+    operation_id: str | None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for step in steps:
+        status = str(step.status or "").upper()
+        default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
+        approval_id = step.approval_id
+        if isinstance(step.result, dict):
+            approval_id = str(
+                step.result.get("approval_id")
+                or step.result.get("_approval_id")
+                or approval_id
+                or ""
+            ).strip() or None
+        if status in {"DONE", "FAILED", "AMBIGUOUS"}:
+            rows.extend(
+                _operation_rows_from_result(
+                    step.result if isinstance(step.result, dict) else None,
+                    default_status=default_status,
+                    operation_id=operation_id or step.plan_id,
+                    approval_id=approval_id,
+                    step_id=step.step_id,
+                    tool_name=step.tool_name,
+                    fallback_args=step.args if _is_write_tool_name(step.tool_name) else None,
+                )
+            )
+    return rows
+
+
+def _rows_from_tool_events(timeline: list[TimelineEventResponse]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in timeline:
+        if event.event_type != "tool_result":
+            continue
+        details = event.details if isinstance(event.details, dict) else {}
+        result = details.get("result") if isinstance(details.get("result"), dict) else None
+        args = details.get("args") if isinstance(details.get("args"), dict) else {}
+        status = str(event.status or "").upper()
+        default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
+        rows.extend(
+            _operation_rows_from_result(
+                result,
+                default_status=default_status,
+                operation_id=event.operation_id,
+                approval_id=event.approval_id,
+                step_id=event.step_id,
+                tool_name=event.tool_name,
+                fallback_args=args if _is_write_tool_name(event.tool_name) or status in {"FAILED", "AMBIGUOUS"} else None,
+            )
+        )
+    return rows
+
+
+def _dedupe_presentation_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        key = json.dumps(row, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _row_status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = _normalize_row_status(row.get("status"), default="unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _presentation_invariants(
+    *,
+    session: Any,
+    approvals: list[ApprovalResponse],
+    steps: list[PlanStepResponse],
+    rows: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    terminal_event: TimelineEventResponse | None,
+    pending_approval: ApprovalResponse | None,
+) -> dict[str, Any]:
+    counts = _row_status_counts(rows)
+    rejected = [row.approval_id for row in approvals if str(row.status or "").upper() == "REJECTED"]
+    expired = [row.approval_id for row in approvals if _approval_is_expired(row)]
+    failed_steps = [step.step_id for step in steps if str(step.status or "").upper() in {"FAILED", "AMBIGUOUS"}]
+    completed_mutation_steps = [
+        step.step_id
+        for step in steps
+        if _is_write_tool_name(step.tool_name) and str(step.status or "").upper() == "DONE"
+    ]
+    return {
+        "session_status": getattr(session, "status", None),
+        "has_pending_approval": pending_approval is not None,
+        "pending_approval_id": pending_approval.approval_id if pending_approval else None,
+        "has_rejected_approval": bool(rejected),
+        "rejected_approval_ids": rejected,
+        "has_expired_approval": bool(expired),
+        "expired_approval_ids": expired,
+        "has_failed_steps": bool(failed_steps),
+        "failed_step_ids": failed_steps,
+        "has_completed_mutation_steps": bool(completed_mutation_steps),
+        "completed_mutation_step_ids": completed_mutation_steps,
+        "has_sources": bool(sources),
+        "row_status_counts": counts,
+        "has_partial_failure_rows": counts.get("succeeded", 0) > 0 and counts.get("failed", 0) > 0,
+        "has_empty_final_response": bool(terminal_event and not _trimmed(terminal_event.content)),
+    }
+
+
+def _presentation_diagnostics(
+    *,
+    session: Any,
+    terminal_event: TimelineEventResponse | None,
+    reason: str,
+    steps: list[PlanStepResponse],
+) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "session_status": getattr(session, "status", None),
+        "session_error": getattr(session, "error", None),
+        "terminal_event_id": terminal_event.event_id if terminal_event else None,
+        "terminal_event_type": terminal_event.event_type if terminal_event else None,
+        "step_errors": [
+            {
+                "step_id": step.step_id,
+                "tool_name": step.tool_name,
+                "status": step.status,
+                "last_error": step.last_error,
+            }
+            for step in steps
+            if str(step.status or "").upper() in {"FAILED", "AMBIGUOUS"} or step.last_error
+        ],
+    }
+
+
+def _typed_blocked_reason(session: Any, *, default: str = "session_blocked") -> str:
+    context = getattr(session, "replan_context", None)
+    if isinstance(context, dict):
+        reason = str(context.get("blocked_reason") or "").strip()
+        if reason:
+            return reason
+    error = str(getattr(session, "error", "") or "")
+    for reason in ("planner_no_action", "unable_to_start_request", "orphan_turn_state"):
+        if reason in error:
+            return reason
+    return default
+
+
+def _derive_snapshot_presentation(
+    *,
+    session: Any,
+    plan: PlanResponse | None,
+    steps: list[PlanStepResponse],
+    pending_approval: ApprovalResponse | None,
+    approvals: list[ApprovalResponse],
+    timeline: list[TimelineEventResponse],
+) -> PresentationResponse:
+    operation_id = _presentation_operation_id(session=session, plan=plan, timeline=timeline)
+    sources = _presentation_sources(plan=plan, timeline=timeline)
+    terminal_event = _latest_terminal_event(timeline)
+    latest_approval = _latest_approval(approvals)
+
+    step_rows = _dedupe_presentation_rows(
+        _rows_from_steps(steps, operation_id=operation_id) + _rows_from_tool_events(timeline)
+    )
+    invariants = _presentation_invariants(
+        session=session,
+        approvals=approvals,
+        steps=steps,
+        rows=step_rows,
+        sources=sources,
+        terminal_event=terminal_event,
+        pending_approval=pending_approval,
+    )
+    session_status = str(getattr(session, "status", "") or "").upper()
+
+    if is_user_cancelled_session(session):
+        return PresentationResponse(
+            kind="cancelled",
+            state="cancelled",
+            operation_id=operation_id,
+            summary=USER_CANCELLED_TIMELINE_CONTENT,
+            rows=step_rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason=USER_CANCELLED_REASON,
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if pending_approval is not None and _approval_is_expired(pending_approval):
+        rows = _approval_rows_from_args(
+            pending_approval.args,
+            default_status="expired",
+            operation_id=operation_id or pending_approval.plan_id,
+            approval_id=pending_approval.approval_id,
+            tool_name=pending_approval.tool_name,
+        )
+        return PresentationResponse(
+            kind="expired",
+            state="expired",
+            operation_id=operation_id or pending_approval.plan_id,
+            approval_id=pending_approval.approval_id,
+            summary=pending_approval.risk_summary or "Approval expired before it could be applied.",
+            rows=rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="approval_expired",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if pending_approval is not None:
+        rows = _approval_rows_from_args(
+            pending_approval.args,
+            default_status="pending",
+            operation_id=operation_id or pending_approval.plan_id,
+            approval_id=pending_approval.approval_id,
+            tool_name=pending_approval.tool_name,
+        )
+        return PresentationResponse(
+            kind="approval_required",
+            state="pending",
+            operation_id=operation_id or pending_approval.plan_id,
+            approval_id=pending_approval.approval_id,
+            summary=pending_approval.risk_summary or "Approval is required before the operation can continue.",
+            rows=rows,
+            sources=sources,
+            diagnostics={
+                "reason": "approval_pending",
+                "expires_at": pending_approval.expires_at.isoformat() if pending_approval.expires_at else None,
+                "side_effect_level": pending_approval.side_effect_level,
+            },
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if latest_approval is not None and str(latest_approval.status or "").upper() == "REJECTED":
+        rows = _approval_rows_from_args(
+            latest_approval.args,
+            default_status="rejected",
+            operation_id=operation_id or latest_approval.plan_id,
+            approval_id=latest_approval.approval_id,
+            tool_name=latest_approval.tool_name,
+        )
+        return PresentationResponse(
+            kind="rejected",
+            state="rejected",
+            operation_id=operation_id or latest_approval.plan_id,
+            approval_id=latest_approval.approval_id,
+            summary=latest_approval.rejection_reason or "Approval was rejected; the requested mutation was not applied.",
+            rows=rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="approval_rejected",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if latest_approval is not None and _approval_is_expired(latest_approval):
+        rows = _approval_rows_from_args(
+            latest_approval.args,
+            default_status="expired",
+            operation_id=operation_id or latest_approval.plan_id,
+            approval_id=latest_approval.approval_id,
+            tool_name=latest_approval.tool_name,
+        )
+        return PresentationResponse(
+            kind="expired",
+            state="expired",
+            operation_id=operation_id or latest_approval.plan_id,
+            approval_id=latest_approval.approval_id,
+            summary=latest_approval.risk_summary or "Approval expired; the stale approval cannot be applied.",
+            rows=rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="approval_expired",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if session_status == "BLOCKED":
+        reason = _typed_blocked_reason(session)
+        diagnostics = _presentation_diagnostics(
+            session=session,
+            terminal_event=terminal_event,
+            reason=reason,
+            steps=steps,
+        )
+        context = getattr(session, "replan_context", None)
+        if isinstance(context, dict) and context.get("original_session_status"):
+            diagnostics["original_session_status"] = context.get("original_session_status")
+        return PresentationResponse(
+            kind="diagnostic",
+            state="blocked",
+            operation_id=operation_id,
+            summary=getattr(session, "error", None) or (terminal_event.content if terminal_event else "Execution blocked."),
+            rows=step_rows,
+            sources=sources,
+            diagnostics=diagnostics,
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    row_counts = invariants.get("row_status_counts") if isinstance(invariants.get("row_status_counts"), dict) else {}
+    has_partial_rows = bool(row_counts.get("succeeded", 0) and row_counts.get("failed", 0))
+    if has_partial_rows:
+        return PresentationResponse(
+            kind="partial_failure",
+            state="failed",
+            operation_id=operation_id,
+            approval_id=next((row.get("approval_id") for row in step_rows if row.get("approval_id")), None),
+            summary=(terminal_event.content if terminal_event and terminal_event.content else "Some rows failed while others succeeded."),
+            rows=step_rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="partial_failure",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if session_status == "FAILED":
+        return PresentationResponse(
+            kind="diagnostic",
+            state="failed",
+            operation_id=operation_id,
+            approval_id=next((row.get("approval_id") for row in step_rows if row.get("approval_id")), None),
+            summary=getattr(session, "error", None) or (terminal_event.content if terminal_event else "Session failed."),
+            rows=step_rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="session_failed",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if terminal_event is not None and terminal_event.event_type == "session_completed" and not _trimmed(terminal_event.content):
+        return PresentationResponse(
+            kind="diagnostic",
+            state="failed",
+            operation_id=operation_id,
+            summary="Unable to render final response; assistant content was empty.",
+            rows=step_rows,
+            sources=sources,
+            diagnostics=_presentation_diagnostics(
+                session=session,
+                terminal_event=terminal_event,
+                reason="empty_final_response",
+                steps=steps,
+            ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    has_completed_write = any(_is_write_tool_name(step.tool_name) and str(step.status or "").upper() == "DONE" for step in steps)
+    if session_status == "COMPLETED" and has_completed_write:
+        approval_id = next((row.get("approval_id") for row in step_rows if row.get("approval_id")), None)
+        if approval_id is None and latest_approval and str(latest_approval.status or "").upper() == "APPROVED":
+            approval_id = latest_approval.approval_id
+        return PresentationResponse(
+            kind="mutation_result",
+            state="completed",
+            operation_id=operation_id,
+            approval_id=approval_id,
+            summary=terminal_event.content if terminal_event else "Mutation completed.",
+            rows=step_rows,
+            sources=sources,
+            diagnostics={"reason": "mutation_completed"},
+            invariants={**invariants, "full_success_forbidden": False},
+        )
+
+    if session_status == "COMPLETED" and sources:
+        answer_summary = sanitize_rag_answer_text(terminal_event.content if terminal_event else (plan.plan_explanation if plan else None))
+        return PresentationResponse(
+            kind="knowledge_answer",
+            state="completed",
+            operation_id=operation_id,
+            summary=answer_summary,
+            rows=step_rows,
+            sources=sources,
+            diagnostics={"reason": "source_backed_answer"},
+            invariants={**invariants, "full_success_forbidden": False},
+        )
+
+    if session_status == "COMPLETED":
+        return PresentationResponse(
+            kind="answer",
+            state="completed",
+            operation_id=operation_id,
+            summary=terminal_event.content if terminal_event else (plan.plan_explanation if plan else None),
+            rows=step_rows,
+            sources=sources,
+            diagnostics={"reason": "completed_answer"},
+            invariants={**invariants, "full_success_forbidden": False},
+        )
+
+    pending_state = "pending" if session_status in {"PLANNING", "EXECUTING", "WAITING_CONFIRMATION"} else "blocked"
+    return PresentationResponse(
+        kind="diagnostic",
+        state=pending_state,
+        operation_id=operation_id,
+        summary=terminal_event.content if terminal_event else None,
+        rows=step_rows,
+        sources=sources,
+        diagnostics=_presentation_diagnostics(
+            session=session,
+            terminal_event=terminal_event,
+            reason="non_terminal_snapshot",
+            steps=steps,
+        ),
+        invariants=invariants,
+    )
+
+
+def _presentation_for_event(ev: TimelineEventResponse) -> PresentationResponse | None:
+    operation_id = ev.operation_id or _trimmed((ev.step_context or {}).get("plan_id")) or None
+    details = ev.details if isinstance(ev.details, dict) else {}
+    if ev.event_type == "approval_required":
+        status = str(ev.status or "").upper()
+        args = details.get("args") if isinstance(details.get("args"), dict) else {}
+        if status == "REJECTED":
+            kind = "rejected"
+            state = "rejected"
+            row_status = "rejected"
+            reason = "approval_rejected"
+        elif status == "EXPIRED":
+            kind = "expired"
+            state = "expired"
+            row_status = "expired"
+            reason = "approval_expired"
+        elif status in {"APPROVED", "ACCEPTED"}:
+            kind = "approval_required"
+            state = "completed"
+            row_status = "succeeded"
+            reason = "approval_completed"
+        else:
+            kind = "approval_required"
+            state = "pending"
+            row_status = "pending"
+            reason = "approval_pending"
+        return PresentationResponse(
+            kind=kind,  # type: ignore[arg-type]
+            state=state,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            approval_id=ev.approval_id,
+            summary=ev.content,
+            rows=_approval_rows_from_args(
+                args,
+                default_status=row_status,
+                operation_id=operation_id,
+                approval_id=ev.approval_id,
+                tool_name=ev.tool_name,
+            ),
+            diagnostics={"reason": reason, "event_type": ev.event_type, "event_status": ev.status},
+            invariants={"full_success_forbidden": state in {"pending", "rejected", "expired"}},
+        )
+    if ev.event_type == "approval_decided":
+        rejected = str(ev.status or "").upper() == "REJECTED"
+        return PresentationResponse(
+            kind="rejected" if rejected else "approval_required",
+            state="rejected" if rejected else "completed",
+            operation_id=operation_id,
+            approval_id=ev.approval_id,
+            summary=ev.content,
+            diagnostics={
+                "reason": "approval_rejected" if rejected else "approval_decided",
+                "event_type": ev.event_type,
+                "event_status": ev.status,
+            },
+            invariants={"full_success_forbidden": rejected},
+        )
+    if ev.event_type == "tool_result":
+        status = str(ev.status or "").upper()
+        default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
+        rows = _operation_rows_from_result(
+            details.get("result") if isinstance(details.get("result"), dict) else None,
+            default_status=default_status,
+            operation_id=operation_id,
+            approval_id=ev.approval_id,
+            step_id=ev.step_id,
+            tool_name=ev.tool_name,
+            fallback_args=details.get("args") if isinstance(details.get("args"), dict) else None,
+        )
+        counts = _row_status_counts(rows)
+        partial = bool(counts.get("succeeded", 0) and counts.get("failed", 0))
+        failed = status in {"FAILED", "AMBIGUOUS"}
+        kind = "partial_failure" if partial else "diagnostic" if failed else "mutation_result" if _is_write_tool_name(ev.tool_name) else "answer"
+        state = "failed" if (partial or failed) else "completed"
+        return PresentationResponse(
+            kind=kind,  # type: ignore[arg-type]
+            state=state,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            approval_id=ev.approval_id,
+            summary=ev.content,
+            rows=rows,
+            diagnostics={"reason": "tool_result", "event_status": ev.status},
+            invariants={
+                "row_status_counts": counts,
+                "has_partial_failure_rows": partial,
+                "full_success_forbidden": partial or failed,
+            },
+        )
+    return None
+
+
+def _attach_typed_presentations_to_events(
+    events: list[TimelineEventResponse],
+    *,
+    snapshot_presentation: PresentationResponse,
+) -> list[TimelineEventResponse]:
+    terminal = _latest_terminal_event(events)
+    terminal_id = terminal.event_id if terminal is not None else None
+    out: list[TimelineEventResponse] = []
+    for event in events:
+        presentation = snapshot_presentation if event.event_id == terminal_id else _presentation_for_event(event)
+        out.append(event.model_copy(update={"presentation": presentation}) if presentation is not None else event)
+    return out
+
+
+def _response_document_turn_id(timeline: list[TimelineEventResponse], *, session_id: str) -> str:
+    for event in reversed(timeline):
+        if event.turn_id:
+            return event.turn_id
+    return f"session:{session_id}"
+
+
+def _response_document_revision(
+    *,
+    cursor: int,
+    session: Any,
+    timeline: list[TimelineEventResponse],
+) -> tuple[int, str]:
+    event_seq = getattr(session, "event_seq", None)
+    if event_seq is not None:
+        try:
+            return max(0, int(event_seq or 0)), "event_seq"
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(0, int(cursor or 0)), "event_seq"
+    except (TypeError, ValueError):
+        pass
+    updated_at = getattr(session, "updated_at", None)
+    if isinstance(updated_at, datetime):
+        return max(0, int(updated_at.timestamp() * 1000)), "session_updated_at"
+    if timeline:
+        latest = max(event.created_at for event in timeline)
+        return max(0, int(latest.timestamp() * 1000)), "timeline_timestamp"
+    return 0, "empty_snapshot"
+
+
+def _response_document_state(
+    *,
+    session: Any,
+    pending_approval: ApprovalResponse | None,
+    presentation: PresentationResponse,
+) -> str:
+    session_status = str(getattr(session, "status", "") or "").upper()
+    if pending_approval is not None:
+        return "waiting_approval"
+    if session_status == "WAITING_CONFIRMATION":
+        return "waiting_confirmation"
+    if presentation.state == "completed":
+        return "completed"
+    if presentation.state == "failed":
+        return "failed"
+    if presentation.state == "blocked":
+        return "blocked"
+    if presentation.state == "rejected":
+        return "rejected"
+    if presentation.state == "expired":
+        return "expired"
+    if presentation.state == "cancelled":
+        return "cancelled"
+    return "running"
+
+
+def _run_step_kind_for_activity(step: ActivityStepResponse) -> str:
+    group = str(step.group or "")
+    label = str(step.label or "").lower()
+    if group == "planning":
+        return "analysis"
+    if group == "approval":
+        return "approval"
+    if group == "response":
+        return "completed"
+    if group == "system":
+        return "cancelled" if "cancel" in label else "diagnostic"
+    if group == "research":
+        return "mutation" if "updating" in label or "updated" in label else "read"
+    return "analysis"
+
+
+def _run_step_state_for_activity(step: ActivityStepResponse) -> str:
+    state = str(step.state or "")
+    if state == "running":
+        return "current"
+    if state == "waiting":
+        return "waiting"
+    if state in {"success", "complete"}:
+        return "completed"
+    if state == "error":
+        return "failed"
+    return "pending"
+
+
+def _run_steps_from_activity(
+    *,
+    activity_steps: list[ActivityStepResponse],
+    operation_id: str | None,
+    pending_approval: ApprovalResponse | None,
+    presentation: PresentationResponse,
+) -> list[RunStep]:
+    rows = presentation.rows if isinstance(presentation.rows, list) else []
+    run_steps: list[RunStep] = []
+    for step in activity_steps:
+        step_state = _run_step_state_for_activity(step)
+        step_kind = _run_step_kind_for_activity(step)
+        approval_id = (
+            pending_approval.approval_id
+            if pending_approval is not None and step_kind == "approval" and step_state in {"waiting", "current"}
+            else None
+        )
+        run_steps.append(
+            RunStep(
+                step_id=step.id,
+                kind=step_kind,  # type: ignore[arg-type]
+                state=step_state,  # type: ignore[arg-type]
+                title=step.label,
+                summary=step.detail,
+                approval_id=approval_id,
+                operation_id=operation_id,
+                record_count=len(rows) if step_kind in {"approval", "mutation"} and rows else None,
+                current=step_state in {"current", "waiting"},
+            )
+        )
+    return run_steps
+
+
+def _current_response_step_id(run_steps: list[RunStep]) -> str | None:
+    current = next((step for step in reversed(run_steps) if step.current), None)
+    if current is not None:
+        return current.step_id
+    return run_steps[-1].step_id if run_steps else None
+
+
+def _response_block_anchor(*, document_id: str, operation_id: str | None, approval_id: str | None) -> str:
+    return approval_id or operation_id or document_id
+
+
+def _diagnostic_severity(state: str) -> str:
+    if state in {"failed", "blocked", "rejected", "expired", "cancelled"}:
+        return "error"
+    if state == "running":
+        return "info"
+    return "warning"
+
+
+def _response_blocks_from_presentation(
+    *,
+    document_id: str,
+    state: str,
+    run_steps: list[RunStep],
+    presentation: PresentationResponse,
+) -> list[ResponseBlock]:
+    operation_id = presentation.operation_id
+    approval_id = presentation.approval_id
+    anchor = _response_block_anchor(document_id=document_id, operation_id=operation_id, approval_id=approval_id)
+    summary = _trimmed(presentation.summary) or ""
+    rows = presentation.rows if isinstance(presentation.rows, list) else []
+    sources = presentation.sources if isinstance(presentation.sources, list) else []
+    diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
+    reason = str(diagnostics.get("reason") or presentation.kind)
+
+    blocks: list[ResponseBlock] = []
+    if run_steps:
+        blocks.append(
+            RunActivityBlock(
+                id=f"activity:{document_id}",
+                step_ids=[step.step_id for step in run_steps],
+            )
+        )
+    if summary:
+        blocks.append(
+            ShortMessageBlock(
+                id=f"message:{anchor}:{state}",
+                message=summary,
+                status=state,  # type: ignore[arg-type]
+            )
+        )
+
+    if presentation.kind == "approval_required" and presentation.state == "pending" and approval_id:
+        blocks.append(
+            ApprovalRequiredBlock(
+                id=f"approval:{approval_id}",
+                approval_id=approval_id,
+                operation_id=operation_id,
+                summary=summary or "Approval is required before the operation can continue.",
+                rows=rows,
+            )
+        )
+
+    if presentation.kind in {"mutation_result", "partial_failure"}:
+        blocks.append(
+            MutationResultBlock(
+                id=f"mutation:{anchor}",
+                operation_id=operation_id,
+                approval_id=approval_id,
+                summary=summary or "Mutation completed.",
+                rows=rows,
+                status="partial_failure" if presentation.kind == "partial_failure" else "completed",
+            )
+        )
+
+    if presentation.kind == "knowledge_answer" and summary:
+        blocks.append(
+            KnowledgeAnswerBlock(
+                id=f"knowledge:{anchor}",
+                answer=summary,
+                operation_id=operation_id,
+            )
+        )
+
+    if rows:
+        blocks.append(
+            ResultTableBlock(
+                id=f"table:{anchor}:affected-records",
+                rows=rows,
+                operation_id=operation_id,
+                approval_id=approval_id,
+            )
+        )
+
+    if sources:
+        blocks.append(
+            SourceListBlock(
+                id=f"sources:{anchor}",
+                sources=sources,
+                operation_id=operation_id,
+            )
+        )
+
+    if presentation.kind in {"diagnostic", "cancelled", "rejected", "expired", "partial_failure"}:
+        blocks.append(
+            DiagnosticBlock(
+                id=f"diagnostic:{anchor}:{reason}",
+                severity=_diagnostic_severity(state),  # type: ignore[arg-type]
+                reason=reason,
+                user_message=summary or "The request needs attention before it can continue.",
+                technical_details=diagnostics,
+            )
+        )
+
+    return blocks
+
+
+def _build_response_document(
+    *,
+    session: Any,
+    plan: PlanResponse | None,
+    pending_approval: ApprovalResponse | None,
+    timeline: list[TimelineEventResponse],
+    activity_steps: list[ActivityStepResponse],
+    presentation: PresentationResponse,
+    cursor: int,
+) -> ResponseDocument:
+    session_id = str(getattr(session, "session_id", "") or "unknown-session")
+    turn_id = _response_document_turn_id(timeline, session_id=session_id)
+    operation_id = presentation.operation_id or (plan.plan_id if plan else None)
+    document_id = f"rd:{session_id}:{turn_id}"
+    revision, revision_source = _response_document_revision(cursor=cursor, session=session, timeline=timeline)
+    state = _response_document_state(session=session, pending_approval=pending_approval, presentation=presentation)
+    run_steps = _run_steps_from_activity(
+        activity_steps=activity_steps,
+        operation_id=operation_id,
+        pending_approval=pending_approval,
+        presentation=presentation,
+    )
+    blocks = _response_blocks_from_presentation(
+        document_id=document_id,
+        state=state,
+        run_steps=run_steps,
+        presentation=presentation,
+    )
+    summary = _trimmed(presentation.summary)
+    return ResponseDocument(
+        id=document_id,
+        document_id=document_id,
+        turn_id=turn_id,
+        operation_id=operation_id,
+        revision=revision,
+        revision_source=revision_source,
+        state=state,  # type: ignore[arg-type]
+        status=state,  # type: ignore[arg-type]
+        summary=summary,
+        message=summary,
+        current_step_id=_current_response_step_id(run_steps),
+        run_steps=run_steps,
+        blocks=blocks,
+        invariants=presentation.invariants,
+        diagnostics=presentation.diagnostics,
+    )
 
 
 class SessionSnapshotService:
@@ -607,7 +1952,7 @@ class SessionSnapshotService:
                 isinstance(state_payload, dict)
                 and state_payload.get("kind") == "langgraph_native_checkpoint"
             )
-        allow_step_projection = (not graph_native_session) or is_langgraph_plan(current_plan)
+        allow_step_projection = (not graph_native_session) or allows_persisted_step_projection(current_plan)
 
         checkpoint_state = _checkpoint_state_dict(checkpoint_payload if isinstance(checkpoint_payload, dict) else None)
         checkpoint_draft = checkpoint_state.get("validated_plan") if isinstance(checkpoint_state.get("validated_plan"), dict) else {}
@@ -632,10 +1977,7 @@ class SessionSnapshotService:
         unscoped_plan_messages = [row for row in plan_messages if not row.step_id]
         conversation_messages = [row for row in assistant_messages if row.tool_name == "__conversation__"]
         confirmation_messages = [row for row in assistant_messages if row.tool_name == "__confirmation__"]
-        snapshot_step_rows = step_rows if allow_step_projection else []
-        step_ids_by_plan: dict[str, list[str]] = {}
-        for step in snapshot_step_rows:
-            step_ids_by_plan.setdefault(step.plan_id, []).append(step.step_id)
+        snapshot_step_rows: list[PlanStepRow] = []
 
         user_messages_sorted = sorted(user_messages, key=lambda m: m.created_at)
 
@@ -666,6 +2008,15 @@ class SessionSnapshotService:
             if isinstance(_raw_plan_id, str) and _raw_plan_id.strip()
             else None
         )
+        if allow_step_projection:
+            snapshot_step_rows = (
+                [step for step in step_rows if step.plan_id == snapshot_plan_id]
+                if snapshot_plan_id
+                else list(step_rows)
+            )
+        step_ids_by_plan: dict[str, list[str]] = {}
+        for step in snapshot_step_rows:
+            step_ids_by_plan.setdefault(step.plan_id, []).append(step.step_id)
 
         def _step_ctx(extra: dict[str, Any] | None = None) -> dict[str, Any]:
             base: dict[str, Any] = {**_session_ctx(), **(extra or {})}
@@ -767,28 +2118,32 @@ class SessionSnapshotService:
             for row in approval_rows
             if (getattr(row, "subject_type", "step") or "step") == "graph"
         ]
-        graph_plan_order = {
-            row.plan_id: idx
-            for idx, row in enumerate([p for p in plan_rows if is_langgraph_plan(p)])
-        }
-        graph_plan_count = max(1, len(graph_plan_order))
-
         def _plan_timeline_created_at(plan_row: PlanRow) -> datetime:
-            if not is_langgraph_plan(plan_row) or not graph_approval_rows:
-                return plan_row.created_at
-            first_approval_at = min(row.created_at for row in graph_approval_rows if row.created_at)
-            order = graph_plan_order.get(plan_row.plan_id, 0)
-            latest_user_before_approval = None
-            for msg in user_messages_sorted:
-                if msg.created_at <= first_approval_at:
-                    latest_user_before_approval = msg
-                else:
-                    break
-            if latest_user_before_approval:
-                candidate = latest_user_before_approval.created_at + timedelta(milliseconds=10, microseconds=order)
-                if candidate < first_approval_at:
-                    return candidate
-            return first_approval_at - timedelta(microseconds=graph_plan_count - order)
+            return plan_row.created_at
+
+        approval_decided_at_by_id = {
+            row.approval_id: row.decided_at
+            for row in approval_rows
+            if row.approval_id and row.decided_at
+        }
+
+        def _approval_id_from_payload(*payloads: Any, fallback: str | None = None) -> str | None:
+            for payload in payloads:
+                if not isinstance(payload, dict):
+                    continue
+                candidate = (
+                    payload.get("approval_id")
+                    or payload.get("_approval_id")
+                    or (payload.get("result") if isinstance(payload.get("result"), dict) else {}).get("approval_id")
+                )
+                if candidate:
+                    return str(candidate)
+            return fallback
+
+        def _commit_event_time(default: datetime, approval_id: str | None, offset_ms: int) -> datetime:
+            if approval_id and approval_id in approval_decided_at_by_id:
+                return approval_decided_at_by_id[approval_id] + timedelta(milliseconds=offset_ms)
+            return default
 
         events: list[TimelineEventResponse] = []
         for msg in user_messages:
@@ -815,6 +2170,8 @@ class SessionSnapshotService:
                 plan_by_conversation_id[msg.message_id] = noop_plans_in_order[idx_msg]
 
         for msg in conversation_messages:
+            if _is_approval_wait_text(msg.content):
+                continue
             associated_plan = plan_by_conversation_id.get(msg.message_id)
             convo_details: dict[str, Any] = {}
             if associated_plan is not None:
@@ -867,10 +2224,10 @@ class SessionSnapshotService:
             if plan_message is None and idx < len(unscoped_plan_messages):
                 plan_message = unscoped_plan_messages[idx]
             plan_event_created_at = _plan_timeline_created_at(plan_row)
-            content = (
-                plan_message.content
-                if plan_message and plan_message.content
-                else (plan_row.plan_explanation or "Execution plan created.")
+            content = _plan_timeline_content(
+                session_status=sess.status,
+                plan_row=plan_row,
+                plan_message=plan_message,
             )
             events.append(
                 _timeline_event(
@@ -967,6 +2324,12 @@ class SessionSnapshotService:
                 )
             else:
                 continue
+            result_approval_id = _approval_id_from_payload(
+                step.result if isinstance(step.result, dict) else None,
+                step.args if isinstance(step.args, dict) else None,
+                fallback=step.approval_id,
+            )
+            created_at = _commit_event_time(created_at, result_approval_id, 5 + step.step_index)
 
             events.append(
                 _timeline_event(
@@ -984,6 +2347,7 @@ class SessionSnapshotService:
                         }
                     ),
                     step_id=step.step_id,
+                    approval_id=result_approval_id,
                     tool_name=step.tool_name,
                     status=step.status,
                     details=_build_tool_result_details(
@@ -1048,7 +2412,9 @@ class SessionSnapshotService:
                 if not tool_name:
                     continue
                 key = _graph_tool_event_key(action, idx_action)
-                created_at = _graph_event_time(20 + idx_action * 20)
+                args = action.get("args") if isinstance(action.get("args"), dict) else {}
+                approval_id = _approval_id_from_payload(action, args)
+                created_at = _commit_event_time(_graph_event_time(20 + idx_action * 20), approval_id, 2 + idx_action)
                 events.append(
                     _timeline_event(
                         event_id=f"graph-tool-started:{session_id}:{idx_action}:{key}",
@@ -1063,9 +2429,10 @@ class SessionSnapshotService:
                             }
                         ),
                         step_id=f"lg-step-{idx_action}",
+                        approval_id=approval_id,
                         tool_name=tool_name,
                         status="IN_PROGRESS",
-                        details={"args": action.get("args") if isinstance(action.get("args"), dict) else {}},
+                        details={"args": args},
                     )
                 )
 
@@ -1088,7 +2455,8 @@ class SessionSnapshotService:
                 )
                 content = summary or fallback_content
                 key = _graph_tool_event_key(output, idx_out)
-                created_at = _graph_event_time(25 + idx_out * 20)
+                approval_id = _approval_id_from_payload(output, result, args)
+                created_at = _commit_event_time(_graph_event_time(25 + idx_out * 20), approval_id, 5 + idx_out)
                 events.append(
                     _timeline_event(
                         event_id=f"graph-tool-result:{session_id}:{idx_out}:{key}",
@@ -1103,6 +2471,7 @@ class SessionSnapshotService:
                             }
                         ),
                         step_id=f"lg-step-{idx_out}",
+                        approval_id=approval_id,
                         tool_name=tool_name,
                         status=status,
                         details=_build_tool_result_details(
@@ -1218,13 +2587,26 @@ class SessionSnapshotService:
                     step_context=_session_ctx(),
                 )
             )
+        if is_user_cancelled_session(sess):
+            events.append(
+                _timeline_event(
+                    event_id=f"cancelled:{session_id}",
+                    event_type="session_failed",
+                    content=USER_CANCELLED_TIMELINE_CONTENT,
+                    created_at=sess.updated_at,
+                    status=sess.status,
+                    turn_id=_turn_id_for_time(sess.updated_at),
+                    step_context=_session_ctx(),
+                    details={"reason": USER_CANCELLED_REASON},
+                )
+            )
         latest_user_at = user_messages_sorted[-1].created_at if user_messages_sorted else None
         has_completion_for_latest_turn = any(
             event.event_type == "session_completed"
             and (latest_user_at is None or event.created_at >= latest_user_at)
             for event in events
         )
-        if sess.status == "COMPLETED" and not has_completion_for_latest_turn:
+        if sess.status == "COMPLETED" and pending_approval is None and not has_completion_for_latest_turn:
             useful_completion_message = next(
                 (
                     msg
@@ -1239,13 +2621,15 @@ class SessionSnapshotService:
                 (msg for msg in reversed(assistant_messages) if "Execution completed successfully" in msg.content),
                 None,
             )
-            useful_tool_result_event = next(
-                (
-                    event
-                    for event in sorted(events, key=lambda item: item.created_at, reverse=True)
-                    if event.event_type == "tool_result" and _is_operator_result_text(event.content)
-                ),
-                None,
+            useful_tool_result_events = [
+                event
+                for event in events
+                if event.event_type == "tool_result" and _is_operator_result_text(event.content)
+            ]
+            useful_tool_result_event = (
+                max(useful_tool_result_events, key=_tool_result_completion_sort_key)
+                if useful_tool_result_events
+                else None
             )
             completed_at = (
                 sess.completed_at
@@ -1263,9 +2647,14 @@ class SessionSnapshotService:
             if useful_tool_result_event and (
                 not useful_completion_message
                 or _is_plan_like_completion_text(useful_completion_message.content)
+                or (
+                    _is_success_like_plan_text(useful_completion_message.content)
+                    and not _is_rich_operator_completion_text(useful_completion_message.content)
+                )
+                or _is_approval_wait_text(useful_completion_message.content)
                 or _looks_like_raw_json_text(useful_completion_message.content)
             ):
-                completion_content = useful_tool_result_event.content
+                completion_content = _operator_result_content_for_completion(useful_tool_result_event) or useful_tool_result_event.content
             events.append(
                 _timeline_event(
                     event_id=f"completed:{session_id}",
@@ -1371,14 +2760,36 @@ class SessionSnapshotService:
         if pending_approval is not None and pending_approval.status != "PENDING":
             healed_pending_approval = None
 
-        # Also cross-check against session status: WAITING_APPROVAL without a PENDING
-        # approval row means we're in a stale state — repair silently.
-        if healed_pending_approval is None and sess.status == "WAITING_APPROVAL":
-            # There is no pending approval row; the session will self-advance on next
-            # execute call but we must not expose a "waiting" phase to the frontend.
+        # Also cross-check against approval state: a pending approval must keep the
+        # browser in WAITING_APPROVAL even if a stale terminal row is still present.
+        orphan_turn_state = _is_orphan_turn_state(
+            session=sess,
+            pending_approval=approval_to_response(healed_pending_approval) if healed_pending_approval else None,
+            timeline=events,
+        )
+        if healed_pending_approval is not None:
+            _effective_status = "WAITING_APPROVAL"
+        elif orphan_turn_state:
+            _effective_status = "BLOCKED"
+        elif healed_pending_approval is None and sess.status == "WAITING_APPROVAL":
             _effective_status = sess.status
         else:
             _effective_status = sess.status
+        _session_response = session_to_response(sess)
+        if _effective_status != sess.status:
+            update_payload: dict[str, Any] = {
+                "status": _effective_status,
+                "completed_at": None if _effective_status != "COMPLETED" else _session_response.completed_at,
+            }
+            if orphan_turn_state:
+                context = dict(_session_response.replan_context or {})
+                context["blocked_reason"] = ORPHAN_TURN_REASON
+                context["original_session_status"] = sess.status
+                update_payload["error"] = ORPHAN_TURN_MESSAGE
+                update_payload["replan_context"] = context
+            _session_response = _session_response.model_copy(
+                update=update_payload
+            )
 
         # Derive resume_hint: session is applying approved changes if it is EXECUTING
         # and replan_context carries a recent approval resume marker (decided within
@@ -1411,26 +2822,56 @@ class SessionSnapshotService:
                     decided_at=_approval_decided_at_str or None,
                 )
 
-        # Build server-authoritative activity steps.
-        _snapshot_for_activity = SessionSnapshotResponse(
-            session=session_to_response(sess),
-            plan=plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None,
-            steps=(checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]),
-            pending_approval=approval_to_response(healed_pending_approval) if healed_pending_approval else None,
+        _plan_response = plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None
+        _step_responses = checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]
+        _pending_approval_response = approval_to_response(healed_pending_approval) if healed_pending_approval else None
+        _approval_responses = [approval_to_response(row) for row in approval_rows]
+        _presentation = _derive_snapshot_presentation(
+            session=_session_response,
+            plan=_plan_response,
+            steps=_step_responses,
+            pending_approval=_pending_approval_response,
+            approvals=_approval_responses,
             timeline=events,
         )
+        events = _attach_typed_presentations_to_events(events, snapshot_presentation=_presentation)
+
+        # Build server-authoritative activity steps.
+        _snapshot_for_activity = SessionSnapshotResponse(
+            session=_session_response,
+            plan=_plan_response,
+            steps=_step_responses,
+            pending_approval=_pending_approval_response,
+            timeline=events,
+            presentation=_presentation,
+        )
         _activity_steps = _activity_steps_for_snapshot(_snapshot_for_activity)
+        _cursor = int(getattr(sess, "event_seq", None) or 0)
+        _response_document = compose_response_document(
+            session=_session_response,
+            plan=_plan_response,
+            steps=_step_responses,
+            pending_approval=_pending_approval_response,
+            approvals=_approval_responses,
+            timeline=events,
+            activity_steps=_activity_steps,
+            presentation=_presentation,
+            cursor=_cursor,
+        )
 
         return SessionSnapshotResponse(
-            session=session_to_response(sess),
-            plan=plan_to_response(current_plan) if current_plan and not _is_noop_plan(current_plan) else None,
-            steps=(checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]),
-            pending_approval=approval_to_response(healed_pending_approval) if healed_pending_approval else None,
+            session=_session_response,
+            plan=_plan_response,
+            steps=_step_responses,
+            pending_approval=_pending_approval_response,
             timeline=events,
-            cursor=int(getattr(sess, "event_seq", None) or 0),
+            snapshot_revision=_response_document.revision,
+            cursor=_cursor,
             phase=_effective_status,
             resume_hint=_resume_hint,
             activity_steps=_activity_steps,
+            presentation=_presentation,
+            response_document=_response_document,
         )
 
     @staticmethod

@@ -1,0 +1,186 @@
+{
+  "id": "SO-023",
+  "title": "LOTO lowercase and punctuation machine ID",
+  "risk": "Lowercase or punctuation-heavy LOTO wording can lose the machine ID, ask for it again, or route away from RAG despite a valid M-CNC-01 reference.",
+  "prompt": "need lockout tagout for m-cnc-01 before service",
+  "initial_state": {
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "rag_sources": [
+      {
+        "source_id": "SRC-LOTO-CNC-01",
+        "machine_id": "M-CNC-01",
+        "title": "LOTO Procedure for CNC Cell"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": []
+  },
+  "expected_route": {
+    "route": "rag.loto_procedure",
+    "machine_id": "M-CNC-01",
+    "normalized_from": "m-cnc-01",
+    "must_not_route_to": [
+      "clarification.machine_id_missing",
+      "tool.read.machine_status"
+    ]
+  },
+  "expected_approvals": [],
+  "expected_intermediate_states": [
+    {
+      "after": "entity extraction",
+      "session_phase": "EXECUTING",
+      "machine_id": "M-CNC-01",
+      "normalized_from": "m-cnc-01",
+      "missing_required_entities": []
+    },
+    {
+      "after": "rag retrieval",
+      "session_phase": "EXECUTING",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ],
+      "forbidden": [
+        "ask_for_machine_id_again",
+        "machine_status_tool_call"
+      ]
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "machines": [
+      {
+        "id": "M-CNC-01",
+        "status": "running",
+        "cell": "CNC"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [],
+  "expected_timeline": [
+    {
+      "event": "operation_started"
+    },
+    {
+      "event": "intent_split",
+      "intent_count": 1
+    },
+    {
+      "event": "route_selected",
+      "route": "rag.loto_procedure"
+    },
+    {
+      "event": "rag_retrieval_completed",
+      "machine_id": "M-CNC-01",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    },
+    {
+      "event": "final_response_created"
+    },
+    {
+      "event": "operation_completed"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": false,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "route": "rag.loto_procedure",
+      "source_ids": [
+        "SRC-LOTO-CNC-01"
+      ]
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "rag_retrieval_completed M-CNC-01",
+    "must_include": [
+      "M-CNC-01",
+      "LOTO",
+      "SRC-LOTO-CNC-01"
+    ],
+    "must_not_include": [
+      "Which machine",
+      "provide the exact machine",
+      "Factory Agent needs attention",
+      "Status: running"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "M-CNC-01",
+      "LOTO",
+      "Knowledge sources",
+      "Seeded LOTO Procedure for M-CNC-01"
+    ],
+    "must_not_show": [
+      "Which machine",
+      "provide the exact machine",
+      "Factory Agent needs attention",
+      "machine status only"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "M-CNC-01",
+      "status": "running"
+    }
+  ],
+  "invariants": [
+    "no_approval_required",
+    "machine_id_normalized_from_lowercase",
+    "route_matches_operator_intent",
+    "rag_sources_project_to_snapshot_and_ui",
+    "read_only_state_unchanged"
+  ],
+  "required_layers": [
+    "parser_route",
+    "seeded_browser"
+  ],
+  "weakness_from_phase0": "Existing successful LOTO coverage used cleaner wording or slash-separated lockout/tagout; this exact normal-use phrase proves lowercase normalization and route selection for plain 'lockout tagout'.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "Lowercase m-cnc-01 plus plain lockout tagout wording can fail normalization and fall back to a clarification or wrong route.",
+    "existing_test_that_would_miss_it": "SO-021 covers a canonical uppercase ID, and the prior bank wording used lockout/tagout with a slash rather than this punctuation-free operator phrasing.",
+    "lowest_useful_layer": "parser_route",
+    "browser_coverage_required": true,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "Real LangGraph is optional for this scenario; parser/route coverage proves normalization and seeded browser coverage proves source projection.",
+    "required_positive_evidence": [
+      "m-cnc-01 normalizes to M-CNC-01",
+      "LOTO/RAG route selected",
+      "source metadata tied to LOTO-M-CNC-01",
+      "no repeat machine-id clarification",
+      "machine state unchanged"
+    ],
+    "required_forbidden_stale_evidence": [
+      "Which machine",
+      "provide the exact machine",
+      "machine status-only route",
+      "Factory Agent needs attention"
+    ],
+    "coverage_category": "canonical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_phase19_prompt_workflow_regression.py::test_so021_so023_so025_prompt_oracles_route_loto_to_rag_with_machine_id",
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract"
+    ],
+    "playwright": [
+      "eMas Front/e2e/specs/full-stack-prompt-workflow-regression.spec.js::SO-021 scenario 116/124/125"
+    ],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "tests/e2e/scenarios/manual_prompt_regressions.json::phase16-so023-loto-lowercase-punctuation-m-cnc-01",
+      "docs/qa/manual_prompt_regression_bank.md#phase-16-remaining-normal-use-breakage-scenarios"
+    ],
+    "tracker": "docs/qa/STATEFUL_ORACLE_TESTING_TRACK.md#phase-16-remaining-normal-use-breakage-scenarios"
+  }
+}

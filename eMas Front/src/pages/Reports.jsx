@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import CalendarPicker from '../components/features/reports/CalendarPicker'
 import ReportPreview from '../components/features/reports/ReportPreview'
+import { formatReportValue } from '../components/features/reports/reportValueFormatter'
 import PageHeader from '../components/shared/PageHeader'
 import { reportsApi, apiErrorMessage } from '../services/api'
 import logger from '../services/logger'
@@ -73,7 +74,19 @@ const Reports = () => {
     }
 
     const handleDateRangeChange = (range) => {
-        setDateRange(range)
+        if (range && typeof range === 'object') {
+            setDateRange(formatReportValue(range))
+            const start = range.start instanceof Date ? range.start : new Date(range.start)
+            const end = range.end instanceof Date ? range.end : new Date(range.end)
+            if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+                const endOfDay = new Date(end)
+                endOfDay.setHours(23, 59, 59, 999)
+                setStartIso(start.toISOString())
+                setEndIso(endOfDay.toISOString())
+            }
+            return
+        }
+        setDateRange(range || '')
         // Parse "Oct 5, 2023 – Oct 9, 2023" → ISO
         try {
             const parts = range.split(/\s*[-–]\s*/)

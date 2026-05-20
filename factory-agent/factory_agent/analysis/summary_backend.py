@@ -133,6 +133,24 @@ def _job_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
         status = str(data.get("status") or "").strip()
         deadline = str(data.get("deadline") or "").strip()
         priority = str(data.get("priority") or args.get("priority") or "").strip().lower()
+        previous_priority = str(
+            data.get("previous_priority")
+            or data.get("_previous_priority")
+            or args.get("previous_priority")
+            or ""
+        ).strip().lower()
+        source_state_basis = str(
+            data.get("source_state_basis")
+            or data.get("_source_state_basis")
+            or args.get("source_state_basis")
+            or ""
+        ).strip().lower()
+        approval_id = str(
+            data.get("approval_id")
+            or data.get("_approval_id")
+            or row.get("approval_id")
+            or ""
+        ).strip()
         items.append(
             {
                 "id": rid,
@@ -140,6 +158,9 @@ def _job_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
                 "status": status,
                 "deadline": deadline,
                 "priority": priority,
+                "previous_priority": previous_priority,
+                "source_state_basis": source_state_basis,
+                "approval_id": approval_id,
             }
         )
     if not items:
@@ -150,6 +171,35 @@ def _job_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
     ordered = list(by_id.values())
     n = len(ordered)
     intent = str(facts.get("intent") or "").strip()
+
+    grouped_lines = _priority_write_set_summary_lines(ordered)
+    if grouped_lines:
+        lines: list[str] = ["**Success**", ""]
+        if intent and len(intent) < 280:
+            lines.append(intent)
+            lines.append("")
+        group_count = len(grouped_lines)
+        lines.append(f"Updated **{n}** job(s) across **{group_count}** write set(s).")
+        lines.append("")
+        lines.extend(f"- {line}" for line in grouped_lines)
+        lines.append("")
+        lines.append("No jobs were created or deleted.")
+        lines.append("")
+        lines.append("Affected records:")
+        lines.append("")
+        for i, j in enumerate(ordered, start=1):
+            prev = j.get("previous_priority") or "unknown"
+            new = j.get("priority") or "unknown"
+            lines.append(f"{i}. **{j['id']}**")
+            lines.append(f"   - Previous Priority: **{prev}**")
+            lines.append(f"   - New Priority: **{new}**")
+            if j["product_id"]:
+                lines.append(f"   - Product: **{j['product_id']}**")
+            if j["status"]:
+                lines.append(f"   - Status: **{j['status']}**")
+            lines.append("")
+        return "\n".join(lines).strip()
+
     lines: list[str] = ["**Success**", ""]
     if intent and len(intent) < 280:
         lines.append(intent)
@@ -172,6 +222,58 @@ def _job_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:
         lines.append("\n".join(block))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def _priority_write_set_summary_lines(items: list[dict[str, str]]) -> list[str]:
+    """Summarize multi-approval priority updates by previous/new priority."""
+    if not items:
+        return []
+    if not all(item.get("previous_priority") and item.get("priority") for item in items):
+        return []
+
+    groups: list[dict[str, Any]] = []
+    group_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in items:
+        key = (
+            item.get("previous_priority") or "",
+            item.get("priority") or "",
+            item.get("source_state_basis") or "",
+            item.get("approval_id") or "",
+        )
+        group = group_by_key.get(key)
+        if group is None:
+            group = {
+                "previous_priority": key[0],
+                "priority": key[1],
+                "source_state_basis": key[2],
+                "approval_id": key[3],
+                "ids": [],
+            }
+            group_by_key[key] = group
+            groups.append(group)
+        group["ids"].append(item["id"])
+
+    if len(groups) <= 1:
+        return []
+
+    lines: list[str] = []
+    earlier_targets: set[str] = set()
+    for group in groups:
+        count = len(group["ids"])
+        previous = str(group["previous_priority"])
+        new = str(group["priority"])
+        basis = str(group.get("source_state_basis") or "")
+        approval_id = str(group.get("approval_id") or "")
+        original = previous in earlier_targets or (basis == "original" and bool(lines))
+        original_text = "original " if original else ""
+        job_word = "job" if count == 1 else "jobs"
+        line = f"{count} {original_text}{previous} priority {job_word} changed to {new}"
+        if approval_id:
+            line += f" under approval {approval_id}"
+        lines.append(line)
+        if new:
+            earlier_targets.add(new)
+    return lines
 
 
 def _entity_recap_markdown_from_facts(facts: dict[str, Any]) -> str | None:

@@ -16,9 +16,12 @@ DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "20"))
 DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
 DB_POOL_TIMEOUT_S = int(os.getenv("DB_POOL_TIMEOUT_S", "30"))
 DB_SLOW_QUERY_MS = float(os.getenv("DB_SLOW_QUERY_MS", "250"))
+SQLITE_BUSY_TIMEOUT_S = float(os.getenv("SQLITE_BUSY_TIMEOUT_S", "30"))
 
 engine_kwargs = {"echo": False}
-if not DATABASE_URL.startswith("sqlite"):
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.update({"connect_args": {"timeout": SQLITE_BUSY_TIMEOUT_S}})
+else:
     engine_kwargs.update(
         {
             "pool_size": DB_POOL_SIZE,
@@ -32,6 +35,19 @@ engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(f"PRAGMA busy_timeout = {int(SQLITE_BUSY_TIMEOUT_S * 1000)}")
+        if ":memory:" not in DATABASE_URL:
+            cursor.execute("PRAGMA journal_mode = WAL")
+    finally:
+        cursor.close()
 
 
 @event.listens_for(engine.sync_engine, "before_cursor_execute")

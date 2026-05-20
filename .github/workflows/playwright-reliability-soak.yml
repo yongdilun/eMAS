@@ -1,0 +1,78 @@
+name: Playwright Reliability Soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Number of mocked/seeded/release smoke loops for scenario 95.
+        required: false
+        default: "1"
+      include_release:
+        description: Include the opt-in chromium-release smoke inside the soak runner.
+        required: false
+        default: "true"
+  schedule:
+    - cron: "17 9 * * 1"
+
+jobs:
+  reliability-soak:
+    name: Phase 15 reliability and soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    defaults:
+      run:
+        working-directory: eMas Front
+
+    env:
+      PLAYWRIGHT_RELIABILITY_SOAK_REPEAT: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat || '2' }}
+      PLAYWRIGHT_RELIABILITY_SKIP_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_release == 'false' && '1' || '0' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: eMas Front/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Factory Agent dependencies
+        working-directory: factory-agent
+        run: python -m pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run mocked reliability scenarios
+        run: npm run test:e2e:reliability
+
+      - name: Run seeded reliability scenarios
+        run: npm run test:e2e:reliability:seeded
+
+      - name: Upload reliability artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-reliability-soak
+          path: |
+            eMas Front/playwright-report/
+            eMas Front/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

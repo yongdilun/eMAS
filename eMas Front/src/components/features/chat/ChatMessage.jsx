@@ -26,7 +26,14 @@ const ChatMessage = ({
 
   const renderFormattedText = (text) => {
     if (!text) return null
-    return <div className="whitespace-pre-wrap">{renderCitationsAndBold(stripSourceFootnoteDefinitions(text))}</div>
+    return (
+      <div
+        className={`whitespace-pre-wrap break-words ${isUser ? '' : 'max-w-[72ch]'}`}
+        data-assistant-prose={isUser ? undefined : ''}
+      >
+        {renderCitationsAndBold(stripSourceFootnoteDefinitions(text))}
+      </div>
+    )
   }
 
   const renderCitationsAndBold = (text) => {
@@ -152,7 +159,7 @@ const ChatMessage = ({
         </span>
       </div>
       <div
-        className={`flex flex-col ${isUser ? 'max-w-[85%] items-end' : 'w-full max-w-2xl items-stretch'}`}
+        className={`flex flex-col ${isUser ? 'max-w-[85%] items-end' : 'w-full min-w-0 max-w-none items-stretch'}`}
       >
         <div className={`mb-1.5 flex items-center gap-2 px-1 ${isUser ? 'flex-row-reverse' : ''}`}>
           <span className="text-[11px] font-bold uppercase tracking-wider text-ink-tertiary">
@@ -174,6 +181,7 @@ const ChatMessage = ({
         ) : (
           <div
             className={`overflow-hidden rounded-lg border border-hairline bg-surface-1 text-ink shadow-sm transition-all duration-300 ${bubbleAnim}`}
+            data-assistant-response-card=""
           >
             {hasAssistantBody ? (
               <div className="border-b border-hairline bg-surface-2 px-5 py-3">
@@ -183,7 +191,7 @@ const ChatMessage = ({
                 )}
               </div>
             ) : null}
-            <div className="px-5 py-4 text-[13px] leading-relaxed">
+            <div className="px-5 py-4 text-[13px] leading-relaxed" data-assistant-response-content="">
               <div className="relative">
                 {messageAfterBlocks ? renderBlocks?.() : null}
                 {hasMessage ? <div>{renderFormattedText(message)}</div> : null}

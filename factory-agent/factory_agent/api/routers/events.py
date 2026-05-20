@@ -11,9 +11,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from factory_agent.api.dependencies import require_session_owner
 from factory_agent.observability.metrics import metrics
 from factory_agent.persistence.database import get_db
 from factory_agent.schemas import ActivityStepResponse, SessionSnapshotResponse, TimelineEventResponse
+from factory_agent.testing.fault_injection import SseFaultInjectionAdapter, build_sse_fault_injection_adapter
 
 
 LoadSessionSnapshot = Callable[..., Awaitable[SessionSnapshotResponse | None]]
@@ -26,15 +28,23 @@ def build_events_router(
     semantic_payload_for_timeline_event: Callable[..., dict[str, Any]],
     should_skip_semantic_timeline_event: Callable[[TimelineEventResponse], bool],
     require_jwt: Callable[..., dict[str, Any]],
+    sse_fault_injection: SseFaultInjectionAdapter | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    fault_injection = sse_fault_injection or build_sse_fault_injection_adapter()
+
+    if fault_injection.exposes_playwright_diagnostics:
+
+        @router.get("/_playwright/sse-connections")
+        async def seeded_sse_connections(request: Request):
+            return {"connections": fault_injection.connection_rows(request)}
 
     @router.get("/sessions/{session_id}/events/semantic")
     async def stream_semantic_events(
         request: Request,
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -44,6 +54,15 @@ def build_events_router(
         events derived from snapshot timeline diffs. EventSource reconnects can
         resume after Last-Event-ID.
         """
+        fault_injection.record_connection(
+            request,
+            stream="semantic",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
+        initial_for_auth = await load_session_snapshot(db=db, session_id=session_id)
+        if initial_for_auth is not None:
+            require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -62,10 +81,15 @@ def build_events_router(
             if last_event_id:
                 initial_snapshot = await _fresh_snapshot()
                 if initial_snapshot is not None:
+                    resume_seen_event_ids: list[str] = []
+                    found_resume_event = False
                     for ev in initial_snapshot.timeline:
-                        seen_event_ids.add(ev.event_id)
+                        resume_seen_event_ids.append(ev.event_id)
                         if ev.event_id == last_event_id:
+                            found_resume_event = True
                             break
+                    if found_resume_event:
+                        seen_event_ids.update(resume_seen_event_ids)
             init_payload = {"type": "STREAM_READY", "session_id": session_id}
             yield f"event: semantic\ndata: {json.dumps(init_payload, ensure_ascii=False)}\n\n"
             while True:
@@ -148,7 +172,7 @@ def build_events_router(
         request: Request,
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -158,6 +182,15 @@ def build_events_router(
         the chat UI. Intra-poll changes are emitted together, then paced before
         the next poll cycle.
         """
+        fault_injection.record_connection(
+            request,
+            stream="activity",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
+        initial_for_auth = await load_session_snapshot(db=db, session_id=session_id)
+        if initial_for_auth is not None:
+            require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -176,10 +209,19 @@ def build_events_router(
             if last_event_id:
                 initial_snapshot = await _fresh_snapshot()
                 if initial_snapshot is not None:
+                    resume_seen_steps: dict[str, str] = {}
+                    found_resume_step = False
                     for step in activity_steps_for_snapshot(initial_snapshot):
-                        seen_steps[step.id] = json.dumps(step.model_dump(exclude_none=True), sort_keys=True, default=str)
+                        resume_seen_steps[step.id] = json.dumps(
+                            step.model_dump(exclude_none=True),
+                            sort_keys=True,
+                            default=str,
+                        )
                         if step.id == last_event_id:
+                            found_resume_step = True
                             break
+                    if found_resume_step:
+                        seen_steps.update(resume_seen_steps)
 
             ready = {"type": "STREAM_READY", "session_id": session_id}
             yield f"event: control\ndata: {json.dumps(ready, ensure_ascii=False)}\n\n"
@@ -203,7 +245,13 @@ def build_events_router(
                     seen_steps[step.id] = payload_signature
                     emitted = True
                     pending_frames.append((step.id, payload))
-                for step_id, payload in pending_frames:
+                frames_to_emit = fault_injection.activity_frames(
+                    request,
+                    session_id=session_id,
+                    snapshot=snapshot,
+                    pending_frames=pending_frames,
+                )
+                for step_id, payload in frames_to_emit:
                     yield f"id: {step_id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if emitted:
                     idle_heartbeats = 0
@@ -231,7 +279,7 @@ def build_events_router(
         request: Request,
         session_id: str,
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-        _: dict[str, Any] = Depends(require_jwt),
+        user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
         """
@@ -240,6 +288,15 @@ def build_events_router(
         Emits lightweight frames: hello, snapshot_invalidated, phase_changed,
         and heartbeat. Clients re-fetch snapshots when invalidated.
         """
+        fault_injection.record_connection(
+            request,
+            stream="notification",
+            session_id=session_id,
+            last_event_id=last_event_id,
+        )
+        initial_for_auth = await load_session_snapshot(db=db, session_id=session_id)
+        if initial_for_auth is not None:
+            require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
         await db.close()
 
@@ -275,7 +332,15 @@ def build_events_router(
                 "cursor": initial.cursor,
                 "phase": initial.phase,
             }
-            yield f"id: {initial.cursor}\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
+            yield f"id: {initial.cursor}\nretry: 500\nevent: notification\ndata: {json.dumps(hello, ensure_ascii=False)}\n\n"
+
+            if fault_injection.should_drop_notification_stream(
+                request,
+                session_id=session_id,
+                last_event_id=last_event_id,
+                snapshot=initial,
+            ):
+                return
 
             if client_cursor < initial.cursor:
                 inv = {
@@ -294,6 +359,14 @@ def build_events_router(
                 if snapshot is None:
                     gone = {"type": "SESSION_NOT_FOUND", "session_id": session_id}
                     yield f"event: notification\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
+                    return
+
+                if fault_injection.should_drop_notification_stream(
+                    request,
+                    session_id=session_id,
+                    last_event_id=last_event_id,
+                    snapshot=snapshot,
+                ):
                     return
 
                 emitted = False
