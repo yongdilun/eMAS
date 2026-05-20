@@ -46,6 +46,37 @@ def test_validate_knowledge_answer_rejects_inline_step_list_with_only_trailing_c
     assert answer == insufficient_context_answer(has_sources=True)
 
 
+def test_validate_knowledge_answer_rejects_truncated_numbered_step_tail():
+    answer, result = answer_or_insufficient_context(
+        "1. Prepare for shutdown.[^1]\n2. Shut down the machine.[^1]\n3",
+        [_source(1)],
+    )
+
+    assert not result.valid
+    assert result.reason == "incomplete_numbered_item"
+    assert answer == insufficient_context_answer(has_sources=True)
+
+
+def test_validate_knowledge_answer_rejects_truncated_inline_numbered_step_tail():
+    answer, result = answer_or_insufficient_context(
+        "1. Prepare for shutdown.[^1] 2. Shut down the machine.[^1] 3.",
+        [_source(1)],
+    )
+
+    assert not result.valid
+    assert result.reason == "incomplete_numbered_item"
+    assert answer == insufficient_context_answer(has_sources=True)
+
+
+def test_validate_knowledge_answer_does_not_treat_numeric_claim_as_incomplete_step():
+    result = validate_knowledge_answer(
+        "According to the cited source, the procedure has 5 steps.[^1]",
+        [_source(1)],
+    )
+
+    assert result.valid
+
+
 def test_validate_knowledge_answer_accepts_inline_step_list_when_each_step_is_cited():
     result = validate_knowledge_answer(
         "1. Prepare for shutdown.[^1] 2. Shut down the machine.[^1] 3. Disconnect energy sources.[^1]",

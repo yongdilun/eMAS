@@ -59,6 +59,7 @@ If the context does not prove the answer, respond exactly with:
 - Every factual claim must have a citation marker in the same sentence or list item.
 - For procedures, output a numbered list.
 - Every procedure step must end with a citation marker.
+- Do not output an incomplete numbered item such as a bare "3" or "3.".
 - Do not put one citation at the end of a multi-step list unless it is repeated on every step.
 - Do not output [SOURCE 1], source titles, footnote definitions, or a bibliography.
 - Do not include uncited introductions, summaries, conclusions, or safety warnings.
@@ -82,6 +83,7 @@ For non-procedures:
 ### Final Checks Before Answering
 - Every factual sentence/list item has a valid [^N] citation.
 - Every procedure step is numbered and cited.
+- No numbered item is left blank or cut off.
 - Unsupported or partially supported claims are omitted.
 - If no supported answer remains, output exactly the insufficient-context sentence.
 

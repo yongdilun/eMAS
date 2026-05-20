@@ -14,6 +14,8 @@ from factory_agent.rag.source_metadata import (
 _CITATION_MARKER_RE = re.compile(r"\[\^(\d+)\]")
 _NUMBERED_PROCEDURE_LINE_RE = re.compile(r"^\s*(?:\d+[\.)]|[-*]\s*\d+[\.)])\s+")
 _NUMBERED_PROCEDURE_STEP_RE = re.compile(r"(?<!\w)(?:[-*]\s*)?\d+[\.)]\s+")
+_INCOMPLETE_NUMBERED_ITEM_RE = re.compile(r"^\s*(?:[-*]\s*)?\d+[\.)]?\s*$")
+_INCOMPLETE_NUMBERED_AFTER_CITATION_TAIL_RE = re.compile(r"\[\^\d+\][\s;]+(?:[-*]\s*)?\d+[\.)]?\s*$")
 _WORD_RE = re.compile(r"[A-Za-z0-9]")
 
 
@@ -47,6 +49,14 @@ def validate_knowledge_answer(answer: Any, sources: Sequence[Any]) -> KnowledgeA
             valid=False,
             answer=clean_answer,
             reason="unknown_citation",
+            cited_source_numbers=tuple(sorted(cited_numbers)),
+        )
+
+    if _has_incomplete_numbered_item(clean_answer):
+        return KnowledgeAnswerValidation(
+            valid=False,
+            answer=clean_answer,
+            reason="incomplete_numbered_item",
             cited_source_numbers=tuple(sorted(cited_numbers)),
         )
 
@@ -115,6 +125,24 @@ def _has_uncited_claim_line(answer: str) -> bool:
         if _is_citation_framing_line(line, index=index, has_cited_line=has_cited_line):
             continue
         if _looks_like_claim_line(line):
+            return True
+    return False
+
+
+def _has_incomplete_numbered_item(answer: str) -> bool:
+    lines = [line.strip() for line in re.split(r"[\r\n]+", answer or "") if line.strip()]
+    if any(_INCOMPLETE_NUMBERED_ITEM_RE.fullmatch(line) for line in lines):
+        return True
+    if _INCOMPLETE_NUMBERED_AFTER_CITATION_TAIL_RE.search(answer or ""):
+        return True
+
+    matches = list(_NUMBERED_PROCEDURE_STEP_RE.finditer(answer or ""))
+    if not matches:
+        return False
+    for index, match in enumerate(matches):
+        segment_end = matches[index + 1].start() if index + 1 < len(matches) else len(answer)
+        segment = answer[match.start() : segment_end].strip()
+        if _INCOMPLETE_NUMBERED_ITEM_RE.fullmatch(segment):
             return True
     return False
 
