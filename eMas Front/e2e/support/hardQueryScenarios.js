@@ -169,6 +169,7 @@ export const hardQueryScenarios = Object.freeze([
             sort_by: 'deadline',
             sort_dir: 'asc',
             limit: 3,
+            fields: ['job_id', 'deadline'],
           },
         },
       ],
@@ -176,18 +177,63 @@ export const hardQueryScenarios = Object.freeze([
       noMutation: true,
       responseDocument: {
         minReadRunSteps: 3,
+        blockTypes: ['status_result', 'result_table'],
         blocks: [
           {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            entityType: 'machine',
+            displayMode: 'compact_status_card',
+          },
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            entityType: 'job',
+            displayMode: 'compact_status_card',
+          },
+          {
             type: 'result_table',
+            entityType: 'job',
+            readScope: 'records',
+            requestedFields: ['job_id', 'deadline'],
             maxRows: 5,
           },
         ],
+        hiddenBlockTypes: ['approval_required'],
       },
       visibleSemanticBlocks: [
         {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          entityType: 'machine',
+          displayMode: 'compact_status_card',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          entityType: 'job',
+          displayMode: 'compact_status_card',
+          statusFieldKeys: ['job_id', 'status'],
+        },
+        {
           type: 'result_table',
+          entityType: 'job',
+          readScope: 'records',
+          requestedFields: ['job_id', 'deadline'],
+          tableColumnKeys: ['job_id', 'deadline'],
           maxRows: 5,
         },
+      ],
+      visibleTextIncludes: [
+        { label: 'machine status summary', pattern: /Machine\s+M-CNC-01\s+is/i },
+        { label: 'job status summary', pattern: /Job\s+JOB-SEED-001\s+is/i },
+        { label: 'low priority collection summary', pattern: /Found\s+3\s+low-priority\s+jobs/i },
+        { label: 'deadline evidence', pattern: /Deadline/i },
+      ],
+      backendTextIncludes: [
+        { label: 'job identity field', pattern: /job_id/i },
+        { label: 'deadline field', pattern: /deadline/i },
       ],
       forbiddenVisibleText: [
         { label: 'approval required after read-only multi-step', pattern: /Approval required/i },

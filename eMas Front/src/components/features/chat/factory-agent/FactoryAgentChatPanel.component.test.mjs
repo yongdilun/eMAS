@@ -848,6 +848,94 @@ test('FactoryAgentChatPanel renders pending response_document approval compact b
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel renders zero-match first change before first actionable approval', async () => {
+  const rows = [
+    { job_id: 'JOB-MED-001', priority: 'medium', previous_priority: 'medium', new_priority: 'high' },
+    { job_id: 'JOB-MED-002', priority: 'medium', previous_priority: 'medium', new_priority: 'high' },
+  ]
+  const pendingApproval = {
+    approval_id: 'approval-medium-high',
+    tool_name: '__langgraph_commit__',
+    side_effect_level: 'HIGH',
+    risk_summary: 'Update 2 jobs from medium to high.',
+    args: { bundle_ui: { rows } },
+  }
+  const document = baseResponseDocument({
+    state: 'waiting_approval',
+    status: 'waiting_approval',
+    run_steps: [
+      { step_id: 'analysis-1', kind: 'analysis', state: 'completed', title: 'Understood request' },
+      {
+        step_id: 'mutation-noop-low',
+        kind: 'mutation',
+        state: 'completed',
+        title: 'Not changed',
+        summary: 'Not changed: no matching jobs for priority = low; priority -> medium.',
+        record_count: 0,
+      },
+      {
+        step_id: 'approval-medium-high',
+        kind: 'approval',
+        state: 'waiting',
+        title: 'Waiting for approval 1',
+        summary: '2 jobs will be updated from medium to high priority.',
+        approval_id: 'approval-medium-high',
+        current: true,
+      },
+    ],
+    blocks: [
+      {
+        id: 'message:approval-medium-high',
+        type: 'short_message',
+        message: 'Done. Not changed: no matching jobs for priority = low; priority -> medium. 2 jobs will be updated from medium to high priority.',
+        status: 'waiting_approval',
+      },
+      {
+        id: 'completed-step:noop-low',
+        type: 'completed_step',
+        title: 'Completed step',
+        summary: 'Not changed: no matching jobs for priority = low; priority -> medium.',
+        rows: [],
+      },
+      {
+        id: 'approval:approval-medium-high',
+        type: 'approval_required',
+        contract: 'business_change_v1',
+        approval_id: 'approval-medium-high',
+        title: 'Approval required',
+        summary: '2 jobs will be updated from medium to high priority.',
+        rows,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-zero-match', name: 'Zero match', status: 'WAITING_APPROVAL' },
+    sessionList: [{ session_id: 'session-rd-zero-match', name: 'Zero match', status: 'WAITING_APPROVAL' }],
+    activeSessionName: 'Zero match',
+    pendingApproval,
+    turns: [
+      responseDocumentTurn(document, {
+        approvals: [{ event_type: 'approval_required', approval_id: 'approval-medium-high' }],
+      }),
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /no matching jobs for priority = low/i))
+  assert.match(view.text(), /2 jobs will be updated from medium to high priority/i)
+  assert.match(view.text(), /JOB-MED-001/)
+  assert.match(view.text(), /Waiting for approval 1/)
+  assert.doesNotMatch(view.text(), /Waiting for approval 2/)
+  assert.doesNotMatch(view.text(), /Approval required before applying staged changes/)
+  const approvalCards = view.container.querySelectorAll('[data-response-block-type="approval_required"]')
+  assert.equal(approvalCards.length, 1)
+  assert.match(approvalCards[0].textContent, /medium to high priority/i)
+  assert.doesNotMatch(approvalCards[0].textContent, /priority = low/i)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders read-only collection as one Results surface without Preview section', async () => {
   const rows = Array.from({ length: 6 }, (_, index) => ({
     job_id: `JOB-LOW-${String(index + 1).padStart(3, '0')}`,
@@ -897,6 +985,101 @@ test('FactoryAgentChatPanel renders read-only collection as one Results surface 
   assert.doesNotMatch(view.text(), /\bPreview\b/)
   assert.match(view.text(), /Results/)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"] [data-affected-record-row]').length, 5)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel renders mixed read status blocks and collection table in order', async () => {
+  const rows = [
+    { job_id: 'JOB-LOW-001', priority: 'low', deadline: '2026-05-21' },
+    { job_id: 'JOB-LOW-002', priority: 'low', deadline: '2026-05-22' },
+    { job_id: 'JOB-LOW-003', priority: 'low', deadline: '2026-05-23' },
+  ]
+  const message = 'Machine M-CNC-01 is running. Job JOB-SEED-001 is queued. Found 3 low-priority jobs sorted by deadline.'
+  const document = baseResponseDocument({
+    blocks: [
+      { id: 'message:mixed-read', type: 'short_message', message, status: 'completed' },
+      {
+        id: 'status:machine',
+        type: 'status_result',
+        contract: 'entity_status_v1',
+        title: 'Machine status',
+        summary: 'Machine M-CNC-01 is running.',
+        entity_type: 'machine',
+        entity_id: 'M-CNC-01',
+        primary_status: 'running',
+        fields: [
+          { key: 'machine_id', label: 'Machine ID', value: 'M-CNC-01' },
+          { key: 'status', label: 'Status', value: 'running', primary: true },
+        ],
+        requested_fields: ['machine_id', 'status'],
+        display_mode: 'compact_status_card',
+        entity_count: 1,
+      },
+      {
+        id: 'status:job',
+        type: 'status_result',
+        contract: 'entity_status_v1',
+        title: 'Job status',
+        summary: 'Job JOB-SEED-001 is queued.',
+        entity_type: 'job',
+        entity_id: 'JOB-SEED-001',
+        primary_status: 'queued',
+        fields: [
+          { key: 'job_id', label: 'Job ID', value: 'JOB-SEED-001' },
+          { key: 'status', label: 'Status', value: 'queued', primary: true },
+        ],
+        requested_fields: ['job_id', 'status'],
+        display_mode: 'compact_status_card',
+        entity_count: 1,
+      },
+      {
+        id: 'table:low-jobs',
+        type: 'result_table',
+        title: 'Read 3 jobs',
+        rows,
+        read_scope: 'records',
+        requested_fields: ['job_id', 'deadline', 'priority'],
+        display_mode: 'collection_table',
+        entity_type: 'job',
+        entity_count: 3,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-mixed-read', name: 'Mixed read', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-mixed-read', name: 'Mixed read', status: 'COMPLETED' }],
+    activeSessionName: 'Mixed read',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Machine M-CNC-01 is running/))
+  assert.match(view.text(), /Job JOB-SEED-001 is queued/)
+  assert.match(view.text(), /Found 3 low-priority jobs sorted by deadline/)
+  assert.notEqual(message, 'Found 3 low-priority jobs. Details are shown in the table below.')
+  const prose = view.container.querySelector('[data-response-document-prose]')
+  assert.ok(prose)
+  assert.ok(prose.className.includes('w-full'))
+  assert.ok(prose.className.includes('max-w-none'))
+  assert.ok(!prose.className.includes('max-w-[92ch]'))
+  assert.ok(!prose.className.includes('max-w-[72ch]'))
+  const blockTypes = Array.from(view.container.querySelectorAll('[data-response-block-type]'))
+    .map((node) => node.getAttribute('data-response-block-type'))
+  assert.deepEqual(blockTypes.filter((type) => ['status_result', 'result_table'].includes(type)), [
+    'status_result',
+    'status_result',
+    'result_table',
+  ])
+  assert.match(view.text(), /JOB-LOW-001/)
+  assert.match(view.text(), /2026-05-21/)
+  assert.deepEqual(
+    Array.from(view.container.querySelectorAll('[data-response-block-type="result_table"] [data-table-column-key]'))
+      .map((node) => node.getAttribute('data-table-column-key')),
+    ['job_id', 'deadline', 'priority'],
+  )
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"]').length, 0)
 
   await view.unmount()
 })

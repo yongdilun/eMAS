@@ -322,6 +322,22 @@ def test_phase3_requirement_sketch_and_ledger_lock_constraints_before_planner_ex
     ]
 
 
+def test_phase3_priority_mutation_with_target_priority_word_keeps_source_selector_scalar():
+    capability_map = _base_capability_map()
+    sketch = build_requirement_sketch_for_text(
+        "Release keyboard approval: change low priority jobs to high priority",
+        capability_map=capability_map,
+    )
+
+    requirement = sketch.requirements[0]
+
+    assert requirement.requirement_type == "mutation_request"
+    assert requirement.constraints["priority"] == "low"
+    assert requirement.constraints["new_priority"] == "high"
+    assert isinstance(requirement.constraints["priority"], str)
+    assert {"priority", "new_priority"} <= set(requirement.locked_constraints)
+
+
 def test_phase3_compact_capability_map_omits_full_tool_schemas():
     capability_map = _base_capability_map()
     dumped = capability_map.model_dump(mode="json")

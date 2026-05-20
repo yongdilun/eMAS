@@ -17,6 +17,7 @@ from factory_agent.api.dependencies import require_session_owner
 from factory_agent.api.response_mappers import plan_to_response
 from factory_agent.config import Settings, resolve_factory_agent_engine_for_runtime
 from factory_agent.graph.http_tool_client import execute_tool_http
+from factory_agent.graph.noop_mutations import no_op_mutation_for_selector
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.memory_manager import MemoryManager
@@ -736,18 +737,27 @@ class PlanCreationService:
                 v2_run=v2_run,
                 tool_outputs=tool_outputs,
             )
-            sess = await self._persist_graph_interrupt_approval(
-                db=db,
-                sess=sess,
-                approval_payload=approval_payload,
-                mode=mode,
-                tools_by_name=tools_by_name,
-                intent=intent,
-            )
-            current = await self._load_current_plan(db=db, session_id=sess.session_id)
-            if current:
-                return plan_to_response(current)
-            raise HTTPException(status_code=409, detail="v2 approval was created without a compatibility plan")
+            no_op_mutations = approval_payload.get("no_op_mutations")
+            if isinstance(no_op_mutations, list) and no_op_mutations:
+                context = dict(sess.replan_context or {})
+                context["no_op_mutations"] = no_op_mutations
+                intent_contract = dict(context.get("intent_contract") or {})
+                intent_contract["no_op_mutations"] = no_op_mutations
+                context["intent_contract"] = intent_contract
+                sess.replan_context = context
+            if int(approval_payload.get("count") or 0) > 0:
+                sess = await self._persist_graph_interrupt_approval(
+                    db=db,
+                    sess=sess,
+                    approval_payload=approval_payload,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                )
+                current = await self._load_current_plan(db=db, session_id=sess.session_id)
+                if current:
+                    return plan_to_response(current)
+                raise HTTPException(status_code=409, detail="v2 approval was created without a compatibility plan")
 
         context = dict(sess.replan_context or {})
         context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
@@ -884,6 +894,7 @@ class PlanCreationService:
             "http_status": env.get("http_status"),
             "latency_ms": env.get("latency_ms"),
             "status": status,
+            "requirement_id": requirement_id,
         }
         if env.get("infrastructure_error"):
             output["infrastructure_error"] = True
@@ -1230,6 +1241,13 @@ class PlanCreationService:
             for field in (getattr(requirement, "requested_fields", []) or [])
             if str(field).strip()
         ]
+        constraints = dict(getattr(requirement, "constraints", {}) or {})
+        if constraints.get("sort_by") not in (None, "", [], {}):
+            requested_fields.append(self._direct_v2_canonical_output_key(str(constraints.get("sort_by")), entity))
+        for key in ("priority", "status"):
+            if constraints.get(key) not in (None, "", [], {}):
+                requested_fields.append(self._direct_v2_canonical_output_key(key, entity))
+        requested_fields = list(dict.fromkeys(requested_fields))
         identity_fields = self._direct_v2_identity_fields(entity)
         allowed_fields = set(requested_fields) | set(identity_fields) if requested_fields else set()
 
@@ -1321,30 +1339,32 @@ class PlanCreationService:
         v2_run: Any,
         tool_outputs: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        requirement = next(
-            (
-                req
-                for req in (getattr(getattr(v2_run.state, "requirement_ledger", None), "requirements", []) or [])
-                if getattr(req, "requirement_type", "") == "mutation_request"
-            ),
-            None,
-        )
-        constraints = dict(getattr(requirement, "constraints", {}) or {})
-        rows, excluded_rows = self._direct_v2_stage_rows(tool_outputs=tool_outputs, constraints=constraints)
-        new_priority = constraints.get("new_priority") or constraints.get("priority_to") or "medium"
-        previous_priorities = sorted({str(row.get("priority")) for row in rows if row.get("priority")})
-        previous_priority = previous_priorities[0] if len(previous_priorities) == 1 else None
+        business_plan = self._direct_v2_business_change_plan(v2_run=v2_run, tool_outputs=tool_outputs)
+        action = business_plan.get("active_pending_approval")
         write_tool_name = self._direct_v2_write_tool_name(v2_run) or "planner_owned_mutation"
-        staged_rows = [
-            {
-                **row,
-                "original_priority": row.get("priority"),
-                "previous_priority": row.get("priority"),
-                "new_priority": new_priority,
-            }
-            for row in rows
-        ]
         requirement_revision = getattr(getattr(v2_run.state, "requirement_ledger", None), "revision", None)
+        active_change = self._direct_v2_serialized_business_change(
+            action=action if isinstance(action, dict) else None,
+            write_tool_name=write_tool_name,
+        )
+        remaining_business_changes = [
+            self._direct_v2_serialized_business_change(action=item, write_tool_name=write_tool_name)
+            for item in (business_plan.get("actionable_business_changes") or [])[1:]
+            if isinstance(item, dict)
+        ]
+        remaining_business_changes = [
+            {**item, "requirement_ledger_revision": requirement_revision}
+            for item in remaining_business_changes
+            if int(item.get("count") or 0) > 0
+        ]
+        staged_rows = list(active_change.get("rows") or [])
+        excluded_rows = list(active_change.get("excluded_rows") or [])
+        constraints = dict(active_change.get("locked_constraints") or {})
+        new_priority = active_change.get("new_priority") or constraints.get("new_priority") or constraints.get("priority_to") or "medium"
+        previous_priority = active_change.get("previous_priority")
+        source_priority = active_change.get("source_priority") or self._direct_v2_source_priority_constraint(constraints)
+        entity = str(active_change.get("entity_type") or self._direct_v2_entity_from_tool_name(write_tool_name) or "record")
+        requirement_id = active_change.get("current_requirement_id")
         mutation_requirements = [
             {
                 "id": getattr(req, "id", None),
@@ -1356,33 +1376,261 @@ class PlanCreationService:
             for req in (getattr(getattr(v2_run.state, "requirement_ledger", None), "requirements", []) or [])
             if getattr(req, "requirement_type", "") == "mutation_request"
         ]
+        no_op_mutations = list(business_plan.get("no_op_mutations") or [])
+        summary = (
+            f"Update {len(staged_rows)} {self._direct_v2_entity_noun(entity, len(staged_rows))} "
+            f"from {source_priority} to {new_priority}."
+            if staged_rows and source_priority and new_priority
+            else "Approval required before applying the staged v2 changes."
+        )
         return {
-            "summary": "Approval required before applying the staged v2 changes.",
+            "summary": summary,
             "count": len(staged_rows),
+            "no_op_mutations": no_op_mutations,
+            "remaining_business_changes": remaining_business_changes,
+            "actionable_business_change_count": int(business_plan.get("actionable_business_change_count") or 0),
             "preview": [
                 {"tool_name": write_tool_name, "args": {"id": row.get("job_id") or row.get("id"), "priority": new_priority}}
                 for row in staged_rows
             ],
             "bundle_ui": {
                 "kind": "v2_planner_owned_approval_preview",
-                "write_set": "planner_owned_preview",
-                "headline": "Approval required before applying staged changes.",
+                "write_set": self._direct_v2_business_change_id(entity=entity, constraints=constraints),
+                "headline": summary.rstrip("."),
                 "rows": staged_rows,
                 "excluded_rows": excluded_rows,
                 "previous_priority": previous_priority,
                 "new_priority": new_priority,
+                "source_priority": source_priority,
                 "locked_constraints": constraints,
                 "requirement_ledger_revision": requirement_revision,
                 "source_intent": intent,
                 "write_tool_name": write_tool_name,
+                "business_change_id": active_change.get("business_change_id")
+                or self._direct_v2_business_change_id(entity=entity, constraints=constraints),
+                "business_change": active_change.get("business_change")
+                or self._direct_v2_business_change_label(constraints=constraints),
+                "selector_summary": active_change.get("selector_summary")
+                or self._direct_v2_selector_summary(constraints),
             },
             "requirement_ledger_revision": requirement_revision,
-            "current_requirement_id": getattr(requirement, "id", None),
+            "current_requirement_id": requirement_id,
             "mutation_requirements": mutation_requirements,
             "locked_constraints": constraints,
             "commit_state": "not_committed",
             "session_id": sess.session_id,
         }
+
+    def _direct_v2_serialized_business_change(
+        self,
+        *,
+        action: dict[str, Any] | None,
+        write_tool_name: str,
+    ) -> dict[str, Any]:
+        if not isinstance(action, dict):
+            return {
+                "count": 0,
+                "rows": [],
+                "excluded_rows": [],
+                "preview": [],
+                "locked_constraints": {},
+            }
+        requirement = action.get("requirement")
+        constraints = dict(getattr(requirement, "constraints", {}) or {})
+        rows = list(action.get("rows") or [])
+        excluded_rows = list(action.get("excluded_rows") or [])
+        new_priority = constraints.get("new_priority") or constraints.get("priority_to") or "medium"
+        previous_priorities = sorted(
+            {
+                str(row.get("priority") or row.get("previous_priority") or row.get("original_priority"))
+                for row in rows
+                if row.get("priority") or row.get("previous_priority") or row.get("original_priority")
+            }
+        )
+        previous_priority = previous_priorities[0] if len(previous_priorities) == 1 else None
+        entity = str(getattr(requirement, "entity", "") or self._direct_v2_entity_from_tool_name(write_tool_name) or "record")
+        business_change = self._direct_v2_business_change_label(constraints=constraints)
+        business_change_id = self._direct_v2_business_change_id(entity=entity, constraints=constraints)
+        selector_summary = self._direct_v2_selector_summary(constraints)
+        staged_rows = [
+            {
+                **row,
+                "original_priority": row.get("original_priority") or row.get("priority"),
+                "previous_priority": row.get("previous_priority") or row.get("priority"),
+                "new_priority": row.get("new_priority") or new_priority,
+                "source_state_basis": row.get("source_state_basis") or "current_state",
+                "business_change": business_change,
+                "business_change_id": business_change_id,
+                "entity_type": entity,
+                "selector_summary": selector_summary,
+            }
+            for row in rows
+        ]
+        source_priority = self._direct_v2_source_priority_constraint(constraints)
+        summary = (
+            f"Update {len(staged_rows)} {self._direct_v2_entity_noun(entity, len(staged_rows))} "
+            f"from {source_priority} to {new_priority}."
+            if staged_rows and source_priority and new_priority
+            else "Approval required before applying the staged v2 changes."
+        )
+        return {
+            "summary": summary,
+            "count": len(staged_rows),
+            "rows": staged_rows,
+            "excluded_rows": excluded_rows,
+            "preview": [
+                {"tool_name": write_tool_name, "args": {"id": row.get("job_id") or row.get("id"), "priority": new_priority}}
+                for row in staged_rows
+            ],
+            "locked_constraints": constraints,
+            "current_requirement_id": getattr(requirement, "id", None),
+            "requirement": {
+                "id": getattr(requirement, "id", None),
+                "goal": getattr(requirement, "goal", None),
+                "constraints": constraints,
+                "entity": getattr(requirement, "entity", None),
+                "requirement_type": getattr(requirement, "requirement_type", None),
+            },
+            "entity_type": entity,
+            "previous_priority": previous_priority,
+            "new_priority": new_priority,
+            "source_priority": source_priority,
+            "business_change_id": business_change_id,
+            "business_change": business_change,
+            "selector_summary": selector_summary,
+        }
+
+    def _direct_v2_business_change_plan(
+        self,
+        *,
+        v2_run: Any,
+        tool_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        requirements = self._direct_v2_mutation_requirements(v2_run)
+        if not requirements:
+            return {"active_pending_approval": None, "no_op_mutations": [], "actionable_business_changes": []}
+        outputs_by_requirement: dict[str, list[dict[str, Any]]] = {}
+        outputs_without_requirement: list[dict[str, Any]] = []
+        for output in tool_outputs:
+            if not isinstance(output, dict):
+                continue
+            requirement_id = str(output.get("requirement_id") or "")
+            if requirement_id:
+                outputs_by_requirement.setdefault(requirement_id, []).append(output)
+            else:
+                outputs_without_requirement.append(output)
+
+        no_op_mutations: list[dict[str, Any]] = []
+        actionable: list[dict[str, Any]] = []
+        for requirement in requirements:
+            requirement_id = str(getattr(requirement, "id", "") or "")
+            relevant_outputs = outputs_by_requirement.get(requirement_id)
+            if relevant_outputs is None and len(requirements) == 1:
+                relevant_outputs = outputs_without_requirement or tool_outputs
+            if not relevant_outputs:
+                continue
+            constraints = dict(getattr(requirement, "constraints", {}) or {})
+            rows, excluded_rows = self._direct_v2_stage_rows(tool_outputs=relevant_outputs, constraints=constraints)
+            if rows:
+                actionable.append(
+                    {
+                        "requirement": requirement,
+                        "rows": rows,
+                        "excluded_rows": excluded_rows,
+                    }
+                )
+            else:
+                no_op_mutations.append(self._direct_v2_no_op_mutation_for_requirement(requirement))
+
+        return {
+            "active_pending_approval": actionable[0] if actionable else None,
+            "actionable_business_changes": actionable,
+            "no_op_mutations": no_op_mutations,
+            "actionable_business_change_count": len(actionable),
+        }
+
+    def _direct_v2_mutation_requirements(self, v2_run: Any) -> list[Any]:
+        ledger = getattr(getattr(v2_run, "state", None), "requirement_ledger", None)
+        return [
+            req
+            for req in (getattr(ledger, "requirements", []) or [])
+            if getattr(req, "requirement_type", "") == "mutation_request"
+        ]
+
+    def _direct_v2_no_op_mutation_for_requirement(self, requirement: Any) -> dict[str, Any]:
+        constraints = dict(getattr(requirement, "constraints", {}) or {})
+        entity = str(getattr(requirement, "entity", "") or "record").strip().lower() or "record"
+        return no_op_mutation_for_selector(
+            entity_type=entity,
+            selector_summary=self._direct_v2_selector_summary(constraints),
+            change_summary=self._direct_v2_change_summary(constraints),
+        )
+
+    def _direct_v2_selector_summary(self, constraints: dict[str, Any]) -> str:
+        priority = self._direct_v2_source_priority_constraint(constraints)
+        if priority:
+            return f"priority = {priority}"
+        for key in ("status", "date"):
+            value = constraints.get(key)
+            if value not in (None, "", [], {}):
+                return f"{key} = {value}"
+        return "requested selector"
+
+    def _direct_v2_change_summary(self, constraints: dict[str, Any]) -> str:
+        target = str(
+            constraints.get("new_priority")
+            or constraints.get("priority_to")
+            or constraints.get("target_priority")
+            or ""
+        ).strip().lower()
+        if target:
+            return f"priority -> {target}"
+        return "requested change"
+
+    def _direct_v2_business_change_label(self, *, constraints: dict[str, Any]) -> str:
+        source = self._direct_v2_source_priority_constraint(constraints)
+        target = str(
+            constraints.get("new_priority")
+            or constraints.get("priority_to")
+            or constraints.get("target_priority")
+            or ""
+        ).strip().lower()
+        if source and target:
+            return f"{source.title()} -> {target.title()}"
+        return "Requested change"
+
+    def _direct_v2_business_change_id(self, *, entity: str, constraints: dict[str, Any]) -> str:
+        source = self._direct_v2_source_priority_constraint(constraints) or "selected"
+        target = str(
+            constraints.get("new_priority")
+            or constraints.get("priority_to")
+            or constraints.get("target_priority")
+            or "requested"
+        ).strip().lower()
+        safe_entity = re.sub(r"[^a-z0-9]+", "_", entity.strip().lower()).strip("_") or "record"
+        safe_source = re.sub(r"[^a-z0-9]+", "_", source).strip("_") or "selected"
+        safe_target = re.sub(r"[^a-z0-9]+", "_", target).strip("_") or "requested"
+        return f"{safe_entity}-priority-{safe_source}-to-{safe_target}"
+
+    def _direct_v2_entity_from_tool_name(self, tool_name: str | None) -> str | None:
+        text = str(tool_name or "").strip().lower()
+        match = re.search(r"__([a-z0-9_-]+)", text)
+        if not match:
+            return None
+        entity = match.group(1).split("_", 1)[0].split("{", 1)[0].replace("-", "_")
+        if entity.endswith("s") and len(entity) > 1:
+            entity = entity[:-1]
+        return entity or None
+
+    def _direct_v2_entity_noun(self, entity: str, count: int) -> str:
+        base = (entity or "record").strip().lower() or "record"
+        if count == 1:
+            return base
+        if base.endswith("y"):
+            return base[:-1] + "ies"
+        if base.endswith("s"):
+            return base
+        return base + "s"
 
     def _direct_v2_write_tool_name(self, v2_run: Any) -> str | None:
         trace = getattr(getattr(v2_run, "state", None), "execution_trace", None)

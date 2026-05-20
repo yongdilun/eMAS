@@ -313,6 +313,67 @@ async def test_phase9_hard_read_query_proves_v2_retrieval_satisfaction_and_condi
 
 
 @pytest.mark.asyncio
+async def test_phase13_mixed_read_query_keeps_typed_status_and_collection_evidence_without_legacy_completion():
+    prompt = (
+        "Show M-CNC-01 status, then show JOB-SEED-001 status, then list the next 3 low priority jobs sorted by deadline."
+    )
+    selector = NeedAwareSelector()
+
+    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+        intent=prompt,
+        tools_by_name=_base_tools(),
+        engine_mode="v2",
+        direct_test_evidence=[
+            _api_evidence("ev-machine", "req-001", entity="machine", entity_id="M-CNC-01", fields={"status": "running"}),
+            _api_evidence("ev-job", "req-002", entity="job", entity_id="JOB-SEED-001", fields={"status": "queued"}),
+            _api_evidence(
+                "ev-low-jobs",
+                "req-003",
+                entity="job",
+                rows=[
+                    {"job_id": "JOB-SEED-010", "priority": "low", "deadline": "2026-05-21"},
+                    {"job_id": "JOB-SEED-011", "priority": "low", "deadline": "2026-05-22"},
+                    {"job_id": "JOB-SEED-012", "priority": "low", "deadline": "2026-05-23"},
+                ],
+            ),
+        ],
+    )
+
+    ledger = run.state.requirement_ledger
+    assert ledger is not None
+    assert [requirement.requirement_type for requirement in ledger.requirements] == [
+        "single_entity_status",
+        "single_entity_status",
+        "filtered_collection",
+    ]
+    assert [requirement.status for requirement in ledger.requirements] == ["satisfied", "satisfied", "satisfied"]
+    evidence_by_requirement = {
+        evidence.requirement_id: evidence.normalized_result
+        for evidence in run.state.evidence_ledger.evidence
+    }
+    assert evidence_by_requirement["req-001"]["entity"] == "machine"
+    assert evidence_by_requirement["req-001"]["fields"] == {"status": "running"}
+    assert evidence_by_requirement["req-002"]["entity"] == "job"
+    assert evidence_by_requirement["req-002"]["fields"] == {"status": "queued"}
+    assert [row["job_id"] for row in evidence_by_requirement["req-003"]["rows"]] == [
+        "JOB-SEED-010",
+        "JOB-SEED-011",
+        "JOB-SEED-012",
+    ]
+    assert [row["deadline"] for row in evidence_by_requirement["req-003"]["rows"]] == [
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-23",
+    ]
+    assert run.state.execution_trace.generated_by == "v2_planner_loop"
+    assert run.state.execution_trace.detectors.legacy_intent_completion_loop.planner_completion_only_call_count == 0
+    assert run.state.execution_trace.detectors.legacy_intent_completion_loop.used is False
+    assert run.state.execution_trace.detectors.legacy_whole_query_tool_scope.used is False
+    assert run.draft is not None
+    assert run.draft.steps[2].args["fields"] == "job_id,deadline"
+
+
+@pytest.mark.asyncio
 async def test_phase9_multi_id_status_read_satisfies_typed_rows_without_completion_loop():
     selector = NeedAwareSelector()
     run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]

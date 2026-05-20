@@ -996,11 +996,20 @@ def _collection_requested_fields_check(
             passed=bool(actual) or not rows,
             evidence_ref=evidence.id,
         )
+    supporting_fields = _identity_field_keys(requirement)
+    sort_by = requirement.constraints.get("sort_by")
+    if sort_by not in (None, "", [], {}):
+        supporting_fields.add(str(sort_by))
+    for key, value in requirement.constraints.items():
+        if key in _NON_FILTER_CONSTRAINTS or value in (None, "", [], {}):
+            continue
+        supporting_fields.add(str(key))
+    actual_for_pass = [field for field in actual if field not in supporting_fields.difference(expected)]
     return _check(
         "requested_fields",
         expected=expected,
         actual=actual,
-        passed=set(actual) == set(expected),
+        passed=set(actual_for_pass) == set(expected),
         evidence_ref=evidence.id,
     )
 

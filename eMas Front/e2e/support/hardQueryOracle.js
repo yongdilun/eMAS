@@ -259,6 +259,18 @@ function addForbiddenTextViolations(violations, snapshot, ui, expected) {
       violations.push(`forbidden backend contract text matched ${item?.label || labelForPattern(pattern)}`)
     }
   }
+  for (const item of asArray(expected.visibleTextIncludes)) {
+    const pattern = item?.pattern || item
+    if (!matches(visibleText, pattern)) {
+      violations.push(`visible text missing ${item?.label || labelForPattern(pattern)}`)
+    }
+  }
+  for (const item of asArray(expected.backendTextIncludes)) {
+    const pattern = item?.pattern || item
+    if (!matches(backendContractText, pattern)) {
+      violations.push(`backend contract text missing ${item?.label || labelForPattern(pattern)}`)
+    }
+  }
 }
 
 function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {

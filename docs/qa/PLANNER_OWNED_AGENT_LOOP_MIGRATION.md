@@ -662,6 +662,10 @@ Use this table for architecture sequence only. Live phase status, commits, verif
 | 8 | Legacy cleanup switch | Switch default to v2 and retire legacy RAG/scaffold/tool-routing authority. |
 | 9 | Hard query release proof | Prove hard API/RAG/read/write/approval/interrupt cases end to end. |
 | 10 | Legacy kill-switch removal | Remove legacy option after v2 release proof and cleanup guardrails pass. |
+| 11 | Post-migration regression hardening and proof tests | Fix timeout, RAG, read-only collection preview, and ToolSelector trace regressions without new architecture. |
+| 12 | Citation-first RAG answer contract and fallback cleanup | Validate generated RAG citations before evidence/response-document content. |
+| 13 | Mixed-read response summary and table clarity | Fix multi-read final response copy and collection table semantics for machine + job + filtered-list prompts. |
+| 14 | Zero-match approval chain and active approval UI | Fix no-op first business change handling when a later mutation still needs approval. |
 
 ## Phase 1: Boundary And Baseline Audit
 
@@ -1222,6 +1226,130 @@ Acceptance criteria:
 - Knowledge policy no longer performs source-excerpt positive answer recovery; it only preserves or rejects answers based on source/evidence support.
 - Response-document summary/message generation now uses the same citation-derived knowledge answer text, so stale or malformed uncited answers do not show a source-backed message while the block renders insufficient-context.
 - Phase 12 verification is recorded in the progress tracker, including RAG contract/generation/policy, API/response-document, hardcode guardrail, full backend, and `git diff --check` gates.
+
+## Phase 13: Mixed-Read Response Summary And Table Clarity
+
+Goal: fix the multi-read UI regression where a prompt that asks for machine status, job status, and a low-priority job list renders a final response whose top-level copy says only `Found 3 low-priority jobs. Details are shown in the table below.`
+
+Reported prompt:
+
+```text
+Show M-CNC-01 status, then show JOB-SEED-001 status, then list the next 3 low priority jobs sorted by deadline.
+```
+
+Observed issue:
+
+- The UI shows machine and job status blocks, but the main assistant message/summary only describes the final filtered collection.
+- The collection table can render confusing date-only content such as `Read 2 jobs` and repeated `Deadline` values instead of clearly presenting row identity plus deadline/sort evidence.
+- The result feels like the first two read requirements were ignored even though their blocks are present.
+
+Root-cause investigation requirements:
+
+- Trace where the response-document `message`, `short_message`, `run_steps`, `status_result`, and `result_table` content are selected for mixed read sessions.
+- Determine whether the top-level message is being overwritten by the last collection read, by a summary-bundle projection, or by frontend rendering preference.
+- Determine why the filtered job list can lose row identity or render an incorrect row-count/table label.
+
+Required fix behavior:
+
+- The final response for mixed reads must summarize all satisfied read requirements, not only the last collection requirement.
+- The message may stay compact, but it must communicate that machine status, job status, and the low-priority job list were all returned.
+- Status-only reads should remain compact and must not expose unrelated fields.
+- Filtered collection blocks must preserve sort/limit evidence and include a stable row identity, such as job id, plus the relevant requested/sort fields.
+- The UI must render a coherent sequence: machine status block, job status block, and one clear collection result surface.
+
+Maintainability and hardcode rules:
+
+- Do not branch on this exact prompt, `M-CNC-01`, `JOB-SEED-001`, low-priority text, or a screenshot-specific phrase.
+- The fix must be based on durable response-document concepts such as `mixed_read_summary`, requirement count, block types, entity type, requested fields, row identity fields, sort fields, and read result cardinality.
+- If a helper is added, name it by product behavior, such as mixed read summary composition or collection identity field selection.
+- Do not duplicate response-document rendering or planner satisfaction logic.
+
+Required proof tests:
+
+- Backend contract test in `factory-agent/tests/test_response_document_contract.py`: add a mixed-read response-document case with two `status_result` blocks and one filtered job `result_table`; assert the top-level message/short message references all read requirements and the collection table includes job identity plus deadline/sort evidence.
+- Backend v2/release test in `factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py` or a new `factory-agent/tests/test_planner_owned_loop_phase13_mixed_read_response.py`: assert the typed evidence/response document for the mixed read query has machine status, job status, and collection evidence without a legacy intent-completion loop.
+- Frontend component test in `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs`: render the mixed-read response document and assert the visible assistant message is not just the low-priority list summary, while the three typed result blocks render in order.
+- Playwright E2E oracle update in `eMas Front/e2e/support/hardQueryScenarios.js` for `HQ-3S-01`, with support in `eMas Front/e2e/support/hardQueryOracle.js` if needed: assert visible semantic blocks include machine `status_result`, job `status_result`, and job `result_table`; assert no approval UI; assert the visible summary includes all three read families and the table includes row identity plus deadline.
+- Run `npm run test:e2e:seeded-oracles` or the narrower `npx playwright test --project=chromium-seeded --grep "HQ-3S-01"` after updating the oracle.
+
+Acceptance criteria:
+
+- The reported prompt no longer presents the low-priority list as the only outcome.
+- The job collection result is readable and tied to row identity, not a confusing list of dates.
+- Tests prove response-document contracts and browser-visible semantics, not only raw text.
+- No exact-prompt, seeded-ID, entity-label, fixture-source, or screenshot-specific runtime branch is added.
+
+### Phase 13 Evidence (2026-05-21)
+
+- Mixed-read response-document summaries now compose all satisfied read families instead of using only the last collection result.
+- Status-only reads remain compact, while collection rows preserve entity identity plus requested/sort evidence such as `job_id` and `deadline`.
+- Planner read projection adds identity/sort evidence for collections but preserves explicit `only ...` field requests without leaking filter-only fields into the table.
+- Frontend table rendering uses response-document requested fields as a column-order hint, keeping identity first and deadline visible.
+- Response-document prose uses the available card width so mixed-read and approval-chain summaries do not wrap at the old half-card cap while preserving responsive resize gutters.
+- Proof is recorded in the tracker: response-document contract, v2 planner release, frontend component, response-document Playwright, and `HQ-3S-01` seeded oracle checks passed.
+
+## Phase 14: Zero-Match Approval Chain And Active Approval UI
+
+Goal: fix the approval-chain UI regression where a two-step priority mutation has no matches for the first requested business change but has matches for the second, causing the first approval screen to look like a mislabeled second approval and omitting the no-match summary.
+
+Reported prompt:
+
+```text
+change all low priority job to medium, then change all medium priority job to high
+```
+
+Observed issue:
+
+- When there are no low-priority jobs but medium-priority jobs exist, the first visible approval can show rows for the medium-to-high change while using generic or misleading `Approval required before applying staged changes` copy.
+- The response does not clearly state that the low-to-medium change had no matching jobs.
+- The UI can look like the second approval screen was shown as approval 1, even though the only actionable write is medium-to-high.
+
+Root-cause investigation requirements:
+
+- Trace how no-op mutation requirements, staged approval payloads, approval numbering, and response-document blocks are generated when an earlier business change has zero matches.
+- Determine whether the bug lives in planner requirement satisfaction, staged write grouping, approval payload generation, response-document summary generation, frontend selection of the active approval, or stale approval rendering.
+- Confirm whether approval numbering should be compacted to the first actionable approval or should preserve original business-change order with explicit no-op state.
+
+Required fix behavior:
+
+- A zero-match business change must become an explicit no-op/completed-step evidence item before any pending approval.
+- The active approval card must describe the actual actionable write set, including source priority, target priority, and row count.
+- If the first business change has no rows and the second has rows, the UI must state that no low-priority jobs were found, then ask for approval only for the medium-to-high change.
+- The final response must report one approved business change and one not-changed/no-match business change when applicable.
+- Stale approval 1/approval 2 labels or rows must not leak into the active pending approval card.
+
+Maintainability and hardcode rules:
+
+- Do not branch on the exact low-to-medium / medium-to-high prompt.
+- Use durable mutation concepts: `no_op_mutations`, business change metadata, source/target priority fields, active pending approval id, response-document `completed_step`, `approval_required`, and `business_change_v1`.
+- Tests may use seeded low/medium job fixtures, but product code must not key on `JOB-SEED-*`, specific counts, or specific priority words beyond schema-backed enum values.
+- Do not duplicate approval-card rendering, summary-bundle, or response-document business grouping logic.
+
+Required proof tests:
+
+- Backend response-document test in `factory-agent/tests/test_response_document_contract.py`: add or extend a zero-match-first/business-change case proving `completed_step` no-op appears before `approval_required`, the pending approval summary says medium-to-high with the correct rows, and the final message includes one not-changed business change plus one approved change.
+- Backend approval/session test in `factory-agent/tests/test_api_endpoints.py`, `factory-agent/tests/test_approval_atomicity.py`, or a new `factory-agent/tests/test_planner_owned_loop_phase14_zero_match_approval.py`: prove the active pending approval payload rows match the actionable write set and stale/no-op write sets cannot be approved or committed.
+- Frontend component test in `eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs`: render a waiting-approval response document with a no-op first change and an actionable second change; assert visible text includes the no-match low-priority summary, shows the medium-to-high approval copy, does not show misleading generic-only copy, and does not render `Waiting for approval 2` as the active first actionable approval.
+- Playwright response-document E2E fixture in `eMas Front/e2e/support/responseDocumentScenarios.js` plus `eMas Front/e2e/specs/final-response-quality.spec.js`: add a no-op-first approval-chain scenario proving the browser-visible active approval card and activity timeline match the response-document contract.
+- Seeded/full-stack E2E in `eMas Front/e2e/specs/full-stack-data-integrity.spec.js` or `eMas Front/e2e/specs/full-stack-hard-query.spec.js` if the seeded test harness can set up no low-priority rows while medium rows remain; otherwise record the setup blocker in the tracker and keep the response-document Playwright fixture as the required UI proof.
+
+Acceptance criteria:
+
+- The first actionable approval cannot display stale second-approval semantics without a no-op explanation for the skipped first business change.
+- Approval copy, rows, and active approval id all agree.
+- The final response accurately reports no-op and approved change counts.
+- Browser tests prove the UI state, not only backend payload shape.
+- No exact-prompt, seeded-ID, priority-count, screenshot-specific, or fixture-only runtime branch is added.
+
+### Phase 14 Evidence (2026-05-21)
+
+- Direct-v2 approval staging now builds per-business-change metadata, records zero-match business changes as no-op evidence, and chooses the first actionable write set as the active pending approval.
+- Direct-v2 approval resume carries remaining actionable business changes in the typed approval payload, so approving the first low-to-medium write can surface the follow-up medium-to-high approval instead of completing early.
+- Response documents render the no-op completed step before the active `approval_required` block, with row-aware active approval copy and rows that match the active approval id.
+- API/session proof rejects stale no-op approval ids and keeps the actionable pending approval state intact.
+- Priority mutation parsing keeps the source selector and target value separate for prompts such as `change low priority jobs to high priority`, so release approval staging receives a scalar source filter and the intended target priority.
+- Frontend component and RD-014 Playwright fixture prove the visible no-match low-priority summary, medium-to-high active approval copy, and absence of stale `Waiting for approval 2` active-card semantics.
+- A full-stack zero-low/medium-remaining setup was not added because the seeded harness does not expose a clean setup for that state without contaminating other seeded scenarios; the response-document fixture remains the required UI proof.
 
 ## Stop Conditions
 

@@ -542,6 +542,305 @@ async def test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orp
 
 
 @pytest.mark.asyncio
+async def test_phase14_active_pending_approval_uses_actionable_write_set_and_rejects_noop_stale_approval(
+    sessionmaker_override,
+    db_session,
+):
+    from factory_agent.persistence.models import Approval, PlanStep, Session
+
+    session_id = "api-phase14-zero-match"
+    active_approval_id = "api-phase14-medium-high"
+    stale_noop_approval_id = "api-phase14-low-medium-noop"
+    now = datetime.utcnow()
+    medium_rows = [
+        {"job_id": "JOB-API-MED-001", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-API-MED-002", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+    ]
+    no_op = {
+        "entity_type": "job",
+        "selector_summary": "priority = low",
+        "change_summary": "priority -> medium",
+        "matched_count": 0,
+        "changed_count": 0,
+        "status": "not_changed",
+        "reason": "no_matching_records",
+    }
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            name="Phase 14 zero-match approval",
+            status="WAITING_APPROVAL",
+            current_intent="change all low priority job to medium, then change all medium priority job to high",
+            plan_version=1,
+            version=1,
+            event_seq=4,
+            session_started_at=now,
+            created_at=now,
+            updated_at=now,
+            replan_context={
+                "langgraph_pending_approval": {"approval_id": active_approval_id, "thread_id": session_id},
+                "no_op_mutations": [no_op],
+            },
+        )
+    )
+    db_session.add_all(
+        [
+            Approval(
+                approval_id=stale_noop_approval_id,
+                session_id=session_id,
+                subject_type="graph",
+                tool_name="__langgraph_commit__",
+                args={"count": 0, "no_op_mutations": [no_op], "bundle_ui": {"rows": []}},
+                risk_summary="No low-priority jobs were found.",
+                side_effect_level="HIGH",
+                status="PENDING",
+                expires_at=now + timedelta(hours=1),
+                created_at=now,
+            ),
+            Approval(
+                approval_id=active_approval_id,
+                session_id=session_id,
+                subject_type="graph",
+                tool_name="__langgraph_commit__",
+                args={
+                    "summary": "Update 2 jobs from medium to high.",
+                    "count": 2,
+                    "no_op_mutations": [no_op],
+                    "bundle_ui": {
+                        "kind": "phase14_zero_match_first",
+                        "headline": "Update 2 jobs from medium to high",
+                        "rows": medium_rows,
+                    },
+                },
+                risk_summary="Update 2 jobs from medium to high.",
+                side_effect_level="HIGH",
+                status="PENDING",
+                expires_at=now + timedelta(hours=1),
+                created_at=now + timedelta(seconds=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert snapshot["pending_approval"]["approval_id"] == active_approval_id
+        assert [row["job_id"] for row in snapshot["pending_approval"]["args"]["bundle_ui"]["rows"]] == [
+            "JOB-API-MED-001",
+            "JOB-API-MED-002",
+        ]
+        assert "priority = low" not in json.dumps(snapshot["pending_approval"]["args"]["bundle_ui"]["rows"])
+
+        stale = await client.post(f"/approvals/{stale_noop_approval_id}/approve", json={"decided_by": "u1"})
+        assert stale.status_code == 409
+        assert "stale" in stale.text.lower()
+
+    stale_row = await db_session.get(Approval, stale_noop_approval_id)
+    active_row = await db_session.get(Approval, active_approval_id)
+    session = await db_session.get(Session, session_id)
+    assert stale_row.status == "EXPIRED"
+    assert active_row.status == "PENDING"
+    assert session.status == "WAITING_APPROVAL"
+    committed_steps = (
+        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))
+    ).scalars().all()
+    assert committed_steps == []
+
+
+@pytest.mark.asyncio
+async def test_phase14_direct_v2_resume_queues_second_actionable_approval(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Approval, PlanStep, Session
+
+    session_id = "api-phase14-followup-approval"
+    first_approval_id = "api-phase14-low-medium"
+    now = datetime.utcnow()
+    low_rows = [
+        {"job_id": "JOB-LOW-001", "priority": "low", "previous_priority": "low", "new_priority": "medium"},
+        {"job_id": "JOB-LOW-002", "priority": "low", "previous_priority": "low", "new_priority": "medium"},
+    ]
+    medium_rows = [
+        {"job_id": "JOB-MED-001", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-MED-002", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-MED-003", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+    ]
+    remaining_medium_high = {
+        "summary": "Update 3 jobs from medium to high.",
+        "count": 3,
+        "rows": medium_rows,
+        "excluded_rows": [],
+        "preview": [
+            {"tool_name": "put__jobs_{id}", "args": {"id": row["job_id"], "priority": "high"}}
+            for row in medium_rows
+        ],
+        "locked_constraints": {"priority": "medium", "new_priority": "high"},
+        "current_requirement_id": "req-medium-high",
+        "entity_type": "job",
+        "previous_priority": "medium",
+        "new_priority": "high",
+        "source_priority": "medium",
+        "business_change_id": "job-priority-medium-to-high",
+        "business_change": "Medium -> High",
+        "selector_summary": "priority = medium",
+    }
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            name="Phase 14 chained approvals",
+            status="WAITING_APPROVAL",
+            current_intent="change all low priority job to medium, then change all medium priority job to high",
+            plan_version=1,
+            version=1,
+            event_seq=4,
+            session_started_at=now,
+            created_at=now,
+            updated_at=now,
+            replan_context={
+                "langgraph_pending_approval": {"approval_id": first_approval_id, "thread_id": session_id},
+            },
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=first_approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__langgraph_commit__",
+            args={
+                "summary": "Update 2 jobs from low to medium.",
+                "count": 2,
+                "preview": [
+                    {"tool_name": "put__jobs_{id}", "args": {"id": row["job_id"], "priority": "medium"}}
+                    for row in low_rows
+                ],
+                "remaining_business_changes": [remaining_medium_high],
+                "actionable_business_change_count": 2,
+                "bundle_ui": {
+                    "kind": "v2_planner_owned_approval_preview",
+                    "write_set": "job-priority-low-to-medium",
+                    "headline": "Update 2 jobs from low to medium",
+                    "rows": low_rows,
+                    "excluded_rows": [],
+                    "previous_priority": "low",
+                    "new_priority": "medium",
+                    "source_priority": "low",
+                    "locked_constraints": {"priority": "low", "new_priority": "medium"},
+                    "source_intent": "change all low priority job to medium, then change all medium priority job to high",
+                    "write_tool_name": "put__jobs_{id}",
+                    "business_change_id": "job-priority-low-to-medium",
+                    "business_change": "Low -> Medium",
+                    "selector_summary": "priority = low",
+                },
+                "current_requirement_id": "req-low-medium",
+                "mutation_requirements": [
+                    {
+                        "id": "req-low-medium",
+                        "goal": "change all low priority job to medium",
+                        "constraints": {"priority": "low", "new_priority": "medium"},
+                        "entity": "job",
+                        "requirement_type": "mutation_request",
+                    },
+                    {
+                        "id": "req-medium-high",
+                        "goal": "change all medium priority job to high",
+                        "constraints": {"priority": "medium", "new_priority": "high"},
+                        "entity": "job",
+                        "requirement_type": "mutation_request",
+                    },
+                ],
+                "locked_constraints": {"priority": "low", "new_priority": "medium"},
+                "commit_state": "not_committed",
+                "session_id": session_id,
+            },
+            risk_summary="Update 2 jobs from low to medium.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=now + timedelta(hours=1),
+            created_at=now,
+        )
+    )
+    await db_session.commit()
+    await _seed_tool(
+        db_session,
+        name="put__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
+            "required": ["id", "priority"],
+        },
+        capability_tags='["job","update"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    committed_args = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, tool, idempotency_key, extra_headers
+        committed_args.append(dict(args))
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": {"job_id": args["id"], "priority": args["priority"]}},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.services.approval_resume_service.execute_tool_http",
+        fake_execute_tool_http,
+    )
+    app, _ = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(f"/approvals/{first_approval_id}/approve", json={"decided_by": "u1"})
+        assert first.status_code == 200
+        assert first.json()["status"] == "APPROVED"
+
+        after_first = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert after_first["session"]["status"] == "WAITING_APPROVAL"
+        pending = after_first["pending_approval"]
+        assert pending["approval_id"] != first_approval_id
+        assert pending["args"]["bundle_ui"]["business_change_id"] == "job-priority-medium-to-high"
+        assert pending["args"]["bundle_ui"]["headline"] == "Update 3 jobs from medium to high"
+        assert [row["job_id"] for row in pending["args"]["bundle_ui"]["rows"]] == [
+            "JOB-MED-001",
+            "JOB-MED-002",
+            "JOB-MED-003",
+        ]
+        assert {args["priority"] for args in committed_args} == {"medium"}
+
+        second_approval_id = pending["approval_id"]
+        second = await client.post(f"/approvals/{second_approval_id}/approve", json={"decided_by": "u1"})
+        assert second.status_code == 200
+        assert second.json()["status"] == "APPROVED"
+
+        final = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        assert final["session"]["status"] == "COMPLETED"
+        assert final["pending_approval"] is None
+
+    assert [args["priority"] for args in committed_args] == ["medium", "medium", "high", "high", "high"]
+    session = await db_session.get(Session, session_id)
+    committed_steps = (
+        await db_session.execute(
+            select(PlanStep)
+            .where(PlanStep.plan_id == session.plan_id)
+            .order_by(PlanStep.step_index.asc())
+        )
+    ).scalars().all()
+    assert len(committed_steps) == 5
+    assert [step.args["priority"] for step in committed_steps] == ["medium", "medium", "high", "high", "high"]
+
+
+@pytest.mark.asyncio
 async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Session
 

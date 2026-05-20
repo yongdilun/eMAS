@@ -518,6 +518,27 @@ class ApprovalResumeService:
         completed_tool_outputs: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
+        remaining_changes = payload.get("remaining_business_changes")
+        if isinstance(remaining_changes, list):
+            for index, item in enumerate(remaining_changes):
+                if not isinstance(item, dict):
+                    continue
+                rows = item.get("rows")
+                if not isinstance(rows, list) or not rows:
+                    continue
+                return self._next_direct_v2_payload_from_business_change(
+                    payload=payload,
+                    bundle_ui=bundle_ui,
+                    business_change=item,
+                    remaining_business_changes=[
+                        change
+                        for change in remaining_changes[index + 1 :]
+                        if isinstance(change, dict) and int(change.get("count") or 0) > 0
+                    ],
+                    previous_approval_id=previous_approval_id,
+                    completed_plan_steps=completed_plan_steps,
+                    completed_tool_outputs=completed_tool_outputs,
+                )
         requirements = payload.get("mutation_requirements") if isinstance(payload.get("mutation_requirements"), list) else []
         current_requirement_id = str(payload.get("current_requirement_id") or "")
         current_index = next(
@@ -592,6 +613,99 @@ class ApprovalResumeService:
             "requirement_ledger_revision": payload.get("requirement_ledger_revision"),
             "current_requirement_id": next_requirement.get("id"),
             "mutation_requirements": requirements,
+            "completed_plan_steps": completed_plan_steps,
+            "completed_tool_outputs": completed_tool_outputs,
+            "locked_constraints": constraints,
+            "commit_state": "not_committed",
+            "session_id": payload.get("session_id"),
+        }
+
+    def _next_direct_v2_payload_from_business_change(
+        self,
+        *,
+        payload: dict[str, Any],
+        bundle_ui: dict[str, Any],
+        business_change: dict[str, Any],
+        remaining_business_changes: list[dict[str, Any]],
+        previous_approval_id: str,
+        completed_plan_steps: list[dict[str, Any]],
+        completed_tool_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        rows = business_change.get("rows") if isinstance(business_change.get("rows"), list) else []
+        staged_rows = [dict(row) for row in rows if isinstance(row, dict)]
+        if not staged_rows:
+            return None
+        constraints = business_change.get("locked_constraints")
+        if not isinstance(constraints, dict):
+            requirement = business_change.get("requirement") if isinstance(business_change.get("requirement"), dict) else {}
+            constraints = requirement.get("constraints") if isinstance(requirement.get("constraints"), dict) else {}
+        constraints = dict(constraints or {})
+        source_priority = str(
+            business_change.get("source_priority") or self._direct_v2_source_priority_constraint(constraints) or ""
+        ).strip()
+        new_priority = (
+            business_change.get("new_priority")
+            or constraints.get("new_priority")
+            or constraints.get("priority_to")
+            or constraints.get("target_priority")
+        )
+        if not source_priority or not new_priority:
+            return None
+        write_tool_name = _direct_v2_write_tool_name(bundle_ui=bundle_ui, payload=payload)
+        if not write_tool_name:
+            preview = business_change.get("preview") if isinstance(business_change.get("preview"), list) else []
+            write_tool_name = next(
+                (
+                    str(item.get("tool_name") or "").strip()
+                    for item in preview
+                    if isinstance(item, dict) and str(item.get("tool_name") or "").strip()
+                ),
+                None,
+            )
+        write_tool_name = write_tool_name or "planner_owned_mutation"
+        entity = str(business_change.get("entity_type") or "record")
+        business_change_id = str(business_change.get("business_change_id") or "planner_owned_preview")
+        business_change_label = str(business_change.get("business_change") or f"{source_priority.title()} -> {str(new_priority).title()}")
+        selector_summary = str(business_change.get("selector_summary") or f"priority = {source_priority}")
+        summary = str(business_change.get("summary") or "").strip()
+        if not summary:
+            count = len(staged_rows)
+            noun = "job" if count == 1 else "jobs"
+            summary = f"Update {count} {source_priority}-priority {noun} to {new_priority} priority."
+        preview = [
+            {"tool_name": write_tool_name, "args": {"id": row.get("job_id") or row.get("id"), "priority": new_priority}}
+            for row in staged_rows
+        ]
+        return {
+            "summary": summary,
+            "count": len(staged_rows),
+            "preview": preview,
+            "remaining_business_changes": remaining_business_changes,
+            "actionable_business_change_count": payload.get("actionable_business_change_count"),
+            "no_op_mutations": payload.get("no_op_mutations") if isinstance(payload.get("no_op_mutations"), list) else [],
+            "bundle_ui": {
+                "kind": "v2_planner_owned_approval_preview",
+                "write_set": business_change_id,
+                "headline": summary.rstrip("."),
+                "rows": staged_rows,
+                "excluded_rows": business_change.get("excluded_rows") if isinstance(business_change.get("excluded_rows"), list) else [],
+                "previous_priority": business_change.get("previous_priority") or source_priority,
+                "new_priority": new_priority,
+                "source_priority": source_priority,
+                "locked_constraints": constraints,
+                "requirement_ledger_revision": payload.get("requirement_ledger_revision"),
+                "source_intent": bundle_ui.get("source_intent") or payload.get("source_intent"),
+                "write_tool_name": write_tool_name,
+                "previous_approval_id": previous_approval_id,
+                "original_state_semantics": True,
+                "business_change_id": business_change_id,
+                "business_change": business_change_label,
+                "selector_summary": selector_summary,
+                "entity_type": entity,
+            },
+            "requirement_ledger_revision": payload.get("requirement_ledger_revision"),
+            "current_requirement_id": business_change.get("current_requirement_id"),
+            "mutation_requirements": payload.get("mutation_requirements") if isinstance(payload.get("mutation_requirements"), list) else [],
             "completed_plan_steps": completed_plan_steps,
             "completed_tool_outputs": completed_tool_outputs,
             "locked_constraints": constraints,

@@ -517,8 +517,38 @@ def _expanded_args_for_read_card(card: HydratedToolCard, capability_need: Any) -
 def _requested_fields_for_read_card(card: HydratedToolCard, capability_need: Any) -> list[str]:
     fields = [str(field) for field in (getattr(capability_need, "requested_fields", []) or []) if str(field)]
     action = str(getattr(capability_need, "action", "") or "").strip().lower()
+    entity = str(getattr(capability_need, "entity", "") or "").strip().lower()
+    identity_fields = {"id", "entity_id", "record_id"}
+    if entity:
+        identity_fields.add(f"{entity}_id")
+        if entity.endswith("ies") and len(entity) > 3:
+            identity_fields.add(f"{entity[:-3]}y_id")
+        elif entity.endswith("s") and len(entity) > 1:
+            identity_fields.add(f"{entity[:-1]}_id")
+    normalized_fields = {field.strip().lower() for field in fields}
+    path_identity_args = {str(arg).strip().lower() for arg in card.required_args or []}
+    if (
+        "status" in normalized_fields
+        and normalized_fields <= {*identity_fields, "status"}
+        and path_identity_args.intersection(identity_fields)
+    ):
+        return [field for field in fields if field.strip().lower() not in identity_fields] or ["status"]
     if action not in {"update", "create"}:
-        return list(dict.fromkeys(fields))
+        if action not in {"list", "read_many"}:
+            if "status" in normalized_fields and normalized_fields <= {*identity_fields, "status"}:
+                return [field for field in fields if field.strip().lower() not in identity_fields] or ["status"]
+            return fields
+        constraints = dict(getattr(capability_need, "constraints", {}) or {})
+        collection_identity_fields: list[str] = []
+        if entity:
+            collection_identity_fields.append(f"{entity}_id")
+        collection_evidence_fields = []
+        if constraints.get("sort_by") not in (None, "", [], {}):
+            collection_evidence_fields.append(str(constraints.get("sort_by")))
+        for key in ("priority", "status"):
+            if not fields and constraints.get(key) not in (None, "", [], {}):
+                collection_evidence_fields.append(key)
+        return list(dict.fromkeys([*collection_identity_fields, *fields, *collection_evidence_fields]))
 
     entity = str(getattr(capability_need, "entity", "") or "").strip().lower()
     constraints = dict(getattr(capability_need, "constraints", {}) or {})

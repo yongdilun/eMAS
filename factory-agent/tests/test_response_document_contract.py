@@ -691,7 +691,8 @@ async def test_snapshot_includes_additive_response_document_without_changing_pre
     assert document["revision_source"] == "event_seq"
     assert document["state"] == "waiting_approval"
     assert document["status"] == "waiting_approval"
-    assert document["summary"] == body["presentation"]["summary"]
+    assert body["presentation"]["summary"] == "One job will be changed from medium to high priority."
+    assert document["summary"] == "1 job will be updated from medium to high priority."
     assert document["diagnostics"]["reason"] == "approval_pending"
     assert {block["type"] for block in document["blocks"]} >= {
         "run_activity",
@@ -1456,6 +1457,83 @@ async def test_partial_noop_plus_valid_mutation_is_visible_before_approval_and_f
 
 
 @pytest.mark.asyncio
+async def test_phase14_zero_match_first_change_uses_active_pending_approval_write_set(db_session):
+    created_at = datetime(2026, 5, 19, 10, 15, 0)
+    session_id = "rd-phase14-zero-match-first"
+    plan_id = "rd-phase14-zero-match-first-plan"
+    approval_id = "approval-rd-phase14-medium-high"
+    no_op = _noop_contract(
+        entity_type="job",
+        selector_summary="priority = low",
+        change_summary="priority -> medium",
+    )
+    valid_rows = [
+        {"job_id": "JOB-RD-MED-001", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+        {"job_id": "JOB-RD-MED-002", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+    ]
+    approval_args = {
+        "summary": "Update 2 jobs from medium to high.",
+        "count": 2,
+        "no_op_mutations": [no_op],
+        "bundle_ui": {
+            "kind": "phase14_zero_match_first",
+            "write_set": "medium_to_high",
+            "headline": "Update 2 jobs from medium to high",
+            "rows": valid_rows,
+            "source_priority": "medium",
+            "new_priority": "high",
+        },
+    }
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=12,
+                status="WAITING_APPROVAL",
+                current_intent="change all low priority job to medium, then change all medium priority job to high",
+                replan_context={"langgraph_pending_approval": {"approval_id": approval_id, "thread_id": session_id}},
+            ),
+            _user_message(session_id=session_id, created_at=created_at),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _approval(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                approval_id=approval_id,
+                status="PENDING",
+                args=approval_args,
+                risk_summary="Update 2 jobs from medium to high.",
+                created_offset_s=3,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    waiting = (await _snapshot(db_session, session_id))["response_document"]
+
+    assert waiting["state"] == "waiting_approval"
+    assert "no matching jobs for priority = low" in waiting["message"]
+    assert "2 jobs will be updated from medium to high priority" in waiting["message"]
+    assert "Approval required before applying staged changes" not in waiting["message"]
+    noop_index = next(index for index, block in enumerate(waiting["blocks"]) if block["type"] == "completed_step")
+    approval_index = next(index for index, block in enumerate(waiting["blocks"]) if block["type"] == "approval_required")
+    assert noop_index < approval_index
+    approval_block = waiting["blocks"][approval_index]
+    assert approval_block["approval_id"] == approval_id
+    assert approval_block["contract"] == BUSINESS_CHANGE_CONTRACT
+    assert approval_block["summary"] == "2 jobs will be updated from medium to high priority."
+    assert [row["job_id"] for row in approval_block["rows"]] == ["JOB-RD-MED-001", "JOB-RD-MED-002"]
+    assert {row["previous_priority"] for row in approval_block["rows"]} == {"medium"}
+    assert {row["new_priority"] for row in approval_block["rows"]} == {"high"}
+    assert "priority = low" not in json.dumps(approval_block)
+    run_step_titles = [step["title"] for step in waiting["run_steps"]]
+    assert "Waiting for approval 2" not in run_step_titles
+    assert run_step_titles.index("Not changed") < run_step_titles.index("Waiting for approval 1")
+
+
+@pytest.mark.asyncio
 async def test_all_noop_mutation_completes_without_approval_or_fake_success(db_session):
     created_at = datetime(2026, 5, 18, 13, 45, 0)
     session_id = "rd-all-noop"
@@ -2041,6 +2119,109 @@ async def test_machine_status_read_only_response_uses_typed_status_contract(db_s
         "Line 1",
     ]:
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+async def test_phase13_mixed_read_summary_and_collection_identity_fields(db_session):
+    created_at = datetime(2026, 5, 19, 8, 30, 0)
+    session_id = "rd-phase13-mixed-read"
+    plan_id = "rd-phase13-mixed-read-plan"
+    prompt = (
+        "Show M-CNC-01 status, then show JOB-SEED-001 status, then list the next 3 low priority jobs sorted by deadline."
+    )
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=11,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-phase13-machine-status",
+                completed_at=created_at + timedelta(seconds=2),
+                rows=[],
+                summary="Machine status retrieved.",
+                tool_name="get__machines_{id}",
+                args={"id": "M-CNC-01", "fields": "status"},
+                result={"success": True, "data": {"machine_id": "M-CNC-01", "status": "running", "location": "Line 1"}},
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-phase13-job-status",
+                completed_at=created_at + timedelta(seconds=3),
+                rows=[],
+                summary="Job status retrieved.",
+                tool_name="get__jobs_{id}",
+                args={"id": "JOB-SEED-001", "fields": "status"},
+                result={"success": True, "data": {"job_id": "JOB-SEED-001", "status": "queued", "priority": "high"}},
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-phase13-low-jobs",
+                completed_at=created_at + timedelta(seconds=4),
+                rows=[
+                    {"job_id": "JOB-RD-LOW-001", "priority": "low", "status": "planned", "deadline": "2026-05-21"},
+                    {"job_id": "JOB-RD-LOW-002", "priority": "low", "status": "queued", "deadline": "2026-05-22"},
+                    {"job_id": "JOB-RD-LOW-003", "priority": "low", "status": "ready", "deadline": "2026-05-23"},
+                ],
+                summary="Found 3 low-priority jobs. Details are shown in the table below.",
+                tool_name="get__jobs",
+                args={"priority": "low", "fields": "deadline", "sort_by": "deadline", "sort_dir": "asc", "limit": 3},
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content="Found 3 low-priority jobs. Details are shown in the table below.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=5),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+
+    assert document["state"] == "completed"
+    assert "Machine M-CNC-01 is running" in document["message"]
+    assert "Job JOB-SEED-001 is queued" in document["message"]
+    assert "Found 3 low-priority jobs sorted by deadline" in document["message"]
+    assert document["message"] != "Found 3 low-priority jobs. Details are shown in the table below."
+    assert document["summary"] == document["message"]
+    assert document["invariants"]["sort_fields"] is None
+    block_types = [block["type"] for block in document["blocks"]]
+    machine_index = next(
+        index
+        for index, block in enumerate(document["blocks"])
+        if block["type"] == "status_result" and block["entity_type"] == "machine"
+    )
+    job_index = next(
+        index
+        for index, block in enumerate(document["blocks"])
+        if block["type"] == "status_result" and block["entity_type"] == "job"
+    )
+    table_index = next(index for index, block in enumerate(document["blocks"]) if block["type"] == "result_table")
+    assert machine_index < job_index < table_index
+    assert block_types.count("status_result") == 2
+    assert block_types.count("result_table") == 1
+    assert not any(block["type"] == "approval_required" for block in document["blocks"])
+
+    machine_block = document["blocks"][machine_index]
+    job_block = document["blocks"][job_index]
+    table = document["blocks"][table_index]
+    assert machine_block["requested_fields"] == ["machine_id", "status"]
+    assert job_block["requested_fields"] == ["job_id", "status"]
+    assert table["entity_type"] == "job"
+    assert table["requested_fields"] == ["deadline"]
+    assert [list(row.keys()) for row in table["rows"]] == [["job_id", "deadline"]] * 3
+    assert [row["deadline"] for row in table["rows"]] == ["2026-05-21", "2026-05-22", "2026-05-23"]
 
 
 @pytest.mark.asyncio

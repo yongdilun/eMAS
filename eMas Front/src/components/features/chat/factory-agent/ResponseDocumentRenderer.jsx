@@ -315,8 +315,8 @@ function Disclosure({ title, children, defaultCollapsed = true, className = '', 
   )
 }
 
-function ExpandableTable({ title, rows, defaultCollapsed = true, blockId = null }) {
-  const presentation = tablePresentationFromResponseRows(rows, title)
+function ExpandableTable({ title, rows, defaultCollapsed = true, blockId = null, requestedFields = [] }) {
+  const presentation = tablePresentationFromResponseRows(rows, title, requestedFields)
   if (!presentation) return null
   if (!defaultCollapsed) {
     return <TablePresentation presentation={presentation} />
@@ -1593,6 +1593,7 @@ function ResultTableBlock({ block }) {
         rows={rows}
         defaultCollapsed={defaultCollapsed}
         blockId={block.id}
+        requestedFields={block.requested_fields}
       />
     </CompactCard>
   )
@@ -1984,7 +1985,7 @@ export default function ResponseDocumentRenderer({
   return (
     <div className="min-w-0 max-w-full" data-response-document-root="">
       <ActivityTimeline steps={activitySteps} />
-      {message ? <div className="max-w-[72ch] whitespace-pre-wrap break-words text-ink" data-response-document-prose="">{message}</div> : null}
+      {message ? <div className="w-full max-w-none whitespace-pre-wrap break-words text-ink" data-response-document-prose="">{message}</div> : null}
       {renderedBlocks}
     </div>
   )

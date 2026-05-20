@@ -801,6 +801,12 @@ def _constraints_for_clause(
         if constraint.strength != "hard" or not constraint.field:
             continue
         _merge_constraint_value(constraints, constraint.field, constraint.value)
+    source_priority = frame.normalized_entities.get("from_priority") or []
+    target_priority = frame.normalized_entities.get("to_priority") or []
+    if source_priority:
+        constraints["priority"] = source_priority[0] if len(source_priority) == 1 else list(source_priority)
+    if target_priority:
+        constraints["new_priority"] = target_priority[0] if len(target_priority) == 1 else list(target_priority)
     for field, values in frame.normalized_entities.items():
         if not values:
             continue

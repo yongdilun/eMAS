@@ -413,6 +413,7 @@ class ReadDisplayPolicy:
     details_collapsed: bool = True
     entity_type: str | None = None
     contract: str | None = None
+    sort_fields: list[str] = field(default_factory=list)
 
 
 def _trimmed(value: Any) -> str:
@@ -1325,7 +1326,14 @@ def _pending_priority_change_summary(rows: list[dict[str, Any]]) -> str | None:
 
 
 def _pending_approval_summary(approval: ApprovalResponse, rows: list[dict[str, Any]]) -> str:
-    return _pending_priority_change_summary(rows) or _approval_summary(approval)
+    priority_summary = _pending_priority_change_summary(rows)
+    approval_summary = _approval_summary(approval)
+    if priority_summary and approval_summary:
+        approval_lower = approval_summary.lower()
+        priority_lower = priority_summary.rstrip(".").lower()
+        if ("approval" in approval_lower or "original" in approval_lower) and priority_lower not in approval_lower:
+            return f"{approval_summary.rstrip('.')} {priority_summary}"
+    return priority_summary or approval_summary
 
 
 def _approval_contract(approval: ApprovalResponse, rows: list[dict[str, Any]]) -> str | None:
@@ -2692,6 +2700,28 @@ def _requested_fields_from_read_evidence(read_evidence: list[ReadEvidence] | Non
     return list(unique[0]) if len(unique) == 1 else []
 
 
+def _sort_fields_from_args(args: dict[str, Any] | None) -> list[str]:
+    if not isinstance(args, dict):
+        return []
+    raw = args.get("sort_by") or args.get("order_by")
+    values = raw if isinstance(raw, list) else [raw]
+    fields = [
+        _canonical_requested_field_key(value)
+        for value in values
+        if _canonical_requested_field_key(value)
+    ]
+    return list(dict.fromkeys(fields))
+
+
+def _sort_fields_from_read_evidence(read_evidence: list[ReadEvidence] | None) -> list[str]:
+    if not read_evidence:
+        return []
+    field_sets = [tuple(_sort_fields_from_args(evidence.args)) for evidence in read_evidence]
+    field_sets = [fields for fields in field_sets if fields]
+    unique = list(dict.fromkeys(field_sets))
+    return list(unique[0]) if len(unique) == 1 else []
+
+
 def _read_display_policy(
     rows: list[dict[str, Any]],
     *,
@@ -2762,6 +2792,7 @@ def _read_display_policy(
         entity_type=entity_type,
         preview_limit=READ_DISPLAY_PREVIEW_LIMIT,
         details_collapsed=entity_count > READ_DISPLAY_PREVIEW_LIMIT,
+        sort_fields=_sort_fields_from_read_evidence(read_evidence),
     )
 
 
@@ -2769,10 +2800,55 @@ def _canonical_requested_field_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
 
 
-def _project_requested_fields_row(row: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+def _collection_identity_fields(row: dict[str, Any], entity_type: str | None) -> list[str]:
+    if not isinstance(row, dict):
+        return []
+    metadata_ids = {"operation_id", "step_id", "tool_id", "approval_id", "row_id"}
+    preferred: list[str] = []
+    if entity_type:
+        preferred.append(f"{entity_type}_id")
+    preferred.extend(["id", "entity_id", "job_id", "machine_id", "record_id"])
+    by_canonical = {_canonical_requested_field_key(key): key for key in row.keys()}
+    fields: list[str] = []
+    for candidate in preferred:
+        canonical = _canonical_requested_field_key(candidate)
+        if canonical not in metadata_ids and canonical in by_canonical and row.get(by_canonical[canonical]) not in (None, ""):
+            fields.append(canonical)
+    for key, value in row.items():
+        canonical = _canonical_requested_field_key(key)
+        if (
+            not fields
+            and canonical.endswith("_id")
+            and canonical not in metadata_ids
+            and value not in (None, "")
+        ):
+            fields.append(canonical)
+    return list(dict.fromkeys(fields))
+
+
+def _collection_projection_fields(
+    row: dict[str, Any],
+    fields: list[str],
+    *,
+    entity_type: str | None,
+    sort_fields: list[str] | None = None,
+) -> list[str]:
+    requested = [_canonical_requested_field_key(field) for field in fields if _canonical_requested_field_key(field)]
+    sorted_by = [_canonical_requested_field_key(field) for field in sort_fields or [] if _canonical_requested_field_key(field)]
+    identity = _collection_identity_fields(row, entity_type)
+    return list(dict.fromkeys([*identity, *requested, *sorted_by]))
+
+
+def _project_requested_fields_row(
+    row: dict[str, Any],
+    fields: list[str],
+    *,
+    entity_type: str | None = None,
+    sort_fields: list[str] | None = None,
+) -> dict[str, Any]:
     projected: dict[str, Any] = {}
     by_canonical = {_canonical_requested_field_key(key): key for key in row.keys()}
-    for field in fields:
+    for field in _collection_projection_fields(row, fields, entity_type=entity_type, sort_fields=sort_fields):
         key = by_canonical.get(_canonical_requested_field_key(field))
         if key is not None:
             projected[_canonical_requested_field_key(field)] = row.get(key)
@@ -2783,7 +2859,16 @@ def _project_read_rows_for_policy(rows: list[dict[str, Any]], policy: ReadDispla
     if policy is None:
         return rows
     if policy.contract != ENTITY_STATUS_CONTRACT and policy.requested_fields:
-        return [_project_requested_fields_row(row, policy.requested_fields) for row in rows if isinstance(row, dict)]
+        return [
+            _project_requested_fields_row(
+                row,
+                policy.requested_fields,
+                entity_type=policy.entity_type,
+                sort_fields=policy.sort_fields,
+            )
+            for row in rows
+            if isinstance(row, dict)
+        ]
     if (
         policy.contract != ENTITY_STATUS_CONTRACT
         or policy.read_scope != READ_SCOPE_STATUS_ONLY
@@ -2931,6 +3016,89 @@ def _read_evidence_title(item: ReadEvidence) -> str:
     if entity:
         return f"Read {len(rows)} {_entity_noun(entity, len(rows))}"
     return f"Read {len(rows)} {_plural(len(rows), 'record')}"
+
+
+def _read_evidence_collection_summary(item: ReadEvidence, *, rows: list[dict[str, Any]]) -> str:
+    count = len(rows)
+    entity = _read_evidence_entity(item)
+    noun = _entity_noun(entity, count) if entity else _plural(count, "record")
+    args = item.args if isinstance(item.args, dict) else {}
+    priority = _trimmed(args.get("priority")).lower()
+    status_filter = _trimmed(args.get("status")).lower()
+    descriptor = ""
+    if priority:
+        descriptor = f"{priority}-priority "
+    elif status_filter:
+        descriptor = f"{status_filter} "
+    sort_fields = _sort_fields_from_args(args)
+    sort_suffix = f" sorted by {_human_status_label(sort_fields[0]).lower()}" if sort_fields else ""
+    if count <= 0:
+        return f"No matching {descriptor}{noun} were found."
+    return f"Found {count} {descriptor}{noun}{sort_suffix}."
+
+
+def _read_evidence_summary_for_mixed_read(item: ReadEvidence, *, session: Any) -> str | None:
+    rows = [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+    if not rows:
+        return None
+    requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+    entity_type = _read_evidence_entity(item)
+    status_like = _read_evidence_is_status_only(
+        rows=rows,
+        requested_fields=requested_fields,
+        entity_type=entity_type,
+        session=session,
+    )
+    if status_like and len(rows) == 1:
+        status_result = _status_result_from_read_rows(
+            rows,
+            operation_id=item.operation_id,
+            session=session,
+        )
+        if status_result:
+            return _trimmed(status_result.get("summary")) or None
+    return _read_evidence_collection_summary(item, rows=rows)
+
+
+def _mixed_read_summary(read_evidence: list[ReadEvidence], *, session: Any) -> str | None:
+    tool_read_evidence = [item for item in read_evidence if item.tool_name]
+    read_step_ids = {
+        step_id
+        for item in tool_read_evidence
+        for step_id in item.step_ids
+    }
+    if len(read_step_ids) <= 1:
+        return None
+    profiles: list[tuple[str | None, bool]] = []
+    for item in tool_read_evidence:
+        rows = [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+        if not rows:
+            continue
+        requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+        entity_type = _read_evidence_entity(item)
+        profiles.append(
+            (
+                entity_type,
+                _read_evidence_is_status_only(
+                    rows=rows,
+                    requested_fields=requested_fields,
+                    entity_type=entity_type,
+                    session=session,
+                ),
+            )
+        )
+    if profiles and all(status_like for _entity, status_like in profiles):
+        entity_types = {entity for entity, _status_like in profiles if entity}
+        if len(entity_types) <= 1:
+            return None
+    summaries: list[str] = []
+    for item in tool_read_evidence:
+        summary = _read_evidence_summary_for_mixed_read(item, session=session)
+        if summary:
+            summaries.append(summary.rstrip("."))
+    if len(summaries) <= 1:
+        return None
+    return ". ".join(summaries) + "."
 
 
 def _compose_run_steps(
@@ -3134,6 +3302,7 @@ def _compose_run_steps(
                 entity_count=len(rows),
                 entity_type=_read_evidence_entity(item),
                 contract=ENTITY_STATUS_CONTRACT if status_like else None,
+                sort_fields=_sort_fields_from_args(item.args),
             )
             run_steps.append(
                 RunStep(
@@ -3220,7 +3389,7 @@ def _compose_run_steps(
             completion_summary = _trimmed(status_result.get("summary")) or None
         elif read_evidence:
             read_rows = [row for item in read_evidence for row in item.rows]
-            completion_summary = _read_policy_summary(read_rows, read_policy, presentation.summary)
+            completion_summary = _mixed_read_summary(read_evidence, session=session) or _read_policy_summary(read_rows, read_policy, presentation.summary)
         elif sources:
             completion_summary = _strip_footnote_markup(knowledge_answer_text) or "Source-backed answer is ready."
         else:
@@ -3410,6 +3579,7 @@ def _short_message(
     latest_pending: ApprovalResponse | None,
     approvals: list[ApprovalResponse],
     mutation_groups: list[MutationGroup],
+    read_evidence: list[ReadEvidence],
     read_rows: list[dict[str, Any]],
     status_result: dict[str, Any] | None,
     read_policy: ReadDisplayPolicy | None,
@@ -3422,7 +3592,8 @@ def _short_message(
         return failure_profile.user_message
 
     if latest_pending is not None:
-        pending_text = _approval_summary(latest_pending)
+        pending_rows = _approval_rows(latest_pending, operation_id=presentation.operation_id, default_status="pending")
+        pending_text = _pending_approval_summary(latest_pending, pending_rows)
         if mutation_groups:
             completed = "; ".join(_mutation_group_summary(group).rstrip(".") for group in mutation_groups)
             return f"Done. {completed}. {pending_text}"
@@ -3452,6 +3623,10 @@ def _short_message(
 
     if status_result:
         return _trimmed(status_result.get("summary")) or "Status is ready."
+
+    mixed_summary = _mixed_read_summary(read_evidence, session=session)
+    if mixed_summary:
+        return mixed_summary
 
     if read_rows:
         return _read_policy_summary(read_rows, read_policy, presentation.summary)
@@ -3667,6 +3842,7 @@ def _read_blocks_for_evidence_groups(
             entity_type=entity_type,
             contract=ENTITY_STATUS_CONTRACT if status_like else None,
             details_collapsed=False,
+            sort_fields=_sort_fields_from_args(item.args),
         )
         projected_rows = _project_read_rows_for_policy(rows, policy)
         blocks.extend(
@@ -4053,6 +4229,7 @@ def compose_response_document(
         latest_pending=latest_pending,
         approvals=approvals,
         mutation_groups=mutation_groups,
+        read_evidence=read_groups,
         read_rows=read_rows,
         status_result=status_result,
         read_policy=read_policy,
@@ -4118,6 +4295,7 @@ def compose_response_document(
         "read_scope": read_policy.read_scope if read_policy else None,
         "requested_fields": read_policy.requested_fields if read_policy else None,
         "display_mode": read_policy.display_mode if read_policy else None,
+        "sort_fields": read_policy.sort_fields if read_policy and read_policy.sort_fields else None,
         "entity_count": read_policy.entity_count if read_policy else None,
         "preview_limit": read_policy.preview_limit if read_policy else None,
         "read_details_collapsed": read_policy.details_collapsed if read_policy else None,

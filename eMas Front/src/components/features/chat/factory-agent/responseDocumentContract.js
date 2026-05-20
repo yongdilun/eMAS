@@ -142,13 +142,16 @@ export function humanizeResponseDocumentKey(key) {
     .replace(/^\w/, (c) => c.toUpperCase())
 }
 
-function orderedRowKeys(rows) {
-  const preferred = [
+function orderedRowKeys(rows, requestedFields = []) {
+  const requested = cleanStringArray(requestedFields)
+  const identityPreferred = [
     'display_id',
     'record_id',
     'job_id',
     'machine_id',
     'id',
+  ]
+  const preferred = [
     'entity_type',
     'change',
     'status',
@@ -162,12 +165,22 @@ function orderedRowKeys(rows) {
   ]
   const seen = new Set()
   const keys = []
-  for (const key of preferred) {
-    if (INTERNAL_ROW_KEYS.has(key)) continue
+  const pushExistingKey = (key) => {
+    if (INTERNAL_ROW_KEYS.has(key)) return
+    if (seen.has(key)) return
     if (rows.some((row) => Object.prototype.hasOwnProperty.call(row, key))) {
       seen.add(key)
       keys.push(key)
     }
+  }
+  for (const key of identityPreferred) {
+    pushExistingKey(key)
+  }
+  for (const key of requested) {
+    pushExistingKey(key)
+  }
+  for (const key of preferred) {
+    pushExistingKey(key)
   }
   for (const row of rows) {
     for (const key of Object.keys(row || {})) {
@@ -181,10 +194,10 @@ function orderedRowKeys(rows) {
   return keys.slice(0, 8)
 }
 
-export function tablePresentationFromResponseRows(rows, title = 'Affected records') {
+export function tablePresentationFromResponseRows(rows, title = 'Affected records', requestedFields = []) {
   const safeRows = cleanRows(rows)
   if (!safeRows.length) return null
-  const keys = orderedRowKeys(safeRows)
+  const keys = orderedRowKeys(safeRows, requestedFields)
   if (!keys.length) return null
   const visibleRows = safeRows.slice(0, MAX_VISIBLE_TABLE_ROWS)
   return {

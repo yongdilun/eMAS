@@ -149,7 +149,7 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
 
     await page.getByPlaceholder('Ask factory agent...').focus()
-    await page.keyboard.insertText('Release keyboard approval: change low priority jobs to high priority')
+    await page.keyboard.insertText('Release keyboard approval: change medium priority jobs to high priority')
     await page.getByRole('button', { name: 'Send' }).focus()
     await page.keyboard.press('Enter')
 

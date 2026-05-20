@@ -109,8 +109,12 @@ import {
   responseDocumentReverseCascadePrompt,
   responseDocumentStaleApprovalPrompt,
   responseDocumentTimeoutPrompt,
+  responseDocumentZeroMatchApprovalPrompt,
   runningCancellableDocument,
   timeoutDocument,
+  zeroMatchApprovalDefinition,
+  zeroMatchApprovalPayload,
+  zeroMatchApprovalWaitingDocument,
 } from '../support/responseDocumentScenarios.js'
 import {
   reliabilityConcurrentTurns,
@@ -776,6 +780,57 @@ function responseDocumentPartialNoOpScenario() {
   }
 }
 
+function responseDocumentZeroMatchApprovalScenario() {
+  const definition = zeroMatchApprovalDefinition()
+  return {
+    name: 'responseDocumentZeroMatchApproval',
+    description: 'Response document zero-match first business change with active medium-to-high approval fixture.',
+    prompts: [responseDocumentZeroMatchApprovalPrompt],
+    onMessage(session, content) {
+      beginResponseDocumentTurn(session, content || responseDocumentZeroMatchApprovalPrompt, 'responseDocumentZeroMatchApproval')
+      session.response_document_zero_match_phase = 'approval'
+    },
+    onPlan(session) {
+      const turnId = session.response_document_turn_id || session.current_turn_id || responseDocumentTurnPrefix('responseDocumentZeroMatchApproval')
+      installResponseDocumentPlan(session, {
+        turnId,
+        operationId: definition.operationId,
+        objective: 'Exercise response_document zero-match active approval quality.',
+        status: 'PENDING_APPROVAL',
+      })
+      session.status = 'WAITING_APPROVAL'
+      session.pending_approval = {
+        ...zeroMatchApprovalPayload(session, definition),
+        created_at: fixtureTime(3),
+        expires_at: fixtureTime(300),
+      }
+      session.response_document = zeroMatchApprovalWaitingDocument(session, definition)
+      appendTimeline(session, {
+        event_id: `${definition.approvalId}-required`,
+        turn_id: turnId,
+        event_type: 'approval_required',
+        approval_id: definition.approvalId,
+        tool_name: 'typed_priority_update',
+        content: '2 jobs will be updated from medium to high priority.',
+        status: 'PENDING',
+        operation_id: definition.operationId,
+        details: { args: session.pending_approval.args, side_effect_level: 'HIGH' },
+        created_at: fixtureTime(3),
+      })
+      return { status: 200, body: { status: 'WAITING_APPROVAL', plan_id: definition.operationId } }
+    },
+    async onExecute() {
+      return { status: 200, body: { status: 'WAITING_APPROVAL', session_id: null } }
+    },
+    snapshot(session) {
+      if (session.response_document_zero_match_phase === 'approval') {
+        session.response_document = zeroMatchApprovalWaitingDocument(session, definition)
+      }
+      return snapshotFromSession(session)
+    },
+  }
+}
+
 function responseDocumentRejectedScenario() {
   const definition = cascadeDefinition('forward')
   return {
@@ -943,6 +998,8 @@ export const scenarioCatalog = {
   responseDocumentReverseCascade: responseDocumentCascadeScenario('reverse'),
 
   responseDocumentPartialNoOp: responseDocumentPartialNoOpScenario(),
+
+  responseDocumentZeroMatchApproval: responseDocumentZeroMatchApprovalScenario(),
 
   responseDocumentAllNoOp: responseDocumentCompletionScenario({
     name: 'responseDocumentAllNoOp',

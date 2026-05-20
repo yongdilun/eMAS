@@ -25,6 +25,7 @@ export const responseDocumentStaleApprovalPrompt = 'Run response_document stale 
 export const responseDocumentCancelledRunPrompt = 'Start response_document active run that I will cancel'
 export const responseDocumentCompatibilityPrompt = 'Render response_document with stale legacy presentation fixture'
 export const responseDocumentPartialNoOpPrompt = 'Run response_document partial no-op mutation fixture'
+export const responseDocumentZeroMatchApprovalPrompt = 'Run response_document zero-match first approval fixture'
 export const responseDocumentAllNoOpPrompt = 'Run response_document all no-op mutation fixture'
 
 export const forbiddenResponseDocumentText = [
@@ -567,6 +568,91 @@ export function partialNoOpFinalDocument(session, definition = partialNoOpDefini
       affected_record_count: changedRows.length,
       approved_business_change_count: 1,
       affected_record_preview_limit: 5,
+    },
+  })
+}
+
+export function zeroMatchApprovalDefinition() {
+  return {
+    prompt: responseDocumentZeroMatchApprovalPrompt,
+    operationId: 'pw-plan-rd-zero-match-approval',
+    approvalId: 'pw-rd-zero-match-medium-high',
+    noOp: {
+      contract: NO_OP_MUTATION_CONTRACT,
+      entity_type: 'job',
+      selector_summary: 'priority = low',
+      change_summary: 'priority -> medium',
+      matched_count: 0,
+      changed_count: 0,
+      status: 'not_changed',
+      reason: 'no_matching_records',
+    },
+    rows: mediumPriorityRows.slice(0, 2),
+  }
+}
+
+export function zeroMatchApprovalPayload(session, definition = zeroMatchApprovalDefinition()) {
+  return {
+    approval_id: definition.approvalId,
+    session_id: session.session_id,
+    subject_type: 'tool',
+    tool_name: 'typed_priority_update',
+    side_effect_level: 'HIGH',
+    risk_summary: 'Update 2 jobs from medium to high.',
+    args: {
+      count: definition.rows.length,
+      no_op_mutations: [definition.noOp],
+      bundle_ui: {
+        kind: 'response_document_zero_match_first',
+        write_set: 'medium_to_high',
+        headline: 'Update 2 jobs from medium to high',
+        rows: definition.rows,
+      },
+    },
+    status: 'PENDING',
+  }
+}
+
+export function zeroMatchApprovalWaitingDocument(session, definition = zeroMatchApprovalDefinition()) {
+  const noopSummary = 'Not changed: no matching jobs for priority = low; priority -> medium.'
+  const approvalSummary = '2 jobs will be updated from medium to high priority.'
+  return baseDocument(session, {
+    operationId: definition.operationId,
+    revision: 2,
+    state: 'waiting_approval',
+    message: `Done. ${noopSummary} ${approvalSummary}`,
+    currentStepId: 'approval-zero-match',
+    runSteps: [
+      { step_id: 'analysis-1', kind: 'analysis', state: 'completed', title: 'Understood request', summary: 'Parsed the zero-match plus valid mutation request.' },
+      { step_id: 'mutation-noop-low', kind: 'mutation', state: 'completed', title: 'Not changed', summary: noopSummary, record_count: 0 },
+      { step_id: 'approval-zero-match', kind: 'approval', state: 'waiting', title: 'Waiting for approval 1', summary: approvalSummary, approval_id: definition.approvalId, current: true },
+    ],
+    blocks: [
+      {
+        id: 'completed-step:zero-match-low',
+        type: 'completed_step',
+        title: 'Completed step',
+        summary: noopSummary,
+        rows: [],
+        details_collapsed: true,
+      },
+      {
+        id: `approval:${definition.approvalId}`,
+        type: 'approval_required',
+        contract: BUSINESS_CHANGE_CONTRACT,
+        approval_id: definition.approvalId,
+        operation_id: definition.operationId,
+        title: 'Approval required',
+        summary: approvalSummary,
+        rows: definition.rows,
+        details_collapsed: true,
+      },
+    ],
+    invariants: {
+      latest_pending_approval_id: definition.approvalId,
+      no_op_mutation_contract: NO_OP_MUTATION_CONTRACT,
+      not_changed_group_count: 1,
+      mutation_group_count: 2,
     },
   })
 }

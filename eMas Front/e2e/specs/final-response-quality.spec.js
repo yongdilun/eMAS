@@ -33,6 +33,7 @@ import {
   responseDocumentSourcePdfPrompt,
   responseDocumentStaleApprovalPrompt,
   responseDocumentTimeoutPrompt,
+  responseDocumentZeroMatchApprovalPrompt,
 } from '../support/responseDocumentScenarios.js'
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
@@ -664,7 +665,7 @@ test.describe('Final response quality response_document gate', () => {
         revisionGreaterThan: afterSend.backend.responseDocumentRevision,
         visibleBlockTypes: ['result_summary', 'mutation_result'],
         hiddenBlockTypes: ['approval_required'],
-        responseContracts: ['business_change_v1', 'entity_agnostic_no_matching_records_v1'],
+        responseContracts: ['business_change_v1'],
         approvalActionCount: 0,
         textIncludes: [
           'Run complete',
@@ -718,6 +719,42 @@ test.describe('Final response quality response_document gate', () => {
     })
     await testInfo.attach('rd-006-no-op-semantic-probe.json', {
       body: serializeSemanticProbe(allNoop),
+      contentType: 'application/json',
+    })
+  })
+
+  test('RD-014 zero-match first change shows active medium-to-high approval only', async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentZeroMatchApprovalPrompt)
+
+    const probe = await expectTransitionCheckpoint(page, {
+      checkpoint: 'RD-014 zero-match active approval',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'WAITING_APPROVAL',
+        responseState: 'waiting_approval',
+        pendingApprovalId: 'pw-rd-zero-match-medium-high',
+        visibleBlockTypes: ['completed_step', 'approval_required'],
+        backendBlockTypes: ['completed_step', 'approval_required'],
+        responseContracts: ['business_change_v1'],
+        approvalActionCount: 2,
+        textIncludes: [
+          'Not changed',
+          'no matching jobs for priority = low',
+          '2 jobs will be updated from medium to high priority',
+          'Waiting for approval 1',
+        ],
+        textExcludes: [/Waiting for approval 2/i, /Approval required before applying staged changes/i],
+      },
+    })
+    const approvalCard = page.locator('[data-response-block-type="approval_required"]').last()
+    await expect(approvalCard).toContainText('2 jobs will be updated from medium to high priority')
+    await expect(approvalCard).toContainText('JOB-SEED-002')
+    await expect(approvalCard).not.toContainText('priority = low')
+    await testInfo.attach('rd-014-zero-match-active-approval-probe.json', {
+      body: serializeSemanticProbe(probe),
       contentType: 'application/json',
     })
   })
@@ -1340,7 +1377,9 @@ test.describe('Final response quality response_document gate', () => {
     const widenedCard = await elementBox(responseCard)
     expect(widenedCard.width).toBeGreaterThan(initialCard.width + 180)
     const prose = await elementBox(page.locator('[data-response-document-prose]').first())
-    expect(prose.width).toBeLessThan(widenedCard.width - 80)
+    expect(prose.width).toBeGreaterThan(widenedCard.width - 96)
+    expect(prose.left).toBeGreaterThanOrEqual(widenedCard.left - 1)
+    expect(prose.right).toBeLessThanOrEqual(widenedCard.right + 1)
 
     const southeastHandle = page.locator('[data-resize="se"]').first()
     const southeastBox = await southeastHandle.boundingBox()
