@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +25,11 @@ from .v2_contracts import (
     LegacyWorkingIntentExecutionTrace,
     PlannerOwnedLoopV2State,
     ToolRetrievalTrace,
+)
+from .v2_satisfaction import (
+    V2RepeatedRetrievalGuard,
+    apply_deterministic_evidence_satisfaction,
+    validate_v2_final_state,
 )
 from .v2_tool_retriever import V2CapabilityToolRetriever
 
@@ -201,6 +205,7 @@ class PlannerOwnedV2Loop:
         engine_mode: str | None,
         legacy_signals: LegacyExecutionSignals | None = None,
         mode: str = "normal",
+        direct_test_evidence: Sequence[EvidenceLedgerEntry | Mapping[str, Any]] | None = None,
     ) -> PlannerOwnedV2LoopRun:
         resolved_mode = normalize_factory_agent_engine(engine_mode)
         if resolved_mode == "legacy":
@@ -251,15 +256,16 @@ class PlannerOwnedV2Loop:
         trace.diagnostics["used_v2_capability_tool_retriever"] = True
 
         retriever = V2CapabilityToolRetriever(self._tool_selector)
-        seen_need_keys: set[str] = set()
+        repeated_guard = V2RepeatedRetrievalGuard()
+        guard_decisions: list[dict[str, Any]] = []
         repeated_keys: list[str] = []
         retrieval_diagnostics: list[dict[str, Any]] = []
         for need in needs:
-            need_key = _need_key(need.model_dump(mode="json"))
-            if need_key in seen_need_keys:
-                repeated_keys.append(need_key)
+            guard_decision = repeated_guard.check(need, state=state)
+            guard_decisions.append(guard_decision.as_diagnostics())
+            if guard_decision.blocked:
+                repeated_keys.append(guard_decision.need_key)
                 continue
-            seen_need_keys.add(need_key)
             result = await retriever.retrieve_tools_for_need(
                 need,
                 tools_by_name=tools,
@@ -283,6 +289,7 @@ class PlannerOwnedV2Loop:
         trace.diagnostics["repeated_retrieval_guard"] = {
             "status": guard_status,
             "repeated_need_keys": repeated_keys,
+            "decisions": guard_decisions,
         }
         trace.tool_retrieval.diagnostics["retrievals"] = retrieval_diagnostics
         trace.diagnostics["candidate_tool_windows"] = [
@@ -313,6 +320,20 @@ class PlannerOwnedV2Loop:
                     ),
                 )
             )
+
+        for raw_evidence in direct_test_evidence or ():
+            evidence = (
+                raw_evidence
+                if isinstance(raw_evidence, EvidenceLedgerEntry)
+                else EvidenceLedgerEntry.model_validate(raw_evidence)
+            )
+            state.evidence_ledger.evidence.append(evidence)
+
+        if resolved_mode == "v2":
+            apply_deterministic_evidence_satisfaction(state)
+            validate_v2_final_state(state)
+        else:
+            trace.final_validator_status = "not_run_shadow_mode" if resolved_mode == "v2_shadow" else None
 
         draft = _direct_v2_draft(state, tools) if resolved_mode == "v2" else None
         return PlannerOwnedV2LoopRun(state=state, draft=draft, tool_outputs=[])
@@ -358,15 +379,6 @@ def _merge_tool_retrieval_trace(target: ToolRetrievalTrace, incoming: ToolRetrie
     target.backend_used = incoming.backend_used or target.backend_used
     target.reranker.call_count += incoming.reranker.call_count
     target.compatibility_fallback_used = target.compatibility_fallback_used or incoming.compatibility_fallback_used
-
-
-def _need_key(payload: Mapping[str, Any]) -> str:
-    comparable = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"requirement_id", "reason"}
-    }
-    return json.dumps(comparable, sort_keys=True, default=str)
 
 
 def _direct_v2_draft(

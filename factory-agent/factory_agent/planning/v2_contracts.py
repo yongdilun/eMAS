@@ -81,6 +81,7 @@ AgendaPatchOperation = Literal[
     "mark_blocked",
 ]
 RevisionActor = Literal["planner", "deterministic_guard", "user", "final_validator", "system"]
+FinalValidationStatus = Literal["passed", "failed"]
 
 
 class V2ContractModel(BaseModel):
@@ -460,6 +461,23 @@ class SatisfactionState(V2ContractModel):
     requirements: list[RequirementSatisfactionState] = Field(default_factory=list)
 
 
+class FinalValidationIssue(V2ContractModel):
+    issue: str = Field(min_length=1)
+    requirement_id: str | None = None
+    evidence_ref: str | None = None
+    check: str | None = None
+    expected: Any = None
+    actual: Any = None
+    message: str | None = None
+
+
+class FinalValidationResult(V2ContractModel):
+    status: FinalValidationStatus
+    issues: list[FinalValidationIssue] = Field(default_factory=list)
+    checked_requirement_ids: list[str] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
 class PlannerOwnedLoopV2State(V2ContractModel):
     engine_version: EngineVersion = "legacy"
     execution_trace: ExecutionTrace = Field(default_factory=ExecutionTrace)
@@ -468,7 +486,7 @@ class PlannerOwnedLoopV2State(V2ContractModel):
     capability_map: CapabilityMap = Field(default_factory=CapabilityMap)
     evidence_ledger: EvidenceLedger = Field(default_factory=EvidenceLedger)
     satisfaction_state: SatisfactionState = Field(default_factory=SatisfactionState)
+    final_validation_result: FinalValidationResult | None = None
     candidate_tool_windows: list[CandidateToolWindow] = Field(default_factory=list)
     hydrated_tool_cards: list[HydratedToolCards] = Field(default_factory=list)
     revision_history: list[RequirementRevisionRecord] = Field(default_factory=list)
-
