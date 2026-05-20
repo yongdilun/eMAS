@@ -31,6 +31,8 @@ _CONTROL_CONSTRAINTS = {
 }
 _NON_FILTER_CONSTRAINTS = {
     *_CONTROL_CONSTRAINTS,
+    "conditional_branches",
+    "preview_before_apply",
     "requires_approval",
     "safety_constraints",
 }
@@ -416,8 +418,10 @@ def _evaluate_requirement(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
 ) -> tuple[str | None, list[SatisfactionCheck], str]:
-    if requirement.requirement_type in {"single_entity_status", "multi_entity_status"}:
+    if requirement.requirement_type == "single_entity_status":
         return _evaluate_single_entity_requirement(requirement, evidence)
+    if requirement.requirement_type == "multi_entity_status":
+        return _evaluate_multi_entity_requirement(requirement, evidence)
     if requirement.requirement_type == "filtered_collection":
         return _evaluate_collection_requirement(requirement, evidence)
     if requirement.requirement_type == "document_answer":
@@ -461,6 +465,53 @@ def _evaluate_single_entity_requirement(
     return _status_from_checks(checks)
 
 
+def _evaluate_multi_entity_requirement(
+    requirement: RequirementLedgerEntry,
+    evidence: EvidenceLedgerEntry,
+) -> tuple[str, list[SatisfactionCheck], str]:
+    checks: list[SatisfactionCheck] = []
+    if evidence.source_type != "api_tool" or evidence.source_of_truth != "operational_state":
+        checks.append(
+            _check(
+                "source_of_truth",
+                expected="api_tool:operational_state",
+                actual=f"{evidence.source_type}:{evidence.source_of_truth}",
+                passed=False,
+                evidence_ref=evidence.id,
+            )
+        )
+        return "blocked", checks, "wrong_evidence_source"
+
+    rows = _typed_rows(evidence.normalized_result)
+    if rows is None:
+        checks.append(
+            _check(
+                "collection_rows",
+                expected="typed_rows",
+                actual=sorted(evidence.normalized_result.keys()),
+                passed=False,
+                evidence_ref=evidence.id,
+                message="Multi-entity status requirements need typed rows, not prose summary.",
+            )
+        )
+        return "blocked", checks, "missing_typed_multi_entity_rows"
+
+    expected_ids = _expected_entity_ids(requirement)
+    actual_ids = [_row_entity_id(requirement, row) for row in rows]
+    checks.append(
+        _check(
+            "entity_match",
+            expected=expected_ids,
+            actual=actual_ids,
+            actual_count=len([item for item in actual_ids if item not in (None, "")]),
+            passed=bool(expected_ids) and set(map(str, expected_ids)) == set(map(str, actual_ids)),
+            evidence_ref=evidence.id,
+        )
+    )
+    checks.append(_multi_status_requested_fields_check(requirement, evidence, rows))
+    return _status_from_checks(checks)
+
+
 def _evaluate_collection_requirement(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
@@ -497,6 +548,7 @@ def _evaluate_collection_requirement(
     checks.append(_sort_check(requirement, evidence, rows))
     checks.append(_limit_check(requirement, evidence, rows))
     checks.append(_collection_requested_fields_check(requirement, evidence, rows))
+    checks.extend(_conditional_branch_checks(requirement, evidence, rows))
     return _status_from_checks(checks)
 
 
@@ -769,6 +821,29 @@ def _expected_entity_id(requirement: RequirementLedgerEntry) -> tuple[str | None
     return None, None
 
 
+def _expected_entity_ids(requirement: RequirementLedgerEntry) -> list[Any]:
+    values: list[Any] = []
+    seen: set[str] = set()
+    entity = requirement.entity
+    preferred_keys = []
+    if entity:
+        preferred_keys.append(f"{entity}_id")
+    preferred_keys.extend(["id", "machine_ref"])
+    preferred_keys.extend(key for key in requirement.constraints if key.endswith("_id"))
+    for key in dict.fromkeys(preferred_keys):
+        value = requirement.constraints.get(key)
+        if value in (None, "", [], {}):
+            continue
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            marker = str(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            values.append(candidate)
+    return values
+
+
 def _actual_entity_id(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
@@ -792,6 +867,27 @@ def _actual_entity_id(
     return None
 
 
+def _row_entity_id(requirement: RequirementLedgerEntry, row: Mapping[str, Any]) -> Any:
+    candidate_keys = []
+    if requirement.entity:
+        candidate_keys.append(f"{requirement.entity}_id")
+    candidate_keys.extend(["entity_id", "id", "machine_ref"])
+    candidate_keys.extend(key for key in requirement.constraints if key.endswith("_id"))
+    for key in dict.fromkeys(candidate_keys):
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _identity_field_keys(requirement: RequirementLedgerEntry) -> set[str]:
+    keys = {"id", "entity_id", "machine_ref"}
+    if requirement.entity:
+        keys.add(f"{requirement.entity}_id")
+    keys.update(key for key in requirement.constraints if key.endswith("_id"))
+    return keys
+
+
 def _locked_constraint_checks(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
@@ -804,7 +900,15 @@ def _locked_constraint_checks(
         if locked == "requested_fields":
             continue
         expected = _locked_value(requirement, locked)
-        if locked in {"sort_by", "sort_dir", "limit"}:
+        if locked in {
+            "conditional_branches",
+            "preview_before_apply",
+            "requires_approval",
+            "safety_constraints",
+            "sort_by",
+            "sort_dir",
+            "limit",
+        }:
             continue
         if expected in (None, "", [], {}):
             continue
@@ -832,6 +936,9 @@ def _actual_value_for_locked_constraint(
     if locked.endswith("_id") or locked in {"id", "machine_ref"}:
         return _actual_entity_id(requirement, evidence, fields)
     if rows is not None:
+        applied_filters = _evidence_applied_filters(evidence)
+        if locked in applied_filters:
+            return applied_filters[locked]
         return sorted({row.get(locked) for row in rows})
     if locked in fields:
         return fields[locked]
@@ -855,11 +962,13 @@ def _requested_fields_check(
             evidence_ref=evidence.id,
             message="No explicit requested fields; typed fields must still be present.",
         )
+    identity_extras = _identity_field_keys(requirement).difference(expected)
+    actual_for_pass = [field for field in actual if field not in identity_extras]
     return _check(
         "requested_fields",
         expected=expected,
         actual=actual,
-        passed=set(actual) == set(expected),
+        passed=set(actual_for_pass) == set(expected),
         evidence_ref=evidence.id,
     )
 
@@ -888,24 +997,146 @@ def _collection_requested_fields_check(
     )
 
 
+def _multi_status_requested_fields_check(
+    requirement: RequirementLedgerEntry,
+    evidence: EvidenceLedgerEntry,
+    rows: list[dict[str, Any]],
+) -> SatisfactionCheck:
+    expected = list(requirement.requested_fields)
+    identity_fields = _identity_field_keys(requirement)
+    actual = sorted(
+        {
+            str(key)
+            for row in rows
+            for key in row.keys()
+            if str(key) not in identity_fields
+        }
+    )
+    if not expected:
+        return _check(
+            "requested_fields",
+            expected=[],
+            actual=actual,
+            passed=bool(actual) or not rows,
+            evidence_ref=evidence.id,
+        )
+    return _check(
+        "requested_fields",
+        expected=expected,
+        actual=actual,
+        passed=set(actual) == set(expected),
+        evidence_ref=evidence.id,
+    )
+
+
+def _conditional_branch_checks(
+    requirement: RequirementLedgerEntry,
+    evidence: EvidenceLedgerEntry,
+    rows: list[dict[str, Any]],
+) -> list[SatisfactionCheck]:
+    raw_branches = requirement.constraints.get("conditional_branches")
+    if not isinstance(raw_branches, list):
+        return []
+
+    supporting = _conditional_supporting_evidence(evidence)
+    checks: list[SatisfactionCheck] = []
+    for branch in raw_branches:
+        if not isinstance(branch, Mapping):
+            continue
+        field = str(branch.get("condition_field") or "")
+        value = branch.get("condition_value")
+        matched_rows = [row for row in rows if _same_value(value, row.get(field))]
+        if not matched_rows:
+            checks.append(
+                _check(
+                    "conditional_branch:typed_explanation",
+                    expected={field: value, "required_evidence": branch.get("required_evidence")},
+                    actual={"matching_row_count": 0, "planner_continuation_required": False},
+                    actual_count=0,
+                    passed=True,
+                    evidence_ref=evidence.id,
+                    message="Conditional branch did not trigger because no returned row matched the condition.",
+                )
+            )
+            continue
+
+        matched_ids = {
+            str(_row_entity_id(requirement, row))
+            for row in matched_rows
+            if _row_entity_id(requirement, row) not in (None, "")
+        }
+        explained_ids = {
+            str(item.get("entity_id") or item.get("row_id") or item.get("id"))
+            for item in supporting
+            if isinstance(item, Mapping) and (item.get("reason") or item.get("explanation"))
+        }
+        passed = bool(matched_ids) and matched_ids.issubset(explained_ids)
+        checks.append(
+            _check(
+                "conditional_branch:typed_explanation",
+                expected={
+                    "condition": {field: value},
+                    "matched_entity_ids": sorted(matched_ids),
+                    "required_evidence": branch.get("required_evidence"),
+                },
+                actual={
+                    "explained_entity_ids": sorted(explained_ids),
+                    "planner_continuation_required": bool(matched_rows),
+                },
+                actual_count=len(matched_rows),
+                passed=passed,
+                evidence_ref=evidence.id,
+            )
+        )
+    return checks
+
+
+def _conditional_supporting_evidence(evidence: EvidenceLedgerEntry) -> list[Mapping[str, Any]]:
+    for container in (
+        evidence.normalized_result.get("supporting_evidence"),
+        evidence.diagnostic_metadata.get("conditional_branch_evidence"),
+    ):
+        if isinstance(container, Mapping):
+            raw_items = container.get("conditional_branches") or container.get("explanations")
+            if isinstance(raw_items, Sequence) and not isinstance(raw_items, (str, bytes, bytearray)):
+                return [item for item in raw_items if isinstance(item, Mapping)]
+        if isinstance(container, Sequence) and not isinstance(container, (str, bytes, bytearray)):
+            return [item for item in container if isinstance(item, Mapping)]
+    return []
+
+
 def _filter_checks(
     requirement: RequirementLedgerEntry,
     evidence: EvidenceLedgerEntry,
     rows: list[dict[str, Any]],
 ) -> list[SatisfactionCheck]:
     checks: list[SatisfactionCheck] = []
+    applied_filters = _evidence_applied_filters(evidence)
     for key, expected in _filter_constraints(requirement).items():
-        actual_values = [row.get(key) for row in rows]
+        if all(key in row for row in rows):
+            actual_values: Any = [row.get(key) for row in rows]
+            passed = all(_same_value(expected, value) for value in actual_values)
+        elif key in applied_filters:
+            actual_values = applied_filters[key]
+            passed = _same_value(expected, actual_values)
+        else:
+            actual_values = [row.get(key) for row in rows]
+            passed = False
         checks.append(
             _check(
                 f"filter_match:{key}",
                 expected=expected,
                 actual=actual_values,
-                passed=all(_same_value(expected, value) for value in actual_values),
+                passed=passed,
                 evidence_ref=evidence.id,
             )
         )
     return checks
+
+
+def _evidence_applied_filters(evidence: EvidenceLedgerEntry) -> dict[str, Any]:
+    filters = evidence.normalized_result.get("applied_filters")
+    return dict(filters) if isinstance(filters, Mapping) else {}
 
 
 def _filter_constraints(requirement: RequirementLedgerEntry) -> dict[str, Any]:

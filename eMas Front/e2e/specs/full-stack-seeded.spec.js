@@ -37,6 +37,18 @@ async function activeSessionId(page) {
   return page.evaluate(() => window.localStorage.getItem('factory_agent_active_session_id'))
 }
 
+async function startNewChatSession(page) {
+  const previous = await activeSessionId(page)
+  await page.getByRole('button', { name: 'New Session' }).click()
+  await expect
+    .poll(async () => {
+      const current = await activeSessionId(page)
+      return Boolean(current && current !== previous)
+    }, { timeout: 10_000 })
+    .toBe(true)
+  await expect(page.getByPlaceholder(chatSelectors.composerPlaceholder)).toBeEnabled()
+}
+
 async function snapshotForPage(page) {
   let sessionId = await activeSessionId(page)
   if (!sessionId) {
@@ -240,7 +252,7 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
     test.setTimeout(75_000)
     const initialPriorities = await currentPriorityMap()
     await openChat(page)
-    await page.getByRole('button', { name: 'New Session' }).click()
+    await startNewChatSession(page)
     await sendPrompt(page, 'Start a seeded cancel jobs run and keep it executing')
 
     const cancel = page.getByRole('button', { name: 'Cancel current run' })
@@ -255,7 +267,8 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
     expect(snapshot.session.error).toMatch(/Cancelled/i)
     expect(activityText(snapshot)).not.toContain('Run complete')
     expect(timelineText(snapshot)).not.toMatch(/low-priority seeded jobs|Run complete/i)
-    await expect(page.getByText(/Run cancelled by operator request/i).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Run cancelled' })).toBeVisible()
+    await expect(page.getByText(/The run was cancelled\. I stopped work and did not continue pending actions\./i).first()).toBeVisible()
     await expect(page.getByText(/low-priority seeded jobs|Seeded cancellable run completed/i)).toHaveCount(0)
     await expect(page.getByText('Run complete')).toHaveCount(0)
     expectNoSuccessfulAudit(await dataIntegrityAudit(sessionId))

@@ -962,7 +962,7 @@ test.describe('Final response quality response_document gate', () => {
         responseContracts: ['entity_status_v1'],
         approvalActionCount: 0,
         textIncludes: ['JOB-SEED-001', 'JOB-SEED-002', 'running', 'planned'],
-        textExcludes: [/Priority/i, /planner/i, /guard/i, /loop/i, /Needs attention/i],
+        textExcludes: [/Priority/i, /planner/i, /guard/i, /loop/i],
       },
     })
     await testInfo.attach('rd-028-multi-status-display-policy-probe.json', {

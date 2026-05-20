@@ -223,7 +223,10 @@ class SeededPlaywrightPlanner:
         self._scenario_interpreter = SeededScenarioInterpreter()
 
     def handles_seeded_intent(self, intent: str) -> bool:
-        return self._scenario_interpreter.handles_intent(intent)
+        if self._scenario_interpreter.handles_intent(intent):
+            return True
+        lowered = (intent or "").lower()
+        return "seeded" in lowered and any(token in lowered for token in ("cancel", "sse", "activity", "stream"))
 
     def _scenario_for_resume(self, session_id: str) -> str | None:
         scenario = self._scenario_by_session.get(session_id)
@@ -865,7 +868,7 @@ class SeededPlaywrightPlanner:
                     "args": steps[2].args,
                     "result": {"data": summary_rows, "rule_applied": True},
                     "http_status": 200,
-                    "summary": f"Phase 9 step 4 summarize: {len(summary_rows)} seeded job(s) evaluated in ordered sequence.",
+                    "summary": f"Rule Applied: {len(summary_rows)} seeded job(s) evaluated in ordered sequence.",
                     "status": "DONE",
                 },
             ],

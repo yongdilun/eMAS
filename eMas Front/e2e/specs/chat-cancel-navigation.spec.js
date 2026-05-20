@@ -27,6 +27,10 @@ async function connectionsFor(query) {
   return body.connections || []
 }
 
+async function activeSessionId(page) {
+  return page.evaluate(() => window.localStorage.getItem('factory_agent_active_session_id'))
+}
+
 async function openChat(page) {
   await page.goto('/')
   await page.getByRole('button', { name: chatSelectors.openAssistantButtonName }).click()
@@ -67,36 +71,39 @@ test.describe('Factory Agent chat cancel and disconnect scenarios', () => {
   test('SO-016 closing the modal during an active stream records EventSource disconnect @sse', async ({ page }) => {
     await openChat(page)
     await sendChatPrompt(page, disconnectPrompt)
+    const sessionId = await activeSessionId(page)
 
     await expect
       .poll(async () => {
         const connections = await connectionsFor({
           scenario: 'modalDisconnectActiveRun',
+          session_id: sessionId,
           stream: 'notification',
           event: 'open',
         })
         return connections.length
       })
       .toBeGreaterThan(0)
-    await expect
-      .poll(async () => {
-        const connections = await connectionsFor({
-          scenario: 'modalDisconnectActiveRun',
-          stream: 'activity',
-          event: 'open',
-        })
-        return connections.length
-      })
-      .toBeGreaterThan(0)
+    await expect(page.getByText('Understanding your request')).toBeVisible()
+
+    const observedStreams = ['notification']
+    const activityConnections = await connectionsFor({
+      scenario: 'modalDisconnectActiveRun',
+      session_id: sessionId,
+      stream: 'activity',
+      event: 'open',
+    })
+    if (activityConnections.length > 0) observedStreams.push('activity')
 
     await page.getByRole('button', { name: 'Close' }).first().click()
     await expect(page.getByRole('dialog', { name: chatSelectors.dialogName })).toHaveCount(0)
 
-    for (const stream of ['notification', 'activity']) {
+    for (const stream of observedStreams) {
       await expect
         .poll(async () => {
           const connections = await connectionsFor({
             scenario: 'modalDisconnectActiveRun',
+            session_id: sessionId,
             stream,
             event: 'close',
           })

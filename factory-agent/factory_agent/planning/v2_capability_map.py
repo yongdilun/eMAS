@@ -197,7 +197,7 @@ def build_requirement_sketch_for_text(
 ) -> RequirementSketch:
     capability_map = capability_map or CapabilityMap()
     aliases = capability_map.field_aliases
-    intents = split_user_intents(text)
+    intents = _prepare_requirement_intents(split_user_intents(text), aliases)
     requirements: list[RequirementSketchItem] = []
     slices: list[ToolRetrievalSlice] = []
 
@@ -206,6 +206,32 @@ def build_requirement_sketch_for_text(
         frame = semantic_frame_for_text(clause)
         source = _source_for_frame(frame, clause)
         entity = _entity_for_hint(frame, clause, source)
+
+        previous_modifier = _previous_requirement_modifier_for_clause(clause)
+        if previous_modifier and requirements:
+            previous = requirements[-1]
+            for key, value in previous_modifier.items():
+                previous.constraints[key] = value
+                if key not in previous.locked_constraints:
+                    previous.locked_constraints.append(key)
+            if slices:
+                slices[-1].constraints.update(previous_modifier)
+            continue
+
+        conditional_branch = _conditional_branch_for_clause(
+            clause,
+            capability_map=capability_map,
+            entity=entity,
+        )
+        if conditional_branch and requirements:
+            previous = requirements[-1]
+            previous.constraints.setdefault("conditional_branches", []).append(conditional_branch)
+            if "conditional_branches" not in previous.locked_constraints:
+                previous.locked_constraints.append("conditional_branches")
+            if slices:
+                slices[-1].constraints.setdefault("conditional_branches", []).append(conditional_branch)
+            continue
+
         constraints = _constraints_for_clause(
             clause,
             intent=intent,
@@ -264,6 +290,123 @@ def build_requirement_sketch_for_text(
         field_aliases=aliases,
         tool_retrieval_slices=slices,
     )
+
+
+def _prepare_requirement_intents(intents: list[Intent], aliases: FieldAliases) -> list[Intent]:
+    coalesced = _coalesce_field_continuation_intents(intents, aliases)
+    prepared: list[Intent] = []
+    for intent in coalesced:
+        prepared.extend(_expand_mixed_entity_intent(intent))
+    return prepared
+
+
+def _coalesce_field_continuation_intents(intents: list[Intent], aliases: FieldAliases) -> list[Intent]:
+    coalesced: list[Intent] = []
+    for intent in intents:
+        if coalesced and _is_field_continuation_clause(
+            intent.description,
+            previous_clause=coalesced[-1].description,
+            aliases=aliases,
+        ):
+            merged_clause = f"{coalesced[-1].description}, {intent.description}"
+            merged = split_user_intents(merged_clause)[0]
+            coalesced[-1] = merged.model_copy(
+                update={
+                    "intent_id": coalesced[-1].intent_id,
+                    "depends_on": coalesced[-1].depends_on,
+                }
+            )
+            continue
+        coalesced.append(intent)
+    return coalesced
+
+
+def _is_field_continuation_clause(
+    clause: str,
+    *,
+    previous_clause: str,
+    aliases: FieldAliases,
+) -> bool:
+    if not _FIELD_SEGMENT_RE.search(previous_clause):
+        return False
+    if split_user_intents(clause)[0].explicit_constraints:
+        return False
+    frame = semantic_frame_for_text(clause)
+    if frame.route != "unknown" or frame.entity:
+        return False
+    fields = _requested_fields_for_clause(
+        clause,
+        aliases,
+        entity=None,
+        source_of_truth="operational_state",
+    )
+    return bool(fields)
+
+
+def _expand_mixed_entity_intent(intent: Intent) -> list[Intent]:
+    grouped: dict[str, list[Any]] = {}
+    for constraint in intent.explicit_constraints:
+        entity = _entity_from_constraint_field(constraint.field)
+        if entity is None:
+            continue
+        grouped.setdefault(entity, []).append(constraint.value)
+    if len(grouped) <= 1:
+        return [intent]
+
+    field_suffix = _field_context_suffix(intent.description)
+    expanded: list[Intent] = []
+    index = 0
+    for entity, values in grouped.items():
+        for value in _unique_values(values):
+            index += 1
+            clause = f"show {entity} id {value}{field_suffix}"
+            generated = split_user_intents(clause)[0]
+            expanded.append(
+                generated.model_copy(
+                    update={
+                        "intent_id": f"{intent.intent_id}:entity-{index}",
+                        "depends_on": list(intent.depends_on),
+                    }
+                )
+            )
+    return expanded
+
+
+def _entity_from_constraint_field(field: str | None) -> str | None:
+    if not field:
+        return None
+    if field == "machine_ref":
+        return "machine"
+    if field.endswith("_id"):
+        entity = field[:-3]
+        return entity or None
+    return None
+
+
+def _field_context_suffix(clause: str) -> str:
+    fields: list[str] = []
+    lowered = clause.lower()
+    for field in ("status", "details"):
+        if _contains_term(lowered, field):
+            fields.append(field)
+    return f" {' '.join(fields)}" if fields else ""
+
+
+def _unique_values(values: Iterable[Any]) -> list[Any]:
+    seen: set[str] = set()
+    unique: list[Any] = []
+    for value in values:
+        if isinstance(value, list):
+            nested = value
+        else:
+            nested = [value]
+        for item in nested:
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+    return unique
 
 
 def build_requirement_ledger_from_sketch(sketch: RequirementSketch) -> RequirementLedger:
@@ -657,7 +800,7 @@ def _constraints_for_clause(
     for constraint in intent.explicit_constraints:
         if constraint.strength != "hard" or not constraint.field:
             continue
-        constraints[constraint.field] = constraint.value
+        _merge_constraint_value(constraints, constraint.field, constraint.value)
     for field, values in frame.normalized_entities.items():
         if not values:
             continue
@@ -666,7 +809,8 @@ def _constraints_for_clause(
         target_field = "priority" if field == "from_priority" else field
         if field == "to_priority":
             target_field = "new_priority"
-        constraints.setdefault(target_field, values[0] if len(values) == 1 else list(values))
+        if target_field not in constraints:
+            constraints[target_field] = values[0] if len(values) == 1 else list(values)
 
     metadata = _metadata_for_entity(capability_map, entity=entity, source=source_of_truth)
     filter_enums = _filter_enums(metadata)
@@ -693,6 +837,70 @@ def _constraints_for_clause(
         constraints["requires_approval"] = True
 
     return constraints
+
+
+def _merge_constraint_value(constraints: dict[str, Any], field: str, value: Any) -> None:
+    if field not in constraints:
+        constraints[field] = value
+        return
+    existing = constraints[field]
+    values = existing if isinstance(existing, list) else [existing]
+    incoming = value if isinstance(value, list) else [value]
+    for item in incoming:
+        if item not in values:
+            values.append(item)
+    constraints[field] = values
+
+
+def _conditional_branch_for_clause(
+    clause: str,
+    *,
+    capability_map: CapabilityMap,
+    entity: str | None,
+) -> dict[str, Any] | None:
+    if not re.search(r"\bif\s+any\b", clause, re.IGNORECASE):
+        return None
+    if not re.search(r"\bexplain\b", clause, re.IGNORECASE):
+        return None
+
+    metadata = _metadata_for_entity(capability_map, entity=entity, source="operational_state")
+    status_values = _filter_enums(metadata).get("status", [])
+    condition_value = next(
+        (value for value in status_values if _contains_term(clause, value)),
+        None,
+    )
+    if condition_value is None:
+        return None
+
+    branch: dict[str, Any] = {
+        "branch_type": "conditional_explanation",
+        "condition_field": "status",
+        "condition_value": condition_value,
+        "required_evidence": "typed_explanation",
+        "planner_action": "continue_for_explanation_before_update_suggestion",
+    }
+    if re.search(r"\bbefore\b.*\b(?:suggest|recommend)", clause, re.IGNORECASE):
+        branch["ordering"] = "explain_before_suggestion"
+    return branch
+
+
+def _previous_requirement_modifier_for_clause(clause: str) -> dict[str, Any] | None:
+    modifiers: dict[str, Any] = {}
+    if re.match(r"\s*(?:do\s+not|don't|never|without|exclude|except)\b", clause, re.IGNORECASE):
+        negative_safety = [
+            match.group(0).strip(" .;")
+            for match in _NEGATIVE_SAFETY_RE.finditer(clause)
+            if match.group(0).strip(" .;")
+        ]
+        if negative_safety:
+            modifiers["safety_constraints"] = negative_safety
+    if re.search(r"\b(?:show|preview|summari[sz]e)\b.*\b(?:would\s+change|changes?)\b", clause, re.IGNORECASE):
+        modifiers["preview_before_apply"] = True
+    if re.search(r"\b(?:ask|request|require)\b.*\bapproval\b", clause, re.IGNORECASE):
+        modifiers["requires_approval"] = True
+    if not modifiers:
+        return None
+    return modifiers
 
 
 def _metadata_for_entity(
@@ -829,7 +1037,7 @@ def _fields_mentioned(text: str, aliases: FieldAliases, *, entity: str | None) -
             continue
         matches = [
             _term_position(text, term)
-            for term in [alias.canonical_field, *alias.user_terms]
+            for term in _field_selector_terms(alias, entity=entity)
         ]
         matches = [position for position in matches if position is not None]
         if matches:
@@ -838,6 +1046,37 @@ def _fields_mentioned(text: str, aliases: FieldAliases, *, entity: str | None) -
         field
         for field, _position in sorted(positions.items(), key=lambda item: (item[1], item[0]))
     ]
+
+
+def _field_selector_terms(alias: FieldAlias, *, entity: str | None) -> list[str]:
+    canonical = str(alias.canonical_field or "")
+    canonical_terms = {_normalize_phrase(canonical), _normalize_phrase(canonical.replace("_", " "))}
+    common_terms = {_normalize_phrase(term) for term in _COMMON_FIELD_TERMS.get(canonical, ())}
+    primary_id_terms: set[str] = set()
+    if entity and canonical == f"{entity}_id":
+        primary_id_terms.update({_normalize_phrase("id"), _normalize_phrase(f"{entity} id")})
+
+    allowed: list[str] = []
+    compound_parts = {_normalize_phrase(part) for part in canonical.split("_") if part}
+    for term in [canonical, *alias.user_terms]:
+        normalized = _normalize_phrase(term)
+        if not normalized:
+            continue
+        if (
+            canonical.endswith("_id")
+            and entity
+            and canonical != f"{entity}_id"
+            and normalized == "id"
+        ):
+            continue
+        if (
+            normalized in canonical_terms
+            or normalized in common_terms
+            or normalized in primary_id_terms
+            or normalized not in compound_parts
+        ):
+            allowed.append(normalized)
+    return list(dict.fromkeys(allowed))
 
 
 def _terms_for_field(field: str, aliases: FieldAliases, *, entity: str | None) -> list[str]:
@@ -895,6 +1134,8 @@ def _requirement_shape_for(
         return "safety_refusal", "refuse_for_safety"
     if frame.requires_approval or constraints.get("requires_approval") or frame.action in {"create", "update", "delete"}:
         return "mutation_request", "stage_mutation"
+    if entity and _has_multiple_entity_ids(constraints):
+        return "multi_entity_status", "report_multi_status"
     if entity and any(key.endswith("_id") or key in {"id", "machine_ref"} for key in constraints):
         return "single_entity_status", "report_status"
     if entity and ({"limit", "sort_by"} & constraints.keys() or any(key in constraints for key in ("priority", "status"))):
@@ -902,6 +1143,18 @@ def _requirement_shape_for(
     if entity:
         return "multi_entity_status", "report_multi_status"
     return "diagnostic", "report_diagnostic"
+
+
+def _has_multiple_entity_ids(constraints: Mapping[str, Any]) -> bool:
+    count = 0
+    for key, value in constraints.items():
+        if not (key.endswith("_id") or key in {"id", "machine_ref"}):
+            continue
+        if isinstance(value, list):
+            count += len([item for item in value if item not in (None, "", [], {})])
+        elif value not in (None, "", [], {}):
+            count += 1
+    return count > 1
 
 
 def _capability_action_for_requirement(

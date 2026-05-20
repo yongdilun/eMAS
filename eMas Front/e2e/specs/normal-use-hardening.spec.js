@@ -15,6 +15,7 @@ import {
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
 const activeSessionStorageKey = 'factory_agent_active_session_id'
+const backendUnavailableVisiblePattern = /Factory Agent is disconnected|Backend unavailable/i
 
 async function mockJson(path, options = {}) {
   const response = await fetch(`${mockBaseUrl}${path}`, {
@@ -126,7 +127,7 @@ test.describe('Phase 13 normal-use hardening @normal-use', () => {
     await page.getByText('Show details').last().click()
     await expectAnyVisibleText(page, /Reason: normal_use_fixture/)
     await expect(page.getByRole('dialog', { name: chatSelectors.dialogName }).getByRole('combobox')).toHaveCount(0)
-    await expect(page.getByText(/Factory Agent backend unavailable|Run cancelled by operator request/)).toHaveCount(0)
+    await expect(page.getByText(/Factory Agent is disconnected|Backend unavailable|Run cancelled by operator request/i)).toHaveCount(0)
   })
 
   test('SO-019 scenario 82: many historical sessions load, select, and restore the correct transcript', async ({ page }, testInfo) => {
@@ -211,11 +212,11 @@ test.describe('Phase 13 normal-use hardening @normal-use', () => {
 
     await openAssistant(page)
     await expectAnyVisibleText(page, /Phase 13 lifecycle completed session/i)
-    await expect(page.getByText('Factory Agent backend unavailable')).toHaveCount(0)
+    await expect(page.getByText(backendUnavailableVisiblePattern)).toHaveCount(0)
     await expectComposerReady(page)
     await page.getByRole('button', { name: 'New Session' }).click()
     await sendPrompt(page, backendUnavailablePrompt)
-    await expect(page.getByText('Factory Agent backend unavailable')).toBeVisible()
+    await expect(page.getByText(backendUnavailableVisiblePattern).first()).toBeVisible()
     await expect(page.getByText('Service temporarily unavailable. Please retry shortly.')).toBeVisible()
     await expectComposerReady(page)
     const failedId = await activeSessionId(page)
@@ -246,7 +247,7 @@ test.describe('Phase 13 normal-use hardening @normal-use', () => {
     await setActiveSessionId(page, completedId)
     await openAssistant(page)
     await expectAnyVisibleText(page, /Phase 13 lifecycle completed session/i)
-    await expect(page.getByText('Factory Agent backend unavailable')).toHaveCount(0)
+    await expect(page.getByText(backendUnavailableVisiblePattern)).toHaveCount(0)
     await expect(page.getByText(cancelledRunMessage)).toHaveCount(0)
     await expectComposerReady(page)
     await closeChat(page)
@@ -261,7 +262,7 @@ test.describe('Phase 13 normal-use hardening @normal-use', () => {
     await setActiveSessionId(page, cancelledId)
     await openAssistant(page)
     await expect(page.getByText(cancelledRunMessage).first()).toBeVisible()
-    await expect(page.getByText('Factory Agent backend unavailable')).toHaveCount(0)
+    await expect(page.getByText(backendUnavailableVisiblePattern)).toHaveCount(0)
     await expectComposerReady(page)
   })
 })

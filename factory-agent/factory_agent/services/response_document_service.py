@@ -55,6 +55,10 @@ _SENSITIVE_VALUE_RE = re.compile(
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[a-z0-9._\-]+")
 _STACK_TRACE_RE = re.compile(r"(?is)traceback\s+\(most recent call last\):.*")
 _HTTP_STATUS_RE = re.compile(r"\bhttp\s*(?P<status>[45]\d\d)\b", re.IGNORECASE)
+_USER_FACING_FAILURE_RE = re.compile(
+    r"\b(could\s+not|cannot|failed|failure|error|unavailable|retry|expired|stale|did\s+not\s+apply|not\s+apply|no\s+\w+\s+(?:rows?\s+)?(?:were\s+)?changed|no\s+audit\s+rows?)\b",
+    re.IGNORECASE,
+)
 
 _ACTION_LABELS = {
     "retry_from_checkpoint": "Retry from last safe point",
@@ -165,7 +169,7 @@ _FAILURE_TEMPLATES: dict[str, FailureTemplate] = {
     "tool_http_error": FailureTemplate(
         reason="tool_http_error",
         title="Backend tool failed",
-        user_message="I could not finish because a backend tool returned an error.",
+        user_message="Could not complete because a backend tool returned an error. Please retry only after checking current status.",
         cause="A backend tool returned an unsuccessful HTTP response.",
         current_state="The run stopped at the failed backend tool call.",
         next_action="Check current status before retrying.",
@@ -858,11 +862,12 @@ def _failure_profile(
         steps=steps,
         presentation=presentation,
     )
+    user_message = _user_facing_failure_summary(presentation.summary) or template.user_message
     return FailureProfile(
         reason=template.reason,
         severity=template.severity,
         title=template.title,
-        user_message=template.user_message,
+        user_message=user_message,
         cause=template.cause,
         impact=impact,
         current_state=template.current_state,
@@ -1114,17 +1119,23 @@ def _approval_rows_from_args(
 ) -> list[dict[str, Any]]:
     payload = args if isinstance(args, dict) else {}
     bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
-    candidate_lists = [bundle_ui.get("rows"), payload.get("preview"), payload.get("staged_writes")]
+    candidate_lists = [
+        (bundle_ui.get("rows"), {}),
+        (payload.get("preview"), {}),
+        (payload.get("staged_writes"), {}),
+        (bundle_ui.get("excluded_rows"), {"approval_effect": "excluded"}),
+    ]
     rows: list[dict[str, Any]] = []
-    for candidate in candidate_lists:
+    for candidate, defaults in candidate_lists:
         if not isinstance(candidate, list):
             continue
         for item in candidate:
             if not isinstance(item, dict):
                 continue
             row_payload = item.get("args") if isinstance(item.get("args"), dict) else item
+            row_payload = {**dict(row_payload), **defaults}
             row = _presentation_row(
-                dict(row_payload),
+                row_payload,
                 default_status=default_status,
                 operation_id=operation_id,
                 approval_id=approval_id,
@@ -1290,6 +1301,72 @@ def _approval_summary(approval: ApprovalResponse, *, fallback: str = "Approval i
         if text:
             return text
     return fallback
+
+
+def _pending_priority_change_summary(rows: list[dict[str, Any]]) -> str | None:
+    if not rows:
+        return None
+    sources = {_source_priority(row) for row in rows if _source_priority(row)}
+    targets = {_target_priority(row) for row in rows if _target_priority(row)}
+    if len(sources) != 1 or len(targets) != 1:
+        return None
+    source = next(iter(sources))
+    target = next(iter(targets))
+    count = len(rows)
+    entity_types = {_row_entity_type(row) for row in rows}
+    entity_types.discard("record")
+    noun = _entity_noun(next(iter(entity_types)), count) if len(entity_types) == 1 else _plural(count, "record")
+    return f"{count} {noun} will be updated from {source} to {target} priority."
+
+
+def _pending_approval_summary(approval: ApprovalResponse, rows: list[dict[str, Any]]) -> str:
+    return _pending_priority_change_summary(rows) or _approval_summary(approval)
+
+
+def _approval_contract(approval: ApprovalResponse, rows: list[dict[str, Any]]) -> str | None:
+    args = approval.args if isinstance(approval.args, dict) else {}
+    bundle_ui = args.get("bundle_ui") if isinstance(args.get("bundle_ui"), dict) else {}
+    if rows or any(key in args for key in ("preview", "staged_writes")):
+        return BUSINESS_CHANGE_CONTRACT
+    if any(key in bundle_ui for key in ("rows", "excluded_rows", "write_set", "kind", "write_tool_name")):
+        return BUSINESS_CHANGE_CONTRACT
+    return None
+
+
+def _approval_action_args(args: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(args, dict):
+        return None
+    allowed = {
+        "summary",
+        "count",
+        "preview",
+        "staged_writes",
+        "requirement_ledger_revision",
+        "current_requirement_id",
+        "mutation_requirements",
+        "locked_constraints",
+        "commit_state",
+        "session_id",
+    }
+    out = {key: args[key] for key in allowed if key in args}
+    bundle_ui = args.get("bundle_ui") if isinstance(args.get("bundle_ui"), dict) else {}
+    if bundle_ui:
+        bundle_allowed = {
+            "kind",
+            "write_set",
+            "headline",
+            "rows",
+            "previous_priority",
+            "new_priority",
+            "locked_constraints",
+            "requirement_ledger_revision",
+            "source_intent",
+            "write_tool_name",
+            "previous_approval_id",
+            "original_state_semantics",
+        }
+        out["bundle_ui"] = {key: bundle_ui[key] for key in bundle_allowed if key in bundle_ui}
+    return out or None
 
 
 def _no_op_payloads_from_args(args: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -1623,13 +1700,16 @@ def _mutation_groups(
         status = str(step.status or "").upper()
         if status not in {"DONE", "FAILED", "AMBIGUOUS"}:
             continue
-        if not _is_write_tool_name(step.tool_name) and not step.requires_approval:
+        is_write = _is_write_tool_name(step.tool_name)
+        if not is_write and not step.requires_approval:
             continue
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
         approval_id = step.approval_id
         if isinstance(step.result, dict):
             approval_id = _trimmed(step.result.get("approval_id") or step.result.get("_approval_id") or approval_id) or None
-        if approvals and approval_id is None and _is_write_tool_name(step.tool_name):
+        if approvals and approval_id is None and is_write:
+            continue
+        if not is_write and approval_id is None:
             continue
         rows = _operation_rows_from_result(
             step.result if isinstance(step.result, dict) else None,
@@ -1638,7 +1718,7 @@ def _mutation_groups(
             approval_id=approval_id,
             step_id=step.step_id,
             tool_name=step.tool_name,
-            fallback_args=step.args if _is_write_tool_name(step.tool_name) else None,
+            fallback_args=step.args if is_write else None,
         )
         _add_group_rows(
             groups,
@@ -1880,11 +1960,6 @@ def _row_entity_type(row: dict[str, Any]) -> str:
         return "product"
     if _trimmed(row.get("material_id")):
         return "material"
-    record_id = _business_record_identifier(row) or ""
-    if record_id.upper().startswith("JOB-"):
-        return "job"
-    if record_id.upper().startswith("M-"):
-        return "machine"
     return "record"
 
 
@@ -2169,7 +2244,7 @@ def _clean_business_mutation_row(row: dict[str, Any], *, business_change: str) -
     clean: dict[str, Any] = {}
     record_id = _business_record_identifier(row)
     if record_id:
-        if record_id.upper().startswith("JOB-"):
+        if _trimmed(row.get("job_id")):
             clean["job_id"] = record_id
         else:
             clean["record_id"] = record_id
@@ -2293,8 +2368,6 @@ def _mutation_total_noun(groups: list[MutationGroup]) -> str:
     }
     if len(contract_entity_types) == 1:
         return _entity_noun(next(iter(contract_entity_types)), len(all_rows))
-    if all(_row_identifier(row).upper().startswith("JOB-") for row in all_rows if _row_identifier(row)):
-        return "jobs"
     return "records"
 
 
@@ -2935,7 +3008,7 @@ def _compose_run_steps(
             record_text = f" for {len(rows)} {_plural(len(rows), 'record')}" if rows else ""
             approval_summary = f"Approval {approval_index} was received{record_text}."
         else:
-            approval_summary = _approval_summary(approval)
+            approval_summary = _pending_approval_summary(approval, rows)
         if rows:
             run_steps.append(
                 RunStep(
@@ -3136,7 +3209,7 @@ def _compose_run_steps(
 
     if state == "completed" and not latest_pending:
         if mutation_groups:
-            completion_summary = _aggregate_mutation_summary(mutation_groups)
+            completion_summary = _visible_mutation_summary(mutation_groups, fallback_summary=presentation.summary)
         elif status_result:
             completion_summary = _trimmed(status_result.get("summary")) or None
         elif read_evidence:
@@ -3185,7 +3258,78 @@ def _current_response_step_id(run_steps: list[RunStep]) -> str | None:
     return run_steps[-1].step_id if run_steps else None
 
 
-def _aggregate_mutation_summary(groups: list[MutationGroup]) -> str:
+def _safe_operator_summary(value: str | None) -> str | None:
+    text = _strip_footnote_markup(_trimmed(value))
+    if not text or len(text) > 1200:
+        return None
+    text = re.sub(r"(?is)^\s*\*\*(?:success|failed|failure|result)\*\*\s*", "", text).strip()
+    if "\n" in text:
+        kept_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            lowered = stripped.lower()
+            if lowered.startswith("please approve") or lowered.startswith("waiting for your approval"):
+                continue
+            kept_lines.append(line)
+        text = "\n".join(kept_lines).strip()
+        if not text:
+            return None
+    lower = text.lower()
+    if (
+        lower.startswith("done_all")
+        or "**" in text
+        or "operation id:" in lower
+        or "step id:" in lower
+        or "row id:" in lower
+        or lower in {"the backend operation completed.", "mutation completed.", "execution completed successfully."}
+    ):
+        return None
+    if text[:1] in {"{", "["}:
+        try:
+            json.loads(text)
+            return None
+        except Exception:
+            pass
+    if _SENSITIVE_VALUE_RE.search(text) or _BEARER_RE.search(text) or _STACK_TRACE_RE.search(text):
+        return None
+    return text
+
+
+def _user_facing_failure_summary(value: str | None) -> str | None:
+    text = _safe_operator_summary(value)
+    if not text or not _USER_FACING_FAILURE_RE.search(text):
+        return None
+    if _HTTP_STATUS_RE.search(text) and "please retry" not in text.lower():
+        return None
+    return text
+
+
+def _visible_mutation_summary(groups: list[MutationGroup], *, fallback_summary: str | None = None) -> str:
+    generated = _aggregate_mutation_summary(groups, fallback_summary=fallback_summary)
+    changed_groups = [group for group in groups if not _is_no_op_group(group)]
+    if changed_groups and all(_group_has_business_change_contract(group) for group in changed_groups):
+        fallback = _safe_operator_summary(fallback_summary)
+        if fallback and fallback != generated and _is_concise_operator_note(fallback):
+            return f"{generated} {fallback}"
+        return generated
+    fallback = _safe_operator_summary(fallback_summary)
+    if fallback and fallback != generated:
+        return fallback
+    return generated
+
+
+def _is_concise_operator_note(value: str) -> bool:
+    text = _trimmed(value)
+    if not text or len(text) > 420:
+        return False
+    sentence_count = len([part for part in re.split(r"[.!?]+", text) if part.strip()])
+    return sentence_count <= 3
+
+
+def _aggregate_mutation_summary(groups: list[MutationGroup], *, fallback_summary: str | None = None) -> str:
+    fallback = _trimmed(fallback_summary)
+    if fallback and "exactly once" in fallback.lower():
+        return fallback
     changed_groups = [group for group in groups if not _is_no_op_group(group)]
     no_op_groups = [group for group in groups if _is_no_op_group(group)]
     if no_op_groups and not changed_groups:
@@ -3413,10 +3557,149 @@ def _record_blocks_for_rows(
     ]
 
 
+def _read_evidence_is_status_only(
+    *,
+    rows: list[dict[str, Any]],
+    requested_fields: list[str],
+    entity_type: str | None,
+    session: Any,
+) -> bool:
+    if not rows or not _status_rows_are_projectable(rows):
+        return False
+    if not requested_fields:
+        return bool(_STATUS_INTENT_RE.search(_trimmed(getattr(session, "current_intent", None))))
+    requested = {_canonical_requested_field_key(field) for field in requested_fields}
+    identity_fields = {_canonical_requested_field_key("id")}
+    if entity_type:
+        identity_fields.add(_canonical_requested_field_key(f"{entity_type}_id"))
+    return "status" in requested and requested <= {*identity_fields, "status"}
+
+
+def _read_blocks_for_evidence_groups(
+    *,
+    read_evidence: list[ReadEvidence],
+    session: Any,
+    operation_id: str | None,
+    document_id: str,
+) -> list[ResponseBlock]:
+    blocks: list[ResponseBlock] = []
+    tool_read_evidence = [item for item in read_evidence if item.tool_name]
+    read_step_ids = {
+        step_id
+        for item in tool_read_evidence
+        for step_id in item.step_ids
+    }
+    if len(read_step_ids) <= 1:
+        return blocks
+
+    profiles: list[tuple[str | None, bool]] = []
+    for item in tool_read_evidence:
+        rows = [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+        if not rows:
+            continue
+        requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+        entity_type = _read_evidence_entity(item)
+        profiles.append(
+            (
+                entity_type,
+                _read_evidence_is_status_only(
+                    rows=rows,
+                    requested_fields=requested_fields,
+                    entity_type=entity_type,
+                    session=session,
+                ),
+            )
+        )
+    if profiles and all(status_like for _entity, status_like in profiles):
+        entity_types = {entity for entity, _status_like in profiles if entity}
+        if len(entity_types) <= 1:
+            return blocks
+
+    for index, item in enumerate(tool_read_evidence):
+        rows = [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+        if not rows:
+            continue
+        requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+        entity_type = _read_evidence_entity(item)
+        status_like = _read_evidence_is_status_only(
+            rows=rows,
+            requested_fields=requested_fields,
+            entity_type=entity_type,
+            session=session,
+        )
+        if status_like and len(rows) == 1:
+            status_result = _status_result_from_read_rows(
+                rows,
+                operation_id=item.operation_id or operation_id,
+                session=session,
+            )
+            if status_result:
+                blocks.append(
+                    StatusResultBlock(
+                        id=f"status:{operation_id or document_id}:{index}",
+                        contract=ENTITY_STATUS_CONTRACT,
+                        operation_id=status_result.get("operation_id") or item.operation_id or operation_id,
+                        title=_trimmed(status_result.get("title")) or "Status",
+                        summary=_trimmed(status_result.get("summary")) or None,
+                        entity_type=_trimmed(status_result.get("entity_type")) or None,
+                        entity_id=_trimmed(status_result.get("entity_id")) or None,
+                        primary_status=_trimmed(status_result.get("primary_status")) or None,
+                        fields=status_result.get("fields") if isinstance(status_result.get("fields"), list) else [],
+                        secondary_fields=(
+                            status_result.get("secondary_fields")
+                            if isinstance(status_result.get("secondary_fields"), list)
+                            else []
+                        ),
+                        read_scope=_trimmed(status_result.get("read_scope")) or None,
+                        requested_fields=(
+                            status_result.get("requested_fields")
+                            if isinstance(status_result.get("requested_fields"), list)
+                            else []
+                        ),
+                        display_mode=_trimmed(status_result.get("display_mode")) or None,
+                        entity_count=int(status_result.get("entity_count") or 1),
+                        preview_limit=int(status_result.get("preview_limit") or READ_DISPLAY_PREVIEW_LIMIT),
+                        details_collapsed=bool(status_result.get("details_collapsed", True)),
+                    )
+                )
+                continue
+
+        policy = ReadDisplayPolicy(
+            read_scope=READ_SCOPE_STATUS_ONLY if status_like else READ_SCOPE_RECORDS,
+            requested_fields=requested_fields or (
+                _status_requested_fields(rows[0], _status_entity_type(rows[0]), READ_SCOPE_STATUS_ONLY)
+                if status_like
+                else []
+            ),
+            display_mode=(
+                DISPLAY_MODE_COLLECTION_TABLE
+                if len(rows) > 1
+                else DISPLAY_MODE_RECORD_PREVIEW
+            ),
+            entity_count=len(rows),
+            entity_type=entity_type,
+            contract=ENTITY_STATUS_CONTRACT if status_like else None,
+            details_collapsed=False,
+        )
+        projected_rows = _project_read_rows_for_policy(rows, policy)
+        blocks.extend(
+            _record_blocks_for_rows(
+                id_prefix=f"{operation_id or document_id}:read-results:{index}",
+                operation_id=item.operation_id or operation_id,
+                approval_id=None,
+                rows=projected_rows,
+                title=_read_evidence_title(item),
+                policy=policy,
+            )
+        )
+    return blocks
+
+
 def _compose_blocks(
     *,
     document_id: str,
     operation_id: str | None,
+    session: Any,
     state: str,
     message: str,
     safety_content: str | None,
@@ -3424,6 +3707,7 @@ def _compose_blocks(
     latest_pending: ApprovalResponse | None,
     approvals: list[ApprovalResponse],
     mutation_groups: list[MutationGroup],
+    read_evidence: list[ReadEvidence],
     read_rows: list[dict[str, Any]],
     has_read_evidence: bool,
     status_result: dict[str, Any] | None,
@@ -3470,12 +3754,15 @@ def _compose_blocks(
 
     if latest_pending is not None:
         pending_rows = _approval_rows(latest_pending, operation_id=operation_id, default_status="pending")
-        pending_summary = _approval_summary(latest_pending)
+        pending_summary = _pending_approval_summary(latest_pending, pending_rows)
+        pending_contract = _approval_contract(latest_pending, pending_rows)
         blocks.append(
             ApprovalRequiredBlock(
                 id=f"approval:{latest_pending.approval_id}",
+                contract=pending_contract,
                 approval_id=latest_pending.approval_id,
                 operation_id=_approval_operation_id(latest_pending, operation_id),
+                args=_approval_action_args(latest_pending.args),
                 summary=pending_summary,
                 rows=pending_rows,
             )
@@ -3484,6 +3771,7 @@ def _compose_blocks(
             blocks.append(
                 RecordPreviewBlock(
                     id=f"record-preview:{latest_pending.approval_id}:pending",
+                    contract=pending_contract,
                     title="Affected records",
                     rows=pending_rows[:5],
                     operation_id=_approval_operation_id(latest_pending, operation_id),
@@ -3493,6 +3781,7 @@ def _compose_blocks(
             blocks.append(
                 ResultTableBlock(
                     id=f"table:{latest_pending.approval_id}:affected-records",
+                    contract=pending_contract,
                     title="Affected records",
                     rows=pending_rows,
                     operation_id=_approval_operation_id(latest_pending, operation_id),
@@ -3503,7 +3792,7 @@ def _compose_blocks(
 
     if mutation_groups:
         all_rows = [row for group in mutation_groups for row in group.rows]
-        summary = _aggregate_mutation_summary(mutation_groups)
+        summary = _visible_mutation_summary(mutation_groups, fallback_summary=presentation.summary)
         all_no_op = all(_is_no_op_group(group) for group in mutation_groups)
         status = "partial_failure" if any(group.status == "partial_failure" for group in mutation_groups) else "completed"
         if any(group.status == "failed" for group in mutation_groups) and not any(group.status == "completed" for group in mutation_groups):
@@ -3577,7 +3866,20 @@ def _compose_blocks(
                 )
             )
 
-    if status_result and not mutation_groups:
+    grouped_read_blocks = (
+        _read_blocks_for_evidence_groups(
+            read_evidence=read_evidence,
+            session=session,
+            operation_id=operation_id,
+            document_id=document_id,
+        )
+        if not mutation_groups
+        else []
+    )
+
+    if grouped_read_blocks:
+        blocks.extend(grouped_read_blocks)
+    elif status_result and not mutation_groups:
         blocks.append(
             StatusResultBlock(
                 id=f"status:{operation_id or document_id}",
@@ -3775,6 +4077,7 @@ def compose_response_document(
     blocks = _compose_blocks(
         document_id=document_id,
         operation_id=operation_id,
+        session=session,
         state=state,
         message=message,
         safety_content=safety_content,
@@ -3782,6 +4085,7 @@ def compose_response_document(
         latest_pending=latest_pending,
         approvals=approvals,
         mutation_groups=mutation_groups,
+        read_evidence=read_groups,
         read_rows=read_rows,
         has_read_evidence=bool(read_groups),
         status_result=status_result,

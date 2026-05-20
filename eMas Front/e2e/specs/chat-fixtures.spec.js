@@ -13,6 +13,8 @@ import {
 } from '../fixtures/factoryAgentFixtures.js'
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
+const backendUnavailableVisiblePattern = /Factory Agent is disconnected|Backend unavailable/i
+const attentionDiagnosticVisiblePattern = /Factory Agent chat could not start|Prompt route not matched|Factory Agent needs attention/i
 
 async function requestsForPrompt(prompt) {
   const response = await fetch(`${mockBaseUrl}/__test/requests?contains=${encodeURIComponent(prompt)}`)
@@ -37,7 +39,7 @@ test.describe('Factory Agent chat scenario fixtures', () => {
 
     await sendChatPrompt(page, backendUnavailablePrompt)
 
-    await expect(page.getByText('Factory Agent backend unavailable')).toBeVisible()
+    await expect(page.getByText(backendUnavailableVisiblePattern).first()).toBeVisible()
     await expect(page.getByText('Service temporarily unavailable. Please retry shortly.')).toBeVisible()
     await expect(page.getByText('Run complete')).toHaveCount(0)
     await expect(page.getByText(machineStatusAnswer)).toHaveCount(0)
@@ -68,7 +70,7 @@ test.describe('Factory Agent chat scenario fixtures', () => {
     await expect(page.getByText(emptyAssistantFallbackAnswer).last()).toBeVisible()
     await expect(page.getByText(machineStatusAnswer)).toHaveCount(existingMachineAnswerCount)
     await expect(page.getByText('Execution completed.')).toHaveCount(0)
-    await expect(page.getByText('Factory Agent needs attention')).toHaveCount(0)
+    await expect(page.getByText(attentionDiagnosticVisiblePattern)).toHaveCount(0)
 
     await expect
       .poll(async () => {

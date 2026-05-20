@@ -208,6 +208,59 @@ test('response document reducer keeps the current document on conflicting equal 
   assert.equal(result.state.document.message, 'Stable revision 11.')
 })
 
+test('response document reducer accepts terminal equal revision over active progress', () => {
+  const active = doc({
+    revision: 11,
+    state: 'running',
+    status: 'running',
+    message: 'Applying approved change.',
+    summary: 'Applying approved change.',
+    run_steps: [
+      {
+        step_id: 'applying-1',
+        kind: 'mutation',
+        state: 'current',
+        title: 'Applying approved change',
+        summary: 'Applying approved change.',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['applying-1'] },
+      { id: 'message:active-revision-11', type: 'short_message', message: 'Applying approved change.', status: 'running' },
+    ],
+  })
+  const state = applyResponseDocumentSnapshotUpdate(
+    createResponseDocumentReducerState(),
+    snapshot(active),
+    { transport: 'sse' },
+  ).state
+  const terminal = doc({
+    revision: 11,
+    state: 'failed',
+    status: 'failed',
+    message: 'Some rows were updated, but other rows failed.',
+    summary: 'Some rows were updated, but other rows failed.',
+    run_steps: [
+      {
+        step_id: 'failed-1',
+        kind: 'diagnostic',
+        state: 'failed',
+        title: 'Partial failure',
+        summary: 'Some rows were updated, but other rows failed.',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['failed-1'] },
+      { id: 'message:failed-revision-11', type: 'short_message', message: 'Some rows were updated, but other rows failed.', status: 'failed' },
+    ],
+  })
+
+  const result = applyResponseDocumentSnapshotUpdate(state, snapshot(terminal), { transport: 'polling' })
+  assert.equal(result.accepted, true)
+  assert.equal(result.decision, 'accepted_terminal_equal_revision_over_active')
+  assert.equal(result.state.document.message, 'Some rows were updated, but other rows failed.')
+})
+
 test('response document reducer refuses older turn and document scopes', () => {
   const current = applyResponseDocumentSnapshotUpdate(
     createResponseDocumentReducerState(),

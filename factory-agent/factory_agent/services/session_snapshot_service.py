@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factory_agent.analysis.presentation import extract_table_from_result
 from factory_agent.analysis.result_normalizer import normalize_tool_result
 from factory_agent.api.response_mappers import approval_to_response, plan_to_response, session_to_response, step_to_response
-from factory_agent.graph.session_detection import is_graph_native_session, is_langgraph_plan
+from factory_agent.graph.session_detection import (
+    allows_persisted_step_projection,
+    is_graph_native_session,
+)
 from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval as ApprovalRow
@@ -1009,7 +1012,13 @@ def _has_terminal_event_after_latest_user(timeline: list[TimelineEventResponse])
     if latest_user is None:
         return False
     return any(
-        event.event_type in _PRESENTATION_TERMINAL_EVENTS
+        (
+            event.event_type in _PRESENTATION_TERMINAL_EVENTS
+            or (
+                event.event_type == "approval_decided"
+                and str(event.status or "").upper() in {"REJECTED", "EXPIRED"}
+            )
+        )
         and event.created_at >= latest_user.created_at
         and (not latest_user.turn_id or event.turn_id in {None, latest_user.turn_id})
         for event in timeline
@@ -1328,7 +1337,7 @@ def _derive_snapshot_presentation(
             state="expired",
             operation_id=operation_id or latest_approval.plan_id,
             approval_id=latest_approval.approval_id,
-            summary="Approval expired; the stale approval cannot be applied.",
+            summary=latest_approval.risk_summary or "Approval expired; the stale approval cannot be applied.",
             rows=rows,
             sources=sources,
             diagnostics=_presentation_diagnostics(
@@ -1943,7 +1952,7 @@ class SessionSnapshotService:
                 isinstance(state_payload, dict)
                 and state_payload.get("kind") == "langgraph_native_checkpoint"
             )
-        allow_step_projection = (not graph_native_session) or is_langgraph_plan(current_plan)
+        allow_step_projection = (not graph_native_session) or allows_persisted_step_projection(current_plan)
 
         checkpoint_state = _checkpoint_state_dict(checkpoint_payload if isinstance(checkpoint_payload, dict) else None)
         checkpoint_draft = checkpoint_state.get("validated_plan") if isinstance(checkpoint_state.get("validated_plan"), dict) else {}

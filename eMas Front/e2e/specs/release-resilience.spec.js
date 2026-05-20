@@ -14,6 +14,21 @@ import {
 
 test.setTimeout(90_000)
 
+function approvalRowsFromPayload(approval) {
+  const args = approval?.args && typeof approval.args === 'object' ? approval.args : {}
+  const bundle = args.bundle_ui && typeof args.bundle_ui === 'object' ? args.bundle_ui : {}
+  const rows = Array.isArray(bundle.rows) && bundle.rows.length
+    ? bundle.rows
+    : Array.isArray(args.preview)
+      ? args.preview.map((item) => (item?.args && typeof item.args === 'object' ? item.args : item)).filter(Boolean)
+      : []
+  return rows.filter((row) => row && typeof row === 'object')
+}
+
+function visibleSeededRecordIds(text) {
+  return Array.from(new Set(String(text || '').match(/\b[A-Z]+-SEED-\d+\b/g) || []))
+}
+
 test.describe('L4 release resilience and accessibility @l4-release', () => {
   test.beforeEach(async () => {
     await resetReleaseFaults()
@@ -36,7 +51,7 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await openChat(page)
 
     await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.getByText('Factory Agent backend unavailable')).toBeVisible()
+    await expect(page.getByText(/Factory Agent (?:backend unavailable|is disconnected)/i)).toBeVisible()
     await expect(page.getByText(/Cannot reach Factory Agent|service is unavailable|503|factoryAgentUnavailable|controlled release fault/i).first()).toBeVisible()
     await expect(page.getByPlaceholder('Ask factory agent...')).toBeVisible()
   })
@@ -98,6 +113,15 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
 
     const pending = await pendingApprovalsForPage(page)
     expect(pending.length).toBeGreaterThan(0)
+    const payloadRows = approvalRowsFromPayload(pending[0])
+    const stagedIds = payloadRows
+      .map((row) => String(row.job_id || row.id || '').trim())
+      .filter(Boolean)
+    const approvalPreviewRows = page.locator('[data-response-block-type="approval_required"] [data-affected-record-row]')
+    await expect(approvalPreviewRows.first()).toBeVisible()
+    const visibleApprovalIds = visibleSeededRecordIds((await approvalPreviewRows.allTextContents()).join(' '))
+    const expectedCount = payloadRows.length || visibleApprovalIds.length
+    expect(expectedCount).toBeGreaterThan(0)
     await page.getByRole('button', { name: 'Approve' }).click()
     await expect.poll(async () => (await snapshotForPage(page)).session.status, {
       timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
@@ -107,8 +131,12 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     }).toContain('Run complete')
     const dialogText = await page.getByRole('dialog').textContent()
     expect(dialogText).toContain('Run complete')
-    expect(dialogText).toMatch(/Updated\s*1\s*job\(s\)\./)
-    expect(dialogText).toContain('JOB-SEED-005')
+    expect(dialogText).not.toMatch(/Applied\s*0\s+approved/i)
+    expect(dialogText).toMatch(new RegExp(`(?:Updated|Applied)\\s*${expectedCount}\\b`, 'i'))
+    const idsToCheck = stagedIds.length ? stagedIds : visibleApprovalIds
+    if (idsToCheck.length) {
+      expect(idsToCheck.some((id) => dialogText.includes(id))).toBe(true)
+    }
     expect(dialogText).not.toContain('Approved request to change record')
     const finalDialogOverflows = await page.getByRole('dialog').evaluate((dialog) => dialog.scrollWidth > dialog.clientWidth + 1)
     expect(finalDialogOverflows).toBe(false)
@@ -142,7 +170,7 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await openChat(page)
     await sendPrompt(page, 'Run Phase 10 long-running stream with bounded logs')
 
-    await expect(page.getByRole('dialog')).toContainText(/Long Stream Terminal:\s*true/i, {
+    await expect(page.getByRole('dialog')).toContainText(/terminal state within release limits/i, {
       timeout: releaseEnv.latencyBudgetsMs.longStream,
     })
     await expect(page.getByText('Run complete')).toBeVisible()

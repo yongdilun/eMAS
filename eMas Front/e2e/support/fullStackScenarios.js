@@ -1,5 +1,4 @@
 import { expect } from '@playwright/test'
-
 import { chatSelectors } from '../fixtures/selectors.js'
 import { seededRuntimeEnv } from './fullStackEnv.js'
 
@@ -27,14 +26,33 @@ export async function openChat(page) {
 }
 
 export async function sendPrompt(page, prompt) {
-  const composer = page.getByPlaceholder(chatSelectors.composerPlaceholder)
+  const composer = page.getByPlaceholder(/Ask factory agent|Send a revision|Send a follow-up message/i)
   await expect(composer).toBeEnabled()
   await composer.fill(prompt)
   await page.getByRole('button', { name: chatSelectors.sendButtonName }).click()
-  await expect(page.getByText(prompt)).toBeVisible()
+  await expect(page.getByText(prompt).first()).toBeVisible()
 }
 
-export async function activeSessionId(page) {
+export async function startNewChatSession(page) {
+  const previous = await activeSessionId(page, { timeout: 0 })
+  await page.getByRole('button', { name: 'New Session' }).click()
+  await expect
+    .poll(async () => {
+      const current = await activeSessionId(page, { timeout: 0 })
+      return Boolean(current && current !== previous)
+    }, { timeout: 10_000 })
+    .toBe(true)
+  await expect(page.getByPlaceholder(/Ask factory agent|Send a revision|Send a follow-up message/i)).toBeEnabled()
+}
+
+export async function activeSessionId(page, { timeout = 5000 } = {}) {
+  const current = await page.evaluate((key) => window.localStorage.getItem(key), activeSessionStorageKey)
+  if (current || timeout <= 0) return current
+  try {
+    await page.waitForFunction((key) => window.localStorage.getItem(key), activeSessionStorageKey, { timeout })
+  } catch {
+    return null
+  }
   return page.evaluate((key) => window.localStorage.getItem(key), activeSessionStorageKey)
 }
 

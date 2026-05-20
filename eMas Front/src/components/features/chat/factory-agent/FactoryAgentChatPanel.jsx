@@ -683,6 +683,8 @@ function AssistantTurnBubble({
               showApprovalActions={showApprovalCard || showResponseDocumentApprovalActions}
               decideApproval={decideApproval}
               isDecidingApproval={isDecidingApproval}
+              approvalReason={approvalReason}
+              setApprovalReason={setApprovalReason}
               onOpenSourceEvidence={onOpenSourceEvidence}
               selectedSourceEvidence={activeSourceEvidence}
             />
@@ -855,7 +857,6 @@ const FactoryAgentChatPanel = ({
     clientProgress,
     setApprovalReason,
     isDecidingApproval,
-    isPollingSession,
     getStashedBundlePresentation,
     isResumingAfterApproval,
     handleSend,
@@ -940,24 +941,25 @@ const FactoryAgentChatPanel = ({
   }, [session?.session_id])
 
   const inputDisabled =
+    loading ||
     isSending ||
     isDecidingApproval ||
     session?.status === FACTORY_AGENT_STATUS.PLANNING
   const effectiveSessionStatus = pendingApproval
     ? FACTORY_AGENT_STATUS.WAITING_APPROVAL
     : session?.status
+  const sessionShowsActiveProgress = [
+    FACTORY_AGENT_STATUS.PLANNING,
+    FACTORY_AGENT_STATUS.EXECUTING,
+    FACTORY_AGENT_STATUS.WAITING_APPROVAL,
+    FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+  ].includes(effectiveSessionStatus)
 
   const showTopSessionProgress = Boolean(
     session?.session_id &&
     (isDecidingApproval ||
-      isPollingSession ||
       isSending ||
-      [
-        FACTORY_AGENT_STATUS.PLANNING,
-        FACTORY_AGENT_STATUS.EXECUTING,
-        FACTORY_AGENT_STATUS.WAITING_APPROVAL,
-        FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-      ].includes(effectiveSessionStatus)),
+      sessionShowsActiveProgress),
   )
   const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(effectiveSessionStatus)
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'

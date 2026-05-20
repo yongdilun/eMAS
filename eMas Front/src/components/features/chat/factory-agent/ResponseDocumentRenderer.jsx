@@ -294,7 +294,7 @@ function CompactCard({
       data-status-field-count={dataNumber(fieldCount)}
       data-secondary-field-count={dataNumber(secondaryFieldCount)}
     >
-      {title ? <div className="text-sm font-semibold text-ink">{title}</div> : null}
+      {title ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
       {children}
     </div>
   )
@@ -1409,31 +1409,43 @@ function ApprovalBlock({
   showApprovalActions,
   decideApproval,
   isDecidingApproval,
+  approvalReason,
+  setApprovalReason,
 }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
   return (
-    <CompactCard title={block.title || 'Approval required'} blockType="approval_required" blockId={block.id}>
+    <CompactCard title={block.title || 'Approval required'} blockType="approval_required" blockId={block.id} contract={block.contract}>
       <div className="mt-1 text-sm text-ink">{block.summary || 'Review the proposed change before it is applied.'}</div>
       <RowPreview rows={rows} limit={5} />
       {showApprovalActions ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={approvalReason || ''}
+            onChange={(event) => setApprovalReason?.(event.target.value)}
+            placeholder="Optional rejection reason"
+            rows={2}
             disabled={isDecidingApproval}
-            aria-busy={isDecidingApproval ? 'true' : 'false'}
-            onClick={() => decideApproval?.('approve', pendingApproval?.args, pendingApproval)}
-            className="inline-flex min-w-[6.5rem] items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover disabled:opacity-70"
-          >
-            {isDecidingApproval ? 'Approving...' : 'Approve'}
-          </button>
-          <button
-            type="button"
-            disabled={isDecidingApproval}
-            onClick={() => decideApproval?.('reject', undefined, pendingApproval)}
-            className="rounded-md bg-inverse-canvas px-3 py-1.5 text-xs font-semibold text-inverse-ink hover:opacity-90 disabled:opacity-60"
-          >
-            Reject
-          </button>
+            className="w-full rounded-md border border-hairline bg-white px-3 py-2 text-xs text-ink placeholder:text-ink-subtle focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={isDecidingApproval}
+              aria-busy={isDecidingApproval ? 'true' : 'false'}
+              onClick={() => decideApproval?.('approve', pendingApproval?.args, pendingApproval)}
+              className="inline-flex min-w-[6.5rem] items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover disabled:opacity-70"
+            >
+              {isDecidingApproval ? 'Approving...' : 'Approve'}
+            </button>
+            <button
+              type="button"
+              disabled={isDecidingApproval}
+              onClick={() => decideApproval?.('reject', undefined, pendingApproval)}
+              className="rounded-md bg-inverse-canvas px-3 py-1.5 text-xs font-semibold text-inverse-ink hover:opacity-90 disabled:opacity-60"
+            >
+              Reject
+            </button>
+          </div>
         </div>
       ) : null}
       {rows.length > 5 ? (
@@ -1560,6 +1572,7 @@ function RecordPreviewBlock({ block }) {
 function ResultTableBlock({ block }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
   const previewLimit = Number.isFinite(Number(block.preview_limit)) ? Number(block.preview_limit) : PREVIEW_LIMIT
+  const defaultCollapsed = block.details_collapsed === true || block.display_mode === 'collapsed_collection_table'
   return (
     <CompactCard
       title={block.title || 'Results'}
@@ -1578,7 +1591,7 @@ function ResultTableBlock({ block }) {
       <ExpandableTable
         title={block.title || 'Results'}
         rows={rows}
-        defaultCollapsed={block.details_collapsed !== false}
+        defaultCollapsed={defaultCollapsed}
         blockId={block.id}
       />
     </CompactCard>
@@ -1849,6 +1862,8 @@ export default function ResponseDocumentRenderer({
   showApprovalActions,
   decideApproval,
   isDecidingApproval,
+  approvalReason,
+  setApprovalReason,
   onOpenSourceEvidence,
   selectedSourceEvidence,
 }) {
@@ -1932,6 +1947,8 @@ export default function ResponseDocumentRenderer({
         showApprovalActions,
         decideApproval,
         isDecidingApproval,
+        approvalReason,
+        setApprovalReason,
         documentMessage: message,
         sourceLookup,
         selectedSourceKeys,

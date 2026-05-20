@@ -144,13 +144,20 @@ function addResponseDocumentViolations(violations, snapshot, expected) {
   const blockTypes = blocks.map((block) => block?.type).filter(Boolean)
   const contracts = [
     ...blocks.map((block) => block?.contract),
+    ...blocks.flatMap((block) => Array.isArray(block?.citations) ? block.citations.map((citation) => citation?.contract) : []),
+    ...blocks.flatMap((block) => Array.isArray(block?.sources) ? block.sources.map((source) => source?.contract) : []),
     document.invariants?.read_status_contract,
     document.invariants?.mutation_business_contract,
     document.invariants?.no_op_mutation_contract,
+    document.invariants?.source_list_contract,
+    document.invariants?.source_locator_contract,
   ].filter(Boolean)
   const responseExpected = expected.responseDocument || {}
   for (const type of asArray(responseExpected.blockTypes)) {
     if (!blockTypes.includes(type)) violations.push(`response_document missing block type ${type}`)
+  }
+  for (const type of asArray(responseExpected.hiddenBlockTypes)) {
+    if (blockTypes.includes(type)) violations.push(`response_document unexpectedly exposed block type ${type}`)
   }
   for (const contract of asArray(responseExpected.contracts)) {
     if (!contracts.includes(contract)) violations.push(`response_document missing contract ${contract}`)

@@ -250,7 +250,7 @@ def _split_clauses(text: str) -> list[str]:
 
 
 def _is_entity_id_continuation_clause(clause: str) -> bool:
-    text = (clause or "").strip(" \t,;")
+    text = (clause or "").strip(" \t,;.?!")
     if not text:
         return False
     if any(pattern.search(text) for _name, pattern in _ACTION_PATTERNS):
@@ -260,7 +260,7 @@ def _is_entity_id_continuation_clause(clause: str) -> bool:
     stripped = _PRODUCT_RE.sub(" ", stripped)
     stripped = _MACHINE_ID_RE.sub(" ", stripped)
     stripped = re.sub(r"\b(?:and|or|with|id|ids|job|jobs|machine|machines|product|material)\b", " ", stripped, flags=re.I)
-    stripped = re.sub(r"[\s,;#-]+", "", stripped)
+    stripped = re.sub(r"[\s,;#.!?-]+", "", stripped)
     return not stripped
 
 

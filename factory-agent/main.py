@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import os
+from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +28,7 @@ from factory_agent.observability.events import AgentEvent, EventBus
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event, log_step_status_changed, setup_logging
 from factory_agent.registry.tool_registry import ToolRegistry
+from factory_agent.testing.tool_faults import clear_tool_faults, configure_tool_faults, list_tool_faults
 
 
 @dataclass(frozen=True)
@@ -919,9 +921,55 @@ async def playwright_data_integrity_audit(request: Request, session_id: str | No
         return {"entries": []}
     planner = getattr(request.app.state, "playwright_seeded_planner", None)
     read_audit = getattr(planner, "data_integrity_audit", None)
-    if not callable(read_audit):
-        return {"entries": []}
-    return {"entries": read_audit(session_id=session_id)}
+    entries = read_audit(session_id=session_id) if callable(read_audit) else []
+    if not entries and session_id:
+        entries = await _playwright_data_integrity_audit_from_steps(session_id)
+    return {"entries": entries}
+
+
+async def _playwright_data_integrity_audit_from_steps(session_id: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(PlanStepRow.result)
+                .where(PlanStepRow.session_id == session_id)
+                .order_by(PlanStepRow.step_index.asc())
+            )
+        ).all()
+    for (result,) in rows:
+        if not isinstance(result, dict):
+            continue
+        outcomes = result.get("outcomes")
+        if not isinstance(outcomes, list):
+            continue
+        entries.extend(dict(row) for row in outcomes if isinstance(row, dict))
+    return entries
+
+
+@app.get("/_playwright/tool-faults")
+async def playwright_tool_faults():
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    return {"rules": list_tool_faults()}
+
+
+@app.post("/_playwright/tool-faults")
+async def playwright_configure_tool_faults(payload: dict[str, Any]):
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    rules = payload.get("rules") if isinstance(payload, dict) else []
+    if not isinstance(rules, list):
+        raise HTTPException(status_code=400, detail="rules must be a list")
+    return {"ok": True, "rules": configure_tool_faults([rule for rule in rules if isinstance(rule, dict)])}
+
+
+@app.delete("/_playwright/tool-faults")
+async def playwright_clear_tool_faults():
+    if not _playwright_seeded_mode():
+        raise HTTPException(status_code=404, detail="playwright seeded mode is not enabled")
+    clear_tool_faults()
+    return {"ok": True, "rules": []}
 
 
 # Serve the Factory Agent Wiki

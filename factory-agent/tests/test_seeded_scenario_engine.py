@@ -84,6 +84,9 @@ def test_seeded_planner_declares_phase_prompts_it_handles_from_catalog():
     assert planner.handles_seeded_intent("Run Phase 14 stale approval seeded job update")
     assert planner.handles_seeded_intent("Run Phase 14 idempotent approval replay for one seeded job priority update")
     assert planner.handles_seeded_intent("List jobs for Phase 9 large structured result")
+    assert planner.handles_seeded_intent("Start a seeded cancel jobs run and keep it executing")
+    assert planner.handles_seeded_intent("Run seeded SSE activity stream for machine M-CNC-01")
+    assert not planner.handles_seeded_intent("cancel the current run")
     assert not planner.handles_seeded_intent("Please update a job priority without a job id")
 
 

@@ -256,6 +256,88 @@ async def test_phase4_job_list_need_hydrates_filter_sort_limit_and_fields_schema
 
 
 @pytest.mark.asyncio
+async def test_phase4_read_list_need_keeps_matching_read_card_when_selector_returns_write_only():
+    selector = RecordingSelector(ToolSelectionResult(["patch__jobs_{id}"], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]
+    tools = {
+        "patch__jobs_{id}": _tool(
+            "patch__jobs_{id}",
+            endpoint="/jobs/{id}",
+            method="PATCH",
+            tags=["job", "update", "priority"],
+            required=["id"],
+            input_properties={"id": {"type": "string"}, "priority": {"type": "string"}},
+            entity="job",
+            response_contract="business_change_v1",
+        ),
+        "get__jobs": _job_list_tool(),
+    }
+    need = CapabilityNeed(
+        requirement_id="req-jobs",
+        source_of_truth="operational_state",
+        entity="job",
+        action="list",
+        constraints={"priority": "low", "limit": 3},
+        requested_fields=["job_id", "status", "priority", "deadline"],
+    )
+
+    result = await retriever.retrieve_tools_for_need(need, tools_by_name=tools)
+
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "patch__jobs_{id}",
+        "get__jobs",
+    ]
+    assert result.trace.diagnostics["metadata_read_completion_used"] is True
+    assert any(card.tool_name == "get__jobs" and card.is_read_only for card in result.hydrated_tool_cards.cards)
+
+
+@pytest.mark.asyncio
+async def test_phase4_write_need_completes_with_read_preflight_and_write_candidate_from_metadata():
+    selector = RecordingSelector(ToolSelectionResult([], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]
+    tools = {
+        "get__jobs": _job_list_tool(),
+        "put__jobs_{id}": _tool(
+            "put__jobs_{id}",
+            endpoint="/jobs/{id}",
+            method="PUT",
+            tags=["job", "update", "priority"],
+            required=["id"],
+            body_fields=["priority"],
+            required_body_fields=["priority"],
+            input_properties={"id": {"type": "string"}, "priority": {"type": "string"}},
+            output_properties={"job_id": {"type": "string"}, "priority": {"type": "string"}},
+            entity="job",
+            response_contract="business_change_v1",
+        ),
+    }
+    need = CapabilityNeed(
+        requirement_id="req-update",
+        source_of_truth="operational_state",
+        entity="job",
+        action="update",
+        constraints={"priority": "high", "new_priority": "medium", "date": "this week"},
+        requested_fields=["job_id", "priority", "status", "deadline"],
+    )
+
+    result = await retriever.retrieve_tools_for_need(need, tools_by_name=tools)
+
+    assert result.status == "ok"
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "get__jobs",
+        "put__jobs_{id}",
+    ]
+    assert result.trace.diagnostics["metadata_candidate_completion"] == {
+        "read_preflight": ["get__jobs"],
+        "write_candidates": ["put__jobs_{id}"],
+    }
+    cards = {card.tool_name: card for card in result.hydrated_tool_cards.cards}
+    assert cards["get__jobs"].is_read_only is True
+    assert cards["put__jobs_{id}"].is_read_only is False
+    assert cards["put__jobs_{id}"].requires_approval is True
+
+
+@pytest.mark.asyncio
 async def test_phase4_document_knowledge_need_retrieves_rag_candidate_without_executing_rag():
     retriever = V2CapabilityToolRetriever(_selector())
     tools = {

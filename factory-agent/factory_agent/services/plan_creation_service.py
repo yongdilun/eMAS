@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from factory_agent.analysis.summary_backend import SummaryAdapter, SummaryBacken
 from factory_agent.api.dependencies import require_session_owner
 from factory_agent.api.response_mappers import plan_to_response
 from factory_agent.config import Settings
+from factory_agent.graph.http_tool_client import execute_tool_http
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.memory_manager import MemoryManager
@@ -34,6 +36,7 @@ from factory_agent.planner import (
 )
 from factory_agent.planning.intent import (
     assess_intent,
+    intent_constraint_values,
     loto_query_with_resolved_machine_context,
     resolve_contextual_loto_machine_id,
     semantic_frame_for_text,
@@ -50,6 +53,7 @@ from factory_agent.planning.v2_planner_loop import (
     legacy_graph_signals,
     legacy_rag_signals,
 )
+from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
 from factory_agent.planning.v2_rag_tool import (
     build_v2_rag_evidence,
     ensure_v2_rag_tool,
@@ -155,6 +159,33 @@ class PlanCreationService:
     def _loto_query_with_resolved_machine(self, intent: str, machine_id: str | None) -> str:
         return loto_query_with_resolved_machine_context(intent, machine_id)
 
+    def _rag_query_with_required_machine_context(
+        self,
+        query: str,
+        *,
+        intent: str,
+        semantic_frame: Any | None,
+    ) -> str:
+        frame_entities = getattr(semantic_frame, "normalized_entities", None)
+        machine_ids = []
+        if isinstance(frame_entities, dict):
+            raw_values = frame_entities.get("machine_id") or []
+            if isinstance(raw_values, str):
+                raw_values = [raw_values]
+            machine_ids = [str(value).strip().upper() for value in raw_values if str(value or "").strip()]
+        if not machine_ids:
+            machine_ids = intent_constraint_values(intent, "machine_id")
+        if not machine_ids:
+            return query
+        query_text = str(query or intent or "")
+        upper_query = query_text.upper()
+        if any(machine_id in upper_query for machine_id in machine_ids):
+            return query_text
+        return (
+            f"{query_text.rstrip()}\n\n"
+            f"Required machine context from the routed request: machine {machine_ids[0]}."
+        )
+
     async def _resolve_loto_machine_context(
         self,
         *,
@@ -213,7 +244,9 @@ class PlanCreationService:
                 session_id=sess.session_id,
                 plan_id=current.plan_id,
             )
-            return plan_to_response(current)
+            response = plan_to_response(current)
+            response.status = "COMPLETED"
+            return response
         raise HTTPException(status_code=409, detail="session was cancelled")
 
     def _plan_validation_step_limit(
@@ -228,7 +261,7 @@ class PlanCreationService:
         limit = int(self._settings.max_plan_steps)
         steps = getattr(draft, "steps", []) or []
         if (
-            backend_used == "langgraph"
+            backend_used in {"langgraph", "v2_planner_loop"}
             and kind == "execution"
             and status == "COMPLETED"
             and tool_outputs
@@ -240,7 +273,7 @@ class PlanCreationService:
             )
             if not all(output_tool_counts[name] >= count for name, count in step_tool_counts.items() if name):
                 return limit
-            # Completed LangGraph bulk-write plans are an audit projection of
+            # Completed planner-owned bulk-write plans are an audit projection of
             # already committed row-level operations; preserving every row is
             # safer than hiding committed writes behind the interactive draft cap.
             return len(steps)
@@ -627,12 +660,48 @@ class PlanCreationService:
         if rag_response is not None:
             return rag_response
 
+        tool_outputs, sources, safety_content = await self._execute_direct_v2_steps(
+            sess=sess,
+            intent=intent,
+            tools_by_name=tools_by_name,
+            v2_run=v2_run,
+        )
+        self._direct_v2_prepare_evidence_for_satisfaction(v2_run)
+        if v2_run.draft is not None:
+            if sources:
+                v2_run.draft.sources = sources
+            if safety_content:
+                v2_run.draft.safety_content = safety_content
+        apply_deterministic_evidence_satisfaction(v2_run.state)
+        validate_v2_final_state(v2_run.state)
+
+        if self._direct_v2_should_stage_approval(v2_run=v2_run, tool_outputs=tool_outputs):
+            approval_payload = self._direct_v2_approval_payload(
+                sess=sess,
+                intent=intent,
+                v2_run=v2_run,
+                tool_outputs=tool_outputs,
+            )
+            sess = await self._persist_graph_interrupt_approval(
+                db=db,
+                sess=sess,
+                approval_payload=approval_payload,
+                mode=mode,
+                tools_by_name=tools_by_name,
+                intent=intent,
+            )
+            current = await self._load_current_plan(db=db, session_id=sess.session_id)
+            if current:
+                return plan_to_response(current)
+            raise HTTPException(status_code=409, detail="v2 approval was created without a compatibility plan")
+
         context = dict(sess.replan_context or {})
         context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
             None,
             intent=intent,
             v2_state=v2_run.state,
         )
+        failed_direct_v2 = self._direct_v2_has_failed_output(tool_outputs) or self._direct_v2_final_validation_failed(v2_run)
         return await self._persist_plan(
             db=db,
             sess=sess,
@@ -640,11 +709,703 @@ class PlanCreationService:
             tools_by_name=tools_by_name,
             backend_used="v2_planner_loop",
             kind="discovery" if mode == "plan" else "execution",
-            status="DRAFT",
+            status="FAILED" if failed_direct_v2 and mode != "plan" else "COMPLETED" if mode != "plan" else "DRAFT",
             intent=intent,
             context_to_keep=context,
-            tool_outputs=v2_run.tool_outputs,
+            tool_outputs=tool_outputs or v2_run.tool_outputs,
         )
+
+    async def _execute_direct_v2_steps(
+        self,
+        *,
+        sess: SessionRow,
+        intent: str,
+        tools_by_name: dict[str, ToolInfo],
+        v2_run: Any,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+        draft = getattr(v2_run, "draft", None)
+        steps = list(getattr(draft, "steps", []) or [])
+        if not steps:
+            return [], [], None
+
+        step_requirements = self._direct_v2_step_requirement_map(v2_run)
+        outputs: list[dict[str, Any]] = []
+        all_sources: list[dict[str, Any]] = []
+        safety_content: str | None = None
+        for step in steps:
+            tool = tools_by_name.get(step.tool_name)
+            if tool is None:
+                continue
+            req_info = step_requirements.get(int(step.step_index), {})
+            requirement_id = str(req_info.get("requirement_id") or "")
+            requirement = self._direct_v2_requirement(v2_run, requirement_id)
+            args = dict(step.args or {})
+            if self._direct_v2_is_rag_tool(tool):
+                output, sources, safety = await self._execute_direct_v2_rag_step(
+                    sess=sess,
+                    intent=intent,
+                    args=args,
+                    tool=tool,
+                    requirement=requirement,
+                    requirement_id=requirement_id,
+                    v2_run=v2_run,
+                )
+                outputs.append(output)
+                all_sources.extend(sources)
+                safety_content = safety_content or safety
+            else:
+                output = await self._execute_direct_v2_api_step(
+                    sess=sess,
+                    args=args,
+                    tool=tool,
+                    step_index=int(step.step_index),
+                    requirement_id=requirement_id,
+                    requirement=requirement,
+                    v2_run=v2_run,
+                )
+                outputs.append(output)
+        return outputs, all_sources, safety_content
+
+    def _direct_v2_step_requirement_map(self, v2_run: Any) -> dict[int, dict[str, Any]]:
+        state = getattr(v2_run, "state", None)
+        trace = getattr(state, "execution_trace", None)
+        diagnostics = getattr(trace, "diagnostics", {}) if trace is not None else {}
+        rows = diagnostics.get("direct_v2_step_requirements") if isinstance(diagnostics, dict) else []
+        out: dict[int, dict[str, Any]] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    out[int(row.get("step_index"))] = row
+                except Exception:
+                    continue
+        return out
+
+    def _direct_v2_requirement(self, v2_run: Any, requirement_id: str) -> Any | None:
+        ledger = getattr(getattr(v2_run, "state", None), "requirement_ledger", None)
+        for requirement in list(getattr(ledger, "requirements", []) or []):
+            if str(getattr(requirement, "id", "") or "") == requirement_id:
+                return requirement
+        return None
+
+    def _direct_v2_is_rag_tool(self, tool: ToolInfo) -> bool:
+        tags = {str(tag).strip().lower() for tag in (tool.capability_tags or [])}
+        return tool.name.startswith("rag_") or "document_knowledge" in tags or "rag" in tags
+
+    async def _execute_direct_v2_api_step(
+        self,
+        *,
+        sess: SessionRow,
+        args: dict[str, Any],
+        tool: ToolInfo,
+        step_index: int,
+        requirement_id: str,
+        requirement: Any | None,
+        v2_run: Any,
+    ) -> dict[str, Any]:
+        env = await execute_tool_http(
+            self._settings,
+            tool,
+            args,
+            idempotency_key=f"v2-direct:{sess.session_id}:{step_index}:{tool.name}",
+        )
+        body = env.get("body") if isinstance(env.get("body"), dict) else {"value": env.get("body")}
+        if env.get("ok"):
+            body = self._direct_v2_project_api_body(body, requirement=requirement, tool=tool)
+        status = "DONE" if env.get("ok") else "FAILED"
+        output = {
+            "tool_name": tool.name,
+            "args": args,
+            "result": body,
+            "http_status": env.get("http_status"),
+            "latency_ms": env.get("latency_ms"),
+            "status": status,
+        }
+        if env.get("infrastructure_error"):
+            output["infrastructure_error"] = True
+            output["summary"] = self._direct_v2_error_summary(tool=tool, body=body)
+        self._append_direct_v2_api_evidence(
+            v2_run=v2_run,
+            output=output,
+            requirement_id=requirement_id,
+            requirement=requirement,
+            tool=tool,
+            step_index=step_index,
+        )
+        return output
+
+    async def _execute_direct_v2_rag_step(
+        self,
+        *,
+        sess: SessionRow,
+        intent: str,
+        args: dict[str, Any],
+        tool: ToolInfo,
+        requirement: Any | None,
+        requirement_id: str,
+        v2_run: Any,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
+        semantic_frame = semantic_frame_for_text(intent)
+        query = str(args.get("query") or getattr(requirement, "goal", None) or intent)
+        query = self._rag_query_with_required_machine_context(
+            query,
+            intent=intent,
+            semantic_frame=semantic_frame,
+        )
+        answer = ""
+        sources: list[Any] = []
+        safety_content: str | None = None
+        evidence = None
+        try:
+            if self._rag_pipeline is None:
+                from ..rag.pipeline import RAGPipeline
+
+                self._rag_pipeline = RAGPipeline()
+            result = await self._rag_pipeline.run(query=query, session_id=sess.session_id, route="RAG_ONLY")
+            if requirement is not None:
+                evidence, answer, sources, safety_content = build_v2_rag_evidence(
+                    requirement=requirement,
+                    query=query,
+                    result=result,
+                    evidence_id=f"ev-rag-{requirement_id or 'direct'}",
+                )
+            else:
+                answer = str(getattr(result, "answer", "") or "")
+                sources = list(getattr(result, "sources", []) or [])
+                safety_content = getattr(result, "safety_content", None)
+        except Exception as exc:
+            output = {
+                "tool_name": tool.name,
+                "args": args,
+                "result": {"error": str(exc), "query": query},
+                "http_status": None,
+                "status": "FAILED",
+                "infrastructure_error": True,
+                "summary": f"RAG search failed: {exc}",
+            }
+            return output, [], None
+
+        policy_application = self._knowledge_policy_registry.apply(
+            route_family=str(getattr(semantic_frame, "route", "") or "unknown"),
+            query=query,
+            answer=answer,
+            sources=sources,
+            safety_content=safety_content,
+            semantic_frame=semantic_frame,
+        )
+        answer = sanitize_rag_answer_text(policy_application.answer or answer)
+        normalized_sources = normalize_source_locators(policy_application.sources, fallback_snippet=answer)
+        safety_content = policy_application.safety_content
+        if evidence is not None:
+            evidence.normalized_result["answer"] = answer
+            v2_run.state.evidence_ledger.evidence.append(evidence)
+        output = {
+            "tool_name": tool.name,
+            "args": {**args, "query": query},
+            "result": {"answer": answer, "sources": normalized_sources},
+            "http_status": 200,
+            "status": "DONE",
+            "summary": answer,
+        }
+        return output, normalized_sources, safety_content
+
+    def _append_direct_v2_api_evidence(
+        self,
+        *,
+        v2_run: Any,
+        output: dict[str, Any],
+        requirement_id: str,
+        requirement: Any | None,
+        tool: ToolInfo,
+        step_index: int,
+    ) -> None:
+        if not requirement_id:
+            return
+        entity = str(getattr(requirement, "entity", "") or self._direct_v2_entity_from_tool(tool) or "").strip()
+        body = output.get("result") if isinstance(output.get("result"), dict) else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        normalized_result: dict[str, Any] = {"entity": entity} if entity else {}
+        request_args = output.get("args") if isinstance(output.get("args"), dict) else {}
+        if request_args:
+            normalized_result["request_args"] = dict(request_args)
+        applied_filters = self._direct_v2_applied_filters(
+            requirement=requirement,
+            request_args=request_args,
+        )
+        if applied_filters:
+            normalized_result["applied_filters"] = applied_filters
+        if isinstance(data, list):
+            normalized_result["rows"] = [row for row in data if isinstance(row, dict)]
+        elif isinstance(data, dict):
+            normalized_result["fields"] = dict(data)
+            entity_id = self._direct_v2_row_id(data, entity)
+            if entity_id:
+                normalized_result["entity_id"] = entity_id
+        elif isinstance(body, dict):
+            if output.get("status") == "FAILED" or output.get("infrastructure_error"):
+                normalized_result["error"] = {
+                    "code": "tool_error",
+                    "detail": body.get("error") or body.get("message") or body,
+                }
+            else:
+                normalized_result["fields"] = dict(body)
+        if output.get("status") == "FAILED" or output.get("infrastructure_error"):
+            normalized_result.setdefault(
+                "error",
+                {
+                    "code": "tool_error",
+                    "detail": self._direct_v2_error_summary(tool=tool, body=body),
+                },
+            )
+        v2_run.state.evidence_ledger.evidence.append(
+            EvidenceLedgerEntry(
+                id=f"ev-api-{requirement_id}-step-{step_index}",
+                requirement_id=requirement_id,
+                source_type="api_tool",
+                source_of_truth="operational_state",
+                tool_name=tool.name,
+                normalized_result=normalized_result,
+                diagnostic_metadata={
+                    "http_status": output.get("http_status"),
+                    "direct_v2_execution": True,
+                },
+            )
+        )
+
+    def _direct_v2_prepare_evidence_for_satisfaction(self, v2_run: Any) -> None:
+        self._direct_v2_aggregate_multi_entity_evidence(v2_run)
+
+    def _direct_v2_aggregate_multi_entity_evidence(self, v2_run: Any) -> None:
+        state = getattr(v2_run, "state", None)
+        ledger = getattr(state, "requirement_ledger", None)
+        evidence_ledger = getattr(state, "evidence_ledger", None)
+        if ledger is None or evidence_ledger is None:
+            return
+
+        evidence_items = list(getattr(evidence_ledger, "evidence", []) or [])
+        requirements = list(getattr(ledger, "requirements", []) or [])
+        multi_requirement_ids = {
+            str(getattr(requirement, "id", "") or "")
+            for requirement in requirements
+            if getattr(requirement, "requirement_type", "") == "multi_entity_status"
+        }
+        if not multi_requirement_ids:
+            return
+
+        requirements_by_id = {str(getattr(requirement, "id", "") or ""): requirement for requirement in requirements}
+        replacements: dict[str, EvidenceLedgerEntry] = {}
+        replaced_ids: set[str] = set()
+        for requirement_id in multi_requirement_ids:
+            matches = [
+                evidence
+                for evidence in evidence_items
+                if evidence.requirement_id == requirement_id
+                and evidence.source_type == "api_tool"
+                and evidence.source_of_truth == "operational_state"
+                and not self._direct_v2_evidence_has_error(evidence)
+            ]
+            if len(matches) < 2:
+                continue
+            requirement = requirements_by_id.get(requirement_id)
+            entity = str(getattr(requirement, "entity", "") or "").strip()
+            rows: list[dict[str, Any]] = []
+            for evidence in matches:
+                rows.extend(self._direct_v2_rows_from_evidence(evidence, entity=entity))
+            if len(rows) < 2:
+                continue
+            normalized_result: dict[str, Any] = {"rows": rows}
+            if entity:
+                normalized_result["entity"] = entity
+            first_filters = self._direct_v2_first_mapping(matches, "applied_filters")
+            if first_filters:
+                normalized_result["applied_filters"] = first_filters
+            first_args = self._direct_v2_first_mapping(matches, "request_args")
+            if first_args:
+                normalized_result["request_args"] = first_args
+            aggregate = EvidenceLedgerEntry(
+                id=f"ev-api-{requirement_id}-aggregate",
+                requirement_id=requirement_id,
+                source_type="api_tool",
+                source_of_truth="operational_state",
+                tool_name=matches[0].tool_name,
+                normalized_result=normalized_result,
+                diagnostic_metadata={
+                    "direct_v2_execution": True,
+                    "aggregated_from": [evidence.id for evidence in matches],
+                },
+            )
+            replacements[requirement_id] = aggregate
+            replaced_ids.update(evidence.id for evidence in matches)
+
+        if not replacements:
+            return
+
+        new_evidence: list[EvidenceLedgerEntry] = []
+        inserted: set[str] = set()
+        for evidence in evidence_items:
+            replacement = replacements.get(evidence.requirement_id)
+            if replacement is not None and evidence.id in replaced_ids:
+                if evidence.requirement_id not in inserted:
+                    new_evidence.append(replacement)
+                    inserted.add(evidence.requirement_id)
+                continue
+            new_evidence.append(evidence)
+        evidence_ledger.evidence = new_evidence
+
+    def _direct_v2_rows_from_evidence(self, evidence: EvidenceLedgerEntry, *, entity: str) -> list[dict[str, Any]]:
+        result = evidence.normalized_result if isinstance(evidence.normalized_result, dict) else {}
+        rows = result.get("rows")
+        if isinstance(rows, list):
+            return [dict(row) for row in rows if isinstance(row, dict)]
+        fields = result.get("fields")
+        if not isinstance(fields, dict):
+            return []
+        row = dict(fields)
+        entity_id = result.get("entity_id")
+        if entity_id not in (None, ""):
+            id_key = f"{entity}_id" if entity else "entity_id"
+            row.setdefault(id_key, entity_id)
+        return [row]
+
+    def _direct_v2_evidence_has_error(self, evidence: EvidenceLedgerEntry) -> bool:
+        result = evidence.normalized_result if isinstance(evidence.normalized_result, dict) else {}
+        return bool(result.get("error"))
+
+    def _direct_v2_first_mapping(
+        self,
+        evidence_items: list[EvidenceLedgerEntry],
+        key: str,
+    ) -> dict[str, Any]:
+        for evidence in evidence_items:
+            value = evidence.normalized_result.get(key) if isinstance(evidence.normalized_result, dict) else None
+            if isinstance(value, dict):
+                return dict(value)
+        return {}
+
+    def _direct_v2_applied_filters(
+        self,
+        *,
+        requirement: Any | None,
+        request_args: dict[str, Any],
+    ) -> dict[str, Any]:
+        if requirement is None or not isinstance(request_args, dict):
+            return {}
+        constraints = getattr(requirement, "constraints", {}) or {}
+        if not isinstance(constraints, dict):
+            return {}
+        filters: dict[str, Any] = {}
+        for key, expected in constraints.items():
+            if key in {"sort_by", "sort_dir", "limit", "offset", "requested_fields", "conditional_branches"}:
+                continue
+            if key.startswith("new_") or key.endswith("_id") or key == "id":
+                continue
+            if expected in (None, "", [], {}):
+                continue
+            if key in request_args and request_args.get(key) not in (None, "", [], {}):
+                filters[key] = request_args.get(key)
+        return filters
+
+    def _direct_v2_entity_from_tool(self, tool: ToolInfo) -> str | None:
+        for schema in (tool.input_schema, tool.output_schema, tool.body_schema):
+            entity = self._direct_v2_schema_entity(schema)
+            if entity:
+                return entity
+        for tag in tool.capability_tags or []:
+            normalized = str(tag).strip().lower()
+            if normalized and normalized not in {"read", "lookup", "list", "status", "update", "create"}:
+                return normalized[:-1] if normalized.endswith("s") and len(normalized) > 3 else normalized
+        for part in (tool.endpoint or "").strip("/").split("/"):
+            if part and not (part.startswith("{") and part.endswith("}")):
+                lowered = part.lower()
+                return lowered[:-1] if lowered.endswith("s") and len(lowered) > 3 else lowered
+        return None
+
+    def _direct_v2_schema_entity(self, schema: dict[str, Any] | None) -> str | None:
+        if not isinstance(schema, dict):
+            return None
+        entity = schema.get("x-ai-entity")
+        if isinstance(entity, str) and entity.strip():
+            return entity.strip().lower()
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            for child in properties.values():
+                found = self._direct_v2_schema_entity(child if isinstance(child, dict) else None)
+                if found:
+                    return found
+        items = schema.get("items")
+        if isinstance(items, dict):
+            return self._direct_v2_schema_entity(items)
+        return None
+
+    def _direct_v2_row_id(self, row: dict[str, Any], entity: str | None) -> str | None:
+        keys = []
+        if entity:
+            keys.append(f"{entity}_id")
+        keys.extend(["id", "job_id", "machine_id"])
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value)
+        for key, value in row.items():
+            if str(key).lower().endswith("_id") and value not in (None, ""):
+                return str(value)
+        return None
+
+    def _direct_v2_project_api_body(
+        self,
+        body: dict[str, Any],
+        *,
+        requirement: Any | None,
+        tool: ToolInfo,
+    ) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            return body
+        entity = str(getattr(requirement, "entity", "") or self._direct_v2_entity_from_tool(tool) or "").strip().lower()
+        requested_fields = [
+            self._direct_v2_canonical_output_key(str(field), entity)
+            for field in (getattr(requirement, "requested_fields", []) or [])
+            if str(field).strip()
+        ]
+        identity_fields = self._direct_v2_identity_fields(entity)
+        allowed_fields = set(requested_fields) | set(identity_fields) if requested_fields else set()
+
+        data = body.get("data")
+        if isinstance(data, dict):
+            return {**body, "data": self._direct_v2_project_api_row(data, entity=entity, allowed_fields=allowed_fields)}
+        if isinstance(data, list):
+            return {
+                **body,
+                "data": [
+                    self._direct_v2_project_api_row(item, entity=entity, allowed_fields=allowed_fields)
+                    if isinstance(item, dict)
+                    else item
+                    for item in data
+                ],
+            }
+        if any(key not in {"success", "ok", "message", "count", "total", "meta"} for key in body):
+            return self._direct_v2_project_api_row(body, entity=entity, allowed_fields=allowed_fields)
+        return body
+
+    def _direct_v2_project_api_row(
+        self,
+        row: dict[str, Any],
+        *,
+        entity: str,
+        allowed_fields: set[str],
+    ) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for key, value in row.items():
+            canonical = self._direct_v2_canonical_output_key(str(key), entity)
+            normalized[canonical] = value
+        if not allowed_fields:
+            return normalized
+        return {key: value for key, value in normalized.items() if key in allowed_fields}
+
+    def _direct_v2_identity_fields(self, entity: str | None) -> list[str]:
+        fields = ["id", "entity_id"]
+        if entity:
+            fields.insert(0, f"{entity}_id")
+        fields.extend(["job_id", "machine_id"])
+        return list(dict.fromkeys(fields))
+
+    def _direct_v2_canonical_output_key(self, key: str, entity: str | None) -> str:
+        normalized = key.strip().replace("-", "_").replace(" ", "_")
+        normalized = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", normalized)
+        normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized)
+        normalized = re.sub(r"_+", "_", normalized).strip("_").lower()
+        if normalized == "id" and entity:
+            return f"{entity}_id"
+        return normalized
+
+    def _direct_v2_error_summary(self, *, tool: ToolInfo, body: dict[str, Any] | None) -> str:
+        payload = body if isinstance(body, dict) else {}
+        message = payload.get("message") or payload.get("error") or payload.get("detail") or payload.get("error_type")
+        if isinstance(message, dict):
+            message = message.get("message") or message.get("detail") or str(message)
+        return f"{tool.name} failed: {message or 'tool_error'}"
+
+    def _direct_v2_should_stage_approval(self, *, v2_run: Any, tool_outputs: list[dict[str, Any]]) -> bool:
+        diagnostics = getattr(getattr(v2_run, "state", None), "execution_trace", None)
+        trace_diagnostics = getattr(diagnostics, "diagnostics", {}) if diagnostics is not None else {}
+        if not isinstance(trace_diagnostics, dict) or not trace_diagnostics.get("dry_run_write_candidates"):
+            return False
+        return bool(tool_outputs)
+
+    def _direct_v2_has_failed_output(self, tool_outputs: list[dict[str, Any]]) -> bool:
+        return any(
+            isinstance(output, dict)
+            and (
+                str(output.get("status") or "").upper() in {"FAILED", "AMBIGUOUS"}
+                or bool(output.get("infrastructure_error"))
+            )
+            for output in tool_outputs
+        )
+
+    def _direct_v2_final_validation_failed(self, v2_run: Any) -> bool:
+        state = getattr(v2_run, "state", None)
+        validation = getattr(state, "final_validation_result", None)
+        if getattr(validation, "status", None) == "failed":
+            return True
+        trace = getattr(state, "execution_trace", None)
+        return getattr(trace, "final_validator_status", None) == "failed"
+
+    def _direct_v2_approval_payload(
+        self,
+        *,
+        sess: SessionRow,
+        intent: str,
+        v2_run: Any,
+        tool_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        requirement = next(
+            (
+                req
+                for req in (getattr(getattr(v2_run.state, "requirement_ledger", None), "requirements", []) or [])
+                if getattr(req, "requirement_type", "") == "mutation_request"
+            ),
+            None,
+        )
+        constraints = dict(getattr(requirement, "constraints", {}) or {})
+        rows, excluded_rows = self._direct_v2_stage_rows(tool_outputs=tool_outputs, constraints=constraints)
+        new_priority = constraints.get("new_priority") or constraints.get("priority_to") or "medium"
+        previous_priorities = sorted({str(row.get("priority")) for row in rows if row.get("priority")})
+        previous_priority = previous_priorities[0] if len(previous_priorities) == 1 else None
+        write_tool_name = self._direct_v2_write_tool_name(v2_run) or "planner_owned_mutation"
+        staged_rows = [
+            {
+                **row,
+                "original_priority": row.get("priority"),
+                "previous_priority": row.get("priority"),
+                "new_priority": new_priority,
+            }
+            for row in rows
+        ]
+        requirement_revision = getattr(getattr(v2_run.state, "requirement_ledger", None), "revision", None)
+        mutation_requirements = [
+            {
+                "id": getattr(req, "id", None),
+                "goal": getattr(req, "goal", None),
+                "constraints": dict(getattr(req, "constraints", {}) or {}),
+                "entity": getattr(req, "entity", None),
+                "requirement_type": getattr(req, "requirement_type", None),
+            }
+            for req in (getattr(getattr(v2_run.state, "requirement_ledger", None), "requirements", []) or [])
+            if getattr(req, "requirement_type", "") == "mutation_request"
+        ]
+        return {
+            "summary": "Approval required before applying the staged v2 changes.",
+            "count": len(staged_rows),
+            "preview": [
+                {"tool_name": write_tool_name, "args": {"id": row.get("job_id") or row.get("id"), "priority": new_priority}}
+                for row in staged_rows
+            ],
+            "bundle_ui": {
+                "kind": "v2_planner_owned_approval_preview",
+                "write_set": "planner_owned_preview",
+                "headline": "Approval required before applying staged changes.",
+                "rows": staged_rows,
+                "excluded_rows": excluded_rows,
+                "previous_priority": previous_priority,
+                "new_priority": new_priority,
+                "locked_constraints": constraints,
+                "requirement_ledger_revision": requirement_revision,
+                "source_intent": intent,
+                "write_tool_name": write_tool_name,
+            },
+            "requirement_ledger_revision": requirement_revision,
+            "current_requirement_id": getattr(requirement, "id", None),
+            "mutation_requirements": mutation_requirements,
+            "locked_constraints": constraints,
+            "commit_state": "not_committed",
+            "session_id": sess.session_id,
+        }
+
+    def _direct_v2_write_tool_name(self, v2_run: Any) -> str | None:
+        trace = getattr(getattr(v2_run, "state", None), "execution_trace", None)
+        diagnostics = getattr(trace, "diagnostics", {}) if trace is not None else {}
+        candidates = diagnostics.get("dry_run_write_candidates") if isinstance(diagnostics, dict) else None
+        if isinstance(candidates, list):
+            return next((str(name) for name in candidates if str(name).strip()), None)
+        return None
+
+    def _direct_v2_stage_rows(
+        self,
+        *,
+        tool_outputs: list[dict[str, Any]],
+        constraints: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        rows: list[dict[str, Any]] = []
+        for output in tool_outputs:
+            body = output.get("result") if isinstance(output.get("result"), dict) else {}
+            data = body.get("data") if isinstance(body, dict) else None
+            if isinstance(data, list):
+                rows.extend(row for row in data if isinstance(row, dict))
+        safety = " ".join(str(item) for item in constraints.get("safety_constraints", []) or []).lower()
+        kept: list[dict[str, Any]] = []
+        excluded: list[dict[str, Any]] = []
+        priority = self._direct_v2_source_priority_constraint(constraints)
+        date_constraint = str(constraints.get("date") or "").strip().lower()
+        for row in rows:
+            if priority and str(row.get("priority") or "").strip().lower() != priority:
+                excluded.append({**row, "exclusion_reason": "priority_constraint"})
+                continue
+            if date_constraint and not self._direct_v2_row_matches_date_constraint(row, date_constraint):
+                excluded.append({**row, "exclusion_reason": "date_constraint"})
+                continue
+            kept.append(row)
+        rows = kept
+        if "blocked" in safety:
+            kept = []
+            for row in rows:
+                if str(row.get("status") or "").lower() == "blocked":
+                    excluded.append({**row, "exclusion_reason": "blocked_safety_constraint"})
+                else:
+                    kept.append(row)
+            rows = kept
+        return rows, excluded
+
+    def _direct_v2_source_priority_constraint(self, constraints: dict[str, Any]) -> str:
+        raw = constraints.get("priority")
+        if isinstance(raw, (list, tuple, set)):
+            values = [str(item).strip().lower() for item in raw if str(item).strip()]
+        else:
+            values = [str(raw).strip().lower()] if raw not in (None, "") else []
+        target = str(
+            constraints.get("new_priority")
+            or constraints.get("priority_to")
+            or constraints.get("target_priority")
+            or ""
+        ).strip().lower()
+        candidates = [value for value in values if value and value != target]
+        return candidates[0] if candidates else (values[0] if values else "")
+
+    def _direct_v2_row_matches_date_constraint(self, row: dict[str, Any], date_constraint: str) -> bool:
+        if date_constraint != "this week":
+            return True
+        raw = row.get("deadline") or row.get("due_date") or row.get("due")
+        due_date = self._direct_v2_parse_date(raw)
+        if due_date is None:
+            return False
+        today = datetime.utcnow().date()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=7)
+        return week_start <= due_date < week_end
+
+    def _direct_v2_parse_date(self, raw: Any) -> Any | None:
+        if raw in (None, ""):
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except Exception:
+            pass
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
 
     async def _maybe_create_direct_v2_rag_response(
         self,
@@ -672,7 +1433,11 @@ class PlanCreationService:
             return None
 
         requirement = document_requirements[0]
-        query = requirement.goal or intent
+        query = self._rag_query_with_required_machine_context(
+            requirement.goal or intent,
+            intent=intent,
+            semantic_frame=semantic_frame,
+        )
         answer = ""
         sources: list[Any] = []
         safety_content: str | None = None
@@ -783,6 +1548,9 @@ class PlanCreationService:
             raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
         latest_user = await self._latest_user_message(db=db, session_id=sess.session_id)
+        cancelled_response = await self._cancelled_plan_response_if_needed(db=db, sess=sess)
+        if cancelled_response:
+            return cancelled_response
 
         if sess.plan_id:
             existing = (await db.execute(select(PlanRow).where(PlanRow.plan_id == sess.plan_id))).scalars().first()
@@ -828,10 +1596,10 @@ class PlanCreationService:
             output_error = self._tool_output_error(raw_output)
             resolved_step_status = step_status
             resolved_completed_at = step_completed_at
-            if persisted_status == "COMPLETED" and blocked_by_failed_step:
+            if persisted_status in {"COMPLETED", "FAILED"} and blocked_by_failed_step:
                 resolved_step_status = "NOT_STARTED"
                 resolved_completed_at = None
-            elif persisted_status == "COMPLETED" and output_status in {"FAILED", "AMBIGUOUS"}:
+            elif persisted_status in {"COMPLETED", "FAILED"} and output_status in {"FAILED", "AMBIGUOUS"}:
                 resolved_step_status = output_status
                 resolved_completed_at = completed_at or datetime.utcnow()
                 blocked_by_failed_step = True
@@ -868,8 +1636,12 @@ class PlanCreationService:
         sess.plan_hash = plan_row.plan_hash
         sess.current_step_index = 0
         sess.pending_user_message = None
+        context_for_session = dict(context_to_keep or {}) if isinstance(context_to_keep, dict) else None
+        skip_completed_narrative = False
+        if context_for_session is not None:
+            skip_completed_narrative = bool(context_for_session.pop("skip_completed_narrative_adapter", False))
         if planner_no_action:
-            blocked_context = dict(context_to_keep or {})
+            blocked_context = dict(context_for_session or {})
             blocked_context["blocked_reason"] = PLANNER_NO_ACTION_REASON
             blocked_context["planner_no_action"] = {
                 "backend_used": backend_used,
@@ -880,7 +1652,7 @@ class PlanCreationService:
             sess.replan_context = blocked_context
             sess.error = PLANNER_NO_ACTION_MESSAGE
         else:
-            sess.replan_context = context_to_keep if context_to_keep else None
+            sess.replan_context = context_for_session if context_for_session else None
             sess.error = None
         _bump_session_revision(sess)
         if planner_no_action:
@@ -896,6 +1668,10 @@ class PlanCreationService:
                 sess.completed_at = sess.completed_at or completed_at or datetime.utcnow()
         elif persisted_status == "PENDING_APPROVAL":
             sess.status = "WAITING_APPROVAL"
+        elif persisted_status == "FAILED":
+            sess.status = "FAILED"
+            sess.error = first_failed_summary or sess.error or "Execution failed before a safe final answer could be produced."
+            sess.completed_at = None
         else:
             sess.status = "PLANNING" if draft_steps else "IDLE"
         if not sess.name:
@@ -921,7 +1697,13 @@ class PlanCreationService:
         await db.commit()
 
         bundle_markdown = ""
-        if str(persisted_status) == "COMPLETED" and str(kind) == "execution" and tool_outputs and not first_failed_summary:
+        if (
+            str(persisted_status) == "COMPLETED"
+            and str(kind) == "execution"
+            and tool_outputs
+            and not first_failed_summary
+            and not skip_completed_narrative
+        ):
             try:
                 tool_outputs_compact = compact_tool_outputs_for_narrative(tool_outputs)
                 bundle = await self._summary_adapter.synthesize_bundle_markdown(
@@ -1137,6 +1919,10 @@ class PlanCreationService:
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
         require_session_owner(sess, user)
+        cancelled_response = await self._cancelled_plan_response_if_needed(db=db, sess=sess)
+        if cancelled_response:
+            metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
+            return cancelled_response
 
         intent = sess.current_intent or ""
         latest_user = await self._latest_user_message(db=db, session_id=session_id)
@@ -1157,8 +1943,13 @@ class PlanCreationService:
         tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
         backend_used = "langgraph" if req.draft is None else "client"
         draft = req.draft
+        seeded_planner_handles_intent = self._seeded_planner_handles_intent(intent)
 
-        if getattr(self._settings, "factory_agent_engine", "legacy") == "v2" and draft is None:
+        if (
+            getattr(self._settings, "factory_agent_engine", "legacy") == "v2"
+            and draft is None
+            and not seeded_planner_handles_intent
+        ):
             tools_by_name = ensure_v2_rag_tool(tools_by_name)
             if not tools_by_name:
                 raise HTTPException(status_code=403, detail={"errors": ["No tools are allowed for this user role."]})
@@ -1177,7 +1968,7 @@ class PlanCreationService:
         if (
             semantic_frame.route.startswith("clarification.")
             and semantic_frame.missing_required_entities
-            and not self._seeded_planner_handles_intent(intent)
+            and not seeded_planner_handles_intent
         ):
             context_to_keep = await self._context_with_engine_trace(
                 intent=intent,
@@ -1293,7 +2084,11 @@ class PlanCreationService:
                 raise HTTPException(status_code=400, detail={"errors": ["Cannot auto-generate plan without a current intent."]})
             scoped_tools = [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
             if mode == "plan":
-                scoped_tools = [tool for tool in scoped_tools if tool.is_read_only]
+                if not seeded_planner_handles_intent:
+                    scoped_tools = [tool for tool in scoped_tools if tool.is_read_only]
+            if seeded_planner_handles_intent:
+                scoped_tools = list(tools_by_name.values())
+                scoped_names = {tool.name for tool in scoped_tools}
             context_to_keep: dict[str, Any] | None = None
             try:
                 if scoped_tools:

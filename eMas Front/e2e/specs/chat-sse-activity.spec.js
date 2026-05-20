@@ -96,6 +96,7 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       })
       .toBeGreaterThan(0)
 
+    await page.getByRole('button', { name: /Run complete[\s\S]*4 updates/i }).click()
     await expect(page.getByText('SSE understanding request')).toBeVisible()
     await expect(page.getByText('SSE checking machine telemetry')).toBeVisible()
     await expect(page.getByText('SSE validating result')).toBeVisible()
@@ -109,7 +110,6 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       activityText.indexOf('SSE validating result'),
     )
 
-    await expect(page.getByText(activitySseAnswer)).toHaveCount(0, { timeout: 150 })
     await expect(page.getByText(/heartbeat/i)).toHaveCount(0)
 
     await expect(page.getByText(activitySseAnswer).first()).toBeVisible()

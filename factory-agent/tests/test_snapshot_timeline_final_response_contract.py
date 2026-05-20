@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 
 from factory_agent.schemas import TimelineEventResponse
+from factory_agent.services.session_snapshot_service import _has_terminal_event_after_latest_user
 from factory_agent.services.session_snapshot_service import _operator_result_content_for_completion
 from factory_agent.services.session_snapshot_service import _tool_result_completion_sort_key
 from tests.support.operation_assertions import assert_audit_rows_match
@@ -46,6 +47,36 @@ def test_completion_projection_prefers_tool_presentation_message_over_entity_car
     )
 
     assert _operator_result_content_for_completion(event) == "Phase 9 stream drop recovered by snapshot polling."
+
+
+def test_rejected_approval_decision_closes_turn_for_orphan_detection():
+    created_at = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    user = TimelineEventResponse(
+        event_id="user:1",
+        event_type="user_message",
+        content="Change medium priority jobs to high.",
+        created_at=created_at,
+        turn_id="turn-1",
+    )
+    rejected = TimelineEventResponse(
+        event_id="approval:1:rejected",
+        event_type="approval_decided",
+        content="Rejected request to change record.",
+        created_at=created_at + timedelta(seconds=1),
+        status="REJECTED",
+        turn_id="turn-1",
+    )
+    approved = TimelineEventResponse(
+        event_id="approval:1:approved",
+        event_type="approval_decided",
+        content="Approved request to change record.",
+        created_at=created_at + timedelta(seconds=1),
+        status="APPROVED",
+        turn_id="turn-1",
+    )
+
+    assert _has_terminal_event_after_latest_user([user, rejected]) is True
+    assert _has_terminal_event_after_latest_user([user, approved]) is False
 
 
 def test_completion_projection_uses_step_index_as_tool_result_tie_breaker():

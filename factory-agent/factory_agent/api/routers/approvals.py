@@ -23,6 +23,16 @@ StartGraphApprovalResumeTask = Callable[[AsyncSession, str], None]
 ResumeApprovedGraphApproval = Callable[..., Awaitable[None]]
 
 
+def _merge_approval_args(existing: Any, override: dict[str, Any]) -> dict[str, Any]:
+    base = dict(existing) if isinstance(existing, dict) else {}
+    merged = {**base, **override}
+    existing_bundle = base.get("bundle_ui") if isinstance(base.get("bundle_ui"), dict) else {}
+    override_bundle = override.get("bundle_ui") if isinstance(override.get("bundle_ui"), dict) else {}
+    if existing_bundle or override_bundle:
+        merged["bundle_ui"] = {**existing_bundle, **override_bundle}
+    return merged
+
+
 def build_approvals_router(
     *,
     session_mgr: SessionManager,
@@ -140,6 +150,26 @@ def build_approvals_router(
                     status_code=409,
                     detail="approval payload is stale for the newest requirement ledger revision",
                 )
+            if isinstance(req.args, dict) and req.args:
+                if not approval_payload_matches_newest_ledger_revision(req.args, context):
+                    row.status = "EXPIRED"
+                    row.decided_by = req.decided_by or "system"
+                    row.decided_at = now
+                    row.rejection_reason = "Approval payload is stale for the newest requirement ledger revision"
+                    context.pop("langgraph_pending_approval", None)
+                    sess.replan_context = context
+                    sess.status = "PLANNING"
+                    sess.completed_at = None
+                    sess.error = row.rejection_reason
+                    sess.version += 1
+                    sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
+                    sess.updated_at = now
+                    await db.commit()
+                    raise HTTPException(
+                        status_code=409,
+                        detail="approval payload is stale for the newest requirement ledger revision",
+                    )
+                row.args = _merge_approval_args(row.args, req.args)
             row.status = "APPROVED"
             row.decided_by = req.decided_by
             row.decided_at = now

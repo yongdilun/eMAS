@@ -7,6 +7,7 @@ import {
   pendingApprovalsForPage,
   sendPrompt,
   snapshotForPage,
+  startNewChatSession,
   waitForSessionStatus,
 } from '../support/fullStackScenarios.js'
 import {
@@ -69,6 +70,15 @@ async function finalAssistantText(sessionId) {
 async function visibleText(page) {
   return page.locator('body').evaluate((body) => body.innerText)
 }
+
+const reverseCascadeCompletePattern = /Done\. I updated 16 jobs across 2 approved business changes\./i
+const forwardCascadeCompletePattern = /Done\. I updated 21 jobs across 2 approved business changes\./i
+const highToLowGroupPattern = /(?:Original\s+)?High\s*->\s*Low:\s*11 jobs/i
+const lowToMediumGroupPattern = /(?:Original\s+)?Low\s*->\s*Medium:\s*5 jobs/i
+const mediumToHighGroupPattern = /(?:Original\s+)?Medium\s*->\s*High:\s*10 jobs/i
+const highToMediumGroupPattern = /(?:Original\s+)?High\s*->\s*Medium:\s*11 jobs/i
+const partialFailureVisiblePattern =
+  /Partial failure|Some rows were updated, but other rows failed|2 of 3 jobs updated across 2 approved business changes; 1 failed|2 succeeded, 1 failed[\s\S]*not all jobs succeeded/i
 
 async function runPhase6Oracle(testInfo, name, page, body) {
   return withSeededOracleArtifact(testInfo, name, async (artifact) => {
@@ -158,7 +168,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     })
     expect(second.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalLowJobIds].sort())
     await expect(page.getByText(/Approval 2 required: original LOW-priority jobs will become MEDIUM/i).first()).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByText(/Phase 14 cascading priority update complete/i)).toHaveCount(0)
+    await expect(page.getByText(reverseCascadeCompletePattern)).toHaveCount(0)
     await page.getByRole('button', { name: 'Approve' }).click()
 
     await expect
@@ -172,7 +182,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
       .toContain('Run complete')
     await expect
       .poll(async () => page.locator('body').evaluate((body) => body.innerText), { timeout: 30_000 })
-      .toContain('Phase 14 cascading priority update complete')
+      .toMatch(reverseCascadeCompletePattern)
     await expect(page.getByText('Run complete')).toBeVisible()
 
     await expectApprovalRowMatches(second.approval_id, {
@@ -235,7 +245,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
       mustExclude: [/Factory Agent needs attention/i, /3 succeeded, 0 failed/i],
     })
     expectFinalSummaryClaimsOnly(await visibleText(page), {
-      mustInclude: ['Phase 14 cascading priority update complete', 'Run complete'],
+      mustInclude: [reverseCascadeCompletePattern, 'Run complete', highToLowGroupPattern, lowToMediumGroupPattern],
       mustExclude: [/Factory Agent needs attention/i],
     })
   }))
@@ -303,7 +313,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     })
     expect(second.args.bundle_ui.rows.map((row) => row.job_id).sort()).toEqual([...originalHighJobIds].sort())
     await expect(page.getByText(/Approval 2 required: original HIGH-priority jobs will become MEDIUM/i).first()).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByText(/Phase 14 cascading priority update complete/i)).toHaveCount(0)
+    await expect(page.getByText(forwardCascadeCompletePattern)).toHaveCount(0)
     await page.getByRole('button', { name: 'Approve' }).click()
 
     await expect
@@ -360,12 +370,12 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     })
     await expect
       .poll(async () => visibleText(page), { timeout: 30_000 })
-      .toContain('Phase 14 cascading priority update complete')
+      .toMatch(forwardCascadeCompletePattern)
     await expect
       .poll(async () => visibleText(page), { timeout: 30_000 })
       .toContain('Run complete')
     expectFinalSummaryClaimsOnly(await visibleText(page), {
-      mustInclude: ['Phase 14 cascading priority update complete', 'Run complete'],
+      mustInclude: [forwardCascadeCompletePattern, 'Run complete', mediumToHighGroupPattern, highToMediumGroupPattern],
       mustExclude: [/Factory Agent needs attention/i],
     })
   }))
@@ -441,8 +451,6 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     await expect(page.getByText(/Run complete/i)).toHaveCount(0)
     await expect(page.getByText(/Phase 14 cascading priority update complete/i)).toHaveCount(0)
 
-    const rejectionReason = 'SO-005 second approval rejected; stop before second write.'
-    await page.getByPlaceholder('Optional rejection reason').fill(rejectionReason)
     await page.getByRole('button', { name: 'Reject' }).click()
 
     await expect
@@ -516,6 +524,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
       mustInclude: [/SO-005 second approval rejected|approval .*rejected|rejected .*approval|stopped/i],
       mustExclude: [
         /Run complete/i,
+        /Done\. I updated/i,
         /all changes succeeded/i,
         /all requested changes completed/i,
         /Phase 14 cascading priority update complete/i,
@@ -556,7 +565,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
       count: 3,
     })
     await expectSnapshotApprovalState(page, { status: 'FAILED', pendingApprovalId: null })
-    await expect(page.getByText(/2 succeeded, 1 failed[\s\S]*not all jobs succeeded/i).first()).toBeVisible()
+    await expect(page.getByText(partialFailureVisiblePattern).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toHaveCount(0)
 
     expect(await priorityForJob('JOB-SEED-005')).toBe('high')
@@ -590,7 +599,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
 
     const snapshot = await snapshotForPage(page)
     expect(snapshot.steps[0].status).toBe('FAILED')
-    expect(timelineText(snapshot)).toContain('not all jobs succeeded')
+    expect(timelineText(snapshot)).toMatch(/not all jobs succeeded|2 of 3 jobs updated|Partial failure/i)
     expect(timelineText(snapshot)).not.toMatch(/3 succeeded, 0 failed|all 3 jobs succeeded/i)
     expectTimelineEvidenceInOrder(snapshot, [
       {
@@ -610,8 +619,9 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
         predicate: (event) => event.event_type === 'session_failed' && event.status === 'FAILED',
       },
     ])
+    await expect.poll(async () => visibleText(page), { timeout: 10_000 }).toContain('JOB-SEED-MISSING-014')
     expectFinalSummaryClaimsOnly(await visibleText(page), {
-      mustInclude: [/2 succeeded, 1 failed[\s\S]*not all jobs succeeded/i, 'JOB-SEED-MISSING-014'],
+      mustInclude: [partialFailureVisiblePattern, 'JOB-SEED-MISSING-014'],
       mustExclude: [/Run complete/i, /3 succeeded, 0 failed/i, /all 3 jobs succeeded/i],
     })
     expectFinalSummaryClaimsOnly(await finalAssistantText(sessionId), {
@@ -862,7 +872,7 @@ test.describe('Phase 14 data integrity and side-effect safety @data-integrity', 
     await expectRowsUnchangedFromInitial(initial.rowsById, Object.keys(canonicalJobPriorities))
     expectNoSuccessfulAudit(await dataIntegrityAudit(staleSessionId))
 
-    await page.getByRole('button', { name: 'New Session' }).click()
+    await startNewChatSession(page)
     await sendPrompt(page, 'Run Phase 14 expired approval seeded job update')
     const expired = await pendingApprovalMatching(page, 'stale_or_expired_update')
     const expiredSessionId = await activeSessionId(page)

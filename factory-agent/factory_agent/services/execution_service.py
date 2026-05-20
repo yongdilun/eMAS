@@ -62,8 +62,11 @@ class ExecutionService:
             context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
         )
         scoped_tools = [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
-        if mode == "plan":
+        seeded_planner_handles_intent = self._plan_service._seeded_planner_handles_intent(intent)
+        if mode == "plan" and not seeded_planner_handles_intent:
             scoped_tools = [tool for tool in scoped_tools if tool.is_read_only]
+        if seeded_planner_handles_intent and not scoped_tools:
+            scoped_tools = list(tools_by_name.values())
         try:
             planner_context = await self._memory_manager.build_planner_context(
                 db,
@@ -180,6 +183,8 @@ class ExecutionService:
         if not sess:
             raise HTTPException(status_code=404, detail="session not found")
         require_session_owner(sess, user)
+        if self._plan_service._is_cancelled_session(sess):
+            return sess
         if expected_version is not None and sess.version != expected_version:
             raise HTTPException(status_code=409, detail=f"version_conflict expected={expected_version} actual={sess.version}")
         current_plan = await self._plan_service._load_current_plan(db=db, session_id=session_id)

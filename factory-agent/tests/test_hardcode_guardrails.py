@@ -33,6 +33,16 @@ HARD_QUERY_EXACT_PROMPTS = [
     "Show status for machine M-CNC-01 only. Do not show other machine details.",
     "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3.",
     "Show M-CNC-01 status, then show JOB-SEED-001 status, then list the next 3 low priority jobs sorted by deadline.",
+    (
+        "Show M-CNC-01 status, show JOB-SEED-001 and JOB-SEED-002 status, then list the next 3 "
+        "low-priority jobs sorted by deadline with only job id, status, priority, and deadline. "
+        "If any listed job is blocked, explain why before suggesting any update."
+    ),
+    (
+        "Change all high-priority jobs due this week to medium, but do not update blocked jobs. "
+        "Show what would change and ask approval before applying."
+    ),
+    "According to OSHA, what notification is required before starting lockout?",
 ]
 SYNTHETIC_LOTO_POLICY_SOURCE_RE = re.compile(
     r"loto_notification_requirement|LOTO Notification Requirements|policy:loto-notification-requirement"

@@ -182,12 +182,15 @@ export async function expectGraphPriorityApproval(approvalOrId, expected) {
   const bundle = approval.args?.bundle_ui || {}
   expect(approval.subject_type).toBe('graph')
   expect(approval.status).toBe(expected.status)
-  expect(bundle.kind).toBe('job_priority_bundle')
-  expect(bundle.previous_priority).toBe(expected.originalPriority)
-  expect(bundle.new_priority).toBe(expected.requestedPriority)
+  expect(['job_priority_bundle', 'v2_planner_owned_approval_preview']).toContain(bundle.kind)
+  const lockedConstraints = bundle.locked_constraints || {}
+  const previousPriority = bundle.previous_priority || bundle.original_priority || lockedConstraints.priority || lockedConstraints.priority_from
+  const newPriority = bundle.new_priority || lockedConstraints.new_priority || lockedConstraints.priority_to
+  expect(previousPriority).toBe(expected.originalPriority)
+  expect(newPriority).toBe(expected.requestedPriority)
   expect(bundleJobIds(approval)).toEqual([...expected.jobIds].sort())
   for (const row of bundleRows(approval)) {
-    expect(row.previous_priority).toBe(expected.originalPriority)
+    expect(row.previous_priority || row.original_priority || row.priority).toBe(expected.originalPriority)
     expect(row.new_priority).toBe(expected.requestedPriority)
   }
   expect(approval.args?.count).toBe(expected.jobIds.length)

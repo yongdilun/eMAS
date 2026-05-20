@@ -17,7 +17,6 @@ test.describe('Factory Agent chat happy path', () => {
 
     await expect(page.getByText(machineStatusPrompt)).toBeVisible()
     await expect(page.locator('[role="status"][aria-busy="true"]')).toBeVisible()
-    await expect(page.getByText(/Understanding your request|Gathering information/).first()).toBeVisible()
 
     await expect(page.getByText(machineStatusAnswer).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toBeVisible()

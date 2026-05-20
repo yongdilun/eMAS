@@ -6,6 +6,7 @@ import {
   pendingApprovalsForPage,
   sendPrompt,
   snapshotForPage,
+  startNewChatSession,
   waitForSessionStatus,
 } from '../support/fullStackScenarios.js'
 import {
@@ -66,6 +67,18 @@ function approvalHeadlinePattern(number, source, target) {
   return new RegExp(`Approval ${number} required: original ${source.toUpperCase()}-priority jobs will become ${target.toUpperCase()}`, 'i')
 }
 
+function capitalizedPriority(value) {
+  return String(value || '').replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+function cascadeCompletePattern(totalJobs) {
+  return new RegExp(`Done\\. I updated ${totalJobs} jobs across 2 approved business changes\\.`, 'i')
+}
+
+function businessGroupPattern(source, target, count) {
+  return new RegExp(`(?:Original\\s+)?${capitalizedPriority(source)}\\s*->\\s*${capitalizedPriority(target)}:\\s*${count} jobs`, 'i')
+}
+
 async function finalAssistantText(sessionId) {
   const messages = await sessionMessages(sessionId)
   return [...messages].reverse().find((message) => message.role === 'assistant')?.content || ''
@@ -85,6 +98,9 @@ async function runCascadeInvariant(page, scenario, testInfo) {
   const secondWriteSet = `original_${secondChange.source}_to_${secondChange.target}`
   const firstJobIds = jobIdsByPriority(firstChange.source)
   const secondJobIds = jobIdsByPriority(secondChange.source)
+  const finalCompletePattern = cascadeCompletePattern(firstJobIds.length + secondJobIds.length)
+  const firstBusinessGroupPattern = businessGroupPattern(firstChange.source, firstChange.target, firstJobIds.length)
+  const secondBusinessGroupPattern = businessGroupPattern(secondChange.source, secondChange.target, secondJobIds.length)
 
   await openChat(page)
   await sendPrompt(page, scenario.prompt)
@@ -105,7 +121,7 @@ async function runCascadeInvariant(page, scenario, testInfo) {
     `original ${secondChange.source}-priority jobs become ${secondChange.target}`,
   )
   await expect(page.getByText(approvalHeadlinePattern(1, firstChange.source, firstChange.target)).first()).toBeVisible()
-  await expect(page.getByText(/Phase 19 cascade matrix complete|Phase 14 cascading priority update complete/i)).toHaveCount(0)
+  await expect(page.getByText(finalCompletePattern)).toHaveCount(0)
   await page.getByRole('button', { name: 'Approve' }).click()
 
   await expectJobsAtPriority(firstJobIds, firstChange.target)
@@ -237,9 +253,9 @@ async function runCascadeInvariant(page, scenario, testInfo) {
       async () => {
         const text = await visibleText(page)
         return (
-          text.includes('Phase 19 cascade matrix complete') &&
-          text.includes(`${firstChange.source}->${firstChange.target} ${firstJobIds.length}`) &&
-          text.includes(`${secondChange.source}->${secondChange.target} ${secondJobIds.length}`)
+          finalCompletePattern.test(text) &&
+          firstBusinessGroupPattern.test(text) &&
+          secondBusinessGroupPattern.test(text)
         )
       },
       { timeout: 30_000 },
@@ -248,9 +264,9 @@ async function runCascadeInvariant(page, scenario, testInfo) {
   expectFinalSummaryClaimsOnly(await visibleText(page), {
     mustInclude: [
       'Run complete',
-      'Phase 19 cascade matrix complete',
-      `${firstChange.source}->${firstChange.target} ${firstJobIds.length}`,
-      `${secondChange.source}->${secondChange.target} ${secondJobIds.length}`,
+      finalCompletePattern,
+      firstBusinessGroupPattern,
+      secondBusinessGroupPattern,
     ],
     mustExclude: [
       /Factory Agent needs attention/i,
@@ -275,9 +291,10 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
       if (index === 0) {
         await openChat(page)
       } else {
-        await page.getByRole('button', { name: 'New Session' }).click()
+        await startNewChatSession(page)
       }
       await sendPrompt(page, entry.source_prompt)
+      await waitForSessionStatus(page, entry.expected.required_final_state)
 
       await expect(page.getByText(/Controlled seeded RAG answer/i).first()).toBeVisible()
       await expect(page.getByText(/M-CNC-01/i).first()).toBeVisible()
@@ -313,7 +330,9 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
 
   test('SO-026 multi-turn LOTO follow-up resolves it to the previous machine before routing to RAG', async ({ page }) => {
     await openChat(page)
+    await startNewChatSession(page)
     await sendPrompt(page, 'What is the status of M-CNC-01?')
+    await waitForSessionStatus(page, 'COMPLETED')
 
     await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible()
     await expect(page.getByText('Run complete').first()).toBeVisible()
@@ -353,6 +372,7 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
     await sendPrompt(page, 'List jobs for Phase 9 large structured result')
 
     await expect(page.getByText(/Phase 9 large structured result rendered 80 seeded rows/i).first()).toBeVisible()
+    await page.getByText('Results (80)').click()
     await expect(page.getByRole('table').first()).toBeVisible()
     await expect(page.getByText('Showing 20 of 80 rows.')).toBeVisible()
     await expect(page.getByText(/JOB-SEED-LARGE-001/i).first()).toBeVisible()

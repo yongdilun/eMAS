@@ -21,6 +21,7 @@ from factory_agent.planning.intent import (
 from factory_agent.planning.tool_selector import ToolSelector
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import ToolInfo
+from factory_agent.services.plan_creation_service import PlanCreationService
 from factory_agent.testing_seeded_adapters import SeededPlaywrightPlanner, SeededPlaywrightRAGPipeline
 from tests.support.stateful_oracle_harness import load_oracle
 
@@ -371,6 +372,27 @@ def test_phase19_scenario_116_loto_wording_matrix_uses_same_rag_route():
         assert frame.route == "rag.loto_procedure"
         assert frame.normalized_entities["machine_id"] == ["M-CNC-01"]
         assert "tool.read.machine_status" in (frame.negative_route_assertions or [])
+
+
+def test_phase19_machine_specific_rag_query_preserves_semantic_machine_context():
+    prompt = "### Safety check\nLOTO for `M-CNC-01` before touching the spindle."
+    frame = semantic_frame_for_text(prompt)
+    service = object.__new__(PlanCreationService)
+
+    query = service._rag_query_with_required_machine_context(
+        "Which LOTO procedure applies?",
+        intent=prompt,
+        semantic_frame=frame,
+    )
+    already_specific = service._rag_query_with_required_machine_context(
+        "Which LOTO procedure applies for M-CNC-01?",
+        intent=prompt,
+        semantic_frame=frame,
+    )
+
+    assert "M-CNC-01" in query
+    assert query.count("M-CNC-01") == 1
+    assert already_specific == "Which LOTO procedure applies for M-CNC-01?"
 
 
 @pytest.mark.parametrize(

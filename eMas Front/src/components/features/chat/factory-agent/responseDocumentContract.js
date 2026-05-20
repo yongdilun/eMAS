@@ -55,6 +55,8 @@ const ACTIVITY_STATE_BY_STEP = {
 const SAFETY_ADMONITION_RE = /(?:^|\n)[ \t]*:::\s*safety\b[\s\S]*?(?:\n[ \t]*:::[ \t]*(?=\n|$)|$)/gi
 const FOOTNOTE_DEFINITION_RE = /^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*/gm
 const FOOTNOTE_MARKER_RE = /\[\^[^\]\n]+\]/g
+const INTERNAL_ROW_KEYS = new Set(['operation_id', 'approval_id', 'step_id', 'tool_name', 'row_id'])
+const MAX_VISIBLE_TABLE_ROWS = 20
 
 function cleanString(value) {
   if (value == null) return ''
@@ -161,6 +163,7 @@ function orderedRowKeys(rows) {
   const seen = new Set()
   const keys = []
   for (const key of preferred) {
+    if (INTERNAL_ROW_KEYS.has(key)) continue
     if (rows.some((row) => Object.prototype.hasOwnProperty.call(row, key))) {
       seen.add(key)
       keys.push(key)
@@ -168,6 +171,7 @@ function orderedRowKeys(rows) {
   }
   for (const row of rows) {
     for (const key of Object.keys(row || {})) {
+      if (INTERNAL_ROW_KEYS.has(key)) continue
       if (!seen.has(key)) {
         seen.add(key)
         keys.push(key)
@@ -182,13 +186,14 @@ export function tablePresentationFromResponseRows(rows, title = 'Affected record
   if (!safeRows.length) return null
   const keys = orderedRowKeys(safeRows)
   if (!keys.length) return null
+  const visibleRows = safeRows.slice(0, MAX_VISIBLE_TABLE_ROWS)
   return {
     render_hint: 'table',
     title,
     table: {
       columns: keys.map((key) => ({ key, label: humanizeResponseDocumentKey(key) })),
-      rows: safeRows,
-      displayed_rows: safeRows.length,
+      rows: visibleRows,
+      displayed_rows: visibleRows.length,
       total_rows: safeRows.length,
     },
   }

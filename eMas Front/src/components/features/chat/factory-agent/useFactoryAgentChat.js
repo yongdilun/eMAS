@@ -139,6 +139,7 @@ export function useFactoryAgentChat() {
 
   const sessionPollTimerRef = useRef(null)
   const sendingGuardRef = useRef(false)
+  const cancelRequestedSessionIdsRef = useRef(new Set())
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
@@ -586,6 +587,9 @@ export function useFactoryAgentChat() {
   }, [mergeSessionSummary, session?.session_id])
 
   const executeWithRetry = useCallback(async (sessionId, options = {}) => {
+    if (cancelRequestedSessionIdsRef.current.has(sessionId)) {
+      return safelyRefreshSnapshot(sessionId)
+    }
     const preferBackground = options.background ?? true
     try {
       // Prefer background execution so the UI can stream progress via polling
@@ -608,6 +612,9 @@ export function useFactoryAgentChat() {
     await factoryAgentApi.addMessage(sessionId, { role: 'user', content: text, mode })
     await safelyRefreshSnapshot(sessionId)
     const planResp = await factoryAgentApi.createPlan(sessionId)
+    if (cancelRequestedSessionIdsRef.current.has(sessionId)) {
+      return safelyRefreshSnapshot(sessionId)
+    }
     if (!(planResp?.status === 'COMPLETED')) {
       await executeWithRetry(sessionId, { background: mode !== 'plan' })
     }
@@ -629,6 +636,7 @@ export function useFactoryAgentChat() {
       // Keep one session as the chat "thread" until the user explicitly starts a new one.
       if (!current) current = await startNewSession()
       if (!current) return
+      cancelRequestedSessionIdsRef.current.delete(current.session_id)
       startClientProgress(current.session_id, text)
 
       if ([FACTORY_AGENT_STATUS.IDLE, FACTORY_AGENT_STATUS.BLOCKED, FACTORY_AGENT_STATUS.FAILED, FACTORY_AGENT_STATUS.COMPLETED].includes(current.status)) {
@@ -692,6 +700,7 @@ export function useFactoryAgentChat() {
 
   const handleCancel = useCallback(async () => {
     if (!session?.session_id) return
+    cancelRequestedSessionIdsRef.current.add(session.session_id)
     setIsCancelling(true)
     setError(null)
     try {

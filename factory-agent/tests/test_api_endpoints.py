@@ -1331,7 +1331,7 @@ async def test_langchain_planner_invalid_output_rejected(sessionmaker_override, 
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner(), factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         r = await client.post("/sessions", json={"user_id": "u1"})
         session_id = r.json()["session_id"]
@@ -2144,6 +2144,7 @@ async def test_langchain_invalid_output_fallback_disabled_rejected_and_not_execu
     app, _ = await _make_app(
         sessionmaker_override,
         planner_adapter=FakePlanner(),
+        factory_agent_engine="legacy",
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -2290,6 +2291,40 @@ async def test_cancel_marks_remaining_steps_skipped(sessionmaker_override, db_se
     assert status_by_index[0] == "DONE"
     assert status_by_index[1] == "SKIPPED"
     assert status_by_index[2] == "SKIPPED"
+
+
+@pytest.mark.asyncio
+async def test_late_plan_or_execute_after_cancel_does_not_revive_session(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
+    await _seed_session_plan_with_steps(
+        db_session,
+        session_id="sess-cancel-late",
+        plan_id="plan-cancel-late",
+        plan_hash="hash-cancel-late",
+        plan_version=1,
+        steps=[
+            {"step_index": 0, "tool_name": "get__machines", "args": {}, "status": "NOT_STARTED"},
+        ],
+    )
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        cancel = await client.post("/sessions/sess-cancel-late/cancel")
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] == "IDLE"
+
+        late_plan = await client.post("/sessions/sess-cancel-late/plans", json={})
+        assert late_plan.status_code == 200
+        assert late_plan.json()["status"] == "COMPLETED"
+
+        late_execute = await client.post("/sessions/sess-cancel-late/execute?background=true", json={})
+        assert late_execute.status_code == 200
+        assert late_execute.json()["status"] == "IDLE"
+
+    sess = await db_session.get(Session, "sess-cancel-late")
+    assert sess.status == "IDLE"
+    assert sess.error == "Cancelled"
 
 
 @pytest.mark.asyncio

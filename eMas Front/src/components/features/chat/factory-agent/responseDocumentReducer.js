@@ -194,6 +194,18 @@ function compareOrder(incoming, current) {
   return incoming.revision - current.revision
 }
 
+const TERMINAL_DOCUMENT_STATES = new Set(['completed', 'failed', 'blocked', 'rejected', 'expired', 'cancelled'])
+
+function documentState(value) {
+  return cleanString(value?.state || value?.status).toLowerCase()
+}
+
+function terminalStateSupersedesCurrent(incoming, current) {
+  const incomingState = documentState(incoming?.document)
+  const currentState = documentState(current?.document)
+  return TERMINAL_DOCUMENT_STATES.has(incomingState) && !TERMINAL_DOCUMENT_STATES.has(currentState)
+}
+
 export function applyResponseDocumentUpdate(currentState, rawIncoming) {
   const current = createResponseDocumentReducerState(currentState || {})
   const incoming = normalizeIncoming(rawIncoming)
@@ -250,6 +262,10 @@ export function applyResponseDocumentUpdate(currentState, rawIncoming) {
 
   if (incoming.contentHash === current.contentHash) {
     return reject(current, incoming, 'ignored_duplicate_revision')
+  }
+
+  if (terminalStateSupersedesCurrent(incoming, current)) {
+    return accept(incoming, 'accepted_terminal_equal_revision_over_active')
   }
 
   return reject(current, incoming, 'ignored_conflicting_equal_revision')

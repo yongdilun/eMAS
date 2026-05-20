@@ -14,6 +14,14 @@ def is_langgraph_plan(plan: PlanRow | None) -> bool:
     return bool(plan and str(getattr(plan, "created_by", "") or "").strip().lower() == "langgraph")
 
 
+def is_planner_owned_v2_plan(plan: PlanRow | None) -> bool:
+    return bool(plan and str(getattr(plan, "created_by", "") or "").strip().lower() == "v2_planner_loop")
+
+
+def allows_persisted_step_projection(plan: PlanRow | None) -> bool:
+    return is_langgraph_plan(plan) or is_planner_owned_v2_plan(plan)
+
+
 def checkpoint_state_is_langgraph_native(state: object) -> bool:
     return isinstance(state, dict) and state.get("kind") == "langgraph_native_checkpoint"
 

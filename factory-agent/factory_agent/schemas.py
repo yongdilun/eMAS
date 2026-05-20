@@ -112,7 +112,7 @@ AgentGraphRunStatus = Literal[
 ]
 MessageMode = Literal["normal", "plan"]
 PlanKind = Literal["execution", "discovery"]
-PlanStatus = Literal["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED", "INVALIDATED"]
+PlanStatus = Literal["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED", "FAILED", "INVALIDATED"]
 ApprovalSubjectType = Literal["step", "plan", "graph"]
 
 StepStatus = Literal[
@@ -418,8 +418,10 @@ class ShortMessageBlock(ResponseBlockBase):
 
 class ApprovalRequiredBlock(ResponseBlockBase):
     type: Literal["approval_required"] = "approval_required"
+    contract: Literal["business_change_v1"] | None = None
     approval_id: str = Field(min_length=1)
     operation_id: str | None = None
+    args: dict[str, Any] | None = None
     title: str = "Approval required"
     summary: str = Field(min_length=1)
     rows: list[dict[str, Any]] = Field(default_factory=list)

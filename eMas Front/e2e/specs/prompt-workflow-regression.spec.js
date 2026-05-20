@@ -10,6 +10,8 @@ import {
   phase18MockRagAnswer,
 } from '../support/intentEntityScenarios.js'
 
+const attentionDiagnosticVisiblePattern = /Factory Agent chat could not start|Prompt route not matched|Factory Agent needs attention/i
+
 async function openChat(page) {
   await page.goto('/')
   await page.getByRole('button', { name: chatSelectors.openAssistantButtonName }).click()
@@ -43,7 +45,7 @@ test.describe('Phase 19 prompt regression diagnostics @prompt-regression', () =>
 
       await expect.poll(async () => (await visibleDialogText(page)).includes(phase18MockRagAnswer), { timeout: 30_000 }).toBe(true)
       await expect(page.getByText(/Which machine ID/i)).toHaveCount(0)
-      await expect(page.getByText('Factory Agent needs attention')).toHaveCount(0)
+      await expect(page.getByText(attentionDiagnosticVisiblePattern)).toHaveCount(0)
       await expect(page.getByText('Run complete').last()).toBeVisible()
     }
   })
@@ -52,7 +54,7 @@ test.describe('Phase 19 prompt regression diagnostics @prompt-regression', () =>
     await openChat(page)
     await sendPrompt(page, phase19UnknownPrompt)
 
-    await expect(page.getByText('Factory Agent needs attention')).toBeVisible()
+    await expect(page.getByText(attentionDiagnosticVisiblePattern).first()).toBeVisible()
     await expect(page.getByText(phase19UnknownDiagnostic).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toHaveCount(0)
   })
