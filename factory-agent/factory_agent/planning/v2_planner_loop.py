@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..config import FactoryAgentEngine, normalize_factory_agent_engine
+from ..config import normalize_factory_agent_engine
 from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
 from .intent import split_user_intents
 from .tool_selector import ToolSelector
@@ -18,6 +18,7 @@ from .v2_contracts import (
     EvidenceLedgerEntry,
     ExecutionDetectors,
     ExecutionTrace,
+    EngineVersion,
     HydratedToolCard,
     LegacyRagRouteMetadata,
     LegacyRagShortcutTrace,
@@ -109,7 +110,7 @@ def legacy_rag_signals(
 def build_legacy_execution_trace(
     signals: LegacyExecutionSignals | None = None,
     *,
-    engine_version: FactoryAgentEngine = "legacy",
+    engine_version: EngineVersion = "legacy",
 ) -> ExecutionTrace:
     signals = signals or LegacyExecutionSignals()
     generated_by = signals.generated_by if signals.generated_by in {
@@ -197,6 +198,12 @@ class PlannerOwnedV2Loop:
     def __init__(self, tool_selector: ToolSelector) -> None:
         self._tool_selector = tool_selector
 
+    def _resolve_loop_mode(self, engine_mode: str | None) -> EngineVersion:
+        raw = str(engine_mode or "v2").strip().lower()
+        if raw == "v2_shadow":
+            return "v2_shadow"
+        return normalize_factory_agent_engine(raw)
+
     async def run(
         self,
         *,
@@ -207,13 +214,7 @@ class PlannerOwnedV2Loop:
         mode: str = "normal",
         direct_test_evidence: Sequence[EvidenceLedgerEntry | Mapping[str, Any]] | None = None,
     ) -> PlannerOwnedV2LoopRun:
-        resolved_mode = normalize_factory_agent_engine(engine_mode)
-        if resolved_mode == "legacy":
-            state = PlannerOwnedLoopV2State(
-                engine_version="legacy",
-                execution_trace=build_legacy_execution_trace(legacy_signals),
-            )
-            return PlannerOwnedV2LoopRun(state=state)
+        resolved_mode = self._resolve_loop_mode(engine_mode)
 
         generated_by = "v2_shadow_planner_loop" if resolved_mode == "v2_shadow" else "v2_planner_loop"
         trace = ExecutionTrace(engine_version=resolved_mode, generated_by=generated_by)

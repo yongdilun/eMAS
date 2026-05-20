@@ -23,7 +23,7 @@ def _settings(**overrides: Any) -> Settings:
         go_api_base_url="http://testserver",
         tool_selector_backend="retrieval",
         tool_selector_reranker_enabled=False,
-        factory_agent_engine="legacy",
+        factory_agent_engine="v2",
         **overrides,
     )
     return values
@@ -140,8 +140,8 @@ class RecordingSelector:
 def test_phase5_engine_modes_remain_explicit_while_phase8_default_is_v2():
     assert normalize_factory_agent_engine(None) == "v2"
     assert normalize_factory_agent_engine("not-a-mode") == "v2"
-    assert normalize_factory_agent_engine("legacy") == "legacy"
-    assert _settings().factory_agent_engine == "legacy"
+    assert normalize_factory_agent_engine("legacy") == "v2"
+    assert _settings().factory_agent_engine == "v2"
 
 
 @pytest.mark.asyncio

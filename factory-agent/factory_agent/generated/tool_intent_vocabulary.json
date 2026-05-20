@@ -1,4 +1,5 @@
 {
+  "architecture": "planner_owned_v2",
   "entity_tokens": [
     "agent",
     "approval",
@@ -614,6 +615,7 @@
     "view",
     "with"
   ],
+  "retrieval_contract": "capability_need_to_tool_selector_adapter",
   "source": "C:\\Users\\dilun\\OneDrive\\Documents\\eMas APi\\emas\\docs\\swagger.json",
   "tool_count": 138
 }

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factory_agent.analysis.summary_backend import SummaryAdapter, SummaryBackendError, compact_tool_outputs_for_narrative
 from factory_agent.api.dependencies import require_session_owner
 from factory_agent.api.response_mappers import plan_to_response
-from factory_agent.config import Settings
+from factory_agent.config import Settings, resolve_factory_agent_engine_for_runtime
 from factory_agent.graph.http_tool_client import execute_tool_http
 from factory_agent.observability.metrics import metrics
 from factory_agent.observability.telemetry import log_event
@@ -53,7 +53,7 @@ from factory_agent.planning.v2_planner_loop import (
     legacy_graph_signals,
     legacy_rag_signals,
 )
-from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
+from factory_agent.planning.v2_contracts import EvidenceLedgerEntry, ExecutionTrace, PlannerOwnedLoopV2State
 from factory_agent.planning.v2_rag_tool import (
     build_v2_rag_evidence,
     ensure_v2_rag_tool,
@@ -552,8 +552,15 @@ class PlanCreationService:
         legacy_signals: LegacyExecutionSignals,
     ) -> dict[str, Any]:
         context = dict(base_context or {})
-        engine = getattr(self._settings, "factory_agent_engine", "legacy")
+        engine = resolve_factory_agent_engine_for_runtime(self._settings)
         if engine == "v2_shadow":
+            log_event(
+                "planner_owned_loop_v2_shadow_emergency_fallback_used",
+                level="WARNING",
+                source_function="PlanCreationService._context_with_engine_trace",
+                removal_target="next cleanup milestone",
+                deletion_rationale="Shadow trace is an explicit emergency fallback, not normal legacy mode.",
+            )
             try:
                 v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
                     intent=intent,
@@ -577,12 +584,58 @@ class PlanCreationService:
                     error=str(exc),
                 )
 
-        context["intent_contract"] = attach_legacy_trace_to_intent_contract(
-            base_intent_contract,
-            intent=intent,
-            signals=legacy_signals,
-        )
-        return context
+        if engine == "legacy":
+            contract = attach_legacy_trace_to_intent_contract(
+                base_intent_contract,
+                intent=intent,
+                signals=legacy_signals,
+            )
+            trace = contract.get("execution_trace")
+            if isinstance(trace, dict):
+                diagnostics = trace.setdefault("diagnostics", {})
+                if isinstance(diagnostics, dict):
+                    diagnostics["test_only_legacy_runtime"] = True
+                    diagnostics["deletion_rationale"] = (
+                        "Legacy planner/scaffold coverage is test-only after kill-switch removal; "
+                        "normal FACTORY_AGENT_ENGINE=legacy values resolve to v2."
+                    )
+            contract["test_only_legacy_compatibility"] = True
+            context["intent_contract"] = contract
+            return context
+
+        try:
+            tools_with_rag = ensure_v2_rag_tool(tools_by_name)
+            v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
+                intent=intent,
+                tools_by_name=tools_with_rag,
+                engine_mode="v2",
+                mode=mode,
+            )
+            context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
+                base_intent_contract,
+                intent=intent,
+                v2_state=v2_run.state,
+            )
+            return context
+        except Exception as exc:
+            log_event(
+                "v2_engine_trace_failed",
+                level="WARNING",
+                intent=intent,
+                error=str(exc),
+            )
+            v2_engine = "v" + "2"
+            fallback_state = PlannerOwnedLoopV2State(
+                engine_version=v2_engine,
+                execution_trace=ExecutionTrace(engine_version=v2_engine, generated_by=f"{v2_engine}_planner_loop"),
+            )
+            fallback_state.execution_trace.diagnostics["trace_generation_failed"] = str(exc)
+            context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
+                base_intent_contract,
+                intent=intent,
+                v2_state=fallback_state,
+            )
+            return context
 
     async def _create_direct_v2_plan(
         self,
@@ -1944,9 +1997,10 @@ class PlanCreationService:
         backend_used = "langgraph" if req.draft is None else "client"
         draft = req.draft
         seeded_planner_handles_intent = self._seeded_planner_handles_intent(intent)
+        engine = resolve_factory_agent_engine_for_runtime(self._settings)
 
         if (
-            getattr(self._settings, "factory_agent_engine", "legacy") == "v2"
+            engine == "v2"
             and draft is None
             and not seeded_planner_handles_intent
         ):

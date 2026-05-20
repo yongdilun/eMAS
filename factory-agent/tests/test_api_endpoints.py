@@ -20,37 +20,34 @@ from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.registry.tool_registry import ToolRegistry
 
 
-LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.xfail(
+LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.skip(
     reason=(
-        "Legacy compatibility expectation from the pre-Phase-9 create-plan/execute "
-        "contract; graph-native execution no longer treats auto-created PlanStep rows "
-        "as execution truth. Keep as legacy-only documentation until Phase 10 removal."
+        "Phase 10 removed legacy PlanStep projection from normal runtime. This remains "
+        "test-only historical compatibility inventory until the old relational step "
+        "projection tests are deleted after planner-owned v2 coverage fully replaces them."
     ),
-    strict=True,
 )
 
-LEGACY_RUNTIME_RETIRED_XFAIL = pytest.mark.xfail(
+LEGACY_RUNTIME_RETIRED_XFAIL = pytest.mark.skip(
     reason=(
-        "Legacy relational PlanStep execution, step approvals, DLQ replay, and "
-        "background worker execution are retired; graph-native checkpoint execution "
-        "is now the only active runtime. Keep as legacy-only documentation until Phase 10 removal."
+        "Phase 10 removed legacy relational PlanStep execution from normal runtime. "
+        "The old approval/DLQ/background-worker assertions are retained only as "
+        "test-only compatibility inventory pending deletion after v2 response-document "
+        "and graph-native approval coverage supersede them."
     ),
-    strict=True,
 )
 
-LEGACY_CLARIFICATION_400_XFAIL = pytest.mark.xfail(
+LEGACY_CLARIFICATION_400_XFAIL = pytest.mark.skip(
     reason=(
-        "The pre-graph create-plan contract returned HTTP 400 for missing required "
-        "read args. Current graph-native UX persists an assistant clarification "
-        "message/empty plan so the frontend can render the blocked turn. Keep as legacy-only "
-        "documentation until Phase 10 removal."
+        "Phase 10 keeps the pre-graph HTTP 400 clarification expectation only as "
+        "test-only historical inventory. The v2 planner-owned UX persists a typed "
+        "clarification message/empty plan for frontend rendering."
     ),
-    strict=True,
 )
 
 LEGACY_PHASE10_REMOVAL_REASON = (
-    "Legacy-only planner/scoping authority retained behind FACTORY_AGENT_ENGINE=legacy "
-    "until the Phase 10 kill-switch removal."
+    "Legacy-only planner/scoping authority is test-only after Phase 10; normal "
+    "FACTORY_AGENT_ENGINE=legacy values resolve to v2."
 )
 LEGACY_PHASE10_REMOVAL = pytest.mark.legacy_compatibility(reason=LEGACY_PHASE10_REMOVAL_REASON)
 
@@ -124,6 +121,7 @@ async def _make_app(
         tool_selector_backend=tool_selector_backend,
         openai_base_url=openai_base_url,
         factory_agent_engine=factory_agent_engine or "v2",
+        test_only_legacy_engine_enabled=factory_agent_engine == "legacy",
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()

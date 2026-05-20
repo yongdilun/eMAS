@@ -97,11 +97,11 @@ async def _create_prompt(client: httpx.AsyncClient, content: str) -> str:
     return session_id
 
 
-def test_phase8_default_engine_is_v2_with_legacy_kill_switch_available():
+def test_phase8_default_engine_is_v2_with_legacy_kill_switch_removed():
     assert normalize_factory_agent_engine(None) == "v2"
     assert normalize_factory_agent_engine("unknown") == "v2"
-    assert normalize_factory_agent_engine("legacy") == "legacy"
-    assert get_settings().factory_agent_engine in {"v2", "legacy", "v2_shadow"}
+    assert normalize_factory_agent_engine("legacy") == "v2"
+    assert get_settings().factory_agent_engine in {"v2", "v2_shadow"}
 
 
 @pytest.mark.asyncio

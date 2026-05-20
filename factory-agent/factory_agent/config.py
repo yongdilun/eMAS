@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
-FactoryAgentEngine = Literal["legacy", "v2_shadow", "v2"]
+FactoryAgentEngine = Literal["v2_shadow", "v2"]
+ResolvedFactoryAgentEngine = Literal["legacy", "v2_shadow", "v2"]
 
 
 @dataclass(frozen=True)
@@ -124,8 +125,12 @@ class Settings:
     # Phase 5 / FA-004 rollback flag. Prefer explicit migrations; enable only
     # as a temporary compatibility bridge.
     enable_startup_schema_compat: bool = False
-    # Planner-owned loop migration flag. Legacy remains as an explicit kill switch.
+    # Planner-owned loop migration flag. Phase 10 removes the public legacy
+    # kill switch; "legacy" env values normalize back to v2.
     factory_agent_engine: FactoryAgentEngine = "v2"
+    # Test-only compatibility escape hatch for old planner-adapter coverage.
+    # This is intentionally not read from environment.
+    test_only_legacy_engine_enabled: bool = False
 
 
 def _normalize_summary_backend(value: str) -> str:
@@ -149,9 +154,16 @@ def _normalize_graph_checkpoint_backend(raw: str | None) -> str:
 
 def normalize_factory_agent_engine(raw: str | None) -> FactoryAgentEngine:
     v = (raw or "v2").strip().lower() or "v2"
-    if v in {"legacy", "v2_shadow", "v2"}:
+    if v in {"v2_shadow", "v2"}:
         return v  # type: ignore[return-value]
     return "v2"
+
+
+def resolve_factory_agent_engine_for_runtime(settings: Settings) -> ResolvedFactoryAgentEngine:
+    raw = str(getattr(settings, "factory_agent_engine", "v2") or "v2").strip().lower()
+    if raw == "legacy" and getattr(settings, "test_only_legacy_engine_enabled", False):
+        return "legacy"
+    return normalize_factory_agent_engine(raw)
 
 
 def _env_truthy(key: str, default: str = "0") -> bool:

@@ -1039,7 +1039,7 @@ Acceptance criteria:
 
 ### Phase 8 Evidence (2026-05-20)
 
-- Normal default engine resolution is `v2`; `FACTORY_AGENT_ENGINE=legacy` remains as the Phase 10 kill switch.
+- Normal default engine resolution is `v2`; before Phase 10, `FACTORY_AGENT_ENGINE=legacy` remained as the kill switch.
 - Direct v2 RAG answers use `rag_search_documents` evidence with `source_type=rag_tool`; response documents are not generated from `legacy_rag_route`.
 - V2 cleanup tests assert no planner `intent_completed` loop is needed, no whole-query full-catalog selection is used as v2 authority, and runtime retrieval continues to wrap `ToolSelector` instead of duplicating it.
 - Affected API/no-op/RAG tests were migrated to v2 response-document and execution-trace assertions; remaining legacy planner adapter tests are marked `legacy_compatibility` with Phase 10 removal.
@@ -1108,6 +1108,15 @@ Acceptance criteria:
 - Docs and generated tool vocabulary describe v2 architecture.
 - All hard-query release tests pass in v2-only mode.
 - Any emergency fallback is disabled by default, emits telemetry when touched, and has a dated removal issue/phase.
+
+### Phase 10 Evidence (2026-05-20)
+
+- Normal `FACTORY_AGENT_ENGINE=legacy` values now normalize to `v2`. Legacy planner/scaffold behavior requires the non-environment `test_only_legacy_engine_enabled` setting and is limited to marked compatibility tests.
+- Non-seeded, non-client-draft plan creation runs the direct planner-owned v2 path; direct RAG answers use `rag_search_documents` evidence and do not route through `legacy_rag_route`.
+- The old 21 legacy xfails were removed from the normal backend suite and converted to explicit test-only legacy compatibility skips with deletion rationale where they only documented retired relational PlanStep behavior.
+- `v2_shadow` remains only as an explicit emergency shadow fallback, disabled by default, with warning telemetry and a next-cleanup-milestone removal target. It is not represented as normal `legacy` mode.
+- Generated `tool_intent_vocabulary.json` now carries `architecture=planner_owned_v2` and the capability-need-to-ToolSelector retrieval contract.
+- Phase 10 verification is recorded in the progress tracker, including full backend and the frontend release pipeline.
 
 ## Stop Conditions
 

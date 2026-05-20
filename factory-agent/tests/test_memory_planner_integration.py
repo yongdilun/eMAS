@@ -15,8 +15,8 @@ from factory_agent.schemas import PlanDraft, PlanStepDraft
 
 pytestmark = pytest.mark.legacy_compatibility(
     reason=(
-        "Legacy planner-adapter memory context coverage retained behind "
-        "FACTORY_AGENT_ENGINE=legacy until Phase 10 removal."
+        "Legacy planner-adapter memory context coverage is retained only through "
+        "test_only_legacy_engine_enabled after Phase 10; normal FACTORY_AGENT_ENGINE=legacy resolves to v2."
     )
 )
 
@@ -76,6 +76,7 @@ def _settings() -> Settings:
         memory_retention_days=30,
         memory_redact_pii=True,
         factory_agent_engine="legacy",
+        test_only_legacy_engine_enabled=True,
     )
 
 

@@ -21,8 +21,8 @@ from factory_agent.services.planner_service import PlannerService
 
 pytestmark = pytest.mark.legacy_compatibility(
     reason=(
-        "Legacy fake-LangGraph reliability coverage retained behind "
-        "FACTORY_AGENT_ENGINE=legacy until Phase 10 removal."
+        "Legacy fake-LangGraph reliability coverage is retained only through "
+        "test_only_legacy_engine_enabled after Phase 10; normal FACTORY_AGENT_ENGINE=legacy resolves to v2."
     )
 )
 
@@ -65,6 +65,7 @@ def _settings() -> Settings:
         tool_result_summary_backend="deterministic",
         tool_selector_backend="auto",
         factory_agent_engine="legacy",
+        test_only_legacy_engine_enabled=True,
     )
 
 
