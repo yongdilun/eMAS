@@ -14,6 +14,7 @@ from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.planner import PlannerBackendError, PlannerPlanRejected
+from factory_agent.planning.v2_interrupts import approval_payload_matches_newest_ledger_revision
 from factory_agent.schemas import ApprovalDecisionRequest, ApprovalResponse
 
 
@@ -121,6 +122,24 @@ def build_approvals_router(
                 row.rejection_reason = "Approval is stale because the session changed state"
                 await db.commit()
                 raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
+            if not approval_payload_matches_newest_ledger_revision(row.args if isinstance(row.args, dict) else {}, context):
+                row.status = "EXPIRED"
+                row.decided_by = req.decided_by or "system"
+                row.decided_at = now
+                row.rejection_reason = "Approval payload is stale for the newest requirement ledger revision"
+                context.pop("langgraph_pending_approval", None)
+                sess.replan_context = context
+                sess.status = "PLANNING"
+                sess.completed_at = None
+                sess.error = row.rejection_reason
+                sess.version += 1
+                sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
+                sess.updated_at = now
+                await db.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail="approval payload is stale for the newest requirement ledger revision",
+                )
             row.status = "APPROVED"
             row.decided_by = req.decided_by
             row.decided_at = now
@@ -179,6 +198,20 @@ def build_approvals_router(
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
                 raise HTTPException(status_code=404, detail="session not found")
+            if row.status != "PENDING":
+                raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
+            context = dict(sess.replan_context or {})
+            pending = context.get("langgraph_pending_approval") if isinstance(context, dict) else None
+            pending_approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
+            if sess.status != "WAITING_APPROVAL" or (
+                pending_approval_id is not None and pending_approval_id != row.approval_id
+            ):
+                row.status = "EXPIRED"
+                row.decided_by = req.decided_by or "system"
+                row.decided_at = datetime.utcnow()
+                row.rejection_reason = "Approval is stale because the session changed state"
+                await db.commit()
+                raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
             try:
                 await planner.resume_after_approval(session_id=sess.session_id, approved=False)
             except PlannerPlanRejected as e:
@@ -197,7 +230,6 @@ def build_approvals_router(
             row.decided_by = req.decided_by
             row.decided_at = datetime.utcnow()
             row.rejection_reason = req.rejection_reason
-            context = dict(sess.replan_context or {})
             context.pop("langgraph_pending_approval", None)
             context.pop("langgraph_approval_resume", None)
             sess.replan_context = context

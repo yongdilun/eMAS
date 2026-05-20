@@ -82,6 +82,15 @@ AgendaPatchOperation = Literal[
 ]
 RevisionActor = Literal["planner", "deterministic_guard", "user", "final_validator", "system"]
 FinalValidationStatus = Literal["passed", "failed"]
+UserInterruptType = Literal[
+    "cancel_current_run",
+    "replace_goal",
+    "append_requirement",
+    "modify_requirement",
+    "answer_clarification",
+    "reject_approval",
+    "approve_approval",
+]
 
 
 class V2ContractModel(BaseModel):
@@ -352,6 +361,17 @@ class RequirementRevisionRecord(V2ContractModel):
     reason: str | None = None
     locked_constraints_preserved: bool = True
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class UserInterrupt(V2ContractModel):
+    interrupt_id: str = Field(min_length=1)
+    interrupt_type: UserInterruptType
+    user_message: str = Field(min_length=1)
+    previous_goal: str | None = None
+    target_requirement_id: str | None = None
+    approval_id: str | None = None
+    created_from_revision: int | None = Field(default=None, ge=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgendaPatch(V2ContractModel):

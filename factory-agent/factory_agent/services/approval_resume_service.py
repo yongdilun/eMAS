@@ -15,6 +15,7 @@ from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
+from factory_agent.planning.v2_interrupts import execution_result_is_stale_after_interrupt
 from factory_agent.services.plan_creation_service import PlanCreationService
 
 
@@ -88,6 +89,19 @@ class ApprovalResumeService:
                     approval_payload=approval_payload,
                 )
             resumed = await self._planner.resume_after_approval(session_id=sess.session_id, approved=True)
+            await db.refresh(sess)
+            if execution_result_is_stale_after_interrupt(
+                session_status=sess.status,
+                current_intent=sess.current_intent,
+                started_intent=intent,
+                replan_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+            ):
+                log_event(
+                    "graph_approval_resume_result_ignored_after_interrupt",
+                    session_id=sess.session_id,
+                    approval_id=row_approval_id,
+                )
+                return
             draft = resumed.draft
             backend_used = resumed.backend_used
             context = dict(sess.replan_context or {})

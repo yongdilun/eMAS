@@ -14,8 +14,9 @@ from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.orchestration.session_manager import SessionManager, TransitionError
 from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
-from factory_agent.planning.v2_planner_loop import legacy_graph_signals
 from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.v2_interrupts import execution_result_is_stale_after_interrupt
+from factory_agent.planning.v2_planner_loop import legacy_graph_signals
 from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
 from factory_agent.services.plan_creation_service import PlanCreationService, _bump_session_revision
 
@@ -125,6 +126,19 @@ class ExecutionService:
             log_event(
                 "background_execution_result_ignored_after_cancel",
                 session_id=sess.session_id,
+            )
+            return sess
+        if execution_result_is_stale_after_interrupt(
+            session_status=sess.status,
+            current_intent=sess.current_intent,
+            started_intent=intent,
+            replan_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+        ):
+            log_event(
+                "background_execution_result_ignored_after_interrupt",
+                session_id=sess.session_id,
+                started_intent=intent,
+                current_intent=sess.current_intent,
             )
             return sess
         sess.replan_context = context
