@@ -1907,13 +1907,21 @@ export default function ResponseDocumentRenderer({
   const duplicateTableOwners = useMemo(() => {
     const approvalOwners = new Set()
     const mutationOwners = new Set()
+    const readOnlyResultOwners = new Set()
     for (const block of document?.blocks || []) {
       const approvalId = block.approval_id || ''
       const operationId = block.operation_id || ''
       if (block?.type === 'approval_required') approvalOwners.add(`${approvalId}:${operationId}`)
       if (block?.type === 'mutation_result') mutationOwners.add(`${approvalId}:${operationId}`)
+      if (
+        block?.type === 'result_table' &&
+        !approvalId &&
+        (block.read_scope || block.display_mode || block.entity_count)
+      ) {
+        readOnlyResultOwners.add(`${approvalId}:${operationId}`)
+      }
     }
-    return { approvalOwners, mutationOwners }
+    return { approvalOwners, mutationOwners, readOnlyResultOwners }
   }, [document])
   if (!document) return null
   const renderedBlocks = (document.blocks || [])
@@ -1921,6 +1929,13 @@ export default function ResponseDocumentRenderer({
       if (!['result_table', 'record_preview'].includes(block?.type)) return true
       const ownerKey = `${block.approval_id || ''}:${block.operation_id || ''}`
       if (duplicateTableOwners.approvalOwners.has(ownerKey)) return false
+      if (
+        block.type === 'record_preview' &&
+        duplicateTableOwners.readOnlyResultOwners.has(ownerKey) &&
+        safeText(block.title).toLowerCase() === 'preview'
+      ) {
+        return false
+      }
       if (
         block.type === 'result_table' &&
         duplicateTableOwners.mutationOwners.has(ownerKey) &&

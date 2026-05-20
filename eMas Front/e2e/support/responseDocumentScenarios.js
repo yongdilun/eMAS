@@ -857,19 +857,6 @@ export function collapsedResultsDocument(session) {
     ],
     blocks: [
       {
-        id: 'record-preview:collapsed-results:preview',
-        type: 'record_preview',
-        title: 'Preview',
-        rows: rows.slice(0, READ_DISPLAY_PREVIEW_LIMIT),
-        read_scope: 'records',
-        requested_fields: [],
-        display_mode: 'collapsed_collection_table',
-        entity_type: 'job',
-        entity_count: rows.length,
-        preview_limit: READ_DISPLAY_PREVIEW_LIMIT,
-        details_collapsed: true,
-      },
-      {
         id: 'table:collapsed-results',
         type: 'result_table',
         title: 'Results',

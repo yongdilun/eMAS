@@ -3501,26 +3501,7 @@ def _record_blocks_for_rows(
     ):
         shape = "table"
     if shape == "table":
-        blocks: list[ResponseBlock] = []
-        if len(rows) > preview_limit:
-            blocks.append(
-                RecordPreviewBlock(
-                    id=f"record-preview:{id_prefix}:preview",
-                    contract=contract,
-                    title="Preview",
-                    rows=rows[:preview_limit],
-                    operation_id=operation_id,
-                    approval_id=approval_id,
-                    read_scope=read_scope,
-                    requested_fields=requested_fields,
-                    display_mode=display_mode,
-                    entity_type=entity_type,
-                    entity_count=entity_count,
-                    preview_limit=preview_limit,
-                    details_collapsed=details_collapsed,
-                )
-            )
-        blocks.append(
+        return [
             ResultTableBlock(
                 id=f"table:{id_prefix}",
                 contract=contract,
@@ -3536,8 +3517,7 @@ def _record_blocks_for_rows(
                 preview_limit=preview_limit,
                 details_collapsed=details_collapsed,
             )
-        )
-        return blocks
+        ]
     return [
         RecordPreviewBlock(
             id=f"record-preview:{id_prefix}",

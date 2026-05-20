@@ -1909,14 +1909,14 @@ async def test_read_only_result_shape_is_deterministic_for_table_and_list(db_ses
     assert table_body["response_document"]["invariants"]["entity_count"] == 6
     assert table_body["response_document"]["invariants"]["preview_limit"] == 5
     table = next(block for block in table_body["response_document"]["blocks"] if block["type"] == "result_table")
-    preview = next(block for block in table_body["response_document"]["blocks"] if block["type"] == "record_preview")
+    block_types = [block["type"] for block in table_body["response_document"]["blocks"]]
     assert table["title"] == "Results"
     assert table["display_mode"] == "collapsed_collection_table"
     assert table["entity_count"] == 6
     assert table["preview_limit"] == 5
     assert table["details_collapsed"] is True
-    assert preview["title"] == "Preview"
-    assert len(preview["rows"]) == 5
+    assert block_types.count("result_table") == 1
+    assert not any(block["type"] == "record_preview" and block["title"] == "Preview" for block in table_body["response_document"]["blocks"])
     assert list_body["response_document"]["invariants"]["read_result_shape"] == "list"
     assert any(block["type"] == "record_preview" and block["title"] == "Results" for block in list_body["response_document"]["blocks"])
     assert not any(block["type"] == "approval_required" for block in table_body["response_document"]["blocks"])

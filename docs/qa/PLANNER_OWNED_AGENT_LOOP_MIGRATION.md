@@ -1118,6 +1118,60 @@ Acceptance criteria:
 - Generated `tool_intent_vocabulary.json` now carries `architecture=planner_owned_v2` and the capability-need-to-ToolSelector retrieval contract.
 - Phase 10 verification is recorded in the progress tracker, including full backend and the frontend release pipeline.
 
+## Phase 11: Post-Migration Regression Hardening And Proof Tests
+
+Goal: fix post-Phase-10 product regressions without expanding the migration architecture or reintroducing legacy authority.
+
+This phase exists only because user-visible regressions were reported after the v2 migration was completed. It is not a new planner-owned-loop design phase.
+
+Reported regressions:
+
+- Factory Agent chat can fail to start with the frontend timeout message: `Factory Agent request timed out after 30000 ms. Retry or cancel the current run.`
+- V2 RAG can return insufficient-context even when retrieved cited sources should support a safe answer.
+- Read-only collection results such as "Find all low priority jobs" can render a duplicate `Preview` block before the `Results` table.
+- Forced LLM tracing / reranker accounting must remain visible at the session/API contract level, not only inside `ToolSelector`.
+
+Required fixes:
+
+- If the chat-start timeout is genuinely too short for the v2 release path, raise the frontend Factory Agent request budget through the existing timeout configuration and keep environment override behavior intact. Do not use a timeout bump to hide a backend hang.
+- Restore positive RAG answers only when typed source evidence proves the requested claim. Related-but-insufficient sources must still render insufficient-context.
+- Remove duplicate read-only collection preview rendering while preserving preview/affected-record behavior for approval, mutation, and staged-write flows.
+- Ensure forced ToolSelector reranker traces increment both tool-selection trace state and session-visible LLM call accounting when the reranker is actually attempted.
+
+Proof tests to add or update:
+
+- `tests/test_tool_selector.py`: forced `force_llm_trace_all` uses the reranker even when retrieval has a clear winner or semantic shortcut; reranker failure falls back to retrieval but still records the attempted LLM call.
+- API/session tests: direct-v2 plan creation records `execution_trace.tool_retrieval.reranker.call_count` and increments `session.llm_call_count` when forced reranking is attempted.
+- API/RAG tests: source-backed OSHA/LOTO RAG returns `created_by=v2_rag_tool`, `source_type=rag_tool`, `tool_name=rag_search_documents`, and a non-insufficient answer when citations prove the claim; empty or non-proving sources still produce insufficient-context.
+- Response-document backend tests: read-only collection result shape does not require both `record_preview` and `result_table` when that creates duplicate user-facing preview content.
+- Frontend component or Playwright tests: read-only collection rendering shows one `Results` surface and no extra `Preview` section, while approval/mutation previews remain visible where expected.
+
+Timeout fix note: no dedicated automated timeout test is required for this phase. If the timeout budget changes, keep the existing environment override path intact and verify through the normal frontend/release smoke gates.
+
+Acceptance criteria:
+
+- The three reported regressions are fixed with maintainable, contract-shaped changes.
+- Fixes are driven by reusable contracts, metadata, capability maps, typed evidence, response-document shape, or existing configuration, not by one-off branches for a single screenshot, prompt, entity, source, or test fixture.
+- Any branching introduced for a bug must name a durable product concept such as read-only collection rendering, source-backed knowledge evidence, reranker trace accounting, timeout budget configuration, approval preview, or mutation preview.
+- Reuse existing helpers and boundaries before adding new abstractions. If the fix needs a new helper, keep it small, named by product behavior, covered by tests, and local to the existing module boundary.
+- Do not duplicate ToolSelector, RAG retrieval, response-document rendering, or session state accounting logic to make the regression pass.
+- No runtime branch keys on exact prompt text, seeded IDs such as `M-CNC-01` or `JOB-SEED-*`, fixture-only source IDs, or entity labels.
+- Tests may use seeded IDs and fixed prompts as fixtures, but assertions must prove contracts, evidence, counts, block types, and durable behavior rather than depending on runtime code that special-cases those values.
+- No normal product path reintroduces `legacy` engine, legacy RAG shortcut, `working_intents`, `intent_cursor`, or planner `intent_completed` loop authority.
+- No new retriever stack is added; capability retrieval continues to wrap the existing `ToolSelector`.
+- Tests assert contract shape, typed evidence, result cardinality, and visible block types rather than brittle full prompt/entity snapshots.
+- If a bug requires structural work, use the local `improve-codebase-architecture` skill before patching.
+- Full release verification passes, or any blocker is recorded in the tracker with owner, failing command, and narrowed proof suite.
+
+### Phase 11 Evidence (2026-05-20)
+
+- The Factory Agent frontend request timeout default was raised through `VITE_FACTORY_AGENT_REQUEST_TIMEOUT_MS`'s existing configuration path; environment overrides remain honored.
+- Forced ToolSelector reranking is now proven for normal, clear-winner, and semantic-shortcut retrieval windows, and reranker exceptions fall back to retrieval while still recording the attempted LLM call.
+- Direct v2 plan creation records `execution_trace.tool_retrieval.reranker.call_count` and increments session-visible `llm_call_count` when forced reranking is attempted.
+- OSHA/LOTO RAG policy now allows a non-insufficient answer only when cited retrieved source text proves the OSHA standard claim; empty or related non-proving sources still return insufficient-context.
+- Read-only collection response documents now use a single `Results` table surface instead of a duplicate user-facing `Preview` plus `Results`, while approval and mutation previews remain visible where expected.
+- Phase 11 verification is recorded in the progress tracker, including targeted backend proof suites, full backend, frontend unit, response-document Playwright, and release Playwright gates.
+
 ## Stop Conditions
 
 Stop and fix before phase completion if:

@@ -7,7 +7,7 @@ export const FACTORY_AGENT_BASE_URL = (
 ).replace(/\/+$/, '')
 
 const STATIC_BEARER = import.meta.env?.VITE_FACTORY_AGENT_BEARER_TOKEN || ''
-const REQUEST_TIMEOUT_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_REQUEST_TIMEOUT_MS || 30_000)
+const REQUEST_TIMEOUT_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_REQUEST_TIMEOUT_MS || 75_000)
 const FACTORY_AGENT_USER_ID = import.meta.env?.VITE_FACTORY_AGENT_USER_ID || 'frontend-operator'
 
 export const factoryAgentStreamAuth = {

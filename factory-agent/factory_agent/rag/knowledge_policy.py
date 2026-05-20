@@ -218,6 +218,21 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                     "obtain required permits, and consult your safety officer before proceeding."
                 ),
                 required_answer_evidence=("29 cfr 1910.147",),
+                support_profiles=(
+                    EvidenceSupportProfile(
+                        profile_id="osha_loto_standard_source_backed",
+                        required_query_evidence=(
+                            r"\bosha\b",
+                            r"\b1910\.147\b",
+                            r"\bhazardous\s+energy\b",
+                            r"\bcontrol\s+of\s+hazardous\s+energy\b",
+                        ),
+                        required_answer_evidence=("29 cfr 1910.147",),
+                        required_source_evidence=("29 cfr 1910.147",),
+                        required_source_any_evidence=(("hazardous energy", "lockout", "tagout", "loto"),),
+                        recovery_strategy="source_excerpt",
+                    ),
+                ),
             )
         ]
     )

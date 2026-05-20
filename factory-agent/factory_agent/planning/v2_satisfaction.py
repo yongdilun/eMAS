@@ -5,6 +5,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from factory_agent.rag.source_metadata import is_insufficient_context_answer
+
 from .v2_contracts import (
     CapabilityNeed,
     EvidenceLedgerEntry,
@@ -583,8 +585,14 @@ def _evaluate_document_requirement(
         _check(
             "document_answer",
             expected="typed_answer_or_explicit_no_match",
-            actual="typed_answer" if isinstance(answer, str) and answer.strip() else None,
-            passed=isinstance(answer, str) and bool(answer.strip()),
+            actual=(
+                "insufficient_context"
+                if is_insufficient_context_answer(answer)
+                else "typed_answer"
+                if isinstance(answer, str) and answer.strip()
+                else None
+            ),
+            passed=isinstance(answer, str) and bool(answer.strip()) and not is_insufficient_context_answer(answer),
             evidence_ref=evidence.id,
         )
     )

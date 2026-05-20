@@ -1041,13 +1041,13 @@ test.describe('Final response quality response_document gate', () => {
     })
   })
 
-  test('RD-029 collapsed results display policy renders preview and collapsed table', async ({ page }, testInfo) => {
+  test('RD-029 collapsed results display policy renders one collapsed Results surface', async ({ page }, testInfo) => {
     await openChat(page)
     await sendChatPrompt(page, responseDocumentCollapsedResultsPrompt)
 
-    const previewBlock = page.locator('[data-response-block-type="record_preview"][data-display-mode="collapsed_collection_table"]').last()
+    const previewBlock = page.locator('[data-response-block-type="record_preview"][data-display-mode="collapsed_collection_table"]')
     const tableBlock = page.locator('[data-response-block-type="result_table"][data-display-mode="collapsed_collection_table"]').last()
-    await expect(previewBlock).toBeVisible()
+    await expect(previewBlock).toHaveCount(0)
     await expect(tableBlock).toBeVisible()
     await expect(tableBlock).toHaveAttribute('data-read-scope', 'records')
     await expect(tableBlock).toHaveAttribute('data-entity-count', '6')
@@ -1065,12 +1065,13 @@ test.describe('Final response quality response_document gate', () => {
         sessionStatus: 'COMPLETED',
         responseState: 'completed',
         pendingApprovalId: null,
-        visibleBlockTypes: ['record_preview', 'result_table'],
-        backendBlockTypes: ['record_preview', 'result_table'],
+        visibleBlockTypes: ['result_table'],
+        backendBlockTypes: ['result_table'],
         hiddenBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
-        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result', 'record_preview'],
         approvalActionCount: 0,
-        textIncludes: ['Found 6 low-priority jobs.', 'Preview', 'Results'],
+        textIncludes: ['Found 6 low-priority jobs.', 'Results'],
+        textExcludes: ['Preview'],
       },
     })
     await testInfo.attach('rd-029-collapsed-results-display-policy-probe.json', {

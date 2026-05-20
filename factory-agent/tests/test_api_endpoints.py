@@ -95,6 +95,9 @@ async def _make_app(
     min_healthy_tool_count=20,
     tool_selector_backend="auto",
     openai_base_url=None,
+    openai_api_key=None,
+    force_llm_trace_all=False,
+    tool_selector_openai_base_url=None,
     rag_pipeline_adapter=None,
     factory_agent_engine=None,
 ):
@@ -120,6 +123,9 @@ async def _make_app(
         min_healthy_tool_count=min_healthy_tool_count,
         tool_selector_backend=tool_selector_backend,
         openai_base_url=openai_base_url,
+        openai_api_key=openai_api_key,
+        force_llm_trace_all=force_llm_trace_all,
+        tool_selector_openai_base_url=tool_selector_openai_base_url,
         factory_agent_engine=factory_agent_engine or "v2",
         test_only_legacy_engine_enabled=factory_agent_engine == "legacy",
     )
@@ -556,18 +562,21 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
                 "Result",
                 (),
                 {
-                    "answer": (
-                        "According to OSHA, Lockout/Tagout procedures control hazardous energy so "
-                        "machines are isolated and rendered safe before servicing or maintenance. "
-                        "The OSHA standard is 29 CFR 1910.147 [^1]."
-                    ),
+                    "answer": "I do not have enough retrieved evidence to answer that safely.",
                     "sources": [
                         {
                             "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#purpose-standard",
                             "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "purpose-standard",
                             "title": "Control of Hazardous Energy Lockout/Tagout",
                             "organization": "OSHA",
                             "authority_level": "official_public_guidance",
+                            "snippet": (
+                                "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                                "hazardous energy during servicing and maintenance and helps prevent unexpected "
+                                "energization, startup, or release of stored energy."
+                            ),
                         }
                     ],
                     "safety_content": (
@@ -598,9 +607,11 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
         body = created.json()
         assert body["status"] == "COMPLETED"
         assert body["created_by"] == "v2_rag_tool"
+        assert not body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "29 CFR 1910.147" in body["plan_explanation"]
         assert body["sources"][0]["organization"] == "OSHA"
         assert {source["doc_id"] for source in body["sources"]} == {"osha_3120_lockout_tagout"}
+        assert body["sources"][0]["chunk_id"] == "purpose-standard"
         assert "approved SOP" in body["safety_content"]
 
         steps = await client.get(f"/sessions/{session_id}/steps")
@@ -618,6 +629,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
     assert evidence[0]["source_type"] == "rag_tool"
     assert evidence[0]["tool_name"] == "rag_search_documents"
+    assert "29 CFR 1910.147" in evidence[0]["normalized_result"]["answer"]
 
 
 @pytest.mark.asyncio
@@ -657,6 +669,58 @@ async def test_create_plan_uses_insufficient_context_when_osha_loto_rag_is_empty
         assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "29 CFR 1910.147" not in body["plan_explanation"]
         assert body["sources"] == []
+        assert "consult your safety officer" in body["safety_content"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_uses_insufficient_context_when_osha_loto_sources_do_not_prove_claim(sessionmaker_override):
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": "The OSHA guide describes general energy-control responsibilities [^1].",
+                    "sources": [
+                        {
+                            "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#general-energy-control",
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "general-energy-control",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "snippet": "The guide describes energy-control program responsibilities for employers.",
+                        }
+                    ],
+                    "safety_content": None,
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["created_by"] == "v2_rag_tool"
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "related sources checked" in body["plan_explanation"]
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
         assert "consult your safety officer" in body["safety_content"]
 
 
@@ -2043,6 +2107,101 @@ async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker
     step = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().first()
     assert step is not None
     assert step.tool_name == "post__machines"
+
+
+@pytest.mark.asyncio
+async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Session
+    from factory_agent.planning.tool_selector import ToolSelector
+
+    await _seed_tool(
+        db_session,
+        name="get__machines_{id}",
+        endpoint="/machines/{id}",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+        capability_tags='["machine","lookup","status"]',
+        is_read_only=True,
+    )
+    await _seed_tool(
+        db_session,
+        name="get__machines_status",
+        endpoint="/machines/status",
+        method="GET",
+        input_schema={"type": "object", "properties": {}},
+        capability_tags='["machine","status","list"]',
+        is_read_only=True,
+    )
+
+    called = {"count": 0}
+
+    async def fake_invoke(self, *, prompt):
+        del self, prompt
+        called["count"] += 1
+        return {
+            "primary_tool": "get__machines_{id}",
+            "additional_tools": ["get__machines_status"],
+            "confidence": 1.0,
+            "missing_fields": [],
+            "reason": "forced trace accounting",
+        }
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, tool, idempotency_key, extra_headers
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {
+                "data": {
+                    "machineID": str(args.get("id") or "5"),
+                    "status": "RUNNING",
+                }
+            },
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(ToolSelector, "_invoke_reranker", fake_invoke)
+    monkeypatch.setattr(
+        ToolSelector,
+        "_top_candidates",
+        lambda self, **kwargs: [
+            ("get__machines_{id}", 100),
+            ("get__machines_status", 1),
+        ],
+    )
+    monkeypatch.setattr(
+        "factory_agent.services.plan_creation_service.execute_tool_http",
+        fake_execute_tool_http,
+    )
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        force_llm_trace_all=True,
+        tool_selector_openai_base_url="http://fake-selector",
+        openai_api_key="test-key",
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={"role": "user", "content": "Check machine 5 status", "mode": "normal"},
+        )
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        assert created.json()["created_by"] == "v2_planner_loop"
+
+    session_row = await db_session.get(Session, session_id)
+    assert called["count"] == 1
+    assert session_row.llm_call_count == 1
+    trace = (session_row.replan_context or {})["intent_contract"]["execution_trace"]
+    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["tool_retrieval"]["reranker"]["call_count"] == 1
+    assert "get__machines_{id}" in trace["tool_retrieval"]["selected_candidate_tool_names"]
 
 
 @pytest.mark.asyncio

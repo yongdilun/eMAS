@@ -14,13 +14,13 @@ Use the main plan for architecture, contracts, phase definitions, stop condition
 
 ## Current Status
 
-Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 6.5 stabilization, Phase 7, Phase 8, Phase 9, and Phase 10 are complete. Phase 10 removed the normal legacy kill switch: `FACTORY_AGENT_ENGINE=legacy` now resolves to planner-owned v2, legacy planner/scaffold execution is test-only through `test_only_legacy_engine_enabled`, and v2 hard-query release proof still passes.
+Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 6.5 stabilization, Phase 7, Phase 8, Phase 9, Phase 10, and Phase 11 are complete. Phase 10 removed the normal legacy kill switch: `FACTORY_AGENT_ENGINE=legacy` now resolves to planner-owned v2, legacy planner/scaffold execution is test-only through `test_only_legacy_engine_enabled`, and v2 hard-query release proof still passes. Phase 11 hardened post-migration regressions for chat-start timeout, source-backed RAG answers, read-only collection rendering, and ToolSelector/session trace accounting.
 
 Important handoff after Phase 10: no normal product path should reintroduce legacy graph/RAG/scaffold fallback authority. Any future emergency fallback must stay explicit, disabled by default, monitored, and scheduled for deletion.
 
 Testing handoff for Phase 5 and later: the main plan now includes a Testing Migration Impact Map. Future phases must update or satisfy that map when they affect hard-query E2E, stateful oracle, response-document UX, RAG/source UX, SSE/timeline, seeded adapter, or hardcode guardrail coverage.
 
-Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 8 ran full backend plus frontend unit/Playwright semantic gates. Phase 9 and Phase 10 should run the full release pipeline. If any full gate is blocked, record the blocker, narrower suite, and deferred owner in this tracker.
+Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 8 ran full backend plus frontend unit/Playwright semantic gates. Phase 9 and Phase 10 ran the full release pipeline. Phase 11 should run targeted proof tests for changed areas plus the full release pipeline when backend and frontend behavior both change. If any full gate is blocked, record the blocker, narrower suite, and deferred owner in this tracker.
 
 ## Phase Progress
 
@@ -37,6 +37,7 @@ Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 
 | 8 | Legacy cleanup switch | Complete | Codex | `1b6fcbe5 feat: switch planner-owned loop default to v2` | Phase 1-8: `62 passed`; full backend: `890 passed, 3 skipped, 21 xfailed`; frontend unit: `127 passed`; Playwright response-document: `28 passed`; hardcode guardrails: `14 passed`; `git diff --check` passed | Default engine became v2, v2 RAG used `rag_search_documents` evidence, normal API/RAG/no-op tests asserted v2 contracts, and Phase 8 intentionally left the legacy kill switch for Phase 10. |
 | 9 | Hard query release proof | Complete | Codex | This commit: `feat: add planner-owned loop hard query release proof` | Focused Phase 1-9: `72 passed, 58 warnings`; route/splitter/selector/hardcode: `103 passed, 34 warnings`; full backend: `908 passed, 3 skipped, 21 xfailed, 1924 warnings`; frontend unit: `128 passed`; mocked Playwright: `51 passed`; response-document Playwright: `29 passed`; seeded oracles: `35 passed`; real LangGraph: `3 passed`; release Playwright: `21 passed`; `git diff --check` passed | Proved hard query read, multi-ID, sort/limit/fields, mixed API/RAG, conditional branch, approval, interrupt, insufficient-context, and tool-failure families through typed evidence, response_document rendering, semantic/oracle assertions, and no-hardcode guardrails. Remaining release blockers: none. |
 | 10 | Legacy kill-switch removal | Complete | Codex | This commit: `feat: remove planner-owned loop legacy kill switch` | Phase 1-10: `76 passed`; route/splitter/selector/hardcode: `103 passed`; full backend: `912 passed, 24 skipped, 0 xfailed`; frontend unit: `128 passed`; mocked Playwright: `51 passed`; response-document Playwright: `29 passed`; seeded oracles: `35 passed`; real LangGraph: `3 passed`; release Playwright: `21 passed`; `git diff --check` passed | Normal `FACTORY_AGENT_ENGINE=legacy` resolves to v2, legacy planner/scaffold behavior is test-only, v2 RAG remains `rag_search_documents` evidence, old legacy xfails are removed from normal backend, generated vocabulary names planner-owned v2, and `v2_shadow` is logged as an explicit emergency fallback only. |
+| 11 | Post-migration regression hardening and proof tests | Complete | Codex | This commit: `fix: harden planner-owned loop post-migration regressions` | ToolSelector: `27 passed`; API/response-doc: `87 passed, 21 skipped`; route/splitter/selector/hardcode: `107 passed`; full backend: `920 passed, 24 skipped`; frontend unit: `129 passed`; response-document Playwright: `29 passed`; release Playwright: `21 passed`; `git diff --check` passed | Raised frontend timeout through existing config default, restored source-backed OSHA/LOTO RAG answers while preserving insufficient-context negatives, removed duplicate read-only collection `Preview`, and surfaced forced reranker attempts in session/API LLM accounting. No legacy authority, exact-prompt runtime branch, seeded-ID runtime branch, fixture-source runtime branch, or second retriever stack was added. |
 
 ## Audit Notes
 
@@ -168,3 +169,23 @@ When a phase is completed:
 - Phase 10 frontend verification passed: `npm test` reported `128 passed`; `npm run test:e2e:mocked` reported `51 passed`; `npm run test:e2e:response-document` reported `29 passed`; `npm run test:e2e:seeded-oracles` reported `35 passed`; `npm run test:e2e:real-langgraph` reported `3 passed`; final `npm run test:e2e:release` reported `21 passed`.
 - Phase 10 release lane note: the first full release run had a transient scenario 64 refresh-race failure; targeted rerun `npx playwright test --project=chromium-release --grep "scenario 64"` reported `1 passed`, then the full release lane rerun reported `21 passed`.
 - Remaining Phase 10 blockers or deferred release risks: none.
+- Phase 11 planned as post-migration regression hardening, not new planner-owned-loop architecture. It must add proof tests for positive and negative v2 RAG evidence handling, read-only collection rendering without duplicate `Preview`, and ToolSelector reranker/session LLM trace accounting. Fixes must be maintainable contract/metadata/configuration changes, not exact-prompt, seeded-ID, fixture-source, or screenshot-specific branches. The chat-start timeout fix does not require a dedicated automated timeout test, but must preserve the existing environment override path and pass the normal frontend/release smoke gates when touched.
+- Phase 11 implementation raised the frontend Factory Agent request timeout default from 30 seconds to 75 seconds through `VITE_FACTORY_AGENT_REQUEST_TIMEOUT_MS`, preserving override behavior and pairing the timeout budget with backend regression fixes rather than using it as a hang mask.
+- Phase 11 ToolSelector/API fixes prove forced reranker tracing for normal, clear-winner, semantic-shortcut, and reranker-exception retrieval paths. Direct v2 API plan creation now has proof that `execution_trace.tool_retrieval.reranker.call_count` and `session.llm_call_count` both increment when forced reranking is attempted.
+- Phase 11 RAG fixes added source-backed OSHA/LOTO evidence recovery only when cited source text proves the `29 CFR 1910.147` claim, plus API negative coverage for empty and related non-proving sources.
+- Phase 11 response-document fixes removed duplicate read-only collection `Preview` blocks before `Results`, added frontend defensive filtering for old read-only duplicate preview blocks, and preserved approval/mutation previews.
+- Verification passed: `python -m pytest tests/test_tool_selector.py -q` reported `27 passed, 12 warnings`.
+- Verification passed: `python -m pytest tests/test_api_endpoints.py tests/test_response_document_contract.py -q` reported `87 passed, 21 skipped, 1179 warnings`.
+- Verification passed: `python -m pytest tests/test_route_to_execution_contract.py tests/test_intent_splitter.py tests/test_tool_selector.py tests/test_hardcode_guardrails.py -q` reported `107 passed, 35 warnings`.
+- Verification passed: project-local temp full backend command reported `920 passed, 24 skipped, 1777 warnings`:
+
+  ```powershell
+  $env:TMP='C:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent\.pytest-phase11-tmp'
+  $env:TEMP='C:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent\.pytest-phase11-tmp'
+  New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
+  python -m pytest -q
+  ```
+
+- Phase 11 frontend verification passed: `npm test` reported `129 passed`; `npm run test:e2e:response-document` reported `29 passed`; `npm run test:e2e:release` reported `21 passed`.
+- Verification passed: `git diff --check` exited 0.
+- Remaining Phase 11 blockers or deferred release risks: none.

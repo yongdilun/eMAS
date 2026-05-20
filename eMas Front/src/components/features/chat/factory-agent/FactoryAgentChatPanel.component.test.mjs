@@ -834,6 +834,7 @@ test('FactoryAgentChatPanel renders pending response_document approval compact b
 
   await waitFor(() => assert.match(view.text(), /Update 6 jobs from medium to high/))
   assert.match(view.text(), /\+1 more/)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"] [data-affected-record-row]').length, 5)
   assert.match(view.text(), /Approve/)
   assert.match(view.text(), /Reject/)
   assert.doesNotMatch(view.text(), /Follow-up messages can revise the plan/)
@@ -843,6 +844,59 @@ test('FactoryAgentChatPanel renders pending response_document approval compact b
   )
   assert.equal(affectedDetails?.hasAttribute('open'), false)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"]').length, 1)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel renders read-only collection as one Results surface without Preview section', async () => {
+  const rows = Array.from({ length: 6 }, (_, index) => ({
+    job_id: `JOB-LOW-${String(index + 1).padStart(3, '0')}`,
+    priority: 'low',
+    status: 'queued',
+  }))
+  const document = baseResponseDocument({
+    blocks: [
+      { id: 'message:read-results', type: 'short_message', message: 'Found 6 low-priority jobs.', status: 'completed' },
+      {
+        id: 'record-preview:read-results',
+        type: 'record_preview',
+        operation_id: 'op-read-low',
+        title: 'Preview',
+        rows: rows.slice(0, 5),
+        read_scope: 'records',
+        display_mode: 'collapsed_collection_table',
+        entity_count: 6,
+        preview_limit: 5,
+      },
+      {
+        id: 'table:read-results',
+        type: 'result_table',
+        operation_id: 'op-read-low',
+        title: 'Results',
+        rows,
+        read_scope: 'records',
+        display_mode: 'collapsed_collection_table',
+        entity_count: 6,
+        preview_limit: 5,
+        details_collapsed: true,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-read-results', name: 'Read results', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-read-results', name: 'Read results', status: 'COMPLETED' }],
+    activeSessionName: 'Read results',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Found 6 low-priority jobs/))
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"]').length, 1)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="record_preview"]').length, 0)
+  assert.doesNotMatch(view.text(), /\bPreview\b/)
+  assert.match(view.text(), /Results/)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"] [data-affected-record-row]').length, 5)
 
   await view.unmount()
 })

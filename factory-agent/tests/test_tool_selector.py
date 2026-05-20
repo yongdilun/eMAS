@@ -847,6 +847,192 @@ async def test_selector_force_llm_trace_uses_reranker_when_enabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_selector_force_llm_trace_uses_reranker_for_clear_winner(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__reports_machine-utilization": ToolInfo(
+            name="get__reports_machine-utilization",
+            description="Machine utilization report",
+            endpoint="/reports/machine-utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization", "report"],
+        ),
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {
+            "primary_tool": "get__reports_machine-utilization",
+            "additional_tools": [],
+            "confidence": 1.0,
+            "reason": "forced trace",
+        }
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+    monkeypatch.setattr(
+        selector,
+        "_top_candidates",
+        lambda **kwargs: [
+            ("get__reports_machine-utilization", 100),
+            ("get__machines_utilization", 1),
+        ],
+    )
+
+    result = await selector.select_tools(
+        intent="show machine utilization report",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "langchain"
+    assert result.llm_calls == 1
+    assert result.tool_names[0] == "get__reports_machine-utilization"
+
+
+@pytest.mark.asyncio
+async def test_selector_force_llm_trace_uses_reranker_for_semantic_shortcut(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__jobs_{id}": ToolInfo(
+            name="get__jobs_{id}",
+            description="Get a job by ID",
+            endpoint="/jobs/{id}",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["job", "lookup"],
+        ),
+        "get__ai_scheduling_jobs_{id}_explanation": ToolInfo(
+            name="get__ai_scheduling_jobs_{id}_explanation",
+            description="Explanation",
+            endpoint="/ai/scheduling/jobs/{id}/explanation",
+            method="GET",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["ai", "scheduling", "job", "explanation"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return {
+            "primary_tool": "get__ai_scheduling_jobs_{id}_explanation",
+            "additional_tools": ["get__jobs_{id}"],
+            "confidence": 1.0,
+            "reason": "forced trace",
+        }
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="explain schedule for job JOB-SEED-003",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "langchain"
+    assert result.llm_calls == 1
+    assert result.tool_names[0] == "get__ai_scheduling_jobs_{id}_explanation"
+
+
+@pytest.mark.asyncio
+async def test_selector_force_llm_trace_reranker_exception_records_attempt(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+        "get__reports_utilization": ToolInfo(
+            name="get__reports_utilization",
+            description="Utilization report",
+            endpoint="/reports/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["utilization", "report"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        raise RuntimeError("reranker unavailable")
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="show utilization",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "retrieval"
+    assert result.llm_calls == 1
+    assert result.tool_names
+
+
+@pytest.mark.asyncio
 async def test_selector_respects_disabled_reranker_even_when_trace_forced(monkeypatch):
     selector = ToolSelector(
         _settings(
