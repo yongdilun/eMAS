@@ -14,9 +14,9 @@ Use the main plan for architecture, contracts, phase definitions, stop condition
 
 ## Current Status
 
-Phase 1 is complete. Phase 2 is the next implementation phase.
+Phase 1, Phase 2, and Phase 3 are complete. Phase 4 is the next implementation phase.
 
-Important handoff for Phase 2: RAG shortcut traces need additive contract support because the legacy RAG path currently persists an empty plan outside graph/tool execution. Phase 2 contracts must represent that path without pretending legacy RAG went through v2 tools.
+Important handoff for Phase 4: capability-map and source-of-truth helpers are contract-only. RAG/procedure/policy are represented as document-knowledge capability families, while the legacy RAG route remains explicitly named as `legacy_rag_route`; Phase 4 must wrap existing `ToolSelector` retrieval rather than building a second retriever.
 
 ## Phase Progress
 
@@ -24,7 +24,7 @@ Important handoff for Phase 2: RAG shortcut traces need additive contract suppor
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Boundary and baseline audit | Complete | Codex | `4eb425e0b36a32faca6af0ceabe2525a88523939` | `91 passed, 35 warnings`; `git diff --check` passed | Legacy scaffold, RAG shortcut, whole-query tool scope, intent-completion loop, pending-message gap, and ToolSelector reuse boundary documented. |
 | 2 | Requirement ledger and v2 state contracts only | Complete | Codex | `feat: add planner-owned loop v2 state contracts` | Phase 1/2 contract suite: `11 passed, 1 warning`; route/splitter/selector suite: `88 passed, 35 warnings`; `git diff --check` passed | Contracts only. Added serializable v2 state, agenda patch locked-constraint guard, adapter trace contracts, and distinct legacy RAG route evidence. No runtime switch or v2/v2_shadow production claim. |
-| 3 | Capability map and source-of-truth hints | Planned | TBD | TBD | TBD | Must use metadata/generated registry, not handwritten runtime prompt/source branches. |
+| 3 | Capability map and source-of-truth hints | Complete | Codex | `feat: add planner-owned loop capability map hints` | Phase 1/2/3 contract suite: `21 passed, 1 warning`; route/splitter/selector suite: `88 passed, 35 warnings`; `git diff --check` passed | Added compact metadata-driven capability map helpers, source-of-truth hints, document-knowledge families, field aliases, and requirement sketch/ledger locking. No runtime switch or v2/v2_shadow production claim. |
 | 4 | Need-based tool retrieval and hydration | Planned | TBD | TBD | TBD | Wrap existing `ToolSelector`; do not build a second retriever. |
 | 5 | Planner-owned v2 loop behind flag | Planned | TBD | TBD | TBD | Add trace-only `v2_shadow` first; production shadow must not mutate state. |
 | 6 | Evidence satisfaction and replan | Planned | TBD | TBD | TBD | Deterministic satisfaction may close obvious read requirements only with typed evidence. |
@@ -61,3 +61,6 @@ When a phase is completed:
 - Phase 2 contracts added in `factory_agent/planning/v2_contracts.py` with focused tests in `tests/test_planner_owned_loop_phase2_contracts.py`.
 - Verification passed: `python -m pytest tests/test_planner_owned_loop_phase1_boundary.py tests/test_planner_owned_loop_phase2_contracts.py -q` reported `11 passed, 1 warning`; `python -m pytest tests/test_route_to_execution_contract.py tests/test_intent_splitter.py tests/test_tool_selector.py -q` reported `88 passed, 35 warnings`; `git diff --check` passed.
 - Handoff for Phase 3: consume these contracts from metadata/generated capability-map work only; legacy RAG remains represented as `legacy_rag_route` evidence, not `rag_tool`, and production still must not claim `engine_version=v2` or `engine_version=v2_shadow`.
+- Phase 3 capability-map helpers added in `factory_agent/planning/v2_capability_map.py` with focused tests in `tests/test_planner_owned_loop_phase3_capability_map.py`.
+- Verification passed: `python -m pytest tests/test_planner_owned_loop_phase1_boundary.py tests/test_planner_owned_loop_phase2_contracts.py tests/test_planner_owned_loop_phase3_capability_map.py -q` reported `21 passed, 1 warning`; `python -m pytest tests/test_route_to_execution_contract.py tests/test_intent_splitter.py tests/test_tool_selector.py -q` reported `88 passed, 35 warnings`; `git diff --check` passed.
+- Handoff for Phase 4: use the compact capability hints and requirement sketches as inputs, keep document knowledge as capability families until a real RAG tool retriever is implemented, and reuse the existing `ToolSelector` stack for need-based retrieval.
