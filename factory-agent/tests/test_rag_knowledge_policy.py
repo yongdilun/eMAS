@@ -213,7 +213,7 @@ def test_osha_reenergizing_notification_policy_accepts_osha_assure_know_wording(
     assert_no_synthetic_loto_notification_source(result)
 
 
-def test_osha_reenergizing_notification_policy_recovers_when_llm_refuses_but_source_proves_answer():
+def test_osha_reenergizing_notification_policy_does_not_recover_positive_answer_from_source_excerpt():
     registry = default_knowledge_policy_registry()
     frame = semantic_frame_for_text(SUPPORTED_REENERGIZING_NOTIFICATION_PROMPT)
 
@@ -244,9 +244,10 @@ def test_osha_reenergizing_notification_policy_recovers_when_llm_refuses_but_sou
     )
 
     assert result.policy_id == "loto_notification_document_content"
-    assert result.answer.startswith("After removing the lockout or tagout devices")
-    assert "employer must assure" in result.answer
-    assert "[^1]" in result.answer
+    assert result.answer.startswith("I do not have enough retrieved evidence")
+    assert "related sources checked" in result.answer
+    assert "employer must assure" not in result.answer
+    assert "[^1]" not in result.answer
     assert result.sources[0]["chunk_id"] == "osha_3120_lockout_tagout_c0029"
     assert_no_synthetic_loto_notification_source(result)
 

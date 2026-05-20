@@ -545,6 +545,11 @@ def _knowledge_answer_payload(answer: Any, sources: list[dict[str, Any]]) -> tup
     return clean_answer, segments, list(citations_by_id.values())
 
 
+def _knowledge_answer_text_for_sources(answer: Any, sources: list[dict[str, Any]]) -> str:
+    clean_answer, _segments, _citations = _knowledge_answer_payload(answer, sources)
+    return clean_answer
+
+
 def _action(action_id: str) -> dict[str, str]:
     return {"id": action_id, "label": _ACTION_LABELS.get(action_id, action_id.replace("_", " ").title())}
 
@@ -3166,8 +3171,9 @@ def _compose_run_steps(
             )
         )
 
+    knowledge_answer_text = _knowledge_answer_text_for_sources(presentation.summary, sources) if sources else ""
     if sources:
-        insufficient_context = is_insufficient_context_answer(presentation.summary)
+        insufficient_context = is_insufficient_context_answer(knowledge_answer_text)
         run_steps.append(
             RunStep(
                 step_id=f"knowledge:{operation_id or document_id}",
@@ -3216,7 +3222,7 @@ def _compose_run_steps(
             read_rows = [row for item in read_evidence for row in item.rows]
             completion_summary = _read_policy_summary(read_rows, read_policy, presentation.summary)
         elif sources:
-            completion_summary = _strip_footnote_markup(presentation.summary) or "Source-backed answer is ready."
+            completion_summary = _strip_footnote_markup(knowledge_answer_text) or "Source-backed answer is ready."
         else:
             completion_summary = _trimmed(presentation.summary) or None
         run_steps.append(
@@ -3436,8 +3442,9 @@ def _short_message(
         return _trimmed(presentation.summary) or "Some rows failed while others succeeded."
 
     if sources:
-        if is_insufficient_context_answer(presentation.summary):
-            clean_summary = _strip_footnote_markup(presentation.summary)
+        knowledge_answer_text = _knowledge_answer_text_for_sources(presentation.summary, sources)
+        if is_insufficient_context_answer(knowledge_answer_text):
+            clean_summary = _strip_footnote_markup(knowledge_answer_text)
             if clean_summary:
                 return clean_summary.split(" The related sources checked", 1)[0].rstrip(".") + "."
             return "I do not have enough retrieved evidence to answer that safely."

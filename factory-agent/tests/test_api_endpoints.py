@@ -559,13 +559,16 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
                 }
             )
             return type(
-                "Result",
-                (),
-                {
-                    "answer": "I do not have enough retrieved evidence to answer that safely.",
-                    "sources": [
-                        {
-                            "source_number": 1,
+                    "Result",
+                    (),
+                    {
+                        "answer": (
+                            "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                            "hazardous energy during servicing and maintenance [^1]."
+                        ),
+                        "sources": [
+                            {
+                                "source_number": 1,
                             "source_id": "osha_3120_lockout_tagout#purpose-standard",
                             "doc_id": "osha_3120_lockout_tagout",
                             "chunk_id": "purpose-standard",
@@ -630,6 +633,71 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
     assert evidence[0]["source_type"] == "rag_tool"
     assert evidence[0]["tool_name"] == "rag_search_documents"
     assert "29 CFR 1910.147" in evidence[0]["normalized_result"]["answer"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_does_not_recover_uncited_osha_loto_answer_from_source_excerpt(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
+    class FakeRAGPipeline:
+        async def run(self, *, query, session_id=None, route="RAG_ONLY", api_data=None):
+            del query, session_id, route, api_data
+            return type(
+                "Result",
+                (),
+                {
+                    "answer": (
+                        "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                        "hazardous energy during servicing and maintenance."
+                    ),
+                    "sources": [
+                        {
+                            "source_number": 1,
+                            "source_id": "osha_3120_lockout_tagout#purpose-standard",
+                            "doc_id": "osha_3120_lockout_tagout",
+                            "chunk_id": "purpose-standard",
+                            "title": "Control of Hazardous Energy Lockout/Tagout",
+                            "organization": "OSHA",
+                            "authority_level": "official_public_guidance",
+                            "snippet": (
+                                "OSHA's lockout/tagout standard, 29 CFR 1910.147, covers the control of "
+                                "hazardous energy during servicing and maintenance."
+                            ),
+                        }
+                    ],
+                    "safety_content": "This topic involves high-risk industrial procedures.",
+                },
+            )()
+
+    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": (
+                    "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA? "
+                    "Is there any specific OSHA regulation or standard that defines this?"
+                ),
+                "mode": "normal",
+            },
+        )
+
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["created_by"] == "v2_rag_tool"
+        assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
+        assert "29 CFR 1910.147" not in body["plan_explanation"]
+        assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
+
+    session_row = await db_session.get(Session, session_id)
+    evidence = (session_row.replan_context or {})["intent_contract"]["v2_state"]["evidence_ledger"]["evidence"]
+    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["tool_name"] == "rag_search_documents"
+    assert evidence[0]["normalized_result"]["answer"].startswith("I do not have enough retrieved evidence")
 
 
 @pytest.mark.asyncio

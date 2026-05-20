@@ -7,6 +7,7 @@ from factory_agent.rag.generation import AnswerGenerator
 from factory_agent.rag.reranking import LLMReranker
 from factory_agent.rag.retrieval import HybridRetriever
 from factory_agent.rag.schemas import AnswerResult
+from factory_agent.rag.source_metadata import is_insufficient_context_answer
 from factory_agent.observability.telemetry import log_event
 
 
@@ -47,7 +48,7 @@ class RAGPipeline:
         log_event(
             "rag_pipeline_complete",
             session_id=session_id,
-            success=not result.answer.startswith("No relevant documents"),
+            success=not is_insufficient_context_answer(result.answer),
             chunk_count=len(result.sources)
         )
         return result

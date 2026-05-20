@@ -6,8 +6,12 @@ from typing import List, Dict, Any, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from factory_agent.config import Settings, get_settings
 from factory_agent.llm import build_rag_answer_chat_model
+from factory_agent.rag.answer_contract import (
+    answer_or_insufficient_context,
+    validate_knowledge_answer,
+)
 from factory_agent.rag.schemas import Chunk, SourceCitation, AnswerResult
-from factory_agent.rag.source_metadata import normalize_source_locator, sanitize_rag_answer_text
+from factory_agent.rag.source_metadata import insufficient_context_answer, normalize_source_locator, sanitize_rag_answer_text
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +47,45 @@ SOURCE_SUPPORT_STOPWORDS = {
 ANSWER_PROMPT = """
 You are eMAS Assistant, an expert in industrial maintenance, safety, and operations.
 
-Answer the user's question using ONLY the provided context. Do not use prior knowledge.
-If the context does not contain enough information to answer, say so clearly.
+### Task
+Answer the user's question using ONLY the provided context and source numbers.
+Do not use prior knowledge. Do not infer beyond what the context states.
+If the context does not prove the answer, respond exactly with:
+{insufficient_answer}
 
-Rules:
-- Be concise and direct
-- Use numbered steps for procedures
-- Cite source numbers using superscript format like [^1] after each claim
-- Do not include any safety warnings or "Safety Warning:" text in this answer; a separate advisory block will be handled by the system.
-- Do not speculate beyond the context
+### Citation Contract
+- Use citation markers exactly like [^1], [^2], etc.
+- Use only source numbers that appear in the context.
+- Every factual claim must have a citation marker in the same sentence or list item.
+- For procedures, output a numbered list.
+- Every procedure step must end with a citation marker.
+- Do not put one citation at the end of a multi-step list unless it is repeated on every step.
+- Do not output [SOURCE 1], source titles, footnote definitions, or a bibliography.
+- Do not include uncited introductions, summaries, conclusions, or safety warnings.
 
-Context:
+### Output Format
+For procedures:
+1. <step proven by context>.[^N]
+2. <step proven by context>.[^N]
+
+For non-procedures:
+<direct answer sentence with citation>.[^N]
+
+### Context
 {context}
 
 {api_data_section}
 
-User question: {query}
+### User Question
+{query}
 
-Answer:
+### Final Checks Before Answering
+- Every factual sentence/list item has a valid [^N] citation.
+- Every procedure step is numbered and cited.
+- Unsupported or partially supported claims are omitted.
+- If no supported answer remains, output exactly the insufficient-context sentence.
+
+### Answer
 """
 
 API_DATA_SECTION_TEMPLATE = """
@@ -112,7 +137,7 @@ class AnswerGenerator:
         """
         if not chunks and not api_data:
             return AnswerResult(
-                answer="No relevant documents or data found for this query.",
+                answer=insufficient_context_answer(has_sources=False),
                 sources=[],
                 safety_warning=False,
                 route_used=route
@@ -155,7 +180,8 @@ class AnswerGenerator:
             prompt = ANSWER_PROMPT.format(
                 context=context,
                 api_data_section=api_section,
-                query=query
+                query=query,
+                insufficient_answer=insufficient_context_answer(has_sources=bool(chunks)),
             )
 
             # 4. Call LLM
@@ -175,18 +201,21 @@ class AnswerGenerator:
                 safety_text = "This topic involves high-risk industrial procedures. Always follow your site's approved SOP, obtain required permits, and consult your safety officer before proceeding."
 
             # 6. Build citations (one per unique document)
-            source_chunks = [
-                self._select_representative_source_chunk(
-                    query=query,
-                    answer=answer_text,
-                    chunks=doc_chunks[d_id],
-                )
-                for d_id in doc_order
-            ]
-            sources = [
-                self.build_source_citation(c, i + 1, query=query, answer=answer_text)
-                for i, c in enumerate(source_chunks)
-            ]
+            sources = self._build_sources_for_answer(
+                query=query,
+                answer=answer_text,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
+            answer_text, sources = self._validate_answer(
+                query=query,
+                context=context,
+                api_data_section=api_section,
+                answer=answer_text,
+                sources=sources,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
             
             logger.info(f"Generated {len(sources)} sources for query. Top source: {sources[0].title if sources else 'None'}")
             if sources:
@@ -202,8 +231,7 @@ class AnswerGenerator:
 
         except Exception as e:
             logger.error(f"Answer generation failed: {e}")
-            # A9: Fallback message
-            fallback_answer = "Unable to generate a detailed answer. Please check the following sources directly."
+            fallback_answer = insufficient_context_answer(has_sources=bool(chunks))
             
             # Recalculate unique docs for fallback
             doc_order = []
@@ -215,18 +243,12 @@ class AnswerGenerator:
                     doc_chunks[d_id] = []
                 doc_chunks[d_id].append(chunk)
 
-            source_chunks = [
-                self._select_representative_source_chunk(
-                    query=query,
-                    answer=fallback_answer,
-                    chunks=doc_chunks[d_id],
-                )
-                for d_id in doc_order
-            ]
-            sources = [
-                self.build_source_citation(c, i + 1, query=query, answer=fallback_answer)
-                for i, c in enumerate(source_chunks)
-            ]
+            sources = self._build_sources_for_answer(
+                query=query,
+                answer=fallback_answer,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
             has_high_risk = any(c.metadata.get("risk_level") == "high" for c in chunks)
             return AnswerResult(
                 answer=fallback_answer,
@@ -235,6 +257,47 @@ class AnswerGenerator:
                 safety_content="Safety data may be relevant but could not be fully processed." if has_high_risk else None,
                 route_used=route
             )
+
+    def _build_sources_for_answer(
+        self,
+        *,
+        query: str,
+        answer: str,
+        doc_order: list[str],
+        doc_chunks: dict[str, list[Chunk]],
+    ) -> list[SourceCitation]:
+        source_chunks = [
+            self._select_representative_source_chunk(
+                query=query,
+                answer=answer,
+                chunks=doc_chunks[d_id],
+            )
+            for d_id in doc_order
+        ]
+        return [
+            self.build_source_citation(c, i + 1, query=query, answer=answer)
+            for i, c in enumerate(source_chunks)
+        ]
+
+    def _validate_answer(
+        self,
+        *,
+        query: str,
+        context: str,
+        api_data_section: str,
+        answer: str,
+        sources: list[SourceCitation],
+        doc_order: list[str],
+        doc_chunks: dict[str, list[Chunk]],
+    ) -> tuple[str, list[SourceCitation]]:
+        if api_data_section.strip():
+            # Mixed live-data answers can contain operational facts that are not document source claims.
+            return sanitize_rag_answer_text(answer), sources
+        validation = validate_knowledge_answer(answer, sources)
+        if validation.valid:
+            return validation.answer, sources
+        fallback_answer, _validation = answer_or_insufficient_context(answer, sources)
+        return fallback_answer, sources
 
     def build_context(self, chunks: List[Chunk], source_numbers: Optional[List[int]] = None) -> str:
         """

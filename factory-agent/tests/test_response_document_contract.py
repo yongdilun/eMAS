@@ -2795,10 +2795,13 @@ async def test_rag_response_document_converts_wholly_uncited_source_backed_answe
     document = (await _snapshot(db_session, session_id))["response_document"]
     knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
 
+    assert document["message"] == "I do not have enough retrieved evidence to answer that safely."
     assert knowledge_block["answer"].startswith("I do not have enough retrieved evidence")
     assert "related sources checked" in knowledge_block["answer"]
     assert knowledge_block["citations"] == []
     assert knowledge_block["segments"] == [{"text": knowledge_block["answer"], "citation_ids": []}]
+    assert any(step["title"] == "Checked related sources" for step in document["run_steps"])
+    assert all("affected employee notification before lockout starts" not in step.get("summary", "") for step in document["run_steps"])
     assert "affected employee notification before lockout starts" not in json.dumps(knowledge_block)
 
 

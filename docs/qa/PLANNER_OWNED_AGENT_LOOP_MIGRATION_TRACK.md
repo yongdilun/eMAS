@@ -2,7 +2,7 @@
 
 Branch: `codex/playwright-e2e-plan`
 Created: 2026-05-20
-Last updated: 2026-05-20
+Last updated: 2026-05-21
 
 Primary plan: [`PLANNER_OWNED_AGENT_LOOP_MIGRATION.md`](PLANNER_OWNED_AGENT_LOOP_MIGRATION.md)
 
@@ -14,13 +14,13 @@ Use the main plan for architecture, contracts, phase definitions, stop condition
 
 ## Current Status
 
-Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 6.5 stabilization, Phase 7, Phase 8, Phase 9, Phase 10, and Phase 11 are complete. Phase 10 removed the normal legacy kill switch: `FACTORY_AGENT_ENGINE=legacy` now resolves to planner-owned v2, legacy planner/scaffold execution is test-only through `test_only_legacy_engine_enabled`, and v2 hard-query release proof still passes. Phase 11 hardened post-migration regressions for chat-start timeout, source-backed RAG answers, read-only collection rendering, and ToolSelector/session trace accounting.
+Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 6.5 stabilization, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11, and Phase 12 are complete. Phase 10 removed the normal legacy kill switch: `FACTORY_AGENT_ENGINE=legacy` now resolves to planner-owned v2, legacy planner/scaffold execution is test-only through `test_only_legacy_engine_enabled`, and v2 hard-query release proof still passes. Phase 11 hardened post-migration regressions for chat-start timeout, source-backed RAG answers, read-only collection rendering, and ToolSelector/session trace accounting. Phase 12 tightened RAG around a citation-first answer contract and removed confusing source-excerpt/default answer fallbacks.
 
 Important handoff after Phase 10: no normal product path should reintroduce legacy graph/RAG/scaffold fallback authority. Any future emergency fallback must stay explicit, disabled by default, monitored, and scheduled for deletion.
 
 Testing handoff for Phase 5 and later: the main plan now includes a Testing Migration Impact Map. Future phases must update or satisfy that map when they affect hard-query E2E, stateful oracle, response-document UX, RAG/source UX, SSE/timeline, seeded adapter, or hardcode guardrail coverage.
 
-Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 8 ran full backend plus frontend unit/Playwright semantic gates. Phase 9 and Phase 10 ran the full release pipeline. Phase 11 should run targeted proof tests for changed areas plus the full release pipeline when backend and frontend behavior both change. If any full gate is blocked, record the blocker, narrower suite, and deferred owner in this tracker.
+Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 8 ran full backend plus frontend unit/Playwright semantic gates. Phase 9 and Phase 10 ran the full release pipeline. Phase 11 ran targeted proof tests plus full backend and release gates. Phase 12 must run targeted RAG/API/response-document proof suites, full backend when backend RAG behavior changes broadly, and frontend/release gates if response-document or frontend behavior changes. If any full gate is blocked, record the blocker, narrower suite, and deferred owner in this tracker.
 
 ## Phase Progress
 
@@ -38,6 +38,7 @@ Full-pipeline handoff: Phase 6.5 retired the Phase 6 full backend waiver. Phase 
 | 9 | Hard query release proof | Complete | Codex | This commit: `feat: add planner-owned loop hard query release proof` | Focused Phase 1-9: `72 passed, 58 warnings`; route/splitter/selector/hardcode: `103 passed, 34 warnings`; full backend: `908 passed, 3 skipped, 21 xfailed, 1924 warnings`; frontend unit: `128 passed`; mocked Playwright: `51 passed`; response-document Playwright: `29 passed`; seeded oracles: `35 passed`; real LangGraph: `3 passed`; release Playwright: `21 passed`; `git diff --check` passed | Proved hard query read, multi-ID, sort/limit/fields, mixed API/RAG, conditional branch, approval, interrupt, insufficient-context, and tool-failure families through typed evidence, response_document rendering, semantic/oracle assertions, and no-hardcode guardrails. Remaining release blockers: none. |
 | 10 | Legacy kill-switch removal | Complete | Codex | This commit: `feat: remove planner-owned loop legacy kill switch` | Phase 1-10: `76 passed`; route/splitter/selector/hardcode: `103 passed`; full backend: `912 passed, 24 skipped, 0 xfailed`; frontend unit: `128 passed`; mocked Playwright: `51 passed`; response-document Playwright: `29 passed`; seeded oracles: `35 passed`; real LangGraph: `3 passed`; release Playwright: `21 passed`; `git diff --check` passed | Normal `FACTORY_AGENT_ENGINE=legacy` resolves to v2, legacy planner/scaffold behavior is test-only, v2 RAG remains `rag_search_documents` evidence, old legacy xfails are removed from normal backend, generated vocabulary names planner-owned v2, and `v2_shadow` is logged as an explicit emergency fallback only. |
 | 11 | Post-migration regression hardening and proof tests | Complete | Codex | This commit: `fix: harden planner-owned loop post-migration regressions` | ToolSelector: `27 passed`; API/response-doc: `87 passed, 21 skipped`; route/splitter/selector/hardcode: `107 passed`; full backend: `920 passed, 24 skipped`; frontend unit: `129 passed`; response-document Playwright: `29 passed`; release Playwright: `21 passed`; `git diff --check` passed | Raised frontend timeout through existing config default, restored source-backed OSHA/LOTO RAG answers while preserving insufficient-context negatives, removed duplicate read-only collection `Preview`, and surfaced forced reranker attempts in session/API LLM accounting. No legacy authority, exact-prompt runtime branch, seeded-ID runtime branch, fixture-source runtime branch, or second retriever stack was added. |
+| 12 | Citation-first RAG answer contract and fallback cleanup | Complete | Codex | Pending | Targeted Phase 12: `37 passed`; API/response-doc: `88 passed, 21 skipped`; RAG suite: `51 passed`; route/splitter/selector/hardcode: `107 passed`; full backend: `931 passed, 24 skipped`; `git diff --check` passed | Added reusable RAG answer citation validation, strengthened the single initial RAG prompt with explicit citation rules/examples/final checks, added v2 evidence-time validation, response-document message/block agreement, and removed source-excerpt/default positive answer recovery. No second RAG post-processing LLM call, legacy authority, exact-prompt runtime branch, fixture-source runtime branch, or new retriever stack was added. |
 
 ## Audit Notes
 
@@ -189,3 +190,26 @@ When a phase is completed:
 - Phase 11 frontend verification passed: `npm test` reported `129 passed`; `npm run test:e2e:response-document` reported `29 passed`; `npm run test:e2e:release` reported `21 passed`.
 - Verification passed: `git diff --check` exited 0.
 - Remaining Phase 11 blockers or deferred release risks: none.
+
+### 2026-05-21
+
+- Phase 12 planned before implementation in the main migration plan as `Citation-First RAG Answer Contract And Fallback Cleanup`.
+- Phase 12 scope: remove source-excerpt/default positive answer fallbacks; validate RAG answer citations before v2 evidence, requirement satisfaction, and response-document rendering; use one stronger initial RAG prompt rather than a second LLM post-processing call; and keep unsupported, uncited, malformed, empty, or related-but-non-proving sources on the insufficient-context contract.
+- Required Phase 12 proof: RAG generation/validation tests for uncited and cited procedure answers, knowledge-policy tests proving no positive source-excerpt recovery, API/session tests proving validated answers are what persist into evidence and plan explanation, response-document tests proving message/block agreement, and hardcode guardrail coverage.
+- Phase 12 implementation added `factory_agent/rag/answer_contract.py`, strengthened the single RAG answer prompt with explicit delimiters/output examples/repeated citation checks, wired validation into RAG generation and `build_v2_rag_evidence`, removed knowledge-policy source-excerpt positive recovery, standardized generation failure/empty-source answers on insufficient-context, and made response-document messages/run summaries use citation-derived knowledge-answer text.
+- Verification passed: `python -m pytest tests/test_rag_answer_contract.py tests/test_rag_generation.py tests/test_rag_knowledge_policy.py tests/test_api_endpoints.py::test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan tests/test_api_endpoints.py::test_create_plan_does_not_recover_uncited_osha_loto_answer_from_source_excerpt tests/test_api_endpoints.py::test_create_plan_uses_insufficient_context_when_osha_loto_rag_is_empty tests/test_api_endpoints.py::test_create_plan_uses_insufficient_context_when_osha_loto_sources_do_not_prove_claim tests/test_response_document_contract.py::test_rag_response_document_converts_wholly_uncited_source_backed_answer_to_insufficient_context tests/test_response_document_contract.py::test_phase32_negative_osha_before_starting_lockout_uses_insufficient_context_with_related_sources -q` reported `37 passed, 67 warnings`.
+- Verification passed: `python -m pytest tests/test_api_endpoints.py tests/test_response_document_contract.py -q` reported `88 passed, 21 skipped, 1194 warnings`.
+- Verification note: the first RAG suite run without temp overrides hit the known Windows `tmp_path` permission error for `C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun`; rerunning with project-local temp passed.
+- Verification passed with project-local temp: `python -m pytest tests/test_rag_answer_contract.py tests/test_rag_retrieval.py tests/test_rag_reranking.py tests/test_rag_generation.py tests/test_rag_ingestion.py tests/test_rag_knowledge_policy.py -q` reported `51 passed, 3 warnings`.
+- Verification passed: `python -m pytest tests/test_route_to_execution_contract.py tests/test_intent_splitter.py tests/test_tool_selector.py tests/test_hardcode_guardrails.py -q` reported `107 passed, 35 warnings`.
+- Verification passed: project-local temp full backend command reported `931 passed, 24 skipped, 1792 warnings`:
+
+  ```powershell
+  $env:TMP='C:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent\.pytest-phase12-tmp'
+  $env:TEMP='C:\Users\dilun\OneDrive\Documents\eMas APi\factory-agent\.pytest-phase12-tmp'
+  New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
+  python -m pytest -q
+  ```
+
+- Verification passed: `git diff --check` exited 0. Output contained only working-copy LF-to-CRLF normalization warnings.
+- Remaining Phase 12 blockers or deferred release risks: none.

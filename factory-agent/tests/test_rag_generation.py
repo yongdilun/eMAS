@@ -3,7 +3,7 @@ import json
 from unittest.mock import MagicMock, patch
 from factory_agent.rag.schemas import Chunk, ScoredChunk, AnswerResult
 from factory_agent.rag.generation import AnswerGenerator, SAFETY_WARNING_BLOCK
-from factory_agent.rag.source_metadata import normalize_source_locators
+from factory_agent.rag.source_metadata import insufficient_context_answer, normalize_source_locators
 
 @pytest.fixture
 def mock_settings():
@@ -104,7 +104,7 @@ def test_build_context_restricted(mock_build_llm, mock_settings, restricted_chun
 def test_generate_answer_safety_warning(mock_build_llm, mock_settings, sample_chunks):
     mock_llm = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = "To perform LOTO, follow these steps [SOURCE 1]."
+    mock_response.content = "To perform LOTO, follow these steps [^1]."
     mock_llm.invoke.return_value = mock_response
     mock_build_llm.return_value = mock_llm
     
@@ -149,6 +149,72 @@ def test_generate_answer_strips_legacy_raw_safety_markdown(mock_build_llm, mock_
     assert "SAFETY WARNING" not in result.answer
     assert "Notify affected employees" in result.answer
     assert result.safety_content
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0027",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy sources."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 14,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    response = MagicMock()
+    response.content = (
+        "1. Prepare for shutdown.[^1]\n"
+        "2. Shut down the machine.[^1]\n"
+        "3. Disconnect or isolate the machine from the energy sources.[^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert result.answer == response.content
+    assert mock_llm.invoke.call_count == 1
+    prompt = mock_llm.invoke.call_args.args[0][1].content
+    assert "Every procedure step must end with a citation marker" in prompt
+    assert "Do not put one citation at the end of a multi-step list" in prompt
+    assert "If no supported answer remains, output exactly the insufficient-context sentence" in prompt
+    assert result.sources[0].source_number == 1
+    assert result.sources[0].doc_id == "osha_3120_lockout_tagout"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_uses_insufficient_context_when_first_answer_is_uncited(mock_build_llm, mock_settings, sample_chunks):
+    bad_response = MagicMock()
+    bad_response.content = "Lock out the machine before maintenance."
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = bad_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("How to do LOTO?", [sample_chunks[0]])
+
+    assert result.answer == insufficient_context_answer(has_sources=True)
+    assert mock_llm.invoke.call_count == 1
+    assert result.sources[0].doc_id == "doc1"
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
@@ -284,7 +350,7 @@ def test_generate_answer_no_safety_warning(mock_build_llm, mock_settings, sample
     
     mock_llm = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = "OEE is Availability * Performance * Quality [SOURCE 1]."
+    mock_response.content = "OEE is Availability * Performance * Quality [^1]."
     mock_llm.invoke.return_value = mock_response
     mock_build_llm.return_value = mock_llm
     
@@ -317,7 +383,7 @@ def test_generate_answer_api_integration(mock_build_llm, mock_settings, sample_c
 def test_generate_answer_citations(mock_build_llm, mock_settings, sample_chunks):
     mock_llm = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = "Steps: 1. Lock [SOURCE 1]. 2. Verify [SOURCE 1]. 3. Calc [SOURCE 2]."
+    mock_response.content = "Steps: 1. Lock [^1]. 2. Verify [^1]. 3. Calc [^2]."
     mock_llm.invoke.return_value = mock_response
     mock_build_llm.return_value = mock_llm
     
@@ -349,8 +415,7 @@ def test_generate_answer_llm_failure(mock_build_llm, mock_settings, sample_chunk
     generator = AnswerGenerator(mock_settings)
     result = generator.generate("How to do LOTO?", sample_chunks)
     
-    # A9: Fallback message
-    assert "Unable to generate a detailed answer" in result.answer
+    assert result.answer == insufficient_context_answer(has_sources=True)
     assert len(result.sources) == 2
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
@@ -359,7 +424,7 @@ def test_generate_answer_empty_input(mock_build_llm, mock_settings):
     generator = AnswerGenerator(mock_settings)
     result = generator.generate("What is the meaning of life?", [])
     
-    assert "No relevant documents" in result.answer
+    assert result.answer == insufficient_context_answer(has_sources=False)
     assert len(result.sources) == 0
 
 

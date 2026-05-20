@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from factory_agent.rag.answer_contract import answer_or_insufficient_context
 from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
 from factory_agent.schemas import ToolInfo
 
@@ -87,6 +88,7 @@ def build_v2_rag_evidence(
     raw_sources = list(getattr(result, "sources", []) or [])
     sources = normalize_source_locators(raw_sources, fallback_snippet=answer)
     safety_content = getattr(result, "safety_content", None)
+    answer, _validation = answer_or_insufficient_context(answer, sources)
     citations: list[EvidenceCitation] = []
     for source in sources:
         citation = _citation_from_source(source)

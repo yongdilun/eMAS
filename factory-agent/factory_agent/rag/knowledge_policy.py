@@ -8,7 +8,6 @@ from factory_agent.rag.source_metadata import (
     insufficient_context_answer,
     normalize_source_locators,
     sanitize_rag_answer_text,
-    snippet_from_text,
 )
 
 
@@ -35,7 +34,6 @@ class EvidenceSupportProfile:
     required_answer_any_evidence: tuple[tuple[str, ...], ...] = ()
     required_source_evidence: tuple[str, ...] = ()
     required_source_any_evidence: tuple[tuple[str, ...], ...] = ()
-    recovery_strategy: str | None = None
 
     def applies_to(self, query: str) -> bool:
         return not self.required_query_evidence or _matches_any_pattern(query, self.required_query_evidence)
@@ -119,21 +117,6 @@ class KnowledgePolicyRegistry:
         merged_answer = (answer or "").strip()
         merged_sources = list(sources)
         merged_safety = safety_content
-        rescued_answer = _source_backed_policy_answer(
-            policy=policy,
-            query=query,
-            sources=merged_sources,
-        )
-        if rescued_answer and (
-            _is_empty_or_unusable_answer(merged_answer)
-            or not _policy_answer_has_required_evidence(
-                policy=policy,
-                query=query,
-                answer=merged_answer,
-                sources=merged_sources,
-            )
-        ):
-            merged_answer = rescued_answer
         if (
             _is_empty_or_unusable_answer(merged_answer)
             or not merged_sources
@@ -199,7 +182,6 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                             ("know", "assure", "notify", "informed", "aware"),
                             ("remov", "device"),
                         ),
-                        recovery_strategy="source_excerpt",
                     ),
                 ),
             ),
@@ -230,7 +212,6 @@ def default_knowledge_policy_registry() -> KnowledgePolicyRegistry:
                         required_answer_evidence=("29 cfr 1910.147",),
                         required_source_evidence=("29 cfr 1910.147",),
                         required_source_any_evidence=(("hazardous energy", "lockout", "tagout", "loto"),),
-                        recovery_strategy="source_excerpt",
                     ),
                 ),
             )
@@ -339,33 +320,6 @@ def _policy_answer_has_required_evidence(
             required_any_evidence=profile.required_answer_any_evidence,
         ) and _sources_support_profile(sources, profile)
     return _answer_has_required_evidence(answer, policy.required_answer_evidence)
-
-
-def _source_backed_policy_answer(
-    *,
-    policy: KnowledgePolicy,
-    query: str,
-    sources: Sequence[Any],
-) -> str | None:
-    profile = _policy_support_profile(policy, query)
-    if profile is None or profile.recovery_strategy != "source_excerpt":
-        return None
-    supporting_source = _first_source_supporting_profile(sources, profile)
-    if supporting_source is None:
-        return None
-    return _source_excerpt_answer(supporting_source)
-
-
-def _source_excerpt_answer(source: Any) -> str | None:
-    excerpt = snippet_from_text(
-        _source_value(source, "snippet") or _source_value(source, "text_search") or _source_value(source, "text"),
-        limit=360,
-    )
-    if not excerpt:
-        return None
-    source_number = _source_value(source, "source_number") or 1
-    punctuated = excerpt if excerpt.endswith((".", "!", "?")) else f"{excerpt}."
-    return f"{punctuated}[^{source_number}]"
 
 
 def _has_source_identity(sources: Sequence[Any], identity_evidence: Sequence[str]) -> bool:

@@ -1172,6 +1172,57 @@ Acceptance criteria:
 - Read-only collection response documents now use a single `Results` table surface instead of a duplicate user-facing `Preview` plus `Results`, while approval and mutation previews remain visible where expected.
 - Phase 11 verification is recorded in the progress tracker, including targeted backend proof suites, full backend, frontend unit, response-document Playwright, and release Playwright gates.
 
+## Phase 12: Citation-First RAG Answer Contract And Fallback Cleanup
+
+Goal: replace confusing RAG answer fallbacks with a citation-first answer contract that validates generated claims before they become v2 evidence or response-document content.
+
+Why this phase exists:
+
+- A retrieved OSHA/LOTO source can prove the user's question, while the generated answer is incomplete or missing `[^N]` citations.
+- The response-document renderer currently protects users by downgrading wholly uncited sourced answers to insufficient-context, but that happens after the plan summary/message may already claim a source-backed answer.
+- Source-excerpt or policy-specific recovery fallbacks can make the product look correct while hiding prompt/contract failures, and they risk turning related source text into unsupported answers.
+
+Architecture direction:
+
+- RAG generation must produce an answer that satisfies `knowledge_answer_v1`: every factual claim, and every numbered procedure step, must carry valid source markers that resolve to returned source locators.
+- RAG validation must happen before `build_v2_rag_evidence`, requirement satisfaction, and response-document rendering. Invalid positive answers become explicit insufficient-context answers at the RAG tool boundary.
+- RAG generation must use a single strong prompt with explicit context delimiters, output examples, and repeated citation checks near the answer cue. Do not add a second LLM post-processing call for citation shape.
+- Knowledge policy may reject unsupported answers and preserve insufficient-context with related sources. It must not synthesize positive answers from policy text, exact prompts, source ids, seeded fixtures, or source snippets.
+- Response-document rendering remains a final safety net, but it should normally receive already-validated `knowledge_answer_v1` payloads.
+
+Required cleanup:
+
+- Remove policy/source-excerpt recovery paths that turn retrieved sources into positive prose answers.
+- Replace default generation exception fallbacks such as "Unable to generate..." with the same insufficient-context contract used for other invalid RAG answers.
+- Preserve negative behavior: empty sources, related-but-non-proving sources, malformed citations, and uncited answers must render insufficient-context and list related sources when present.
+- Preserve positive behavior: properly cited answers from retrieved sources should remain `created_by=v2_rag_tool`, `source_type=rag_tool`, `tool_name=rag_search_documents`, with typed citations and non-insufficient answer text.
+
+Required proof tests:
+
+- RAG generation tests prove the initial prompt contains the complete citation contract, procedure answers cite every numbered step, and uncited/truncated answers become insufficient-context without a second LLM repair call.
+- Knowledge-policy tests prove policies reject unsupported or uncited positive answers without source-excerpt recovery.
+- API/session tests prove direct-v2 RAG persists only the validated answer into `plan_explanation`, evidence `normalized_result.answer`, and response-document blocks.
+- Response-document tests prove the user-facing message and knowledge block agree: invalid RAG answers do not show "I found a source-backed answer" while the block says insufficient-context.
+- Hardcode guardrail tests continue to block exact-prompt, seeded-ID, fixture-source, and synthetic-source runtime branches.
+
+Acceptance criteria:
+
+- No product/runtime branch keys on one OSHA prompt, one source id, one seeded fixture, or one entity label.
+- No new retriever stack is added.
+- No normal legacy RAG/scaffold behavior is reintroduced.
+- `Requirement`, `capability_need`, `tool_call`, and `evidence` remain distinct in code, traces, and tests.
+- RAG answer validity is determined by reusable citation/source locator contracts and typed evidence shape, not by fallback prose.
+- Full backend verification passes, and frontend/release gates run if response-document or frontend behavior changes.
+
+### Phase 12 Evidence (2026-05-21)
+
+- Added a reusable RAG answer contract validator for `knowledge_answer_v1` that requires positive document answers to cite returned source numbers and requires numbered procedure steps to be cited.
+- RAG generation now uses one stronger initial prompt with explicit citation rules, output examples, source delimiters, and final checks. If that single answer is invalid, it becomes insufficient-context with related sources preserved.
+- V2 RAG evidence creation validates answers before persisting `plan_explanation`, evidence `normalized_result.answer`, or response-document content.
+- Knowledge policy no longer performs source-excerpt positive answer recovery; it only preserves or rejects answers based on source/evidence support.
+- Response-document summary/message generation now uses the same citation-derived knowledge answer text, so stale or malformed uncited answers do not show a source-backed message while the block renders insufficient-context.
+- Phase 12 verification is recorded in the progress tracker, including RAG contract/generation/policy, API/response-document, hardcode guardrail, full backend, and `git diff --check` gates.
+
 ## Stop Conditions
 
 Stop and fix before phase completion if:
