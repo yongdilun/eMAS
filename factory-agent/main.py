@@ -85,7 +85,25 @@ def _schema_compatibility_actions(sync_conn) -> list[_SchemaCompatibilityAction]
             )
         )
 
+    def ensure_index(table: str, index_name: str, columns: tuple[str, ...]) -> None:
+        if table not in tables:
+            return
+        indexes = {index["name"] for index in inspector.get_indexes(table)}
+        if index_name in indexes:
+            return
+        quoted_columns = ", ".join(columns)
+        actions.append(
+            _SchemaCompatibilityAction(
+                table=table,
+                column=index_name,
+                statement=f"CREATE INDEX {index_name} ON {table} ({quoted_columns})",
+                reason="missing compatibility index",
+            )
+        )
+
     ensure_column("sessions", "name", "VARCHAR(255)")
+    ensure_index("sessions", "idx_sessions_user_updated_at", ("user_id", "updated_at"))
+    ensure_index("sessions", "idx_sessions_updated_at", ("updated_at",))
     ensure_column("messages", "mode", "VARCHAR(20) NOT NULL DEFAULT 'normal'")
     ensure_column("plans", "kind", "VARCHAR(20) NOT NULL DEFAULT 'execution'")
     ensure_column("plans", "status", "VARCHAR(30) NOT NULL DEFAULT 'DRAFT'")

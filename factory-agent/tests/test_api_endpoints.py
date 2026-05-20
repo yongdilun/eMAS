@@ -253,6 +253,49 @@ async def test_create_session_and_message_updates_intent(sessionmaker_override, 
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_is_bounded_and_recent_for_user(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    db_session.add_all(
+        [
+            Session(
+                session_id=f"recent-{index}",
+                user_id="u1",
+                name=f"Chat {index}",
+                status="IDLE",
+                updated_at=base + timedelta(minutes=index),
+            )
+            for index in range(120)
+        ]
+        + [
+            Session(
+                session_id="other-user-session",
+                user_id="u2",
+                name="Other user",
+                status="IDLE",
+                updated_at=base + timedelta(minutes=999),
+            )
+        ]
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        default_response = await client.get("/sessions?user_id=u1")
+        assert default_response.status_code == 200
+        default_rows = default_response.json()
+        assert len(default_rows) == 100
+        assert default_rows[0]["session_id"] == "recent-119"
+        assert default_rows[-1]["session_id"] == "recent-20"
+        assert "other-user-session" not in {row["session_id"] for row in default_rows}
+
+        limited_response = await client.get("/sessions?user_id=u1&limit=3")
+        assert limited_response.status_code == 200
+        assert [row["session_id"] for row in limited_response.json()] == ["recent-119", "recent-118", "recent-117"]
+
+
+@pytest.mark.asyncio
 async def test_create_plan_rejects_tool_not_in_scope(sessionmaker_override, db_session):
     # Seed 8 machine tools + 1 inventory tool (should be excluded once picked>=8 and score==0)
     machine_schema = {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}

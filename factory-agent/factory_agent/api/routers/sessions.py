@@ -43,10 +43,11 @@ def build_sessions_router(
     @router.get("/sessions", response_model=list[SessionResponse])
     async def list_sessions(
         user_id: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=500),
         user: dict[str, Any] = Depends(require_jwt),
         db: AsyncSession = Depends(get_db),
     ):
-        stmt = select(SessionRow).order_by(SessionRow.updated_at.desc())
+        stmt = select(SessionRow).order_by(SessionRow.updated_at.desc()).limit(limit)
         principal = principal_user_id(user)
         if principal and not is_admin_claims(user):
             stmt = stmt.where(SessionRow.user_id == principal)

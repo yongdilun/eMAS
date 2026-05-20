@@ -11,6 +11,8 @@ class Session(Base):
     __tablename__ = "sessions"
     __table_args__ = (
         Index("idx_sessions_user_id", "user_id"),
+        Index("idx_sessions_user_updated_at", "user_id", "updated_at"),
+        Index("idx_sessions_updated_at", "updated_at"),
         Index("idx_sessions_status", "status"),
     )
     session_id = Column(String(36), primary_key=True, default=generate_uuid)

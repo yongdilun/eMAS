@@ -37,6 +37,11 @@ class _FakeInspector:
             ]
         return []
 
+    def get_indexes(self, table: str) -> list[dict[str, object]]:
+        if table == "sessions":
+            return [{"name": "idx_sessions_user_id"}, {"name": "idx_sessions_status"}]
+        return []
+
 
 def test_schema_compatibility_relaxes_approval_step_id_for_graph_approvals(monkeypatch):
     conn = _FakeConnection()
@@ -45,6 +50,16 @@ def test_schema_compatibility_relaxes_approval_step_id_for_graph_approvals(monke
     main._ensure_schema_compatibility(conn)
 
     assert "ALTER TABLE approvals MODIFY step_id VARCHAR(36) NULL" in conn.sql
+
+
+def test_schema_compatibility_adds_session_history_indexes(monkeypatch):
+    conn = _FakeConnection()
+    monkeypatch.setattr(main, "inspect", lambda sync_conn: _FakeInspector())
+
+    main._ensure_schema_compatibility(conn)
+
+    assert "CREATE INDEX idx_sessions_user_updated_at ON sessions (user_id, updated_at)" in conn.sql
+    assert "CREATE INDEX idx_sessions_updated_at ON sessions (updated_at)" in conn.sql
 
 
 def test_schema_compatibility_read_only_mode_reports_pending_ddl_without_mutation(monkeypatch):
