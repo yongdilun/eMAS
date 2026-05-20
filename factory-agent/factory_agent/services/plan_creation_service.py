@@ -50,6 +50,15 @@ from factory_agent.planning.v2_planner_loop import (
     legacy_graph_signals,
     legacy_rag_signals,
 )
+from factory_agent.planning.v2_rag_tool import (
+    build_v2_rag_evidence,
+    ensure_v2_rag_tool,
+    open_document_requirements,
+)
+from factory_agent.planning.v2_satisfaction import (
+    apply_deterministic_evidence_satisfaction,
+    validate_v2_final_state,
+)
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
 from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
 from factory_agent.registry.tool_registry import ToolRegistry
@@ -71,6 +80,7 @@ PLANNER_NO_ACTION_MESSAGE = (
     "request. Current state: blocked before execution. Next action: refine the request or check tool availability, "
     "then retry."
 )
+EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_planner_loop", "v2_rag_tool"}
 
 
 class PlanCreationService:
@@ -263,6 +273,7 @@ class PlanCreationService:
         await db.commit()
         sources = kwargs.get("sources", [])
         sources_dict = normalize_source_locators(sources, fallback_snippet=reply)
+        backend_used = str(kwargs.get("backend_used") or "system")
 
         empty_draft = PlanDraft(
             plan_explanation=reply,
@@ -276,7 +287,7 @@ class PlanCreationService:
             sess=sess,
             draft=empty_draft,
             tools_by_name=tools_by_name,
-            backend_used="system",
+            backend_used=backend_used,
             kind="execution",
             status="COMPLETED",
             intent=intent,
@@ -548,13 +559,74 @@ class PlanCreationService:
         tools_by_name: dict[str, ToolInfo],
         intent: str,
         mode: str,
+        semantic_frame: Any | None = None,
+        assessment: Any | None = None,
     ) -> PlanResponse:
+        tools_by_name = ensure_v2_rag_tool(tools_by_name)
         v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
             intent=intent,
             tools_by_name=tools_by_name,
             engine_mode="v2",
             mode=mode,
         )
+
+        if (
+            semantic_frame is not None
+            and str(getattr(semantic_frame, "route", "") or "").startswith("clarification.")
+            and getattr(semantic_frame, "missing_required_entities", None)
+            and not self._seeded_planner_handles_intent(intent)
+        ):
+            context = dict(sess.replan_context or {})
+            if hasattr(semantic_frame, "to_payload"):
+                context["semantic_frame"] = semantic_frame.to_payload()
+            context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
+                None,
+                intent=intent,
+                v2_state=v2_run.state,
+            )
+            return await self._persist_conversation_reply_as_empty_plan(
+                db=db,
+                sess=sess,
+                reply=self._semantic_clarification_reply(semantic_frame),
+                mode=mode,
+                tools_by_name=tools_by_name,
+                intent=intent,
+                context_to_keep=context,
+                backend_used="v2_planner_loop",
+            )
+
+        if assessment is not None and getattr(assessment, "kind", None) != "operations":
+            reply = getattr(assessment, "reply", None)
+            if reply:
+                context = dict(sess.replan_context or {})
+                context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
+                    None,
+                    intent=intent,
+                    v2_state=v2_run.state,
+                )
+                return await self._persist_conversation_reply_as_empty_plan(
+                    db=db,
+                    sess=sess,
+                    reply=reply,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                    context_to_keep=context,
+                    backend_used="v2_planner_loop",
+                )
+
+        rag_response = await self._maybe_create_direct_v2_rag_response(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            mode=mode,
+            v2_run=v2_run,
+            semantic_frame=semantic_frame,
+        )
+        if rag_response is not None:
+            return rag_response
+
         context = dict(sess.replan_context or {})
         context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
             None,
@@ -572,6 +644,104 @@ class PlanCreationService:
             intent=intent,
             context_to_keep=context,
             tool_outputs=v2_run.tool_outputs,
+        )
+
+    async def _maybe_create_direct_v2_rag_response(
+        self,
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+        mode: str,
+        v2_run: Any,
+        semantic_frame: Any | None,
+    ) -> PlanResponse | None:
+        document_requirements = open_document_requirements(v2_run.state)
+        if not document_requirements:
+            return None
+        ledger = v2_run.state.requirement_ledger
+        if ledger is None:
+            return None
+        if any(
+            requirement.required
+            and requirement.requirement_type != "document_answer"
+            and requirement.status not in {"satisfied", "skipped", "superseded"}
+            for requirement in ledger.requirements
+        ):
+            return None
+
+        requirement = document_requirements[0]
+        query = requirement.goal or intent
+        answer = ""
+        sources: list[Any] = []
+        safety_content: str | None = None
+        evidence = None
+        try:
+            if self._rag_pipeline is None:
+                from ..rag.pipeline import RAGPipeline
+
+                self._rag_pipeline = RAGPipeline()
+            result = await self._rag_pipeline.run(query=query, session_id=sess.session_id, route="RAG_ONLY")
+            evidence, answer, sources, safety_content = build_v2_rag_evidence(
+                requirement=requirement,
+                query=query,
+                result=result,
+                evidence_id=f"ev-rag-{requirement.id}",
+            )
+        except Exception as exc:
+            log_event(
+                "v2_rag_tool_failed",
+                level="WARNING",
+                session_id=sess.session_id,
+                error=str(exc),
+            )
+
+        semantic_frame = semantic_frame or semantic_frame_for_text(intent)
+        route_family = str(getattr(semantic_frame, "route", "") or "unknown")
+        policy_application = self._knowledge_policy_registry.apply(
+            route_family=route_family,
+            query=query,
+            answer=answer,
+            sources=sources,
+            safety_content=safety_content,
+            semantic_frame=semantic_frame,
+        )
+        answer = sanitize_rag_answer_text(policy_application.answer or answer)
+        sources = normalize_source_locators(policy_application.sources, fallback_snippet=answer)
+        safety_content = policy_application.safety_content
+        if evidence is not None:
+            evidence.normalized_result["answer"] = answer
+            v2_run.state.evidence_ledger.evidence.append(evidence)
+        apply_deterministic_evidence_satisfaction(v2_run.state)
+        validate_v2_final_state(v2_run.state)
+        v2_run.state.execution_trace.diagnostics["v2_rag_tool"] = {
+            "executed": evidence is not None,
+            "requirement_id": requirement.id,
+            "source_count": len(sources),
+        }
+        if not answer:
+            answer = "I could not find enough relevant knowledge-base material to answer that safely."
+
+        context = dict(sess.replan_context or {})
+        if semantic_frame and getattr(semantic_frame, "route", None) != "unknown" and hasattr(semantic_frame, "to_payload"):
+            context["semantic_frame"] = semantic_frame.to_payload()
+        context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
+            None,
+            intent=intent,
+            v2_state=v2_run.state,
+        )
+        return await self._persist_conversation_reply_as_empty_plan(
+            db=db,
+            sess=sess,
+            reply=answer,
+            mode=mode,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            sources=sources,
+            safety_content=safety_content,
+            context_to_keep=context,
+            backend_used="v2_rag_tool",
         )
 
     async def _persist_plan(self,
@@ -594,7 +764,7 @@ class PlanCreationService:
             and not draft_steps
             and (
                 status != "COMPLETED"
-                or (backend_used not in {"system"} and not tool_outputs)
+                or (backend_used not in EMPTY_PLAN_COMPLETION_BACKENDS and not tool_outputs)
             )
         )
         persisted_status = "DRAFT" if planner_no_action and status == "COMPLETED" else status
@@ -989,6 +1159,7 @@ class PlanCreationService:
         draft = req.draft
 
         if getattr(self._settings, "factory_agent_engine", "legacy") == "v2" and draft is None:
+            tools_by_name = ensure_v2_rag_tool(tools_by_name)
             if not tools_by_name:
                 raise HTTPException(status_code=403, detail={"errors": ["No tools are allowed for this user role."]})
             plan_resp = await self._create_direct_v2_plan(
@@ -997,6 +1168,8 @@ class PlanCreationService:
                 tools_by_name=tools_by_name,
                 intent=intent,
                 mode=mode,
+                semantic_frame=semantic_frame,
+                assessment=assessment,
             )
             metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
             return plan_resp

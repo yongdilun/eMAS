@@ -259,7 +259,9 @@ def test_phase19_adjacent_loto_and_status_controls_keep_entity_requirements():
 
 
 @pytest.mark.asyncio
-async def test_phase19_document_content_loto_prompt_workflow_returns_clean_response_document(sessionmaker_override):
+async def test_phase19_document_content_loto_prompt_workflow_returns_clean_response_document(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
     class FakeRAGPipeline:
         def __init__(self):
             self.calls = []
@@ -313,7 +315,7 @@ async def test_phase19_document_content_loto_prompt_workflow_returns_clean_respo
 
     assert rag.calls == [{"query": prompt, "session_id": session_id, "route": "RAG_ONLY", "api_data": None}]
     assert body["status"] == "COMPLETED"
-    assert body["created_by"] == "system"
+    assert body["created_by"] == "v2_rag_tool"
     assert "notifying affected employees" in body["plan_explanation"].lower()
     assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
     assert steps == []
@@ -332,6 +334,11 @@ async def test_phase19_document_content_loto_prompt_workflow_returns_clean_respo
     assert "Which machine ID" not in serialized
     assert "No results" not in serialized
     assert "completed_answer" not in serialized
+    session_row = await db_session.get(Session, session_id)
+    contract = (session_row.replan_context or {})["intent_contract"]
+    assert contract["engine_version"] == "v2"
+    assert contract["execution_trace"]["detectors"]["legacy_rag_shortcut"]["used"] is False
+    assert contract["v2_state"]["evidence_ledger"]["evidence"][0]["source_type"] == "rag_tool"
 
 
 def test_phase19_scenario_116_loto_wording_matrix_uses_same_rag_route():

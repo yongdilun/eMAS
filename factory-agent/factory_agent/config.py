@@ -124,8 +124,8 @@ class Settings:
     # Phase 5 / FA-004 rollback flag. Prefer explicit migrations; enable only
     # as a temporary compatibility bridge.
     enable_startup_schema_compat: bool = False
-    # Planner-owned loop migration flag. Default legacy preserves production behavior.
-    factory_agent_engine: FactoryAgentEngine = "legacy"
+    # Planner-owned loop migration flag. Legacy remains as an explicit kill switch.
+    factory_agent_engine: FactoryAgentEngine = "v2"
 
 
 def _normalize_summary_backend(value: str) -> str:
@@ -148,10 +148,10 @@ def _normalize_graph_checkpoint_backend(raw: str | None) -> str:
 
 
 def normalize_factory_agent_engine(raw: str | None) -> FactoryAgentEngine:
-    v = (raw or "legacy").strip().lower() or "legacy"
+    v = (raw or "v2").strip().lower() or "v2"
     if v in {"legacy", "v2_shadow", "v2"}:
         return v  # type: ignore[return-value]
-    return "legacy"
+    return "v2"
 
 
 def _env_truthy(key: str, default: str = "0") -> bool:
@@ -388,5 +388,5 @@ def get_settings() -> Settings:
         ),
         enable_startup_schema_compat=_env_truthy("ENABLE_STARTUP_SCHEMA_COMPAT", "0"),
         bge_reranker_model=os.getenv("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3").strip(),
-        factory_agent_engine=normalize_factory_agent_engine(os.getenv("FACTORY_AGENT_ENGINE", "legacy")),
+        factory_agent_engine=normalize_factory_agent_engine(os.getenv("FACTORY_AGENT_ENGINE", "v2")),
     )

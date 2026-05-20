@@ -365,6 +365,20 @@ export function summarizeFinalResponseQuality(quality = {}) {
   })
 }
 
+function hasFinalResponseQualityEvidence(quality = {}) {
+  return (
+    Number(quality.finalResultCardCount || 0) > 0 ||
+    Number(quality.affectedRecordPreviewCount || 0) > 0 ||
+    Boolean(quality.expandableAuditPresent) ||
+    Boolean(quality.auditExpanded) ||
+    asArray(quality.businessGroups).length > 0 ||
+    asArray(quality.expandedAuditGroups).length > 0 ||
+    asArray(quality.forbiddenTextHits).length > 0 ||
+    asArray(quality.duplicateAffectedRecordEvidence).length > 0 ||
+    Boolean(quality.finalSummaryText)
+  )
+}
+
 export function forbiddenTextHits(text, expected = {}) {
   const forbidden = [...baseForbiddenProbeText, ...asArray(expected.forbiddenText)]
   if (expected.forbidWaitingApproval1) {
@@ -381,6 +395,7 @@ export function forbiddenTextHits(text, expected = {}) {
 export function summarizeVisibleUi(ui = {}, expected = {}) {
   const blocks = Array.isArray(ui.visibleBlocks) ? ui.visibleBlocks : []
   const blockSummaries = summarizeVisibleBlocks(blocks)
+  const finalResponseQuality = summarizeFinalResponseQuality(ui.finalResponseQuality || {})
   const approvalIds = compactArray([
     ...asArray(ui.visibleApprovalIds),
     ...blockSummaries.map((block) => block.approvalId),
@@ -465,7 +480,7 @@ export function summarizeVisibleUi(ui = {}, expected = {}) {
       text: compactText(ui.sourceDrawer.text || '', 180) || null,
     }) : null,
     forbiddenTextHits: compactArray(forbiddenTextHits(ui.visibleText || '', expected), 20),
-    finalResponseQuality: summarizeFinalResponseQuality(ui.finalResponseQuality || {}),
+    finalResponseQuality: hasFinalResponseQualityEvidence(finalResponseQuality) ? finalResponseQuality : null,
   }
 }
 
@@ -750,8 +765,25 @@ export function semanticProbeHumanSummary(probe) {
   ].filter(Boolean).join('\n')
 }
 
+function pruneArtifactValue(value) {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => pruneArtifactValue(item))
+      .filter((item) => item !== undefined)
+    return items.length ? items : undefined
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+      .map(([key, item]) => [key, pruneArtifactValue(item)])
+      .filter(([, item]) => item !== undefined)
+    return entries.length ? Object.fromEntries(entries) : undefined
+  }
+  if (value === null || value === undefined || value === '') return undefined
+  return value
+}
+
 export function serializeSemanticProbe(probe) {
-  return redactSensitiveArtifactText(JSON.stringify(probe, null, 2))
+  return redactSensitiveArtifactText(JSON.stringify(pruneArtifactValue(probe) || {}, null, 2))
 }
 
 function textLines(node) {

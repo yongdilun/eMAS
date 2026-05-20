@@ -24,7 +24,7 @@ LEGACY_PLAN_STEP_PROJECTION_XFAIL = pytest.mark.xfail(
     reason=(
         "Legacy compatibility expectation from the pre-Phase-9 create-plan/execute "
         "contract; graph-native execution no longer treats auto-created PlanStep rows "
-        "as execution truth."
+        "as execution truth. Keep as legacy-only documentation until Phase 10 removal."
     ),
     strict=True,
 )
@@ -33,7 +33,7 @@ LEGACY_RUNTIME_RETIRED_XFAIL = pytest.mark.xfail(
     reason=(
         "Legacy relational PlanStep execution, step approvals, DLQ replay, and "
         "background worker execution are retired; graph-native checkpoint execution "
-        "is now the only active runtime."
+        "is now the only active runtime. Keep as legacy-only documentation until Phase 10 removal."
     ),
     strict=True,
 )
@@ -42,10 +42,17 @@ LEGACY_CLARIFICATION_400_XFAIL = pytest.mark.xfail(
     reason=(
         "The pre-graph create-plan contract returned HTTP 400 for missing required "
         "read args. Current graph-native UX persists an assistant clarification "
-        "message/empty plan so the frontend can render the blocked turn."
+        "message/empty plan so the frontend can render the blocked turn. Keep as legacy-only "
+        "documentation until Phase 10 removal."
     ),
     strict=True,
 )
+
+LEGACY_PHASE10_REMOVAL_REASON = (
+    "Legacy-only planner/scoping authority retained behind FACTORY_AGENT_ENGINE=legacy "
+    "until the Phase 10 kill-switch removal."
+)
+LEGACY_PHASE10_REMOVAL = pytest.mark.legacy_compatibility(reason=LEGACY_PHASE10_REMOVAL_REASON)
 
 
 class FakeEventBus:
@@ -92,6 +99,7 @@ async def _make_app(
     tool_selector_backend="auto",
     openai_base_url=None,
     rag_pipeline_adapter=None,
+    factory_agent_engine=None,
 ):
     worker_count = 1 if enqueue_session is not None else 0
     settings = Settings(
@@ -115,6 +123,7 @@ async def _make_app(
         min_healthy_tool_count=min_healthy_tool_count,
         tool_selector_backend=tool_selector_backend,
         openai_base_url=openai_base_url,
+        factory_agent_engine=factory_agent_engine or "v2",
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()
@@ -374,7 +383,10 @@ async def test_create_plan_rolls_back_when_plan_message_persistence_fails(
 
 
 @pytest.mark.asyncio
-async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
+@LEGACY_PHASE10_REMOVAL
+async def test_legacy_engine_without_draft_uses_planner_adapter(sessionmaker_override, db_session):
+    """Legacy-only until Phase 10: direct v2 is the normal/default engine."""
+
     await _seed_tool(
         db_session,
         name="get__machines",
@@ -402,7 +414,11 @@ async def test_create_plan_without_draft_uses_planner_adapter(sessionmaker_overr
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=FakePlanner(),
+        factory_agent_engine="legacy",
+    )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         r = await client.post("/sessions", json={"user_id": "u1"})
         session_id = r.json()["session_id"]
@@ -479,7 +495,9 @@ async def test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orp
 
 
 @pytest.mark.asyncio
-async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override):
+async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_plan(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
     class FakeRAGPipeline:
         def __init__(self):
             self.calls = []
@@ -538,7 +556,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
         assert created.status_code == 200
         body = created.json()
         assert body["status"] == "COMPLETED"
-        assert body["created_by"] == "system"
+        assert body["created_by"] == "v2_rag_tool"
         assert "29 CFR 1910.147" in body["plan_explanation"]
         assert body["sources"][0]["organization"] == "OSHA"
         assert {source["doc_id"] for source in body["sources"]} == {"osha_3120_lockout_tagout"}
@@ -550,6 +568,15 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
 
     assert rag.calls
     assert rag.calls[0]["route"] == "RAG_ONLY"
+    session_row = await db_session.get(Session, session_id)
+    contract = (session_row.replan_context or {})["intent_contract"]
+    trace = contract["execution_trace"]
+    evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
+    assert contract["engine_version"] == "v2"
+    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
+    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["tool_name"] == "rag_search_documents"
 
 
 @pytest.mark.asyncio
@@ -630,6 +657,7 @@ async def test_create_plan_unknown_non_loto_procedure_does_not_borrow_osha_polic
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_prefers_entity_machine_tool_when_id_present(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -652,7 +680,7 @@ async def test_legacy_planner_prefers_entity_machine_tool_when_id_present(sessio
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -753,6 +781,7 @@ async def test_legacy_planner_allows_partial_args_for_write_tool_and_waits_appro
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -775,7 +804,7 @@ async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -790,6 +819,7 @@ async def test_legacy_planner_extracts_seed_machine_id(sessionmaker_override, db
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -812,7 +842,7 @@ async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_ses
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -827,6 +857,7 @@ async def test_legacy_planner_extracts_seed_job_id(sessionmaker_override, db_ses
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -849,7 +880,7 @@ async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessi
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -864,6 +895,7 @@ async def test_legacy_planner_prefers_seed_job_slots_tool_for_slots_intent(sessi
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_prefers_resource_create_over_specialized_subresource(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -902,7 +934,7 @@ async def test_legacy_planner_prefers_resource_create_over_specialized_subresour
         requires_approval=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -919,6 +951,7 @@ async def test_legacy_planner_prefers_resource_create_over_specialized_subresour
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -937,7 +970,7 @@ async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -955,6 +988,7 @@ async def test_legacy_planner_adds_fields_for_id_only_list_requests(sessionmaker
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_prefers_products_list_over_product_process_lookup_when_id_missing(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -988,7 +1022,7 @@ async def test_legacy_planner_prefers_products_list_over_product_process_lookup_
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -1006,6 +1040,7 @@ async def test_legacy_planner_prefers_products_list_over_product_process_lookup_
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_llm_structured_tool_selection_contract_is_applied(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.persistence.models import PlanStep
 
@@ -1074,7 +1109,11 @@ async def test_llm_structured_tool_selection_contract_is_applied(sessionmaker_ov
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override, openai_base_url="http://fake-llm")
+    app, _ = await _make_app(
+        sessionmaker_override,
+        openai_base_url="http://fake-llm",
+        factory_agent_engine="legacy",
+    )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -1132,6 +1171,7 @@ async def test_plan_creation_survives_summary_model_failure(sessionmaker_overrid
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_splits_compound_intent_into_multiple_steps(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -1154,7 +1194,7 @@ async def test_legacy_planner_splits_compound_intent_into_multiple_steps(session
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -1185,6 +1225,7 @@ async def test_legacy_planner_splits_compound_intent_into_multiple_steps(session
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -1207,7 +1248,7 @@ async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, d
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -1222,6 +1263,7 @@ async def test_legacy_planner_extracts_seed_material_id(sessionmaker_override, d
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_legacy_planner_extracts_seed_proposal_id(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -1244,7 +1286,7 @@ async def test_legacy_planner_extracts_seed_proposal_id(sessionmaker_override, d
         is_read_only=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post("/sessions", json={"user_id": "u1"})
         session_id = created.json()["session_id"]
@@ -1419,6 +1461,7 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep
 
@@ -1442,7 +1485,7 @@ async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_overrid
         requires_approval=True,
     )
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
@@ -1459,7 +1502,7 @@ async def test_normal_mode_create_machine_prefers_post_tool(sessionmaker_overrid
 
 @pytest.mark.asyncio
 async def test_conversation_message_returns_completed_empty_plan(sessionmaker_override, db_session):
-    from factory_agent.persistence.models import PlanStep
+    from factory_agent.persistence.models import PlanStep, Session
 
     await _seed_tool(
         db_session,
@@ -1484,12 +1527,15 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
         snapshot = await client.get(f"/sessions/{session_id}/snapshot")
         assert snapshot.status_code == 200
-        assert snapshot.json()["plan"] is None
-        assert all(event["event_type"] != "plan_created" for event in snapshot.json()["timeline"])
+        snapshot_body = snapshot.json()
+        assert snapshot_body["plan"]["status"] == "COMPLETED"
+        assert snapshot_body["plan"]["created_by"] == "v2_planner_loop"
+        assert any(event["event_type"] == "plan_created" for event in snapshot_body["timeline"])
         assert any(
             event["event_type"] == "session_completed" and "factory operations" in event["content"]
-            for event in snapshot.json()["timeline"]
+            for event in snapshot_body["timeline"]
         )
+        assert snapshot_body["response_document"]["state"] == "completed"
 
         executed = await client.post(f"/sessions/{session_id}/execute", json={})
         assert executed.status_code == 200
@@ -1497,9 +1543,14 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
 
     steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
     assert steps == []
+    session_row = await db_session.get(Session, session_id)
+    contract = (session_row.replan_context or {})["intent_contract"]
+    assert contract["engine_version"] == "v2"
+    assert contract["execution_trace"]["generated_by"] == "v2_planner_loop"
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_planner_clarification_returns_message_not_error(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Message, Session
     from factory_agent.planner import PlannerClarificationError
@@ -1536,7 +1587,11 @@ async def test_planner_clarification_returns_message_not_error(sessionmaker_over
                 ],
             )
 
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=FakePlanner(),
+        factory_agent_engine="legacy",
+    )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
@@ -1571,6 +1626,7 @@ async def test_planner_clarification_returns_message_not_error(sessionmaker_over
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_langgraph_read_only_not_found_plan_returns_200_not_400(
     sessionmaker_override,
     db_session,
@@ -1592,7 +1648,11 @@ async def test_langgraph_read_only_not_found_plan_returns_200_not_400(
             del intent, scoped_tools, context
             raise PlannerClarificationError("Is there any specific information you need about machine 5, given that it does not exist?")
 
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=FakePlanner())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=FakePlanner(),
+        factory_agent_engine="legacy",
+    )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
@@ -1606,6 +1666,7 @@ async def test_langgraph_read_only_not_found_plan_returns_200_not_400(
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_planner_unknown_term_clarification_returns_message_not_error(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.persistence.models import Message
     from factory_agent.planning.reasoning_pipeline import ReasoningPipeline
@@ -1632,7 +1693,7 @@ async def test_planner_unknown_term_clarification_returns_message_not_error(sess
 
     monkeypatch.setattr(ReasoningPipeline, "classify_unknown_term", _fake_classify_unknown_term)
 
-    app, _ = await _make_app(sessionmaker_override)
+    app, _ = await _make_app(sessionmaker_override, factory_agent_engine="legacy")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
         await client.post(
@@ -1794,6 +1855,7 @@ async def test_tool_registry_load_normalizes_legacy_string_tags(sessionmaker_ove
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.registry.tool_registry import ToolRegistry
     from factory_agent.persistence.models import Tool
@@ -1866,6 +1928,7 @@ async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_overrid
         database_url="mysql+aiomysql://test",
         enforce_tool_registry_health=True,
         auto_repair_tool_registry=True,
+        factory_agent_engine="legacy",
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1883,6 +1946,7 @@ async def test_create_plan_auto_repairs_incomplete_registry(sessionmaker_overrid
 
 
 @pytest.mark.asyncio
+@LEGACY_PHASE10_REMOVAL
 async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker_override, db_session, monkeypatch):
     from factory_agent.planning.tool_selector import ToolSelector
     from factory_agent.persistence.models import PlanStep
@@ -1924,6 +1988,7 @@ async def test_create_plan_uses_tool_selector_reranker_when_enabled(sessionmaker
         sessionmaker_override,
         tool_selector_backend="langchain",
         openai_base_url="http://fake-llm",
+        factory_agent_engine="legacy",
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]

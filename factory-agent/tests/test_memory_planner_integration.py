@@ -13,6 +13,14 @@ from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanDraft, PlanStepDraft
 
 
+pytestmark = pytest.mark.legacy_compatibility(
+    reason=(
+        "Legacy planner-adapter memory context coverage retained behind "
+        "FACTORY_AGENT_ENGINE=legacy until Phase 10 removal."
+    )
+)
+
+
 class _FakeEventBus(EventBus):
     def __init__(self):
         super().__init__(redis_url=None)
@@ -67,6 +75,7 @@ def _settings() -> Settings:
         checkpoint_enabled=True,
         memory_retention_days=30,
         memory_redact_pii=True,
+        factory_agent_engine="legacy",
     )
 
 

@@ -137,9 +137,10 @@ class RecordingSelector:
         return ToolSelectionResult(self.names, backend_used="retrieval", llm_calls=self.llm_calls)
 
 
-def test_phase5_default_engine_mode_remains_legacy():
-    assert normalize_factory_agent_engine(None) == "legacy"
-    assert normalize_factory_agent_engine("not-a-mode") == "legacy"
+def test_phase5_engine_modes_remain_explicit_while_phase8_default_is_v2():
+    assert normalize_factory_agent_engine(None) == "v2"
+    assert normalize_factory_agent_engine("not-a-mode") == "v2"
+    assert normalize_factory_agent_engine("legacy") == "legacy"
     assert _settings().factory_agent_engine == "legacy"
 
 

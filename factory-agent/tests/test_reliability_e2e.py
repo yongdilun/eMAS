@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -16,6 +17,14 @@ from factory_agent.persistence.models import Tool, generate_uuid
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanDraft, PlanStepDraft
 from factory_agent.services.planner_service import PlannerService
+
+
+pytestmark = pytest.mark.legacy_compatibility(
+    reason=(
+        "Legacy fake-LangGraph reliability coverage retained behind "
+        "FACTORY_AGENT_ENGINE=legacy until Phase 10 removal."
+    )
+)
 
 
 class FakeEventBus:
@@ -55,6 +64,7 @@ def _settings() -> Settings:
         summary_backend="deterministic",
         tool_result_summary_backend="deterministic",
         tool_selector_backend="auto",
+        factory_agent_engine="legacy",
     )
 
 

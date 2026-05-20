@@ -100,6 +100,8 @@ class V2CapabilityToolRetriever:
             },
         )
 
+        backend_used = getattr(selection, "backend_used", "retrieval")
+        llm_calls = int(getattr(selection, "llm_calls", 0) or 0)
         selected_names = _unique_existing(selection.tool_names, tools, limit=self._max_candidates)
         scores = _candidate_scores(adapter_request, selected_names, tools)
         candidates = [
@@ -109,7 +111,7 @@ class V2CapabilityToolRetriever:
                 score=float(scores.get(name)) if name in scores else None,
                 source_of_truth=_source_of_truth_for_tool(tools[name]),
                 actions=_actions_for_tool(tools[name]),
-                reason=f"tool_selector:{selection.backend_used}",
+                reason=f"tool_selector:{backend_used}",
                 requires_approval=bool(tools[name].requires_approval),
             )
             for index, name in enumerate(selected_names, start=1)
@@ -119,7 +121,7 @@ class V2CapabilityToolRetriever:
             capability_need=capability_need,
             candidates=candidates,
             max_candidates=self._max_candidates,
-            backend_used=selection.backend_used,
+            backend_used=backend_used,
             adapter_request=adapter_request,
         )
 
@@ -165,8 +167,8 @@ class V2CapabilityToolRetriever:
         trace = ToolRetrievalTrace(
             call_count=1,
             selected_candidate_tool_names=selected_names,
-            backend_used=selection.backend_used,
-            reranker=RerankerTrace(call_count=selection.llm_calls),
+            backend_used=backend_used,
+            reranker=RerankerTrace(call_count=llm_calls),
             compatibility_fallback_used=_compatibility_fallback_used(adapter_request, selected_names, tools),
             diagnostics=diagnostics,
         )
