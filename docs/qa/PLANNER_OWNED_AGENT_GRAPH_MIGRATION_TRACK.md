@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 2 complete. Graph-owned state and planner decision authority contracts are added without switching normal runtime.
+Status: Phase 3 complete. The planner-owned LangGraph shell is added behind an explicit test/debug entry point without switching normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -43,7 +43,7 @@ State/checkpoint decision:
 | --- | --- | --- | --- | --- |
 | 1 | Graph state and trace contracts | Complete | `fb1d24b9cb93778ba8ab7ae93387b84ab9dbfc07` | Focused Phase 1 state tests plus existing v2 cleanup guard |
 | 2 | Planner decision interface | Complete | pending final commit | Decision validation tests plus route/tool guardrails |
-| 3 | LangGraph shell | Not started |  | Node transition tests plus fake tracer proof |
+| 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
 | 4 | Retrieval and tool choice | Not started |  | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Not started |  | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Not started |  | Mixed read, empty-result, response-document tests and E2E |
@@ -124,7 +124,7 @@ Next phase recommendation:
 
 ### Phase 3: LangGraph Shell
 
-Status: not started.
+Status: complete.
 
 Planned files:
 
@@ -137,6 +137,23 @@ Completion evidence to record:
 - fake tracer or local trace proof,
 - confirmation old graph state is not execution authority,
 - confirmation the graph accepts an injected/configured LangGraph checkpointer and does not create a bespoke checkpoint store.
+
+Completion evidence:
+
+- Files changed: `factory-agent/factory_agent/graph/v2_agent_graph.py`, `factory-agent/tests/test_planner_owned_agent_graph_phase3_shell.py`, and this tracker.
+- Added `PlannerOwnedAgentGraph` with the Phase 3 LangGraph shell nodes: `semantic_intake_node`, `requirement_ledger_node`, `planner_decision_node`, `tool_retrieval_node`, `planner_choose_tool_node`, `tool_execution_node`, `evidence_observation_node`, `satisfaction_node`, `approval_node`, `finalize_node`, and `response_document_node`.
+- The graph uses `PlannerOwnedAgentGraphState` as the LangGraph state schema and records node order in `execution_trace.diagnostics["phase3_node_order"]`.
+- Added local Phase 3 adapters and `LocalPlannerOwnedGraphTracer` for shell proof only. The adapters create bounded local candidate windows, planner-selected tool calls, fake execution observations, typed evidence, deterministic satisfaction, and response-document context without calling product APIs, RAG, approval persistence, or the response renderer.
+- Phase 2 decision validation gates retrieval, tool choice, deterministic guarded execution, deterministic finalize, and fail transitions through `record_planner_decision()`/`validate_planner_decision()`.
+- The graph compiles through the existing checkpoint seam with `build_graph_checkpointer(settings)` and also accepts injected checkpointers such as LangGraph `MemorySaver`. No bespoke checkpoint store was added.
+- Tests prove a simple read query flows through nodes in order, planner decisions are written into state, old graph fields are ignored as execution authority, injected/configured checkpointers are accepted, direct service execution is not called, and `session.replan_context` is not used as authoritative resume state.
+- Normal runtime was not switched, normal plan creation does not call this graph, direct-v2 helpers were not removed, no real API/RAG tools were executed, and no product-visible behavior changed.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase3_shell.py -q` reported `6 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py -q` reported `18 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` reported `5 passed, 3 warnings`.
+- No pytest command in this phase used `*`, so no PowerShell wildcard expansion was required.
+- `git diff --check`: passed.
+- Blockers: none.
 
 ### Phase 4: Retrieval And Tool Choice
 
