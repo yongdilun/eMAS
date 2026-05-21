@@ -46,7 +46,7 @@ State/checkpoint decision:
 | 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
 | 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
-| 6 | Read-only product flows | Complete | pending final commit | Mixed read, empty-result, response-document tests and E2E |
+| 6 | Read-only product flows | Complete | `d5f69242` | Mixed read, empty-result, response-document tests and E2E |
 | 7 | RAG as a graph tool | Not started |  | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Not started |  | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Not started |  | Interrupt/revision/stale-work tests |
@@ -259,7 +259,7 @@ Completion evidence:
 - Seeded-oracles: `npm run test:e2e:seeded-oracles` from `eMas Front` reported `35 passed`.
 - `git diff --check`: passed with Git line-ending warnings only.
 - Blockers: none.
-- Commit: pending final commit.
+- Commit: `d5f69242` (`feat: prove graph read-only product flows`).
 
 ### Phase 7: RAG As A Graph Tool
 
