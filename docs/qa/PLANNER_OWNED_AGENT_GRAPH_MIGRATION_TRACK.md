@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 1 complete. Graph-owned state and trace contracts are added without switching normal runtime.
+Status: Phase 2 complete. Graph-owned state and planner decision authority contracts are added without switching normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -42,7 +42,7 @@ State/checkpoint decision:
 | Phase | Name | Status | Commit | Required Gate |
 | --- | --- | --- | --- | --- |
 | 1 | Graph state and trace contracts | Complete | `fb1d24b9cb93778ba8ab7ae93387b84ab9dbfc07` | Focused Phase 1 state tests plus existing v2 cleanup guard |
-| 2 | Planner decision interface | Not started |  | Decision validation tests plus route/tool guardrails |
+| 2 | Planner decision interface | Complete | pending final commit | Decision validation tests plus route/tool guardrails |
 | 3 | LangGraph shell | Not started |  | Node transition tests plus fake tracer proof |
 | 4 | Retrieval and tool choice | Not started |  | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Not started |  | Evidence observation tests plus satisfaction guard |
@@ -87,11 +87,12 @@ Completion evidence:
 
 ### Phase 2: Planner Decision Interface
 
-Status: not started.
+Status: complete.
 
 Planned files:
 
 - `factory-agent/factory_agent/planning/v2_planner_decisions.py`
+- `factory-agent/factory_agent/planning/v2_agent_state.py`
 - `factory-agent/tests/test_planner_owned_agent_graph_phase2_decisions.py`
 
 Completion evidence to record:
@@ -99,6 +100,27 @@ Completion evidence to record:
 - invalid decision rejection coverage,
 - locked-constraint preservation coverage,
 - no exact-prompt or seeded-ID branches.
+
+Completion evidence:
+
+- Files changed: `factory-agent/factory_agent/planning/v2_planner_decisions.py`, `factory-agent/factory_agent/planning/v2_agent_state.py`, `factory-agent/tests/test_planner_owned_agent_graph_phase2_decisions.py`, and this tracker.
+- Added a strict `PlannerDecisionSubmission`/`validate_planner_decision()`/`record_planner_decision()` gate that validates planner decision records against `PlannerOwnedAgentGraphState` before later graph phases can retrieve tools, choose tools, execute, request approval, revise requirements, clarify, finalize, or fail.
+- Existing graph state decision/tool-call contracts are reused. `PlannerDecisionRecord` now also supports `selected_tool_calls` so `execute_parallel_read_batch` can be represented without adding a second tool-call stack.
+- Locked constraints are validated against proposed requirement-ledger revisions before `revise_requirements` decisions can pass.
+- `choose_tool`, `execute_tool`, `execute_parallel_read_batch`, and `request_approval` decisions require selected API/RAG tool calls from hydrated candidate windows.
+- `finalize` decisions are rejected unless existing v2 final validation passes from typed evidence and terminal requirement proof.
+- Deterministic guard decisions are accepted only when state already proves the transition, such as a prior persisted planner `choose_tool` decision for an `execute_tool` guard.
+- Tests cover invalid locked-constraint changes, choosing a non-candidate tool, executing without a selected tool/RAG action, finalizing without required evidence, a valid `retrieve_tools` decision, deterministic guard rejection/acceptance, and serialization/deserialization of planner decision submissions.
+- Normal runtime was not switched, no LangGraph nodes were added, no tools/RAG were executed, no product behavior changed, and no ToolSelector/RAG/approval/response-document stack was added.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py -q` reported `12 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q` reported `50 passed, 37 warnings`.
+- No pytest command in this phase used `*`, so no PowerShell wildcard expansion was required.
+- `git diff --check`: passed.
+- Blockers: none.
+
+Next phase recommendation:
+
+- Proceed to Phase 3: add the LangGraph shell and node transitions behind an explicit test/debug entry point, using the Phase 2 decision gate as the authorization boundary before any retrieval, execution, approval, finalization, or failure transition.
 
 ### Phase 3: LangGraph Shell
 
@@ -299,10 +321,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 2 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
-
-Before coding:
-- If `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md` is still untracked, preserve it and include it in a docs commit before or with Phase 2 so the tracker and source plan are versioned together.
+You are implementing Phase 3 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -311,24 +330,21 @@ Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LOOP_MIGRATION_TRACK.md
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_contracts.py
+- factory-agent/factory_agent/planning/v2_planner_decisions.py
 
 Scope:
-- Implement only Phase 2: Planner Decision Interface.
+- Implement only Phase 3: LangGraph Shell.
 - Do not switch runtime.
 - Do not execute the new graph from normal plan creation.
-- Do not add LangGraph nodes yet.
 - Do not remove direct-v2 helpers.
 - Update only the graph migration tracker after implementation.
 
 Implementation requirements:
-- Add a strict planner decision interface, likely in `factory-agent/factory_agent/planning/v2_planner_decisions.py`.
-- Support retrieve_tools, choose_tool, execute_tool, execute_parallel_read_batch, request_approval, revise_requirements, request_clarification, finalize, and fail decisions.
-- Validate locked constraints are preserved.
-- Validate chosen tools come from hydrated candidate windows.
-- Validate execution requires a selected tool/RAG action.
-- Validate finalize is rejected when required evidence is missing.
-- Allow deterministic guard decisions only when state already proves the transition.
-- Reuse `PlannerOwnedAgentGraphState` and existing v2 contracts instead of duplicating models.
+- Add the new graph shell and node transitions behind an explicit test/debug entry point.
+- Use `PlannerOwnedAgentGraphState` as graph state.
+- Require a planner decision or deterministic guard decision before retrieval, tool choice, execution, approval, finalization, or failure transitions.
+- Compile with the existing LangGraph checkpointer seam and support injected/configured checkpointers.
+- Assert local/fake trace shape without requiring live LangSmith.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
@@ -340,13 +356,13 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py -q
-- python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py -q
+- python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: add planner-owned agent graph decision contracts
+feat: add planner-owned agent graph shell
 
 Final response format:
 Use exactly these sections:

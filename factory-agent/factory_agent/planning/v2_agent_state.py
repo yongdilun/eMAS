@@ -69,6 +69,7 @@ class PlannerDecisionRecord(V2ContractModel):
     ledger_revision: int = Field(default=1, ge=1)
     capability_need: CapabilityNeed | None = None
     selected_tool_call: GraphToolCall | None = None
+    selected_tool_calls: list[GraphToolCall] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     reason: str | None = None
     diagnostics: dict[str, Any] = Field(default_factory=dict)
@@ -81,6 +82,9 @@ class PlannerDecisionRecord(V2ContractModel):
             and self.selected_tool_call.requirement_id != self.requirement_id
         ):
             raise ValueError("selected tool call must target the planner decision requirement")
+        for tool_call in self.selected_tool_calls:
+            if self.requirement_id is not None and tool_call.requirement_id != self.requirement_id:
+                raise ValueError("selected tool calls must target the planner decision requirement")
         return self
 
 
