@@ -39,14 +39,20 @@ Known starting points:
 - Phase 15 cleanup removed normal runtime authority for `FACTORY_AGENT_ENGINE=legacy`, `v2_shadow`, `test_only_legacy_engine_enabled`, legacy RAG shortcut authority, and legacy/shadow trace attachment branches. Historical values may remain parse-only.
 - Baseline note from 2026-05-21: seeded-oracle and real-LangGraph E2E suites were reported green before this graph migration began. Later failures in those lanes should be treated as migration regressions unless the tracker proves an unrelated external cause.
 
-The gap is that the planner is not yet deciding after each observation. The graph must own planner decisions, tool/RAG execution, evidence observation, approval pauses, resumes, interruptions, final validation, and response document creation.
+The original gap is that the planner is not yet deciding after each observation. The graph must own planner decisions, tool/RAG execution, evidence observation, approval pauses, resumes, interruptions, final validation, and response document creation.
+
+Post-Phase-10 gap:
+
+- Normal runtime enters `PlannerOwnedAgentGraph`, but the planner-decision nodes still create many decisions through deterministic graph code.
+- The decision gate is valuable, but `author = "planner"` must not become a fake-v2 label for decisions that were never proposed by a planner adapter.
+- Before legacy cleanup, the graph needs a small, deep planner proposer seam: local Qwen/OpenAI-compatible LLM proposes a `PlannerDecisionSubmission`; deterministic validation decides whether that proposal may authorize graph progress.
 
 ## Target Loop
 
 ```text
 semantic_intake
 -> build_requirement_ledger
--> planner_decide_next_action
+-> planner_decide_next_action (LLM proposal, deterministic validation)
 -> retrieve_tools
 -> planner_choose_tool
 -> execute_tool_or_rag
@@ -70,6 +76,7 @@ Supporting contracts and adapters should live near the existing v2 modules unles
 ```text
 factory-agent/factory_agent/planning/v2_agent_state.py
 factory-agent/factory_agent/planning/v2_planner_decisions.py
+factory-agent/factory_agent/planning/v2_planner_proposer.py
 factory-agent/factory_agent/planning/v2_graph_adapters.py
 ```
 
@@ -81,6 +88,7 @@ Use existing implementations as leverage:
 - RAG through the existing RAG tool path, represented as graph tool evidence.
 - Approval staging and resume through the existing approval persistence and response contracts as adapters. The graph checkpoint remains the source of truth for resume state.
 - Response documents through existing response-document rendering logic.
+- LLM access through the existing OpenAI-compatible model factory in `factory_agent.llm.models`, configured for local Qwen-compatible backends.
 
 Do not build a second ToolSelector, retriever stack, RAG stack, approval system, or response renderer.
 
@@ -255,6 +263,7 @@ The seeded-oracle and real-LangGraph suites were reported green before this migr
 | 8 | Run seeded | Optional or targeted | Write approval, preview, and UI behavior become in scope. |
 | 9 | Run seeded | Run real-LangGraph | Interruption, stale work, and stateful graph behavior become in scope. |
 | 10 | Mandatory | Mandatory | Normal runtime switches to graph. Both suites are release blockers. |
+| 10.5 | Mandatory | Mandatory | LLM planner proposer becomes the source of planner-authored decisions. Both suites are release blockers. |
 | 11 | Mandatory | Mandatory | Test cleanup can hide wrong behavior. Both suites are release blockers. |
 | 12 | Mandatory | Mandatory | Final release proof. Both suites must be green unless a failure is proven external/environmental with owner and removal gate. |
 
@@ -675,9 +684,70 @@ cd ..
 git diff --check
 ```
 
+## Phase 10.5: LLM Planner Decision Proposer
+
+Goal: make planner-authored decisions come from a real planner proposer seam before legacy cleanup.
+
+This phase fixes the post-runtime-switch gap. The graph already owns execution, evidence, checkpointing, approval, and response documents, but planner decisions are still mostly produced by deterministic graph code. Phase 10.5 must introduce the planner proposer module so the graph can use local Qwen/OpenAI-compatible LLM output as a proposal, then rely on the existing deterministic decision gate to accept or reject it.
+
+Target rule:
+
+```text
+LLM proposes PlannerDecisionSubmission.
+validate_planner_decision() approves or rejects it.
+Only accepted decisions can retrieve tools, choose tools, request approval, revise, fail, or finalize.
+```
+
+Requirements:
+
+- Add a small, deep `PlannerDecisionProposer` interface near the v2 planning modules.
+- Add a local/OpenAI-compatible Qwen adapter that uses existing settings and `build_planner_chat_model(..., json_mode=True)`.
+- The proposer receives a bounded graph-state view only: original query, requirement ledger summary, evidence summary, capability map, candidate windows, hydrated cards, pending approval state, and final validation status.
+- The proposer must not see the full OpenAPI tool catalog before retrieval has produced bounded candidate windows.
+- The graph must call the proposer for judgement decisions such as `retrieve_tools`, `choose_tool`, `request_approval`, `request_clarification`, `revise_requirements`, `fail`, and `finalize` where appropriate.
+- Deterministic guards may still authorize mechanical transitions such as executing a previously accepted tool choice or finalizing after passed validation.
+- Do not mark a decision as planner-authored unless it came through the proposer seam and records proposer diagnostics.
+- Invalid JSON, invalid schema, stale revision, dropped locked constraint, tool outside hydrated window, unsafe approval skip, or finalize-before-validation must fail closed and record diagnostics. It must not fall through into service-level direct execution.
+- Keep Qwen/model-specific behavior behind the adapter and config. No exact prompt, seeded-ID, source-ID, or query-specific runtime branches.
+
+Suggested files:
+
+- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/config.py` if a small config flag or model setting is needed
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py`
+- existing Phase 10 runtime-switch tests
+
+Proof tests:
+
+- Mocked proposer returns valid `retrieve_tools` and `choose_tool` submissions; graph records accepted planner decisions with proposer diagnostics.
+- Mocked proposer returns malformed JSON or invalid schema; graph fails closed with no tool execution.
+- Mocked proposer chooses a tool outside the hydrated candidate window; `validate_planner_decision()` rejects it and execution does not run.
+- Mocked proposer drops a locked constraint during `revise_requirements`; validation rejects it.
+- Mocked proposer tries to finalize without passed final validation; validation rejects it.
+- Static guard: `author = "planner"` decisions in graph runtime must be produced through the proposer seam, not hand-built inside graph nodes.
+- Existing seeded-oracle and real-LangGraph suites remain green.
+
+Verification:
+
+```powershell
+cd factory-agent
+python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py -q
+python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
+python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
+cd "..\eMas Front"
+npm run test:e2e:response-document
+npm run test:e2e:seeded-oracles
+npm run test:e2e:real-langgraph
+cd ..
+git diff --check
+```
+
+If a live local Qwen endpoint is configured, also run one opt-in smoke test or manual trace against the smallest hard query that requires more than one planner decision. Record the model name, base URL type, and accepted/rejected proposal diagnostics in the tracker. Do not make the phase depend on a cloud model.
+
 ## Phase 11: Test Cleanup And Legacy Quarantine
 
-Goal: remove or rewrite tests that reward the wrong architecture after graph runtime is proven.
+Goal: remove or rewrite tests that reward the wrong architecture after graph runtime and planner proposer are proven.
 
 Rules:
 
@@ -692,6 +762,7 @@ Likely cleanup targets:
 - tests that treat `PlannerOwnedV2Loop` as the whole agent loop,
 - tests that accept `execution_trace.generated_by = "v2_planner_loop"` as enough proof,
 - tests that require old graph `working_intents` behavior in normal runtime.
+- tests that accept hand-built graph decisions as planner-authored decisions without proposer diagnostics.
 
 Proof tests:
 
@@ -712,7 +783,7 @@ git diff --check
 
 ## Phase 12: Release Proof
 
-Goal: prove the migration end to end with backend, frontend, seeded oracle, and trace evidence.
+Goal: prove the migration end to end with backend, frontend, seeded oracle, planner proposer, and trace evidence.
 
 Required proof:
 
@@ -723,6 +794,7 @@ Required proof:
 - Seeded-oracle Playwright passes. Because it was green at migration start, any failure is blocking unless the tracker proves an unrelated external/environment issue with owner and removal gate.
 - Real-LangGraph/semantic oracle suite passes. Because it was green at migration start, any failure is blocking unless the tracker proves an unrelated external/environment issue with owner and removal gate.
 - LangSmith or fake-tracer proof shows parent graph run plus child LLM/tool/RAG calls.
+- Planner-authored decisions in trace include proposer diagnostics and deterministic validation outcome.
 
 Recommended commands:
 
@@ -793,6 +865,7 @@ Scope:
 - Implement only Phase <N>.
 - Update the graph migration tracker with exact files changed, tests run, counts, and blockers.
 - Do not switch runtime unless this is Phase 10.
+- Do not add or replace the planner proposer seam unless this is Phase 10.5.
 - Do not delete legacy/direct tests unless this is Phase 11 and the product behavior is already covered by graph-owned tests.
 
 Maintainability and hardcode rules:

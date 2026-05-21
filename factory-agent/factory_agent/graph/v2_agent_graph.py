@@ -1217,10 +1217,8 @@ class PlannerOwnedAgentGraph:
             for staged_call in staged_tool_calls
         ]
         payload = build_approval_required_payload(staged, intent_text=state.original_query)
-        checkpoint_identity = dict(
-            state.execution_trace.diagnostics.get("graph_checkpoint_identity")
-            or _graph_checkpoint_identity({}, ledger_revision=state.requirement_ledger.revision)
-        )
+        checkpoint_identity = _graph_checkpoint_identity_for_current_revision(state)
+        state.execution_trace.diagnostics["graph_checkpoint_identity"] = checkpoint_identity
         payload.update(
             {
                 "kind": "graph_write_approval_required",
@@ -2310,6 +2308,24 @@ def _graph_checkpoint_identity(
         "ledger_revision": ledger_revision,
         "native_langgraph_checkpoint": True,
     }
+
+
+def _graph_checkpoint_identity_for_current_revision(
+    state: PlannerOwnedAgentGraphState,
+) -> dict[str, Any]:
+    existing = state.execution_trace.diagnostics.get("graph_checkpoint_identity")
+    configurable: dict[str, Any] = {}
+    if isinstance(existing, Mapping):
+        thread_id = existing.get("thread_id")
+        checkpoint_ns = existing.get("checkpoint_ns")
+        if thread_id not in (None, ""):
+            configurable["thread_id"] = str(thread_id)
+        if checkpoint_ns is not None:
+            configurable["checkpoint_ns"] = str(checkpoint_ns)
+    return _graph_checkpoint_identity(
+        {"configurable": configurable},
+        ledger_revision=state.requirement_ledger.revision,
+    )
 
 
 def _checkpoint_tuple_id(checkpoint_tuple: Any) -> str | None:

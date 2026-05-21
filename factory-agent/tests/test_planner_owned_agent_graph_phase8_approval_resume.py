@@ -379,6 +379,90 @@ async def test_phase8_multi_step_approval_labels_approval_one_and_two():
 
 
 @pytest.mark.asyncio
+async def test_phase8_low_to_medium_then_medium_to_high_stages_second_approval_without_llm():
+    class StatefulPriorityExecutor:
+        def __init__(self) -> None:
+            self.rows = [
+                {"job_id": "JOB-LOW-001", "priority": "low", "status": "queued"},
+                {"job_id": "JOB-MED-001", "priority": "medium", "status": "queued"},
+            ]
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"tool_name": tool.name, "method": tool.method, "args": dict(args)})
+            if tool.method == "GET":
+                priority = args.get("priority")
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {
+                        "data": [
+                            dict(row)
+                            for row in self.rows
+                            if priority in (None, "", [], {}) or row.get("priority") == priority
+                        ]
+                    },
+                    "infrastructure_error": False,
+                }
+
+            job_id = str(args.get("id") or "")
+            priority = args.get("priority")
+            for row in self.rows:
+                if row.get("job_id") == job_id:
+                    row["priority"] = priority
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": {"job_id": job_id, "priority": priority}},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    selector = Phase8Selector()
+    executor = StatefulPriorityExecutor()
+    persister = Phase8ApprovalPersister()
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=selector,  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_persister=persister,
+        ),
+        checkpointer=MemorySaver(),
+    )
+
+    first = await graph.run(
+        "Change all low priority job to medium, then change all medium priority job to high",
+        session_context={"session_id": "phase8-low-medium-high"},
+    )
+    second = await graph.resume_from_approval(
+        {"session_id": "phase8-low-medium-high"},
+        _approval_decision(first),
+    )
+
+    assert first.state.pending_approval.payload["approval_label"] == "Approval 1"
+    assert first.state.pending_approval.payload["ledger_revision"] == 1
+    assert first.state.pending_approval.payload["checkpoint_id"] == "phase8-low-medium-high:ledger-1:approval"
+    assert {row["previous_priority"] for row in first.state.pending_approval.payload["preview_rows"]} == {"low"}
+    assert {row["new_priority"] for row in first.state.pending_approval.payload["preview_rows"]} == {"medium"}
+    assert second.state.pending_approval.status == "pending"
+    assert second.state.pending_approval.payload["approval_label"] == "Approval 2"
+    assert second.state.pending_approval.payload["ledger_revision"] == 2
+    assert second.state.pending_approval.payload["checkpoint_id"] == "phase8-low-medium-high:ledger-2:approval"
+    assert {row["previous_priority"] for row in second.state.pending_approval.payload["preview_rows"]} == {"medium"}
+    assert {row["new_priority"] for row in second.state.pending_approval.payload["preview_rows"]} == {"high"}
+    assert [call["args"] for call in executor.calls if call["method"] == "PATCH"] == [
+        {"id": "JOB-LOW-001", "priority": "medium"}
+    ]
+    assert second.state.execution_trace.tool_retrieval.reranker.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_phase8_no_record_first_operation_does_not_show_stale_or_future_approval_details():
     preview = Phase8PreviewProvider(no_records_for={"req-001"})
     graph, _selector, executor, _persister = _graph(preview=preview)

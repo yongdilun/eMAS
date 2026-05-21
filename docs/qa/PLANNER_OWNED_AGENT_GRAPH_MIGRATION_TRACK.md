@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 10 complete. Normal v2 runtime now enters `PlannerOwnedAgentGraph` through a service adapter, uses the session id as stable graph thread/checkpoint identity, and resumes approvals from native LangGraph checkpoint state. Direct-v2 service execution remains only as historical/test/compatibility code and no longer owns normal runtime.
+Status: Phase 10 complete. Normal v2 runtime now enters `PlannerOwnedAgentGraph` through a service adapter, uses the session id as stable graph thread/checkpoint identity, and resumes approvals from native LangGraph checkpoint state. Direct-v2 service execution remains only as historical/test/compatibility code and no longer owns normal runtime. Phase 10.5 is now required before cleanup so planner-authored decisions come from a real LLM proposer seam and deterministic validation gate, not hand-built graph code labelled as planner output.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -50,8 +50,9 @@ State/checkpoint decision:
 | 7 | RAG as a graph tool | Complete | `765069b2` | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Complete | `83911fa9` | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Complete | `04876615` | Interrupt/revision/stale-work tests |
-| 10 | Runtime switch to graph | Complete | pending final commit | Full backend plus frontend response-document, seeded-oracle, and real-LangGraph gates |
-| 11 | Test cleanup and legacy quarantine | Not started |  | Full backend with no new xfail/skips and static cleanup guardrails |
+| 10 | Runtime switch to graph | Complete | `49e3a5ba` | Full backend plus frontend response-document, seeded-oracle, and real-LangGraph gates |
+| 10.5 | LLM planner decision proposer | Not started |  | Proposer seam tests plus seeded-oracle and real-LangGraph gates |
+| 11 | Test cleanup and legacy quarantine | Blocked by Phase 10.5 |  | Full backend with no new xfail/skips and static cleanup guardrails |
 | 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
 
 ## Phase Notes
@@ -328,7 +329,7 @@ Completion evidence to record:
 - Frontend E2E: `npm run test:e2e:seeded-oracles` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` -> `35 passed`.
 - `git diff --check`: passed; Git emitted only LF-to-CRLF working-copy warnings for the edited tracker and graph files.
 - Blockers/waivers: none.
-- Commit: pending final commit.
+- Commit: `83911fa9` (`feat: pause planner-owned graph writes for approval`).
 
 Next phase recommendation:
 
@@ -363,7 +364,7 @@ Completion evidence:
 - Frontend E2E: clean rerun of `npm run test:e2e:real-langgraph` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `3 passed`.
 - `git diff --check`: passed with Git line-ending warnings only.
 - Blockers/waivers: none. The transient real-LangGraph first-run failure has proof and a clean rerun; no migration waiver is carried forward.
-- Commit: pending final commit.
+- Commit: `04876615` (`feat: handle planner-owned graph interruptions`).
 
 Next phase recommendation:
 
@@ -410,15 +411,35 @@ Completion evidence:
 - Frontend real-LangGraph: `npm run test:e2e:real-langgraph` reported `3 passed`.
 - `git diff --check`: passed.
 - Blockers/waivers: none. The default TEMP/TMP backend failure and first response-document E2E race both have clean reruns and are recorded here.
-- Commit: pending final commit.
+- Commit: `49e3a5ba` (`feat: switch normal runtime to planner-owned graph`).
 
 Next phase recommendation:
 
-- Proceed to Phase 11: test cleanup and legacy quarantine. Classify direct-v2 helpers/tests as historical/test-only only where graph-owned coverage proves the same product behavior; add static guards for no service-level direct runtime authority, no legacy RAG/scaffold/cursor authority, and no exact-prompt/seeded-ID/source-ID branches.
+- Proceed to Phase 10.5: LLM planner decision proposer. Cleanup is blocked until planner-authored decisions are proposed through the proposer seam and accepted by the deterministic decision gate.
+
+### Phase 10.5: LLM Planner Decision Proposer
+
+Status: not started.
+
+Planned files:
+
+- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/config.py` only if a small config flag or model setting is needed
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py`
+
+Completion evidence to record:
+
+- planner proposer interface and local/OpenAI-compatible Qwen adapter,
+- graph planner-decision nodes using the proposer seam for planner-authored decisions,
+- deterministic validation accepting valid proposals and rejecting invalid/stale/unsafe proposals,
+- static guard proving `author = "planner"` decisions in graph runtime are not hand-built without proposer diagnostics,
+- seeded-oracle and real-LangGraph counts,
+- optional local Qwen smoke result when a local endpoint is configured.
 
 ### Phase 11: Test Cleanup And Legacy Quarantine
 
-Status: not started.
+Status: blocked by Phase 10.5.
 
 Planned files:
 
@@ -469,60 +490,66 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 11 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 10.5 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
+- factory-agent/factory_agent/llm/models.py
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/graph/v2_agent_graph.py
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
 - factory-agent/factory_agent/services/plan_creation_service.py
-- factory-agent/factory_agent/services/approval_resume_service.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase9_interrupts.py
-- direct-v2 and legacy cleanup tests before editing them
 
 Scope:
-- Implement only Phase 11: Test Cleanup And Legacy Quarantine.
-- Remove, rewrite, or quarantine tests/helpers that still reward direct-v2 service-level runtime authority, but only after graph-owned tests prove the same product guarantee.
+- Implement only Phase 10.5: LLM Planner Decision Proposer.
+- Add the planner proposer seam before cleanup. Do not delete or quarantine legacy/direct tests in this phase.
 - Preserve product behavior and all Phase 10 graph runtime coverage.
+- Do not change normal runtime away from `PlannerOwnedAgentGraph`.
 - Do not restore legacy/shadow runtime authority.
-- Do not change normal runtime back away from `PlannerOwnedAgentGraph`.
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Add or keep static guards proving normal runtime cannot call `_execute_direct_v2_steps()` or historical direct-v2 execution.
-- Classify remaining direct-v2 helpers as historical/test-only/adapters, or delete them only when replacement graph coverage proves the same behavior.
+- Add a small, deep `PlannerDecisionProposer` interface near the v2 planning modules.
+- Add a local/OpenAI-compatible Qwen adapter using existing settings and `build_planner_chat_model(..., json_mode=True)`.
+- The proposer must return `PlannerDecisionSubmission`, not execute tools and not mutate graph state directly.
+- The proposer may see only a bounded graph-state view: original query, requirement ledger summary, evidence summary, capability map, candidate windows, hydrated cards, pending approval state, and final validation status.
+- The proposer must not see the full OpenAPI tool catalog before retrieval has produced bounded candidate windows.
+- `validate_planner_decision()` remains the deterministic authority. Invalid JSON, invalid schema, stale revision, dropped locked constraints, tool outside hydrated window, unsafe approval skip, and finalize-before-validation must fail closed with diagnostics and no tool execution.
+- Graph planner-decision nodes must call the proposer for planner-authored judgement decisions. Mechanical transitions may still use deterministic guards only where the state already proves the action.
+- Do not mark decisions as `author = "planner"` unless they came through the proposer seam and include proposer diagnostics.
 - Keep approval resume native-checkpoint based; `session.replan_context` must remain pointer/UI metadata only.
 - Preserve response-document, seeded-oracle, real-LangGraph, RAG citation, approval safety, stale approval, interruption, and hardcode guardrails.
-- Do not weaken tests to make cleanup pass. Port or replace tests with graph-owned coverage first.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
 - No seeded-ID or source-ID runtime branches such as M-CNC-01, JOB-SEED-*, OSHA source IDs, hard query IDs, or exact prompts.
-- No new retriever, RAG, approval, interrupt, or response-document stack.
+- No new retriever, RAG, approval, interrupt, response-document, or planner-runtime stack.
+- Keep Qwen/model-specific behavior behind the proposer adapter and config.
 - Keep requirement, capability need, tool call, evidence, and response document separate.
 - Use the existing LangGraph checkpointer for checkpoint/resume work. Do not make `session.replan_context` authoritative graph state.
+- Prefer a small, deep proposer interface over spreading LLM prompt/parse/repair logic across graph nodes.
 - If a bug reveals architecture leakage, use the improve-codebase-architecture skill before patching.
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
-- python -m pytest -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
+- python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
 - cd "..\eMas Front"
-- npm test
 - npm run test:e2e:response-document
 - npm run test:e2e:seeded-oracles
 - npm run test:e2e:real-langgraph
 - cd ..
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
+- If a local Qwen endpoint is configured, run one opt-in smoke trace for a hard multi-decision query and record model/base URL/proposal diagnostics. Do not use a cloud-only dependency.
 
 Commit only if the required gate passes. Suggested commit message:
-test: quarantine legacy direct-v2 runtime coverage
+feat: add planner-owned graph llm decision proposer
 
 Final response format:
 Use exactly these sections:
