@@ -12,6 +12,7 @@ ExecutionTraceGeneratedBy = Literal[
     "legacy_working_intents",
     "v2_shadow_planner_loop",
     "v2_planner_loop",
+    "planner_owned_agent_graph",
 ]
 SourceOfTruth = Literal["operational_state", "document_knowledge", "mixed", "unknown"]
 
