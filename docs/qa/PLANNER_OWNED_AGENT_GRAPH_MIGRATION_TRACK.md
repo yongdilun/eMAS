@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 8 complete. The explicit planner-owned graph test/debug path now stages write actions behind graph-owned approval payloads, pauses at the approval node, and resumes from native LangGraph checkpoint state before committing, rejecting, or closing stale approvals. Normal runtime has not been switched.
+Status: Phase 9 complete. The explicit planner-owned graph test/debug path now handles user interruptions, requirement revisions, superseded evidence, stale approvals, and stale background results through graph ledger revision and checkpoint identity. Normal runtime has not been switched.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -42,14 +42,14 @@ State/checkpoint decision:
 | Phase | Name | Status | Commit | Required Gate |
 | --- | --- | --- | --- | --- |
 | 1 | Graph state and trace contracts | Complete | `fb1d24b9cb93778ba8ab7ae93387b84ab9dbfc07` | Focused Phase 1 state tests plus existing v2 cleanup guard |
-| 2 | Planner decision interface | Complete | pending final commit | Decision validation tests plus route/tool guardrails |
-| 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
-| 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
-| 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
+| 2 | Planner decision interface | Complete | `4f3532a1` | Decision validation tests plus route/tool guardrails |
+| 3 | LangGraph shell | Complete | `04f8673c` | Node transition tests plus fake tracer proof |
+| 4 | Retrieval and tool choice | Complete | `6899e2a2` | Candidate-window and no-new-retriever tests |
+| 5 | Tool/RAG execution and evidence observation | Complete | `a9791b90` | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Complete | `d5f69242` | Mixed read, empty-result, response-document tests and E2E |
-| 7 | RAG as a graph tool | Complete | pending final commit | Citation/insufficient-context tests without legacy RAG route |
+| 7 | RAG as a graph tool | Complete | `765069b2` | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Complete | `83911fa9` | Approval resume, stale approval, and UI approval tests |
-| 9 | Interruptions, revisions, and stale work | Complete | pending final commit | Interrupt/revision/stale-work tests |
+| 9 | Interruptions, revisions, and stale work | Complete | `04876615` | Interrupt/revision/stale-work tests |
 | 10 | Runtime switch to graph | Not started |  | Full backend plus frontend response-document and seeded-oracle gates |
 | 11 | Test cleanup and legacy quarantine | Not started |  | Full backend with no new xfail/skips and static cleanup guardrails |
 | 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
@@ -292,7 +292,7 @@ Completion evidence:
 - Frontend path note: the literal parent path `C:\Users\dilun\OneDrive\Documents\eMas Front` does not exist in this checkout; the package lives under the repo root at `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front`.
 - `git diff --check`: passed.
 - Blockers: none.
-- Commit: pending final commit.
+- Commit: `04876615`.
 
 Next phase recommendation:
 
@@ -441,7 +441,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 9 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 10 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -452,26 +452,27 @@ Read first:
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/factory_agent/graph/checkpointing.py
-- factory-agent/factory_agent/services/approval*.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py
+- factory-agent/factory_agent/services/plan_creation_service.py
+- factory-agent/factory_agent/services/execution_service.py
+- factory-agent/factory_agent/services/approval_resume_service.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase9_interrupts.py
 
 Scope:
-- Implement only Phase 9: Interruptions, Revisions, And Stale Work.
-- Do not switch runtime.
-- Do not call the graph from normal plan creation.
-- Do not remove direct-v2 helpers.
-- Do not add a legacy RAG shortcut.
-- Do not change product behavior outside explicit graph test/debug entry points.
+- Implement only Phase 10: Runtime Switch To Graph.
+- Switch normal v2 runtime to the planner-owned graph path.
+- Preserve product behavior.
+- Do not delete direct-v2 helpers yet unless a test proves they are historical/test-only and replacement coverage exists.
+- Do not restore legacy/shadow runtime authority.
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- User interruptions must enter graph-owned revision handling from native checkpoint state.
-- Requirement revisions must preserve locked constraints and revision history.
-- Superseded requirements/evidence must be explicit and traceable.
-- Stale background results must be ignored based on graph revision/checkpoint identity.
-- Stale approvals must remain rejected after interruption/revision changes.
-- `session.replan_context` may store interrupt/checkpoint pointers for UI compatibility only; it must not become authoritative graph state.
+- `plan_creation_service.py` normal v2 runtime must call `PlannerOwnedAgentGraph` through a small adapter/interface.
+- Normal runtime must use a stable graph thread id, usually the session id, with the configured LangGraph checkpointer.
+- Approval resume must reconstruct from the native LangGraph checkpoint, not from a hand-built `session.replan_context` state.
+- `_execute_direct_v2_steps()` must not be used for normal runtime.
+- `_create_direct_v2_plan()` must become a thin graph adapter, be renamed historical/test-only, or be bypassed by a tested graph path.
+- Trace must show graph planner decisions, retrieval calls, tool/RAG evidence refs, approval/revision/checkpoint metadata, satisfaction, final validation, and response-document context.
+- `FACTORY_AGENT_ENGINE=legacy` must continue to resolve according to the Phase 15 cleanup behavior and must not restore old legacy paths.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
@@ -483,17 +484,19 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase9_interrupts.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
-- python -m pytest tests/test_stateful*.py tests/test_approval*.py tests/test_response_document*.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
+- python -m pytest -q
 - cd "..\eMas Front"
+- npm test
 - npm run test:e2e:response-document
 - npm run test:e2e:seeded-oracles
+- npm run test:e2e:real-langgraph
 - cd ..
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: handle planner-owned graph interruptions
+feat: switch normal runtime to planner-owned graph
 
 Final response format:
 Use exactly these sections:
