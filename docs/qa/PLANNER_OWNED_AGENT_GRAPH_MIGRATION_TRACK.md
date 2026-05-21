@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 5 complete. The planner-owned agent graph now executes selected API/RAG calls only through graph-authorized adapters in the explicit graph path, observes typed evidence, and preserves failure/insufficient-context evidence without switching normal runtime.
+Status: Phase 6 complete. The explicit planner-owned graph test/debug path now proves read-only product flows for machine status, job status, multi-ID status, filtered lists, mixed operational/RAG reads, mixed machine/job/list reads, and typed no-record list evidence without switching normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -46,7 +46,7 @@ State/checkpoint decision:
 | 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
 | 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
-| 6 | Read-only product flows | Not started |  | Mixed read, empty-result, response-document tests and E2E |
+| 6 | Read-only product flows | Complete | pending final commit | Mixed read, empty-result, response-document tests and E2E |
 | 7 | RAG as a graph tool | Not started |  | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Not started |  | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Not started |  | Interrupt/revision/stale-work tests |
@@ -223,7 +223,7 @@ Next phase recommendation:
 
 ### Phase 6: Read-Only Product Flows
 
-Status: not started.
+Status: complete.
 
 Planned files:
 
@@ -242,6 +242,24 @@ Completion evidence to record:
 - backend test counts,
 - frontend E2E counts,
 - screenshots only if the UI changed.
+
+Completion evidence:
+
+- Files changed: `factory-agent/factory_agent/graph/v2_agent_graph.py`, `factory-agent/factory_agent/planning/v2_graph_adapters.py`, `factory-agent/tests/test_planner_owned_agent_graph_phase6_read_flows.py`, and this tracker.
+- The explicit graph path now processes a bounded set of independent read requirements in one graph run: planner `retrieve_tools` decisions, retriever-backed candidate windows, planner `choose_tool` decisions, deterministic guarded `execute_tool` decisions, and typed evidence observation are all recorded per fulfilled requirement.
+- API and RAG execution still run only through the Phase 5 graph-authorized adapters. Normal plan creation was not switched, direct-v2 helpers were not removed, and `plan_creation_service.py` remains outside the graph path.
+- Added Phase 6 response-document context proof in `ResponseDocumentContext.diagnostics`: ordered diagnostic blocks, aggregate summary, fulfilled requirement ids, no-record evidence refs, and explicit `preview_blocks=0` / `approval_blocks=0` / `stale_response_context_reused=false`. The real response-document renderer is still not called from the graph path.
+- Empty API collection results now normalize into typed no-record evidence with `match_status=no_match`, `no_match=true`, `summary="No matching records were found."`, and `reason=no_matching_records`, so stale preview/approval/response context is not reused.
+- Phase 6 tests cover simple machine status, job status, multi-ID machine status, filtered jobs with sort/limit/requested fields, mixed machine/job/list reads, mixed operational/RAG reads, and empty-result list reads.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase6_read_flows.py -q` reported `6 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py -q` reported `38 passed, 5 warnings`.
+- Tests run: literal `python -m pytest tests/test_response_document*.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q` under PowerShell did not expand the wildcard and reported `no tests ran` / `file or directory not found`; the valid rerun used a PowerShell-expanded file list.
+- Tests run: PowerShell-expanded response-document command (`$responseDocTests = Get-ChildItem tests -Filter "test_response_document*.py" | ForEach-Object { $_.FullName }`; `python -m pytest @responseDocTests tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q`) reported `93 passed, 175 warnings`.
+- Frontend E2E: root command `npm run test:e2e:response-document` failed with `ENOENT` because `C:\Users\dilun\OneDrive\Documents\eMas APi\package.json` does not exist. The frontend package command from `eMas Front` reported `30 passed`.
+- Seeded-oracles: `npm run test:e2e:seeded-oracles` from `eMas Front` reported `35 passed`.
+- `git diff --check`: passed with Git line-ending warnings only.
+- Blockers: none.
+- Commit: pending final commit.
 
 ### Phase 7: RAG As A Graph Tool
 

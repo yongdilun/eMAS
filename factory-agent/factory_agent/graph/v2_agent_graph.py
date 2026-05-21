@@ -349,109 +349,201 @@ class PlannerOwnedAgentGraph:
 
     async def _planner_decision_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "planner_decision_node", self._tracer)
-        requirement = _first_open_requirement_without_evidence(state)
-        if requirement is None:
+        requirements = [
+            requirement
+            for requirement in _open_requirements_without_evidence(state)
+            if not _has_decision_for_requirement(state, "retrieve_tools", requirement.id)
+        ]
+        if not requirements:
             state.execution_trace.planner.diagnostics["planner_decision_node"] = {"decision": "none"}
             return _state_update(state)
-        need = _capability_need_for_requirement(state, requirement.id)
-        decision = PlannerDecisionRecord(
-            decision_id=f"dec-retrieve-{len(state.planner_decisions) + 1:03d}",
-            decision_kind="retrieve_tools",
-            requirement_id=requirement.id,
-            ledger_revision=state.requirement_ledger.revision,
-            capability_need=need,
-            reason="Graph requests a bounded retriever-backed candidate window.",
-        )
-        record_planner_decision(state, decision)
-        state.execution_trace.planner.call_count += 1
+
+        decisions: list[PlannerDecisionRecord] = []
+        for requirement in requirements:
+            need = _capability_need_for_requirement(state, requirement.id)
+            decision = PlannerDecisionRecord(
+                decision_id=f"dec-retrieve-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="retrieve_tools",
+                requirement_id=requirement.id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=need,
+                reason="Graph requests a bounded retriever-backed candidate window.",
+            )
+            record_planner_decision(state, decision)
+            decisions.append(decision)
+
+        state.execution_trace.planner.call_count += len(decisions)
         state.execution_trace.planner.diagnostics["planner_decision_node"] = {
-            "decision_id": decision.decision_id,
-            "decision_kind": decision.decision_kind,
+            "decision_count": len(decisions),
+            "decision_ids": [decision.decision_id for decision in decisions],
+            "decision_kinds": [decision.decision_kind for decision in decisions],
+            "requirement_ids": [decision.requirement_id for decision in decisions],
         }
+        if len(decisions) == 1:
+            state.execution_trace.planner.diagnostics["planner_decision_node"].update(
+                {
+                    "decision_id": decisions[0].decision_id,
+                    "decision_kind": decisions[0].decision_kind,
+                }
+            )
         return _state_update(state)
 
     async def _tool_retrieval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "tool_retrieval_node", self._tracer)
-        decision = _latest_decision(state, "retrieve_tools")
-        if decision is None:
+        decisions = [
+            decision
+            for decision in state.planner_decisions
+            if decision.decision_kind == "retrieve_tools"
+            and decision.requirement_id is not None
+            and not _has_candidate_window_for_requirement(state, decision.requirement_id)
+            and not _has_evidence_for_requirement(state, decision.requirement_id)
+        ]
+        if not decisions:
             state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {"status": "no_decision"}
             return _state_update(state)
-        validate_planner_decision(state, decision)
-        guard_decision = _record_repeated_retrieval_guard_trace(state, decision.capability_need)
-        if guard_decision is not None and guard_decision.blocked:
-            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {
-                "status": "blocked_by_repeated_retrieval_guard",
-                "guard": guard_decision.as_diagnostics(),
-            }
-            return _state_update(state)
-        retrieval = await _maybe_await(self._adapters.retrieve_tools(state, decision))
-        if not any(window.requirement_id == retrieval.candidate_window.requirement_id for window in state.candidate_tool_windows):
-            state.candidate_tool_windows.append(retrieval.candidate_window)
-        if not any(cards.requirement_id == retrieval.hydrated_tool_cards.requirement_id for cards in state.hydrated_tool_cards):
-            state.hydrated_tool_cards.append(retrieval.hydrated_tool_cards)
-        state.execution_trace.tool_retrieval.call_count += retrieval.trace.call_count
-        state.execution_trace.tool_retrieval.selected_candidate_tool_names = list(
-            dict.fromkeys(
-                [
-                    *state.execution_trace.tool_retrieval.selected_candidate_tool_names,
-                    *retrieval.trace.selected_candidate_tool_names,
-                ]
+
+        retrievals: list[PlannerOwnedGraphRetrieval] = []
+        blocked: list[dict[str, Any]] = []
+        for decision in decisions:
+            validate_planner_decision(state, decision)
+            guard_decision = _record_repeated_retrieval_guard_trace(state, decision.capability_need)
+            if guard_decision is not None and guard_decision.blocked:
+                blocked.append(
+                    {
+                        "decision_id": decision.decision_id,
+                        "requirement_id": decision.requirement_id,
+                        "guard": guard_decision.as_diagnostics(),
+                    }
+                )
+                continue
+            retrieval = await _maybe_await(self._adapters.retrieve_tools(state, decision))
+            retrievals.append(retrieval)
+            if not any(
+                window.requirement_id == retrieval.candidate_window.requirement_id
+                for window in state.candidate_tool_windows
+            ):
+                state.candidate_tool_windows.append(retrieval.candidate_window)
+            if not any(
+                cards.requirement_id == retrieval.hydrated_tool_cards.requirement_id
+                for cards in state.hydrated_tool_cards
+            ):
+                state.hydrated_tool_cards.append(retrieval.hydrated_tool_cards)
+            state.execution_trace.tool_retrieval.call_count += retrieval.trace.call_count
+            state.execution_trace.tool_retrieval.selected_candidate_tool_names = list(
+                dict.fromkeys(
+                    [
+                        *state.execution_trace.tool_retrieval.selected_candidate_tool_names,
+                        *retrieval.trace.selected_candidate_tool_names,
+                    ]
+                )
             )
-        )
-        state.execution_trace.tool_retrieval.backend_used = retrieval.trace.backend_used
-        state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = retrieval.trace.diagnostics
+            state.execution_trace.tool_retrieval.backend_used = retrieval.trace.backend_used
+
+        if len(retrievals) == 1 and not blocked:
+            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = retrievals[0].trace.diagnostics
+        else:
+            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {
+                "status": "ok" if retrievals else "blocked_by_repeated_retrieval_guard",
+                "retrieval_count": len(retrievals),
+                "retrieved_requirement_ids": [
+                    retrieval.candidate_window.requirement_id for retrieval in retrievals
+                ],
+                "blocked": blocked,
+                "retrievals": [retrieval.trace.diagnostics for retrieval in retrievals],
+            }
         return _state_update(state)
 
     async def _planner_choose_tool_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "planner_choose_tool_node", self._tracer)
-        retrieve_decision = _latest_decision(state, "retrieve_tools")
-        if retrieve_decision is None:
+        retrieve_decisions = [
+            decision
+            for decision in state.planner_decisions
+            if decision.decision_kind == "retrieve_tools"
+            and decision.requirement_id is not None
+            and _has_candidate_window_for_requirement(state, decision.requirement_id)
+            and not _has_choice_for_requirement(state, decision.requirement_id)
+            and not _has_evidence_for_requirement(state, decision.requirement_id)
+        ]
+        if not retrieve_decisions:
             state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {"decision": "none"}
             return _state_update(state)
-        tool_call = await _maybe_await(self._adapters.choose_tool(state, retrieve_decision))
-        decision = PlannerDecisionRecord(
-            decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
-            decision_kind="choose_tool",
-            requirement_id=tool_call.requirement_id,
-            ledger_revision=state.requirement_ledger.revision,
-            capability_need=retrieve_decision.capability_need,
-            selected_tool_call=tool_call,
-            reason="Graph selects from the hydrated candidate window.",
-        )
-        tool_call.decision_id = decision.decision_id
-        record_planner_decision(state, decision)
-        state.execution_trace.planner.call_count += 1
-        state.execution_trace.selected_tool_names = list(
-            dict.fromkeys([*state.execution_trace.selected_tool_names, tool_call.tool_name])
-        )
+
+        decisions: list[PlannerDecisionRecord] = []
+        for retrieve_decision in retrieve_decisions:
+            tool_call = await _maybe_await(self._adapters.choose_tool(state, retrieve_decision))
+            decision = PlannerDecisionRecord(
+                decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="choose_tool",
+                requirement_id=tool_call.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=retrieve_decision.capability_need,
+                selected_tool_call=tool_call,
+                reason="Graph selects from the hydrated candidate window.",
+            )
+            tool_call.decision_id = decision.decision_id
+            record_planner_decision(state, decision)
+            decisions.append(decision)
+            state.execution_trace.selected_tool_names = list(
+                dict.fromkeys([*state.execution_trace.selected_tool_names, tool_call.tool_name])
+            )
+
+        state.execution_trace.planner.call_count += len(decisions)
         state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {
-            "decision_id": decision.decision_id,
-            "tool_name": tool_call.tool_name,
+            "decision_count": len(decisions),
+            "decision_ids": [decision.decision_id for decision in decisions],
+            "tool_names": [
+                decision.selected_tool_call.tool_name
+                for decision in decisions
+                if decision.selected_tool_call is not None
+            ],
         }
+        if len(decisions) == 1 and decisions[0].selected_tool_call is not None:
+            state.execution_trace.planner.diagnostics["planner_choose_tool_node"].update(
+                {
+                    "decision_id": decisions[0].decision_id,
+                    "tool_name": decisions[0].selected_tool_call.tool_name,
+                }
+            )
         return _state_update(state)
 
     async def _tool_execution_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "tool_execution_node", self._tracer)
-        choose_decision = _latest_decision(state, "choose_tool")
-        if choose_decision is None or choose_decision.selected_tool_call is None:
+        choose_decisions = [
+            decision
+            for decision in state.planner_decisions
+            if decision.decision_kind == "choose_tool"
+            and decision.selected_tool_call is not None
+            and not _has_evidence_for_requirement(state, decision.selected_tool_call.requirement_id)
+            and not _has_execution_decision_for_call(state, decision.selected_tool_call)
+        ]
+        if not choose_decisions:
             state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {"status": "no_tool_choice"}
             return _state_update(state)
-        guard_decision = PlannerDecisionRecord(
-            decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
-            decision_kind="execute_tool",
-            author="deterministic_guard",
-            requirement_id=choose_decision.requirement_id,
-            ledger_revision=state.requirement_ledger.revision,
-            capability_need=choose_decision.capability_need,
-            selected_tool_call=choose_decision.selected_tool_call,
-            reason="Execute the persisted planner-selected read action.",
-        )
-        record_planner_decision(state, guard_decision)
-        execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+
+        executions: list[GraphToolExecutionResult] = []
+        for choose_decision in choose_decisions:
+            guard_decision = PlannerDecisionRecord(
+                decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="execute_tool",
+                author="deterministic_guard",
+                requirement_id=choose_decision.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=choose_decision.capability_need,
+                selected_tool_call=choose_decision.selected_tool_call,
+                reason="Execute the persisted planner-selected read action.",
+            )
+            record_planner_decision(state, guard_decision)
+            execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+            executions.append(execution)
+
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
-            "execution_result": execution.model_dump(mode="json"),
+            "execution_results": [execution.model_dump(mode="json") for execution in executions],
         }
+        if len(executions) == 1:
+            state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY]["execution_result"] = (
+                executions[0].model_dump(mode="json")
+            )
         return _state_update(state)
 
     async def _evidence_observation_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -460,15 +552,29 @@ class PlannerOwnedAgentGraph:
         if not isinstance(pending, dict) or pending.get("status") != "observed_by_next_node":
             state.execution_trace.diagnostics["evidence_observation"] = {"status": "no_pending_execution"}
             return _state_update(state)
-        execution = GraphToolExecutionResult.model_validate(pending["execution_result"])
-        evidence = await _maybe_await(self._adapters.observe_tool_result(state, execution))
-        state.evidence_ledger.evidence.append(evidence)
+        raw_executions = pending.get("execution_results")
+        if not isinstance(raw_executions, list):
+            raw_executions = [pending["execution_result"]]
+        evidence_items: list[EvidenceLedgerEntry] = []
+        for raw_execution in raw_executions:
+            execution = GraphToolExecutionResult.model_validate(raw_execution)
+            evidence = await _maybe_await(self._adapters.observe_tool_result(state, execution))
+            state.evidence_ledger.evidence.append(evidence)
+            evidence_items.append(evidence)
         state.execution_trace.diagnostics["evidence_observation"] = {
             "status": "recorded",
-            "evidence_ref": evidence.id,
-            "source_type": evidence.source_type,
-            "source_of_truth": evidence.source_of_truth,
+            "evidence_refs": [evidence.id for evidence in evidence_items],
+            "source_types": [evidence.source_type for evidence in evidence_items],
+            "source_of_truths": [evidence.source_of_truth for evidence in evidence_items],
         }
+        if len(evidence_items) == 1:
+            state.execution_trace.diagnostics["evidence_observation"].update(
+                {
+                    "evidence_ref": evidence_items[0].id,
+                    "source_type": evidence_items[0].source_type,
+                    "source_of_truth": evidence_items[0].source_of_truth,
+                }
+            )
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
 
@@ -527,18 +633,38 @@ class PlannerOwnedAgentGraph:
     async def _response_document_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "response_document_node", self._tracer)
         validation_status = state.final_validation_result.status if state.final_validation_result else "failed"
+        response_blocks = _phase6_response_blocks(state)
+        response_summary = _phase6_response_summary(state, response_blocks)
         state.response_document_context = ResponseDocumentContext(
             state="rendered" if validation_status == "passed" else "failed",
-            document_id=f"phase5-response-{uuid4().hex[:12]}",
+            document_id=f"phase6-response-{uuid4().hex[:12]}",
             revision=state.requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in state.requirement_ledger.requirements],
             evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
             pending_approval_id=state.pending_approval.approval_id,
-            render_contract="phase5_execution_observation_response_document_context",
+            render_contract="phase6_read_only_product_flow_response_document_context",
             diagnostics={
-                "phase": "phase5_execution_observation",
+                "phase": "phase6_read_only_product_flows",
                 "real_response_renderer_called": False,
                 "final_validation_status": validation_status,
+                "summary": response_summary,
+                "blocks": response_blocks,
+                "fulfilled_requirement_ids": [
+                    requirement.id
+                    for requirement in state.requirement_ledger.requirements
+                    if requirement.status in {"satisfied", "impossible"}
+                ],
+                "terminal_requirement_statuses": {
+                    requirement.id: requirement.status
+                    for requirement in state.requirement_ledger.requirements
+                    if requirement.status != "open"
+                },
+                "no_record_evidence_refs": [
+                    evidence.id for evidence in state.evidence_ledger.evidence if _evidence_has_no_match(evidence)
+                ],
+                "preview_blocks": 0,
+                "approval_blocks": 0,
+                "stale_response_context_reused": False,
             },
         )
         return _state_update(state)
@@ -639,15 +765,52 @@ def _record_repeated_retrieval_guard_trace(
     return active_decision
 
 
-def _first_open_requirement_without_evidence(state: PlannerOwnedAgentGraphState):
+def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
     evidence_requirement_ids = {evidence.requirement_id for evidence in state.evidence_ledger.evidence}
-    return next(
-        (
-            requirement
-            for requirement in state.requirement_ledger.requirements
-            if requirement.status == "open" and requirement.id not in evidence_requirement_ids
-        ),
-        None,
+    return [
+        requirement
+        for requirement in state.requirement_ledger.requirements
+        if requirement.status == "open" and requirement.id not in evidence_requirement_ids
+    ]
+
+
+def _has_decision_for_requirement(
+    state: PlannerOwnedAgentGraphState,
+    decision_kind: str,
+    requirement_id: str,
+) -> bool:
+    return any(
+        decision.decision_kind == decision_kind and decision.requirement_id == requirement_id
+        for decision in state.planner_decisions
+    )
+
+
+def _has_candidate_window_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
+    return any(window.requirement_id == requirement_id for window in state.candidate_tool_windows) and any(
+        cards.requirement_id == requirement_id for cards in state.hydrated_tool_cards
+    )
+
+
+def _has_choice_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
+    return any(
+        decision.decision_kind == "choose_tool" and decision.requirement_id == requirement_id
+        for decision in state.planner_decisions
+    )
+
+
+def _has_evidence_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
+    return any(evidence.requirement_id == requirement_id for evidence in state.evidence_ledger.evidence)
+
+
+def _has_execution_decision_for_call(
+    state: PlannerOwnedAgentGraphState,
+    tool_call: GraphToolCall,
+) -> bool:
+    return any(
+        decision.decision_kind == "execute_tool"
+        and decision.selected_tool_call is not None
+        and decision.selected_tool_call.call_id == tool_call.call_id
+        for decision in state.planner_decisions
     )
 
 
@@ -730,3 +893,165 @@ def _argument_value_for(arg_name: str, requirement: Any, capability_need: Any) -
     if arg_name == "query" and requirement.source_of_truth == "document_knowledge":
         return requirement.goal
     return None
+
+
+def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str, Any]]:
+    requirements_by_id = {requirement.id: requirement for requirement in state.requirement_ledger.requirements}
+    blocks: list[dict[str, Any]] = []
+    for evidence in state.evidence_ledger.evidence:
+        requirement = requirements_by_id.get(evidence.requirement_id)
+        block = _phase6_response_block_for_evidence(requirement, evidence)
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[dict[str, Any]]) -> str:
+    _ = state
+    parts = [
+        str(block.get("summary") or "").strip()
+        for block in blocks
+        if str(block.get("summary") or "").strip()
+    ]
+    if not parts:
+        return "No fulfilled read evidence was available for response rendering."
+    return " ".join(dict.fromkeys(parts))
+
+
+def _phase6_response_block_for_evidence(requirement: Any | None, evidence: EvidenceLedgerEntry) -> dict[str, Any]:
+    if _evidence_has_no_match(evidence):
+        return {
+            "type": "no_record",
+            "requirement_id": evidence.requirement_id,
+            "evidence_ref": evidence.id,
+            "entity_type": getattr(requirement, "entity", None),
+            "summary": _no_match_summary(requirement, evidence),
+            "source_type": evidence.source_type,
+        }
+
+    if evidence.source_type == "rag_tool":
+        answer = str(evidence.normalized_result.get("answer") or "").strip()
+        return {
+            "type": "document_answer",
+            "requirement_id": evidence.requirement_id,
+            "evidence_ref": evidence.id,
+            "summary": answer or "Document evidence was retrieved.",
+            "citation_count": len(evidence.citations),
+            "source_type": evidence.source_type,
+        }
+
+    rows = _phase6_rows(evidence.normalized_result)
+    if rows is not None:
+        return {
+            "type": "result_table" if getattr(requirement, "requirement_type", None) == "filtered_collection" else "multi_status",
+            "requirement_id": evidence.requirement_id,
+            "evidence_ref": evidence.id,
+            "entity_type": getattr(requirement, "entity", None),
+            "summary": _collection_summary(requirement, evidence, rows),
+            "row_count": len(rows),
+            "rows": rows,
+            "requested_fields": list(getattr(requirement, "requested_fields", []) or []),
+            "source_type": evidence.source_type,
+        }
+
+    fields = _phase6_fields(evidence.normalized_result)
+    entity = str(getattr(requirement, "entity", "") or evidence.normalized_result.get("entity") or "record")
+    entity_id = evidence.normalized_result.get("entity_id") or _first_field_value(
+        fields,
+        [f"{entity}_id", "entity_id", "id", "machine_ref"],
+    )
+    status = _first_field_value(fields, ["status", "state"])
+    summary = _single_status_summary(entity=entity, entity_id=entity_id, status=status)
+    requested_fields = [f"{entity}_id", *list(getattr(requirement, "requested_fields", []) or [])]
+    return {
+        "type": "status_result",
+        "requirement_id": evidence.requirement_id,
+        "evidence_ref": evidence.id,
+        "entity_type": entity,
+        "entity_id": entity_id,
+        "summary": summary,
+        "primary_status": str(status).lower() if status not in (None, "") else None,
+        "requested_fields": list(dict.fromkeys(field for field in requested_fields if field)),
+        "fields": fields,
+        "source_type": evidence.source_type,
+    }
+
+
+def _evidence_has_no_match(evidence: EvidenceLedgerEntry) -> bool:
+    result = evidence.normalized_result
+    return (
+        result.get("no_match") is True
+        or str(result.get("match_status") or "").lower() == "no_match"
+        or str(result.get("status") or "").lower() == "no_match"
+    )
+
+
+def _phase6_rows(result: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    for key in ("rows", "items", "results", "records", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [dict(item) for item in value if isinstance(item, Mapping)]
+    return None
+
+
+def _phase6_fields(result: Mapping[str, Any]) -> dict[str, Any]:
+    fields = result.get("fields")
+    if isinstance(fields, Mapping):
+        return dict(fields)
+    data = result.get("data")
+    if isinstance(data, Mapping):
+        return dict(data)
+    return {
+        key: value
+        for key, value in result.items()
+        if key not in {"status_code", "request_args", "entity", "entity_id", "rows", "applied_filters"}
+    }
+
+
+def _first_field_value(fields: Mapping[str, Any], names: list[str]) -> Any:
+    for name in names:
+        value = fields.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _single_status_summary(*, entity: str, entity_id: Any, status: Any) -> str:
+    label = entity.strip().capitalize() or "Record"
+    if entity_id not in (None, "") and status not in (None, ""):
+        return f"{label} {entity_id} is {str(status).lower()}."
+    if entity_id not in (None, ""):
+        return f"{label} {entity_id} was retrieved."
+    return f"{label} status was retrieved."
+
+
+def _collection_summary(requirement: Any | None, evidence: EvidenceLedgerEntry, rows: list[dict[str, Any]]) -> str:
+    entity = str(getattr(requirement, "entity", "") or evidence.normalized_result.get("entity") or "record")
+    plural = _plural_entity(entity)
+    filters = dict(evidence.normalized_result.get("applied_filters") or {})
+    priority = filters.get("priority") or getattr(requirement, "constraints", {}).get("priority")
+    sort_by = getattr(requirement, "constraints", {}).get("sort_by") if requirement is not None else None
+    descriptor = f"{priority}-priority " if priority not in (None, "", [], {}) else ""
+    sorted_by = f" sorted by {sort_by}" if sort_by not in (None, "", [], {}) else ""
+    return f"Found {len(rows)} {descriptor}{plural}{sorted_by}."
+
+
+def _no_match_summary(requirement: Any | None, evidence: EvidenceLedgerEntry) -> str:
+    base = str(evidence.normalized_result.get("summary") or evidence.normalized_result.get("message") or "").strip()
+    if "no matching records were found" in base.lower():
+        return base
+    entity = str(getattr(requirement, "entity", "") or evidence.normalized_result.get("entity") or "").strip()
+    filters = dict(evidence.normalized_result.get("applied_filters") or {})
+    priority = filters.get("priority") or getattr(requirement, "constraints", {}).get("priority")
+    if entity and priority not in (None, "", [], {}):
+        return f"No matching records were found for {priority}-priority {_plural_entity(entity)}."
+    if entity:
+        return f"No matching records were found for {_plural_entity(entity)}."
+    return "No matching records were found."
+
+
+def _plural_entity(entity: str) -> str:
+    normalized = entity.strip().lower() or "record"
+    if normalized.endswith("s"):
+        return normalized
+    return f"{normalized}s"

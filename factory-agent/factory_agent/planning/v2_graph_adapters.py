@@ -373,6 +373,16 @@ def _normalize_api_result(
         filters = _applied_filters(requirement=requirement, request_args=call.args)
         if filters:
             normalized["applied_filters"] = filters
+        if not rows:
+            normalized.update(
+                {
+                    "match_status": "no_match",
+                    "no_match": True,
+                    "summary": "No matching records were found.",
+                    "message": "No matching records were found.",
+                    "reason": "no_matching_records",
+                }
+            )
         return normalized
 
     fields = _fields_from_body(body)
