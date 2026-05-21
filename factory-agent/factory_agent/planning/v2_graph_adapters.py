@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Mapping
+from types import SimpleNamespace
 from typing import Any, Protocol
 
 from pydantic import Field
 
 from factory_agent.config import Settings
-from factory_agent.rag.source_metadata import is_insufficient_context_answer
+from factory_agent.planning.intent import semantic_frame_for_text
+from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
+from factory_agent.rag.source_metadata import (
+    is_insufficient_context_answer,
+    normalize_source_locators,
+    sanitize_rag_answer_text,
+)
 from factory_agent.schemas import ToolInfo
 
 from .v2_agent_state import GraphToolCall, PlannerDecisionRecord, PlannerOwnedAgentGraphState
@@ -208,14 +215,31 @@ async def execute_graph_rag_tool(
 
     evidence_id = f"ev-rag-preview-{call.requirement_id}"
     evidence = None
-    answer = str(getattr(result, "answer", "") or "")
-    sources: list[dict[str, Any]] = []
+    raw_answer = str(getattr(result, "answer", "") or "")
+    raw_sources = list(getattr(result, "sources", []) or [])
     safety_content = getattr(result, "safety_content", None)
+    semantic_frame = semantic_frame_for_text(query)
+    route_family = str(getattr(semantic_frame, "route", "") or "unknown")
+    policy_application = default_knowledge_policy_registry().apply(
+        route_family=route_family,
+        query=query,
+        answer=raw_answer,
+        sources=raw_sources,
+        safety_content=safety_content,
+        semantic_frame=semantic_frame,
+    )
+    answer = sanitize_rag_answer_text(policy_application.answer or raw_answer)
+    sources: list[dict[str, Any]] = normalize_source_locators(
+        policy_application.sources or raw_sources,
+        fallback_snippet=answer,
+    )
+    safety_content = policy_application.safety_content
+    prepared_result = SimpleNamespace(answer=answer, sources=sources, safety_content=safety_content)
     if requirement is not None:
         evidence, answer, sources, safety_content = build_v2_rag_evidence(
             requirement=requirement,
             query=query,
-            result=result,
+            result=prepared_result,
             evidence_id=evidence_id,
         )
 
@@ -235,11 +259,19 @@ async def execute_graph_rag_tool(
             satisfies=["source_citation", "document_answer"],
             diagnostic_metadata={
                 "graph_authorized_execution": True,
+                "graph_tool_action": "rag_tool",
+                "evidence_source_type": "rag_tool",
                 "execution_adapter": "graph_rag_tool_adapter",
                 "decision_id": decision.decision_id,
                 "tool_call_id": call.call_id,
+                "tool_call_kind": call.kind,
                 "query": query,
                 "source_count": len(sources),
+                "route_family": route_family,
+                "policy_id": policy_application.policy_id,
+                "retrieved_content_proved_claim": True,
+                "safety_content_present": bool(safety_content),
+                "safety_content_used_as_evidence": False,
                 "direct_v2_execution": False,
             },
         )
@@ -257,16 +289,25 @@ async def execute_graph_rag_tool(
             "match_status": "no_match",
             "no_match": True,
             "sources_checked": sources,
+            "summary": answer,
         },
         satisfies=["insufficient_context"],
         diagnostic_metadata={
             "graph_authorized_execution": True,
+            "graph_tool_action": "rag_tool",
+            "evidence_source_type": "insufficient_context",
             "execution_adapter": "graph_rag_tool_adapter",
             "decision_id": decision.decision_id,
             "tool_call_id": call.call_id,
+            "tool_call_kind": call.kind,
             "query": query,
             "source_count": len(sources),
+            "route_family": route_family,
+            "policy_id": policy_application.policy_id,
             "reason": "insufficient_context",
+            "retrieved_content_proved_claim": False,
+            "safety_content_present": bool(safety_content),
+            "safety_content_used_as_evidence": False,
             "direct_v2_execution": False,
         },
     )

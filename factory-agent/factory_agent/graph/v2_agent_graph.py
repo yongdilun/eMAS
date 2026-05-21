@@ -9,6 +9,7 @@ from uuid import uuid4
 from langgraph.graph import END, StateGraph
 from pydantic import Field
 
+from ..rag.source_metadata import is_insufficient_context_answer
 from ..config import Settings, get_settings
 from ..planning.v2_agent_state import (
     GraphToolCall,
@@ -521,6 +522,7 @@ class PlannerOwnedAgentGraph:
             return _state_update(state)
 
         executions: list[GraphToolExecutionResult] = []
+        action_events: list[dict[str, Any]] = []
         for choose_decision in choose_decisions:
             guard_decision = PlannerDecisionRecord(
                 decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
@@ -535,11 +537,29 @@ class PlannerOwnedAgentGraph:
             record_planner_decision(state, guard_decision)
             execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
             executions.append(execution)
+            action_events.append(
+                {
+                    "decision_id": guard_decision.decision_id,
+                    "tool_call_id": execution.tool_call.call_id,
+                    "tool_call_kind": execution.tool_call.kind,
+                    "tool_name": execution.tool_call.tool_name,
+                    "requirement_id": execution.tool_call.requirement_id,
+                    "source_type": execution.source_type,
+                    "source_of_truth": execution.source_of_truth,
+                    "graph_tool_action": execution.diagnostic_metadata.get(
+                        "graph_tool_action",
+                        execution.tool_call.kind,
+                    ),
+                    "legacy_shortcut_used": False,
+                }
+            )
 
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
             "execution_results": [execution.model_dump(mode="json") for execution in executions],
         }
+        previous_actions = list(state.execution_trace.diagnostics.get("graph_tool_actions") or [])
+        state.execution_trace.diagnostics["graph_tool_actions"] = [*previous_actions, *action_events]
         if len(executions) == 1:
             state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY]["execution_result"] = (
                 executions[0].model_dump(mode="json")
@@ -561,11 +581,24 @@ class PlannerOwnedAgentGraph:
             evidence = await _maybe_await(self._adapters.observe_tool_result(state, execution))
             state.evidence_ledger.evidence.append(evidence)
             evidence_items.append(evidence)
+        graph_evidence_events = [
+            {
+                "evidence_ref": evidence.id,
+                "tool_name": evidence.tool_name,
+                "requirement_id": evidence.requirement_id,
+                "source_type": evidence.source_type,
+                "source_of_truth": evidence.source_of_truth,
+                "graph_tool_action": evidence.diagnostic_metadata.get("graph_tool_action"),
+                "legacy_shortcut_used": False,
+            }
+            for evidence in evidence_items
+        ]
         state.execution_trace.diagnostics["evidence_observation"] = {
             "status": "recorded",
             "evidence_refs": [evidence.id for evidence in evidence_items],
             "source_types": [evidence.source_type for evidence in evidence_items],
             "source_of_truths": [evidence.source_of_truth for evidence in evidence_items],
+            "graph_evidence": graph_evidence_events,
         }
         if len(evidence_items) == 1:
             state.execution_trace.diagnostics["evidence_observation"].update(
@@ -637,14 +670,14 @@ class PlannerOwnedAgentGraph:
         response_summary = _phase6_response_summary(state, response_blocks)
         state.response_document_context = ResponseDocumentContext(
             state="rendered" if validation_status == "passed" else "failed",
-            document_id=f"phase6-response-{uuid4().hex[:12]}",
+            document_id=f"phase7-response-{uuid4().hex[:12]}",
             revision=state.requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in state.requirement_ledger.requirements],
             evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
             pending_approval_id=state.pending_approval.approval_id,
-            render_contract="phase6_read_only_product_flow_response_document_context",
+            render_contract="phase7_rag_graph_tool_response_document_context",
             diagnostics={
-                "phase": "phase6_read_only_product_flows",
+                "phase": "phase7_rag_graph_tool",
                 "real_response_renderer_called": False,
                 "final_validation_status": validation_status,
                 "summary": response_summary,
@@ -660,7 +693,20 @@ class PlannerOwnedAgentGraph:
                     if requirement.status != "open"
                 },
                 "no_record_evidence_refs": [
-                    evidence.id for evidence in state.evidence_ledger.evidence if _evidence_has_no_match(evidence)
+                    evidence.id
+                    for evidence in state.evidence_ledger.evidence
+                    if _evidence_has_no_match(evidence)
+                    and not _is_document_insufficient_context_evidence(evidence)
+                ],
+                "document_evidence_refs": [
+                    evidence.id
+                    for evidence in state.evidence_ledger.evidence
+                    if evidence.source_of_truth == "document_knowledge"
+                ],
+                "insufficient_context_evidence_refs": [
+                    evidence.id
+                    for evidence in state.evidence_ledger.evidence
+                    if _is_document_insufficient_context_evidence(evidence)
                 ],
                 "preview_blocks": 0,
                 "approval_blocks": 0,
@@ -919,6 +965,20 @@ def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[di
 
 
 def _phase6_response_block_for_evidence(requirement: Any | None, evidence: EvidenceLedgerEntry) -> dict[str, Any]:
+    if _is_document_insufficient_context_evidence(evidence):
+        answer = str(evidence.normalized_result.get("answer") or "").strip()
+        sources_checked = evidence.normalized_result.get("sources_checked")
+        source_count = len(sources_checked) if isinstance(sources_checked, list) else 0
+        return {
+            "type": "document_insufficient_context",
+            "requirement_id": evidence.requirement_id,
+            "evidence_ref": evidence.id,
+            "summary": answer or "I do not have enough retrieved evidence to answer that safely.",
+            "sources_checked_count": source_count,
+            "source_type": evidence.source_type,
+            "source_of_truth": evidence.source_of_truth,
+        }
+
     if _evidence_has_no_match(evidence):
         return {
             "type": "no_record",
@@ -983,6 +1043,16 @@ def _evidence_has_no_match(evidence: EvidenceLedgerEntry) -> bool:
         result.get("no_match") is True
         or str(result.get("match_status") or "").lower() == "no_match"
         or str(result.get("status") or "").lower() == "no_match"
+    )
+
+
+def _is_document_insufficient_context_evidence(evidence: EvidenceLedgerEntry) -> bool:
+    result = evidence.normalized_result
+    if evidence.source_of_truth != "document_knowledge":
+        return False
+    return (
+        evidence.diagnostic_metadata.get("reason") == "insufficient_context"
+        or is_insufficient_context_answer(result.get("answer"))
     )
 
 

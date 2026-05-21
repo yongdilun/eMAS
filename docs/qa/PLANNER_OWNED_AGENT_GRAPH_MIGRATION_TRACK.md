@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 6 complete. The explicit planner-owned graph test/debug path now proves read-only product flows for machine status, job status, multi-ID status, filtered lists, mixed operational/RAG reads, mixed machine/job/list reads, and typed no-record list evidence without switching normal runtime.
+Status: Phase 7 complete. The explicit planner-owned graph test/debug path now routes document requirements through graph-owned `rag_tool` execution selected from bounded hydrated candidates, creating citation-backed evidence when retrieved content proves the claim and explicit insufficient-context evidence when it does not. Normal runtime has not been switched.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -47,7 +47,7 @@ State/checkpoint decision:
 | 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Complete | `d5f69242` | Mixed read, empty-result, response-document tests and E2E |
-| 7 | RAG as a graph tool | Not started |  | Citation/insufficient-context tests without legacy RAG route |
+| 7 | RAG as a graph tool | Complete | pending final commit | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Not started |  | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Not started |  | Interrupt/revision/stale-work tests |
 | 10 | Runtime switch to graph | Not started |  | Full backend plus frontend response-document and seeded-oracle gates |
@@ -263,19 +263,40 @@ Completion evidence:
 
 ### Phase 7: RAG As A Graph Tool
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
 - `factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py`
-- graph/RAG adapter files as needed.
+- this tracker
 
-Completion evidence to record:
+Completion evidence:
 
-- citation-backed answer proof,
-- insufficient-context proof,
-- no `legacy_rag_route` runtime authority,
-- no source-ID runtime branches.
+- Document requirements now execute through graph-selected `rag_search_documents` calls with `GraphToolCall.kind="rag_tool"` after bounded candidate retrieval and persisted graph execution authorization.
+- `execute_graph_rag_tool()` now adapts the existing RAG pipeline, semantic frame classifier, knowledge policy registry, source normalization, and `build_v2_rag_evidence()` path instead of adding another RAG/retriever stack.
+- Citation-backed document answers become `EvidenceLedgerEntry` records with `source_type=rag_tool`, `source_of_truth=document_knowledge`, typed citations, normalized source metadata, graph action diagnostics, and `retrieved_content_proved_claim=true`.
+- Non-proving retrieved chunks become explicit insufficient-context `system_guard` evidence with `source_of_truth=document_knowledge`, `match_status=no_match`, `sources_checked`, `reason=insufficient_context`, and `retrieved_content_proved_claim=false`.
+- Safety notices remain raw/product metadata only. Phase 7 diagnostics record `safety_content_present` and `safety_content_used_as_evidence=false`; safety content is not used as citation or satisfaction proof.
+- Graph execution trace diagnostics now record graph tool action and graph evidence events without naming `legacy_rag_route` as authority.
+- Response-document context now distinguishes document insufficient context from operational no-record results and records `insufficient_context_evidence_refs`.
+- Phase 7 tests cover citation-backed RAG evidence, insufficient-context evidence with sources checked, no legacy RAG route trace/evidence, no exact prompt/seed/source-id runtime literals in graph code, final validation/satisfaction behavior for document requirements, and normal runtime not calling the graph.
+- Normal runtime was not switched, normal plan creation does not import/call `PlannerOwnedAgentGraph`, direct-v2 helpers were not removed, no legacy RAG shortcut was added, and product behavior outside explicit graph test/debug entry points was not changed.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase7_rag.py -q` reported `5 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py tests/test_planner_owned_agent_graph_phase7_rag.py -q` reported `43 passed, 5 warnings`.
+- Tests run: PowerShell-expanded response-document/RAG command with default `%TEMP%` first reported `104 passed, 1 skipped, 141 warnings, 4 errors`; all 4 errors were `PermissionError: [WinError 5] Access is denied: 'C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun'` while setting up pytest `tmp_path` for `test_rag_ingestion.py`.
+- Tests run: rerun with `TMP` and `TEMP` set to workspace-local `.pytest_tmp`, using PowerShell-expanded `$responseDocTests` and `$ragTests`, reported `108 passed, 1 skipped, 141 warnings`. The temporary directory was removed after the rerun.
+- Frontend E2E: `npm run test:e2e:seeded-oracles` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `35 passed`.
+- Frontend E2E: `npm run test:e2e:real-langgraph` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `3 passed`.
+- Frontend path note: the literal parent path `C:\Users\dilun\OneDrive\Documents\eMas Front` does not exist in this checkout; the package lives under the repo root at `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front`.
+- `git diff --check`: passed.
+- Blockers: none.
+- Commit: pending final commit.
+
+Next phase recommendation:
+
+- Proceed to Phase 8: make write approvals a real graph interrupt/checkpoint path. Stage write actions through graph-owned tool calls, pause at the approval node with ledger revision and checkpoint identity, resume from the native LangGraph checkpoint, and keep `session.replan_context` limited to pointer/UI metadata.
 
 ### Phase 8: Writes, Approval Pause, And Resume
 
@@ -390,7 +411,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 7 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 8 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -399,14 +420,14 @@ Read first:
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
-- factory-agent/factory_agent/planning/v2_rag_tool.py
-- factory-agent/factory_agent/planning/v2_satisfaction.py
-- factory-agent/factory_agent/rag/
+- factory-agent/factory_agent/services/approval*.py
+- factory-agent/factory_agent/graph/checkpointing.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase6_read_flows.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
 
 Scope:
-- Implement only Phase 7: RAG As A Graph Tool.
+- Implement only Phase 8: Writes, Approval Pause, And Resume.
 - Do not switch runtime.
 - Do not call the graph from normal plan creation.
 - Do not remove direct-v2 helpers.
@@ -415,14 +436,13 @@ Scope:
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Route document requirements through graph-owned `rag_tool` execution selected from bounded hydrated candidates.
-- RAG execution must create citation-backed evidence when retrieved content proves the claim.
-- If retrieved content does not prove the claim, create explicit insufficient-context evidence and safe final state.
-- Safety notices remain product behavior, not substitutes for evidence.
-- Trace must identify graph `rag_tool` action/evidence and must not use `legacy_rag_route`.
-- Preserve source/citation metadata without source-ID runtime branches.
-- Keep response document rendering as context/contract proof unless existing response-document code can be adapted safely.
-- Direct service execution helpers remain untouched until runtime switch; graph tests must not use them as graph authority.
+- Write actions must stage changes and pause the graph at an approval node.
+- Approval payloads must include ledger revision and graph checkpoint identity.
+- Resume must use the native LangGraph checkpoint and continue from approval evidence.
+- `session.replan_context` may store approval/checkpoint pointers for UI compatibility only; it must not become authoritative graph state.
+- Rejection must create rejection evidence and finalize safely.
+- Stale approval cannot commit.
+- Blocked jobs remain excluded.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
@@ -434,17 +454,17 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py tests/test_planner_owned_agent_graph_phase7_rag.py -q
-- python -m pytest tests/test_response_document*.py tests/test_rag*.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
+- python -m pytest tests/test_stateful*.py tests/test_approval*.py tests/test_response_document*.py -q
 - cd "..\eMas Front"
+- npm run test:e2e:response-document
 - npm run test:e2e:seeded-oracles
-- npm run test:e2e:real-langgraph
 - cd ..
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: route planner-owned graph rag evidence
+feat: pause planner-owned graph writes for approval
 
 Final response format:
 Use exactly these sections:
