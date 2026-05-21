@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 3 complete. The planner-owned LangGraph shell is added behind an explicit test/debug entry point without switching normal runtime.
+Status: Phase 4 complete. The planner-owned agent graph retrieves bounded candidate windows through the existing v2 retriever path and limits planner tool choice to hydrated candidates without switching normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -44,7 +44,7 @@ State/checkpoint decision:
 | 1 | Graph state and trace contracts | Complete | `fb1d24b9cb93778ba8ab7ae93387b84ab9dbfc07` | Focused Phase 1 state tests plus existing v2 cleanup guard |
 | 2 | Planner decision interface | Complete | pending final commit | Decision validation tests plus route/tool guardrails |
 | 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
-| 4 | Retrieval and tool choice | Not started |  | Candidate-window and no-new-retriever tests |
+| 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
 | 5 | Tool/RAG execution and evidence observation | Not started |  | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Not started |  | Mixed read, empty-result, response-document tests and E2E |
 | 7 | RAG as a graph tool | Not started |  | Citation/insufficient-context tests without legacy RAG route |
@@ -157,18 +157,36 @@ Completion evidence:
 
 ### Phase 4: Retrieval And Tool Choice
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
-- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase3_shell.py`
 - `factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py`
+- this tracker
 
-Completion evidence to record:
+Completion evidence:
 
-- candidate window max and hydration behavior,
-- planner choice limited to hydrated candidates,
-- confirmation `ToolSelector` is reused through the existing adapter.
+- `PlannerOwnedAgentGraphAdapters` now delegates retrieval to `V2CapabilityToolRetriever`, which wraps the existing `ToolSelector`.
+- Retrieval is called only from a validated `retrieve_tools` planner decision carrying a declared `CapabilityNeed`.
+- The graph passes capability-derived adapter requests and retrieval phrases to `ToolSelector`; tests prove the selector does not receive the exact whole user query for a mixed machine/RAG prompt.
+- Candidate windows and hydrated cards come directly from the retriever result, stay bounded at max 5 per need, and do not hydrate unrelated full-catalog tools.
+- The old Phase 3 local candidate-selection helpers were removed so local fake candidates cannot be mistaken for real retrieval.
+- Planner `choose_tool` decisions still pass through the Phase 2 validation gate and are rejected when the selected tool is outside the hydrated candidate window.
+- RAG is represented as `rag_search_documents` with `search_documents` actions and graph `rag_tool` calls/evidence, not as `legacy_rag_route`.
+- Phase 4 still does not execute real API/RAG tools. Execution remains a placeholder with `real_product_execution=false` and `execution_policy=placeholder_only_until_phase5`.
+- Normal runtime was not switched, normal plan creation does not call this graph, direct-v2 helpers were not removed, and product behavior was not changed.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase4_retrieval.py -q` reported `6 passed, 5 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py -q` reported `24 passed, 5 warnings`.
+- Tests run: `python -m pytest tests/test_tool_selector.py tests/test_planner_owned_loop_phase4_tool_retriever.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` reported `44 passed, 15 warnings`.
+- No pytest command in this phase used `*`, so no PowerShell wildcard expansion was required.
+- `git diff --check`: passed.
+- Blockers: none.
+
+Next phase recommendation:
+
+- Proceed to Phase 5: move API/RAG execution behind graph-authorized adapters, convert execution outputs into typed evidence, preserve repeated-retrieval guards, and keep errors as explicit evidence/failure states instead of hidden successful final answers.
 
 ### Phase 5: Tool/RAG Execution And Evidence Observation
 
@@ -338,30 +356,36 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 3 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 5 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
-- docs/qa/PLANNER_OWNED_AGENT_LOOP_MIGRATION.md
-- docs/qa/PLANNER_OWNED_AGENT_LOOP_MIGRATION_TRACK.md
+- factory-agent/factory_agent/graph/v2_agent_graph.py
 - factory-agent/factory_agent/planning/v2_agent_state.py
-- factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
+- factory-agent/factory_agent/planning/v2_tool_retriever.py
+- factory-agent/factory_agent/planning/v2_satisfaction.py
+- factory-agent/factory_agent/planning/v2_rag_tool.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py
 
 Scope:
-- Implement only Phase 3: LangGraph Shell.
+- Implement only Phase 5: Tool/RAG Execution And Evidence Observation.
 - Do not switch runtime.
-- Do not execute the new graph from normal plan creation.
+- Do not call the graph from normal plan creation.
 - Do not remove direct-v2 helpers.
-- Update only the graph migration tracker after implementation.
+- Do not change product behavior outside explicit graph test/debug entry points.
+- Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Add the new graph shell and node transitions behind an explicit test/debug entry point.
-- Use `PlannerOwnedAgentGraphState` as graph state.
-- Require a planner decision or deterministic guard decision before retrieval, tool choice, execution, approval, finalization, or failure transitions.
-- Compile with the existing LangGraph checkpointer seam and support injected/configured checkpointers.
-- Assert local/fake trace shape without requiring live LangSmith.
+- Move API/RAG execution behind graph-authorized adapters.
+- Execute only after a valid persisted planner decision or deterministic guard decision.
+- Keep RAG as a graph `rag_tool` action selected from a bounded hydrated candidate window.
+- Convert API/RAG outputs into typed `EvidenceLedgerEntry` records before satisfaction can pass.
+- Failed tool/RAG results must become explicit evidence or safe failure states, not hidden successful final answers.
+- Preserve repeated-retrieval guard behavior.
+- Direct service execution helpers remain untouched until runtime switch; graph tests must not use them as the primary path.
+- `session.replan_context` must remain pointer/UI metadata only, not authoritative graph state.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
@@ -373,13 +397,13 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py -q
-- python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py -q
+- python -m pytest tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: add planner-owned agent graph shell
+feat: execute planner-owned graph tool evidence
 
 Final response format:
 Use exactly these sections:

@@ -105,9 +105,10 @@ def _tools() -> dict[str, ToolInfo]:
 
 
 def _graph(*, checkpointer: Any = None, tracer: LocalPlannerOwnedGraphTracer | None = None):
+    settings = _settings()
     return PlannerOwnedAgentGraph(
-        settings=_settings(),
-        adapters=PlannerOwnedAgentGraphAdapters(tools_by_name=_tools()),
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(settings=settings, tools_by_name=_tools()),
         checkpointer=checkpointer,
         tracer=tracer,
     )
@@ -200,9 +201,10 @@ async def test_phase3_graph_accepts_injected_and_configured_checkpointers(monkey
     import factory_agent.graph.v2_agent_graph as v2_agent_graph
 
     monkeypatch.setattr(v2_agent_graph, "build_graph_checkpointer", lambda settings: configured)
+    configured_settings = replace(get_settings(), graph_checkpoint_backend="memory")
     configured_graph = PlannerOwnedAgentGraph(
-        settings=replace(get_settings(), graph_checkpoint_backend="memory"),
-        adapters=PlannerOwnedAgentGraphAdapters(tools_by_name=_tools()),
+        settings=configured_settings,
+        adapters=PlannerOwnedAgentGraphAdapters(settings=configured_settings, tools_by_name=_tools()),
     )
 
     assert configured_graph.compiled_graph.checkpointer is configured
@@ -223,7 +225,7 @@ async def test_phase3_direct_service_execution_is_not_called(monkeypatch):
         session_context={"session_id": "phase3-no-direct-service"},
     )
 
-    assert result.state.evidence_ledger.evidence[0].diagnostic_metadata["phase"] == "phase3_shell"
+    assert result.state.evidence_ledger.evidence[0].diagnostic_metadata["real_product_execution"] is False
     assert result.state.response_document_context.diagnostics["real_response_renderer_called"] is False
 
 
