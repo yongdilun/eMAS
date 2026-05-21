@@ -104,11 +104,33 @@ def _tools() -> dict[str, ToolInfo]:
     }
 
 
+async def _fake_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
+    _ = settings, extra_headers
+    assert idempotency_key.startswith("planner-owned-agent-graph:")
+    identifier_field = "job_id" if "jobs" in tool.name else "machine_id"
+    return {
+        "ok": True,
+        "http_status": 200,
+        "latency_ms": 4,
+        "body": {
+            "data": {
+                identifier_field: args.get("id"),
+                "status": "running",
+            }
+        },
+        "infrastructure_error": False,
+    }
+
+
 def _graph(*, checkpointer: Any = None, tracer: LocalPlannerOwnedGraphTracer | None = None):
     settings = _settings()
     return PlannerOwnedAgentGraph(
         settings=settings,
-        adapters=PlannerOwnedAgentGraphAdapters(settings=settings, tools_by_name=_tools()),
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            http_executor=_fake_http_executor,
+        ),
         checkpointer=checkpointer,
         tracer=tracer,
     )
@@ -159,7 +181,7 @@ async def test_phase3_planner_decisions_are_written_into_state():
     assert decisions[1].selected_tool_call.tool_name == "get__machines_{id}"
     assert decisions[2].selected_tool_call is not None
     assert decisions[2].selected_tool_call.call_id == decisions[1].selected_tool_call.call_id
-    assert decisions[3].evidence_refs == ["ev-001"]
+    assert decisions[3].evidence_refs == ["ev-api-req-001"]
 
 
 @pytest.mark.asyncio
@@ -204,7 +226,11 @@ async def test_phase3_graph_accepts_injected_and_configured_checkpointers(monkey
     configured_settings = replace(get_settings(), graph_checkpoint_backend="memory")
     configured_graph = PlannerOwnedAgentGraph(
         settings=configured_settings,
-        adapters=PlannerOwnedAgentGraphAdapters(settings=configured_settings, tools_by_name=_tools()),
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=configured_settings,
+            tools_by_name=_tools(),
+            http_executor=_fake_http_executor,
+        ),
     )
 
     assert configured_graph.compiled_graph.checkpointer is configured
@@ -225,7 +251,8 @@ async def test_phase3_direct_service_execution_is_not_called(monkeypatch):
         session_context={"session_id": "phase3-no-direct-service"},
     )
 
-    assert result.state.evidence_ledger.evidence[0].diagnostic_metadata["real_product_execution"] is False
+    assert result.state.evidence_ledger.evidence[0].diagnostic_metadata["graph_authorized_execution"] is True
+    assert result.state.evidence_ledger.evidence[0].diagnostic_metadata["direct_v2_execution"] is False
     assert result.state.response_document_context.diagnostics["real_response_renderer_called"] is False
 
 

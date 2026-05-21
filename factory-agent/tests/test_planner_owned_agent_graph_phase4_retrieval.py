@@ -98,6 +98,57 @@ def _machine_status_tool(name: str = "get__machines_{id}") -> ToolInfo:
     )
 
 
+async def _fake_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
+    _ = settings, extra_headers
+    assert idempotency_key.startswith("planner-owned-agent-graph:")
+    if "jobs" in tool.name and "{id}" not in tool.name:
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 5,
+            "body": {
+                "data": [
+                    {
+                        "job_id": "JOB-LOCAL-1",
+                        "status": "queued",
+                        "priority": args.get("priority", "low"),
+                        "deadline": "2026-06-01",
+                    }
+                ]
+            },
+            "infrastructure_error": False,
+        }
+    identifier_field = "job_id" if "jobs" in tool.name else "machine_id"
+    return {
+        "ok": True,
+        "http_status": 200,
+        "latency_ms": 5,
+        "body": {"data": {identifier_field: args.get("id"), "status": "running"}},
+        "infrastructure_error": False,
+    }
+
+
+class FakeRAGPipeline:
+    async def run(self, *, query: str, session_id: str | None = None, route: str = "RAG_ONLY", api_data=None):
+        _ = session_id, route, api_data
+
+        class Result:
+            answer = "Follow the cited procedure. [1]"
+            sources = [
+                {
+                    "source_id": "src-procedure-1",
+                    "source_number": 1,
+                    "doc_id": "doc-procedure-1",
+                    "chunk_id": "chunk-1",
+                    "title": "Procedure",
+                    "snippet": query,
+                }
+            ]
+            safety_content = None
+
+        return Result()
+
+
 def _graph(
     tools_by_name: dict[str, ToolInfo],
     *,
@@ -109,6 +160,8 @@ def _graph(
         settings=settings,
         tools_by_name=tools_by_name,
         tool_selector=selector,
+        http_executor=_fake_http_executor,
+        rag_pipeline=FakeRAGPipeline(),
     )
     return PlannerOwnedAgentGraph(settings=settings, adapters=graph_adapters, checkpointer=None)
 
@@ -250,17 +303,15 @@ def test_phase4_graph_uses_existing_v2_retriever_stack():
 
 
 @pytest.mark.asyncio
-async def test_phase4_does_not_execute_real_api_or_rag_tools(monkeypatch):
-    from factory_agent.rag.pipeline import RAGPipeline
+async def test_phase4_graph_does_not_use_direct_v2_execution_helpers(monkeypatch):
     from factory_agent.services.plan_creation_service import PlanCreationService
 
     async def _boom(*args, **kwargs):  # pragma: no cover - only runs on regression
-        raise AssertionError("Phase 4 graph must not execute real API or RAG tools")
+        raise AssertionError("Graph retrieval/execution path must not use direct-v2 service helpers")
 
     monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_steps", _boom)
     monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_api_step", _boom)
     monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_rag_step", _boom)
-    monkeypatch.setattr(RAGPipeline, "run", _boom)
 
     result = await _graph({}).run(
         "Explain the lockout tagout procedure.",
@@ -269,6 +320,6 @@ async def test_phase4_does_not_execute_real_api_or_rag_tools(monkeypatch):
 
     evidence = result.state.evidence_ledger.evidence[0]
     assert evidence.source_type == "rag_tool"
-    assert evidence.diagnostic_metadata["execution_policy"] == "placeholder_only_until_phase5"
-    assert evidence.diagnostic_metadata["real_product_execution"] is False
+    assert evidence.diagnostic_metadata["graph_authorized_execution"] is True
+    assert evidence.diagnostic_metadata["direct_v2_execution"] is False
     assert result.state.response_document_context.diagnostics["real_response_renderer_called"] is False

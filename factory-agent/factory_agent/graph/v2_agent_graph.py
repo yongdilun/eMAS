@@ -21,16 +21,21 @@ from ..planning.v2_agent_state import (
 from ..planning.v2_capability_map import build_capability_needs_for_text
 from ..planning.v2_contracts import (
     CandidateToolWindow,
-    EvidenceCitation,
     EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
     ToolRetrievalTrace,
     V2ContractModel,
 )
+from ..planning.v2_graph_adapters import (
+    GraphToolExecutionResult,
+    GraphToolHttpExecutor,
+    execute_graph_tool_call,
+    observe_graph_tool_result,
+)
 from ..planning.v2_planner_decisions import record_planner_decision, validate_planner_decision
 from ..planning.v2_rag_tool import ensure_v2_rag_tool
-from ..planning.v2_satisfaction import apply_deterministic_evidence_satisfaction
+from ..planning.v2_satisfaction import V2RepeatedRetrievalGuard, apply_deterministic_evidence_satisfaction
 from ..planning.v2_tool_retriever import V2CapabilityToolRetriever
 from ..planning.tool_selector import ToolSelector
 from ..schemas import ToolInfo
@@ -51,7 +56,7 @@ PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER: tuple[str, ...] = (
     "response_document_node",
 )
 
-_PENDING_EXECUTION_DIAGNOSTIC_KEY = "phase4_pending_tool_execution"
+_PENDING_EXECUTION_DIAGNOSTIC_KEY = "phase5_pending_tool_execution"
 _CHECKPOINTER_UNSET = object()
 
 
@@ -74,15 +79,6 @@ class PlannerOwnedGraphRetrieval:
     trace: ToolRetrievalTrace
 
 
-@dataclass(frozen=True)
-class PlannerOwnedGraphExecution:
-    tool_call: GraphToolCall
-    normalized_result: dict[str, Any]
-    result_ref: str
-    citations: list[EvidenceCitation] = field(default_factory=list)
-    diagnostics: dict[str, Any] = field(default_factory=dict)
-
-
 @dataclass
 class LocalPlannerOwnedGraphTracer:
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -100,11 +96,11 @@ class LocalPlannerOwnedGraphTracer:
 
 
 class PlannerOwnedAgentGraphAdapters:
-    """Phase 4 graph adapters.
+    """Graph adapters for retrieval, authorized execution, and evidence observation.
 
     Retrieval uses the existing v2 capability retriever, which wraps the
-    existing ToolSelector. Execution remains an explicit non-product placeholder
-    until the graph execution/evidence phase.
+    existing ToolSelector. Execution is allowed only through persisted graph
+    decisions and converts results into typed evidence before satisfaction.
     """
 
     def __init__(
@@ -115,12 +111,16 @@ class PlannerOwnedAgentGraphAdapters:
         tool_selector: ToolSelector | None = None,
         tool_retriever: V2CapabilityToolRetriever | None = None,
         retrieval_mode: str = "normal",
+        http_executor: GraphToolHttpExecutor | None = None,
+        rag_pipeline: Any | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self.tools_by_name = ensure_v2_rag_tool(dict(tools_by_name or {}))
         self._tool_selector = tool_selector or ToolSelector(self._settings)
         self._tool_retriever = tool_retriever or V2CapabilityToolRetriever(self._tool_selector)
         self._retrieval_mode = retrieval_mode
+        self._http_executor = http_executor
+        self._rag_pipeline = rag_pipeline
 
     @property
     def tool_retriever(self) -> V2CapabilityToolRetriever:
@@ -162,7 +162,7 @@ class PlannerOwnedAgentGraphAdapters:
                 "graph_phase": "phase4_retrieval_and_tool_choice",
                 "tool_selector_adapter": "V2CapabilityToolRetriever",
                 "hydrated_cards_from_retriever_result": True,
-                "real_product_execution": False,
+                "phase5_execution_adapter_ready": True,
             }
         )
         return PlannerOwnedGraphRetrieval(
@@ -199,28 +199,22 @@ class PlannerOwnedAgentGraphAdapters:
         self,
         state: PlannerOwnedAgentGraphState,
         decision: PlannerDecisionRecord,
-    ) -> PlannerOwnedGraphExecution:
-        call = decision.selected_tool_call
-        if call is None:
-            raise ValueError("execute_tool transition requires a selected tool call")
-        requirement = _requirement_by_id(state, call.requirement_id)
-        if requirement is None:
-            raise ValueError("execute_tool transition targets a missing requirement")
-        normalized_result = _fake_normalized_result_for_requirement(requirement, call)
-        citations = [
-            EvidenceCitation(source_id="phase4-placeholder-rag", title="Phase 4 placeholder citation")
-        ] if call.kind == "rag_tool" else []
-        return PlannerOwnedGraphExecution(
-            tool_call=call,
-            normalized_result=normalized_result,
-            result_ref=f"phase4-placeholder-result-{len(state.evidence_ledger.evidence) + 1:03d}",
-            citations=citations,
-            diagnostics={
-                "phase": "phase4_retrieval_and_tool_choice",
-                "real_product_execution": False,
-                "execution_policy": "placeholder_only_until_phase5",
-            },
+    ) -> GraphToolExecutionResult:
+        return await execute_graph_tool_call(
+            settings=self._settings,
+            state=state,
+            decision=decision,
+            tools_by_name=self.tools_by_name,
+            http_executor=self._http_executor,
+            rag_pipeline=self._rag_pipeline,
         )
+
+    async def observe_tool_result(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        execution: GraphToolExecutionResult,
+    ) -> EvidenceLedgerEntry:
+        return observe_graph_tool_result(state, execution)
 
 
 class PlannerOwnedAgentGraph:
@@ -335,7 +329,7 @@ class PlannerOwnedAgentGraph:
         _record_node_visit(state, "semantic_intake_node", self._tracer)
         state.execution_trace.planner.diagnostics["semantic_intake"] = {
             "original_query_present": bool(state.original_query.strip()),
-            "phase": "phase4_retrieval_choice_shell",
+            "phase": "phase5_execution_observation",
         }
         return _state_update(state)
 
@@ -366,7 +360,7 @@ class PlannerOwnedAgentGraph:
             requirement_id=requirement.id,
             ledger_revision=state.requirement_ledger.revision,
             capability_need=need,
-            reason="Phase 4 graph requests a bounded retriever-backed candidate window.",
+            reason="Graph requests a bounded retriever-backed candidate window.",
         )
         record_planner_decision(state, decision)
         state.execution_trace.planner.call_count += 1
@@ -383,6 +377,13 @@ class PlannerOwnedAgentGraph:
             state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {"status": "no_decision"}
             return _state_update(state)
         validate_planner_decision(state, decision)
+        guard_decision = _record_repeated_retrieval_guard_trace(state, decision.capability_need)
+        if guard_decision is not None and guard_decision.blocked:
+            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {
+                "status": "blocked_by_repeated_retrieval_guard",
+                "guard": guard_decision.as_diagnostics(),
+            }
+            return _state_update(state)
         retrieval = await _maybe_await(self._adapters.retrieve_tools(state, decision))
         if not any(window.requirement_id == retrieval.candidate_window.requirement_id for window in state.candidate_tool_windows):
             state.candidate_tool_windows.append(retrieval.candidate_window)
@@ -415,7 +416,7 @@ class PlannerOwnedAgentGraph:
             ledger_revision=state.requirement_ledger.revision,
             capability_need=retrieve_decision.capability_need,
             selected_tool_call=tool_call,
-            reason="Phase 4 graph selects from the hydrated candidate window.",
+            reason="Graph selects from the hydrated candidate window.",
         )
         tool_call.decision_id = decision.decision_id
         record_planner_decision(state, decision)
@@ -449,11 +450,7 @@ class PlannerOwnedAgentGraph:
         execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
-            "tool_call": execution.tool_call.model_dump(mode="json"),
-            "normalized_result": execution.normalized_result,
-            "result_ref": execution.result_ref,
-            "citations": [citation.model_dump(mode="json") for citation in execution.citations],
-            "diagnostics": execution.diagnostics,
+            "execution_result": execution.model_dump(mode="json"),
         }
         return _state_update(state)
 
@@ -463,26 +460,14 @@ class PlannerOwnedAgentGraph:
         if not isinstance(pending, dict) or pending.get("status") != "observed_by_next_node":
             state.execution_trace.diagnostics["evidence_observation"] = {"status": "no_pending_execution"}
             return _state_update(state)
-        tool_call = GraphToolCall.model_validate(pending["tool_call"])
-        source_type = "rag_tool" if tool_call.kind == "rag_tool" else "api_tool"
-        citations = [EvidenceCitation.model_validate(item) for item in pending.get("citations") or []]
-        evidence = EvidenceLedgerEntry(
-            id=f"ev-{len(state.evidence_ledger.evidence) + 1:03d}",
-            requirement_id=tool_call.requirement_id,
-            source_type=source_type,
-            source_of_truth="document_knowledge" if tool_call.kind == "rag_tool" else "operational_state",
-            tool_name=tool_call.tool_name,
-            args=dict(tool_call.args),
-            result_ref=str(pending.get("result_ref") or ""),
-            normalized_result=dict(pending.get("normalized_result") or {}),
-            citations=citations,
-            satisfies=["phase4_placeholder_tool_result"],
-            diagnostic_metadata=dict(pending.get("diagnostics") or {}),
-        )
+        execution = GraphToolExecutionResult.model_validate(pending["execution_result"])
+        evidence = await _maybe_await(self._adapters.observe_tool_result(state, execution))
         state.evidence_ledger.evidence.append(evidence)
         state.execution_trace.diagnostics["evidence_observation"] = {
             "status": "recorded",
             "evidence_ref": evidence.id,
+            "source_type": evidence.source_type,
+            "source_of_truth": evidence.source_of_truth,
         }
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
@@ -502,7 +487,7 @@ class PlannerOwnedAgentGraph:
         _record_node_visit(state, "approval_node", self._tracer)
         state.execution_trace.diagnostics["approval_node"] = {
             "status": state.pending_approval.status,
-            "phase": "phase4_retrieval_choice_no_interrupt",
+            "phase": "phase5_execution_observation_no_interrupt",
         }
         return _state_update(state)
 
@@ -544,14 +529,14 @@ class PlannerOwnedAgentGraph:
         validation_status = state.final_validation_result.status if state.final_validation_result else "failed"
         state.response_document_context = ResponseDocumentContext(
             state="rendered" if validation_status == "passed" else "failed",
-            document_id=f"phase4-response-{uuid4().hex[:12]}",
+            document_id=f"phase5-response-{uuid4().hex[:12]}",
             revision=state.requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in state.requirement_ledger.requirements],
             evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
             pending_approval_id=state.pending_approval.approval_id,
-            render_contract="phase4_retrieval_choice_response_document_context",
+            render_contract="phase5_execution_observation_response_document_context",
             diagnostics={
-                "phase": "phase4_retrieval_and_tool_choice",
+                "phase": "phase5_execution_observation",
                 "real_response_renderer_called": False,
                 "final_validation_status": validation_status,
             },
@@ -622,6 +607,36 @@ def _latest_decision(state: PlannerOwnedAgentGraphState, decision_kind: str) -> 
         ),
         None,
     )
+
+
+def _record_repeated_retrieval_guard_trace(
+    state: PlannerOwnedAgentGraphState,
+    active_need: Any | None,
+):
+    needs = build_capability_needs_for_text(state.original_query, capability_map=state.capability_map)
+    if active_need is not None and not any(need.requirement_id == active_need.requirement_id for need in needs):
+        needs = [active_need, *needs]
+
+    guard = V2RepeatedRetrievalGuard()
+    decisions: list[dict[str, Any]] = []
+    repeated_keys: list[str] = []
+    active_decision = None
+    for need in needs:
+        decision = guard.check(need, state=state.as_loop_compat_state())
+        diagnostics = decision.as_diagnostics()
+        diagnostics["requirement_id"] = need.requirement_id
+        decisions.append(diagnostics)
+        if decision.blocked:
+            repeated_keys.append(decision.need_key)
+        if active_need is not None and need.requirement_id == active_need.requirement_id:
+            active_decision = decision
+
+    state.execution_trace.diagnostics["repeated_retrieval_guard"] = {
+        "status": "blocked_repeated_need" if repeated_keys else "not_triggered",
+        "repeated_need_keys": repeated_keys,
+        "decisions": decisions,
+    }
+    return active_decision
 
 
 def _first_open_requirement_without_evidence(state: PlannerOwnedAgentGraphState):
@@ -715,65 +730,3 @@ def _argument_value_for(arg_name: str, requirement: Any, capability_need: Any) -
     if arg_name == "query" and requirement.source_of_truth == "document_knowledge":
         return requirement.goal
     return None
-
-
-def _fake_normalized_result_for_requirement(requirement: Any, tool_call: GraphToolCall) -> dict[str, Any]:
-    if requirement.requirement_type == "filtered_collection":
-        row = _fake_row_for_requirement(requirement)
-        return {
-            "entity": requirement.entity,
-            "rows": [row],
-            "applied_filters": {
-                key: value
-                for key, value in requirement.constraints.items()
-                if key not in {"limit", "sort_by", "sort_dir"}
-            },
-            "status_code": 200,
-            "phase4_placeholder_execution": True,
-        }
-    if requirement.source_of_truth == "document_knowledge":
-        return {
-            "answer": "Phase 4 document tool action placeholder.",
-            "citations": [{"source_id": "phase4-placeholder-rag"}],
-            "status_code": 200,
-            "phase4_placeholder_execution": True,
-        }
-    entity_id = _entity_id_for_requirement(requirement, tool_call)
-    fields = {
-        field: f"phase4_{field}"
-        for field in (requirement.requested_fields or ["status"])
-    }
-    return {
-        "entity": requirement.entity,
-        "entity_id": entity_id,
-        "fields": fields,
-        "status_code": 200,
-        "phase4_placeholder_execution": True,
-    }
-
-
-def _fake_row_for_requirement(requirement: Any) -> dict[str, Any]:
-    row: dict[str, Any] = {}
-    if requirement.entity:
-        row[f"{requirement.entity}_id"] = requirement.constraints.get(f"{requirement.entity}_id") or "phase4-placeholder-id"
-    for field in requirement.requested_fields or ["status"]:
-        row.setdefault(field, f"phase4_{field}")
-    for key, value in requirement.constraints.items():
-        if key not in {"limit", "sort_by", "sort_dir"}:
-            row.setdefault(key, value)
-    sort_by = requirement.constraints.get("sort_by")
-    if sort_by:
-        row.setdefault(str(sort_by), f"phase4_{sort_by}")
-    return row
-
-
-def _entity_id_for_requirement(requirement: Any, tool_call: GraphToolCall) -> Any:
-    if requirement.entity:
-        value = requirement.constraints.get(f"{requirement.entity}_id")
-        if value not in (None, "", [], {}):
-            return value
-    for key in ("id", "machine_ref"):
-        value = requirement.constraints.get(key)
-        if value not in (None, "", [], {}):
-            return value
-    return tool_call.args.get("id")

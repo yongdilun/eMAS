@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 4 complete. The planner-owned agent graph retrieves bounded candidate windows through the existing v2 retriever path and limits planner tool choice to hydrated candidates without switching normal runtime.
+Status: Phase 5 complete. The planner-owned agent graph now executes selected API/RAG calls only through graph-authorized adapters in the explicit graph path, observes typed evidence, and preserves failure/insufficient-context evidence without switching normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -45,7 +45,7 @@ State/checkpoint decision:
 | 2 | Planner decision interface | Complete | pending final commit | Decision validation tests plus route/tool guardrails |
 | 3 | LangGraph shell | Complete | pending final commit | Node transition tests plus fake tracer proof |
 | 4 | Retrieval and tool choice | Complete | pending final commit | Candidate-window and no-new-retriever tests |
-| 5 | Tool/RAG execution and evidence observation | Not started |  | Evidence observation tests plus satisfaction guard |
+| 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Not started |  | Mixed read, empty-result, response-document tests and E2E |
 | 7 | RAG as a graph tool | Not started |  | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Not started |  | Approval resume, stale approval, and UI approval tests |
@@ -190,20 +190,36 @@ Next phase recommendation:
 
 ### Phase 5: Tool/RAG Execution And Evidence Observation
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
-- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
 - `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase3_shell.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py`
 - `factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py`
+- this tracker
 
-Completion evidence to record:
+Completion evidence:
 
-- tool execution authorization proof,
-- typed evidence proof,
-- failed execution does not satisfy requirements,
-- RAG action creates graph evidence.
+- Added `v2_graph_adapters.py` as the graph execution/evidence adapter surface. `execute_graph_tool_call()` requires a persisted validated `execute_tool` planner/guard decision before any API/RAG execution can run, and `observe_graph_tool_result()` converts execution output into typed evidence.
+- API execution uses the existing stateless HTTP tool execution seam rather than service-level direct-v2 helpers. Successful API results become `EvidenceLedgerEntry` records with `source_type=api_tool`, `source_of_truth=operational_state`, requirement id, tool name, tool call/result refs, args, normalized result, and diagnostics including HTTP status and authorization metadata.
+- RAG execution remains the graph-selected `rag_search_documents` action from bounded hydrated candidates. Citation-backed answers become `rag_tool` citation evidence; insufficient context becomes explicit `system_guard` evidence with `source_of_truth=document_knowledge`, `match_status=no_match`, and `reason=insufficient_context`.
+- Failed API/RAG execution becomes explicit failure evidence/diagnostics and does not satisfy requirements or hide behind a successful final response.
+- The graph observation node now records evidence through the adapter before deterministic satisfaction/final validation. Response document rendering remains placeholder/context only and the real response-document product renderer is still not called.
+- Repeated retrieval guard diagnostics are recorded on the graph path and preserve `blocked_repeated_need` tracing for unchanged repeated capability needs.
+- Phase 3/4 graph tests now inject fake API/RAG adapters so they assert graph contracts without accidental localhost/RAG execution. Direct-v2 service helpers remain untouched and are not called by the graph.
+- Normal runtime was not switched, normal plan creation does not import/call `PlannerOwnedAgentGraph`, direct-v2 helpers were not removed, no product-visible behavior changed, and no ToolSelector/RAG/approval/response-document stack was duplicated.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py -q` reported `32 passed, 5 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` reported `15 passed, 3 warnings`.
+- No pytest command in this phase used `*`, so no PowerShell wildcard expansion was required.
+- `git diff --check`: passed.
+- Blockers: none.
+
+Next phase recommendation:
+
+- Proceed to Phase 6: prove read-only product flows through graph-owned API/RAG evidence without switching normal runtime, preserving product output contracts and avoiding exact-prompt or seeded-ID runtime branches.
 
 ### Phase 6: Read-Only Product Flows
 
@@ -356,7 +372,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 5 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 6 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -364,13 +380,15 @@ Read first:
 - factory-agent/factory_agent/graph/v2_agent_graph.py
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
+- factory-agent/factory_agent/planning/v2_graph_adapters.py
 - factory-agent/factory_agent/planning/v2_tool_retriever.py
 - factory-agent/factory_agent/planning/v2_satisfaction.py
 - factory-agent/factory_agent/planning/v2_rag_tool.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py
+- factory-agent/tests/test_response_document*.py as needed
 
 Scope:
-- Implement only Phase 5: Tool/RAG Execution And Evidence Observation.
+- Implement only Phase 6: Read-Only Product Flows.
 - Do not switch runtime.
 - Do not call the graph from normal plan creation.
 - Do not remove direct-v2 helpers.
@@ -378,13 +396,14 @@ Scope:
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Move API/RAG execution behind graph-authorized adapters.
-- Execute only after a valid persisted planner decision or deterministic guard decision.
-- Keep RAG as a graph `rag_tool` action selected from a bounded hydrated candidate window.
-- Convert API/RAG outputs into typed `EvidenceLedgerEntry` records before satisfaction can pass.
-- Failed tool/RAG results must become explicit evidence or safe failure states, not hidden successful final answers.
-- Preserve repeated-retrieval guard behavior.
-- Direct service execution helpers remain untouched until runtime switch; graph tests must not use them as the primary path.
+- Prove read-only behavior through the graph test/debug path while preserving product-facing response semantics for later runtime switch.
+- Cover simple machine status, job status, multi-ID status, filtered jobs with sort/limit/fields, mixed machine/job/list queries, mixed operational/RAG reads, and empty-result list queries.
+- Keep API/RAG execution behind Phase 5 graph-authorized adapters and typed evidence observation.
+- Ensure summaries and response-document context reflect all fulfilled requirements, not only the final requirement.
+- Empty result evidence must say no matching records were found and must not reuse stale preview/approval/response context.
+- Keep response document rendering as placeholder/context only unless adapting existing response-document code is necessary for contract proof.
+- Preserve repeated retrieval guard tracing and final validation from typed evidence.
+- Direct service execution helpers remain untouched until runtime switch; graph tests must not use them as graph authority.
 - `session.replan_context` must remain pointer/UI metadata only, not authoritative graph state.
 
 Maintainability and hardcode rules:
@@ -397,13 +416,15 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py -q
-- python -m pytest tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py -q
+- python -m pytest tests/test_response_document*.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
+- cd ..
+- npm run test:e2e:response-document
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: execute planner-owned graph tool evidence
+feat: prove graph read-only product flows
 
 Final response format:
 Use exactly these sections:
