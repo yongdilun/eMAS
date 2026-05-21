@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 7 complete. The explicit planner-owned graph test/debug path now routes document requirements through graph-owned `rag_tool` execution selected from bounded hydrated candidates, creating citation-backed evidence when retrieved content proves the claim and explicit insufficient-context evidence when it does not. Normal runtime has not been switched.
+Status: Phase 8 complete. The explicit planner-owned graph test/debug path now stages write actions behind graph-owned approval payloads, pauses at the approval node, and resumes from native LangGraph checkpoint state before committing, rejecting, or closing stale approvals. Normal runtime has not been switched.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -296,31 +296,43 @@ Completion evidence:
 
 Next phase recommendation:
 
-- Proceed to Phase 8: make write approvals a real graph interrupt/checkpoint path. Stage write actions through graph-owned tool calls, pause at the approval node with ledger revision and checkpoint identity, resume from the native LangGraph checkpoint, and keep `session.replan_context` limited to pointer/UI metadata.
+- Phase 8 is now complete. Proceed to Phase 9: make user interruptions, requirement revisions, and stale-work rejection native graph checkpoint/revision behavior while keeping normal runtime unswitched.
 
 ### Phase 8: Writes, Approval Pause, And Resume
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
 - `factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py`
-- approval/graph adapter files as needed,
-- frontend approval E2E tests as needed.
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
 
-Required behavior proof:
+Behavior proof:
 
-- Approval 1 UI describes approval 1.
-- Approval 2 UI describes approval 2.
-- No-record first operation does not show stale/future approval details.
-- Commit happens only after approval.
-- Resume uses the native LangGraph checkpoint; `session.replan_context` is pointer/UI metadata only.
+- Write requirements select bounded hydrated write candidates but stage preview rows instead of executing.
+- Approval payloads include ledger revision, graph checkpoint identity, selected graph tool call, requirement id, preview rows/details, and excluded blocked rows.
+- Commit happens only after matching approval resume from native LangGraph checkpoint state.
+- Rejection creates approval evidence and finalizes safely without commit.
+- Stale approval creates stale rejection evidence and cannot commit.
+- Approval 1 and Approval 2 labels are preserved for multi-step approvals.
+- No-record first operation renders no-record evidence and suppresses stale/future approval details.
+- `session.replan_context` remains non-authoritative; normal plan creation still does not import or call `PlannerOwnedAgentGraph`.
 
 Completion evidence to record:
 
-- backend approval counts,
-- frontend approval E2E counts,
-- stale approval rejection proof.
+- Backend focused approval/resume: `python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q` -> `16 passed`.
+- Backend wildcard expansion: PowerShell-expanded `test_stateful*.py`, `test_approval*.py`, and `test_response_document*.py` -> `67 passed`.
+- Extra graph phase regression sweep: Phase 1 through Phase 8 graph tests -> `51 passed`.
+- Frontend E2E: `npm run test:e2e:response-document` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` -> `30 passed`.
+- Frontend E2E: `npm run test:e2e:seeded-oracles` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` -> `35 passed`.
+- `git diff --check`: passed; Git emitted only LF-to-CRLF working-copy warnings for the edited tracker and graph files.
+- Blockers/waivers: none.
+- Commit: pending final commit.
+
+Next phase recommendation:
+
+- Proceed to Phase 9: interruptions, revisions, and stale work. Native graph interruption handling should tie user revisions, superseded evidence, background/stale results, and stale approvals to graph ledger revision and checkpoint identity. Keep `session.replan_context` as pointer/UI metadata only and keep normal runtime unswitched until Phase 10.
 
 ### Phase 9: Interruptions, Revisions, And Stale Work
 
@@ -411,7 +423,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 8 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 9 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -420,14 +432,14 @@ Read first:
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
-- factory-agent/factory_agent/services/approval*.py
+- factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/factory_agent/graph/checkpointing.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py
-- factory-agent/tests/test_planner_owned_agent_graph_phase6_read_flows.py
+- factory-agent/factory_agent/services/approval*.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py
 
 Scope:
-- Implement only Phase 8: Writes, Approval Pause, And Resume.
+- Implement only Phase 9: Interruptions, Revisions, And Stale Work.
 - Do not switch runtime.
 - Do not call the graph from normal plan creation.
 - Do not remove direct-v2 helpers.
@@ -436,25 +448,24 @@ Scope:
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Write actions must stage changes and pause the graph at an approval node.
-- Approval payloads must include ledger revision and graph checkpoint identity.
-- Resume must use the native LangGraph checkpoint and continue from approval evidence.
-- `session.replan_context` may store approval/checkpoint pointers for UI compatibility only; it must not become authoritative graph state.
-- Rejection must create rejection evidence and finalize safely.
-- Stale approval cannot commit.
-- Blocked jobs remain excluded.
+- User interruptions must enter graph-owned revision handling from native checkpoint state.
+- Requirement revisions must preserve locked constraints and revision history.
+- Superseded requirements/evidence must be explicit and traceable.
+- Stale background results must be ignored based on graph revision/checkpoint identity.
+- Stale approvals must remain rejected after interruption/revision changes.
+- `session.replan_context` may store interrupt/checkpoint pointers for UI compatibility only; it must not become authoritative graph state.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
 - No seeded-ID or source-ID runtime branches such as M-CNC-01, JOB-SEED-*, OSHA source IDs, hard query IDs, or exact prompts.
-- No new retriever, RAG, approval, or response-document stack.
+- No new retriever, RAG, approval, interrupt, or response-document stack.
 - Keep requirement, capability need, tool call, evidence, and response document separate.
-- Use the existing LangGraph checkpointer seam for checkpoint/resume work in later phases. Do not make `session.replan_context` authoritative graph state.
+- Use the existing LangGraph checkpointer for checkpoint/resume work. Do not make `session.replan_context` authoritative graph state.
 - If a bug reveals architecture leakage, use the improve-codebase-architecture skill before patching.
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase9_interrupts.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
 - python -m pytest tests/test_stateful*.py tests/test_approval*.py tests/test_response_document*.py -q
 - cd "..\eMas Front"
 - npm run test:e2e:response-document
@@ -464,7 +475,7 @@ Verification:
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: pause planner-owned graph writes for approval
+feat: handle planner-owned graph interruptions
 
 Final response format:
 Use exactly these sections:
