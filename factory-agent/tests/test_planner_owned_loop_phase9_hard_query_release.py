@@ -401,7 +401,7 @@ async def test_phase9_multi_id_status_read_satisfies_typed_rows_without_completi
     assert requirement.constraints["job_id"] == ["JOB-SEED-001", "JOB-SEED-002"]
     assert requirement.status == "satisfied"
     assert checks["entity_match"].expected == ["JOB-SEED-001", "JOB-SEED-002"]
-    assert checks["requested_fields"].actual == ["status"]
+    assert checks["requested_fields"].actual == ["job_id", "status"]
     assert run.state.execution_trace.detectors.legacy_intent_completion_loop.used is False
     assert run.state.execution_trace.final_validator_status == "passed"
     assert run.draft is not None

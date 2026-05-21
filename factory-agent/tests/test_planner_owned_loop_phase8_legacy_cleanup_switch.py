@@ -125,7 +125,7 @@ async def test_phase8_normal_api_path_records_v2_engine_without_legacy_authority
     contract = session["replan_context"]["intent_contract"]
     trace = contract["execution_trace"]
     assert contract["engine_version"] == "v2"
-    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["generated_by"] == "planner_owned_agent_graph"
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
     assert trace["detectors"]["legacy_working_intent_execution"]["used"] is False
     assert trace["detectors"]["legacy_whole_query_tool_scope"]["used"] is False
@@ -156,11 +156,12 @@ async def test_phase8_v2_rag_response_uses_rag_tool_evidence_not_legacy_route(se
     evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
     assert rag.calls and rag.calls[0]["route"] == "RAG_ONLY"
     assert contract["engine_version"] == "v2"
-    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["generated_by"] == "planner_owned_agent_graph"
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
-    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["source_type"] == "system_guard"
     assert evidence[0]["tool_name"] == "rag_search_documents"
-    assert evidence[0]["citations"][0]["doc_id"] == "osha_3120_lockout_tagout"
+    assert evidence[0]["diagnostic_metadata"]["graph_tool_action"] == "rag_tool"
+    assert evidence[0]["normalized_result"]["sources_checked"][0]["doc_id"] == "osha_3120_lockout_tagout"
     assert snapshot["response_document"]["invariants"]["knowledge_answer_contract"] == "knowledge_answer_v1"
     assert any(block["type"] == "source_list" for block in snapshot["response_document"]["blocks"])
 

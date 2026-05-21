@@ -17,6 +17,7 @@ FACTORY_AGENT_ROOT = Path(__file__).resolve().parents[1]
 GRAPH_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "graph" / "v2_agent_graph.py"
 GRAPH_ADAPTER_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "planning" / "v2_graph_adapters.py"
 PLAN_CREATION_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "services" / "plan_creation_service.py"
+RUNTIME_ADAPTER_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "services" / "planner_owned_graph_runtime.py"
 
 
 def _settings():
@@ -427,8 +428,11 @@ def test_phase8_runtime_has_no_prompt_seed_or_source_id_branches():
         assert literal not in runtime_source
 
 
-def test_phase8_normal_runtime_is_still_not_switched_to_graph():
+def test_phase8_normal_runtime_switches_to_graph_after_phase10():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
 
-    assert "PlannerOwnedAgentGraph" not in source
-    assert "factory_agent.graph.v2_agent_graph" not in source
+    assert "PlannerOwnedGraphRuntimeAdapter" in source
+    assert "PlannerOwnedAgentGraph" in runtime_source
+    assert '"thread_id": sess.session_id' in runtime_source
+    assert "_create_historical_direct_v2_plan" in source

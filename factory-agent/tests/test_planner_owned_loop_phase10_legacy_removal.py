@@ -78,7 +78,7 @@ def test_phase10_legacy_engine_value_normalizes_to_v2(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_phase10_legacy_env_value_still_runs_normal_rag_as_v2_tool(sessionmaker_override):
+async def test_phase10_legacy_env_value_still_runs_normal_rag_through_graph(sessionmaker_override):
     rag = FakeRAGPipeline()
     app = await _make_app(
         sessionmaker_override,
@@ -99,10 +99,11 @@ async def test_phase10_legacy_env_value_still_runs_normal_rag_as_v2_tool(session
     trace = contract["execution_trace"]
     evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
     assert contract["engine_version"] == "v2"
-    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["generated_by"] == "planner_owned_agent_graph"
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
-    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["source_type"] == "system_guard"
     assert evidence[0]["tool_name"] == "rag_search_documents"
+    assert evidence[0]["diagnostic_metadata"]["graph_tool_action"] == "rag_tool"
 
 
 def test_phase10_legacy_xfails_are_removed_from_normal_backend_suite():

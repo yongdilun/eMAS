@@ -316,7 +316,7 @@ async def test_phase19_document_content_loto_prompt_workflow_returns_clean_respo
 
     assert rag.calls == [{"query": prompt, "session_id": session_id, "route": "RAG_ONLY", "api_data": None}]
     assert body["status"] == "COMPLETED"
-    assert body["created_by"] == "v2_rag_tool"
+    assert body["created_by"] == "planner_owned_agent_graph"
     assert "notifying affected employees" in body["plan_explanation"].lower()
     assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
     assert steps == []

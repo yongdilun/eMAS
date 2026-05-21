@@ -250,8 +250,14 @@ def build_requirement_sketch_for_text(
             value = constraints.get(field)
             if isinstance(value, str) and value not in requested_fields:
                 requested_fields.append(value)
-        locked_constraints = _locked_constraints_for(constraints, requested_fields)
         requirement_type, intent_operation = _requirement_shape_for(frame, source, entity, constraints)
+        requested_fields = _requested_fields_with_row_identity(
+            requested_fields,
+            entity=entity,
+            requirement_type=requirement_type,
+            source_of_truth=source,
+        )
+        locked_constraints = _locked_constraints_for(constraints, requested_fields)
         requirement_id = f"req-{index:03d}"
 
         requirement = RequirementSketchItem(
@@ -1031,6 +1037,24 @@ def _requested_fields_for_clause(
             add(alias.canonical_field)
 
     return fields
+
+
+def _requested_fields_with_row_identity(
+    requested_fields: list[str],
+    *,
+    entity: str | None,
+    requirement_type: RequirementType,
+    source_of_truth: SourceOfTruth,
+) -> list[str]:
+    if (
+        source_of_truth != "operational_state"
+        or not entity
+        or requirement_type not in {"filtered_collection", "multi_entity_status"}
+        or not requested_fields
+    ):
+        return requested_fields
+    identity_field = f"{entity}_id"
+    return list(dict.fromkeys([identity_field, *requested_fields]))
 
 
 def _fields_mentioned(text: str, aliases: FieldAliases, *, entity: str | None) -> list[str]:

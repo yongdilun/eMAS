@@ -734,9 +734,16 @@ def _checks_with_evidence_refs(
 
 
 def _ambiguous_evidence_reason(evidence_items: list[EvidenceLedgerEntry]) -> str | None:
-    if any(item.confidence == "ambiguous" for item in evidence_items):
+    aggregated_from = {
+        str(evidence_id)
+        for item in evidence_items
+        for evidence_id in (item.diagnostic_metadata.get("aggregated_from") or [])
+        if str(evidence_id)
+    }
+    effective_items = [item for item in evidence_items if item.id not in aggregated_from]
+    if any(item.confidence == "ambiguous" for item in effective_items):
         return "ambiguous_evidence_confidence"
-    deterministic = [item for item in evidence_items if item.confidence == "deterministic"]
+    deterministic = [item for item in effective_items if item.confidence == "deterministic"]
     if len(deterministic) <= 1:
         return None
     normalized_payloads = {
@@ -1021,14 +1028,7 @@ def _multi_status_requested_fields_check(
 ) -> SatisfactionCheck:
     expected = list(requirement.requested_fields)
     identity_fields = _identity_field_keys(requirement)
-    actual = sorted(
-        {
-            str(key)
-            for row in rows
-            for key in row.keys()
-            if str(key) not in identity_fields
-        }
-    )
+    actual = sorted({str(key) for row in rows for key in row.keys()})
     if not expected:
         return _check(
             "requested_fields",
@@ -1037,11 +1037,12 @@ def _multi_status_requested_fields_check(
             passed=bool(actual) or not rows,
             evidence_ref=evidence.id,
         )
+    actual_for_pass = [field for field in actual if field not in identity_fields.difference(expected)]
     return _check(
         "requested_fields",
         expected=expected,
         actual=actual,
-        passed=set(actual) == set(expected),
+        passed=set(actual_for_pass) == set(expected),
         evidence_ref=evidence.id,
     )
 

@@ -7,7 +7,8 @@ from typing import Any, Protocol
 from pydantic import Field
 
 from factory_agent.config import Settings
-from factory_agent.planning.intent import semantic_frame_for_text
+from factory_agent.planning.api_result_projection import api_row_id, project_api_row
+from factory_agent.planning.intent import rag_query_with_required_machine_context, semantic_frame_for_text
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
 from factory_agent.rag.source_metadata import (
     is_insufficient_context_answer,
@@ -67,6 +68,7 @@ async def execute_graph_tool_call(
     tools_by_name: Mapping[str, ToolInfo],
     http_executor: GraphToolHttpExecutor | None = None,
     rag_pipeline: Any | None = None,
+    session_id: str | None = None,
 ) -> GraphToolExecutionResult:
     """Execute a graph-selected API or RAG call after authorization validation."""
 
@@ -82,6 +84,7 @@ async def execute_graph_tool_call(
             decision=persisted_decision,
             call=call,
             rag_pipeline=rag_pipeline,
+            session_id=session_id,
         )
     if tool is None:
         return _tool_missing_result(state=state, decision=persisted_decision, call=call)
@@ -178,6 +181,7 @@ async def execute_graph_rag_tool(
     decision: PlannerDecisionRecord,
     call: GraphToolCall,
     rag_pipeline: Any | None = None,
+    session_id: str | None = None,
 ) -> GraphToolExecutionResult:
     requirement = _requirement_by_id(state, call.requirement_id)
     query = _rag_query(call=call, requirement=requirement, state=state)
@@ -188,7 +192,7 @@ async def execute_graph_rag_tool(
         pipeline = RAGPipeline()
 
     try:
-        result = await pipeline.run(query=query, session_id=None, route="RAG_ONLY")
+        result = await pipeline.run(query=query, session_id=session_id, route="RAG_ONLY")
     except Exception as exc:
         return GraphToolExecutionResult(
             tool_call=call,
@@ -247,6 +251,7 @@ async def execute_graph_rag_tool(
         normalized_result = dict(evidence.normalized_result)
         normalized_result.setdefault("query", query)
         normalized_result["sources"] = sources
+        normalized_result["safety_content"] = safety_content
         return GraphToolExecutionResult(
             tool_call=call,
             source_type="rag_tool",
@@ -289,6 +294,7 @@ async def execute_graph_rag_tool(
             "match_status": "no_match",
             "no_match": True,
             "sources_checked": sources,
+            "safety_content": safety_content,
             "summary": answer,
         },
         satisfies=["insufficient_context"],
@@ -410,6 +416,7 @@ def _normalize_api_result(
 
     rows = _rows_from_body(body)
     if rows is not None:
+        rows = [project_api_row(row, requirement=requirement, entity=entity) for row in rows]
         normalized["rows"] = rows
         filters = _applied_filters(requirement=requirement, request_args=call.args)
         if filters:
@@ -427,8 +434,9 @@ def _normalize_api_result(
         return normalized
 
     fields = _fields_from_body(body)
+    fields = project_api_row(fields, requirement=requirement, entity=entity)
     normalized["fields"] = fields
-    entity_id = _row_id(fields, entity=entity)
+    entity_id = api_row_id(fields, entity=entity)
     if entity_id not in (None, "", [], {}):
         normalized["entity_id"] = entity_id
     return normalized
@@ -474,18 +482,6 @@ def _applied_filters(*, requirement: Any | None, request_args: Mapping[str, Any]
     return filters
 
 
-def _row_id(row: Mapping[str, Any], *, entity: str) -> Any:
-    candidates = []
-    if entity:
-        candidates.append(f"{entity}_id")
-    candidates.extend(["entity_id", "id", "machine_ref"])
-    for key in candidates:
-        value = row.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-
-
 def _rag_query(
     *,
     call: GraphToolCall,
@@ -493,10 +489,19 @@ def _rag_query(
     state: PlannerOwnedAgentGraphState,
 ) -> str:
     query = str(call.args.get("query") or "").strip()
+    semantic_frame = semantic_frame_for_text(state.original_query)
     if query:
-        return query
+        return rag_query_with_required_machine_context(
+            query,
+            intent=state.original_query,
+            semantic_frame=semantic_frame,
+        )
     goal = str(getattr(requirement, "goal", "") or "").strip()
-    return goal or state.original_query
+    return rag_query_with_required_machine_context(
+        goal or state.original_query,
+        intent=state.original_query,
+        semantic_frame=semantic_frame,
+    )
 
 
 def _idempotency_key(

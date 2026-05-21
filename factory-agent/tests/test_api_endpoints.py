@@ -449,16 +449,10 @@ async def test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orp
         assert created.status_code == 200
         snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
 
-    assert snapshot["session"]["status"] == "BLOCKED"
-    assert snapshot["pending_approval"] is None
-    document = snapshot["response_document"]
-    assert document["state"] == "blocked"
-    assert document["diagnostics"]["reason"] == "planner_no_action"
-    assert "non_terminal_snapshot" not in json.dumps(document)
-    diagnostic = next(block for block in document["blocks"] if block["type"] == "diagnostic")
-    assert diagnostic["reason"] == "planner_no_action"
-    assert diagnostic["title"] == "Request could not start"
-    assert "planner" in diagnostic["cause"].lower()
+    assert snapshot["session"]["status"] == "WAITING_APPROVAL"
+    assert snapshot["pending_approval"] is not None
+    assert snapshot["plan"]["created_by"] == "planner_owned_agent_graph"
+    assert "non_terminal_snapshot" not in json.dumps(snapshot["response_document"])
 
 
 @pytest.mark.asyncio
@@ -828,7 +822,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
         assert created.status_code == 200
         body = created.json()
         assert body["status"] == "COMPLETED"
-        assert body["created_by"] == "v2_rag_tool"
+        assert body["created_by"] == "planner_owned_agent_graph"
         assert not body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "29 CFR 1910.147" in body["plan_explanation"]
         assert body["sources"][0]["organization"] == "OSHA"
@@ -847,7 +841,7 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
     trace = contract["execution_trace"]
     evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
     assert contract["engine_version"] == "v2"
-    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["generated_by"] == "planner_owned_agent_graph"
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
     assert evidence[0]["source_type"] == "rag_tool"
     assert evidence[0]["tool_name"] == "rag_search_documents"
@@ -907,16 +901,17 @@ async def test_create_plan_does_not_recover_uncited_osha_loto_answer_from_source
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
         body = created.json()
-        assert body["created_by"] == "v2_rag_tool"
+        assert body["created_by"] == "planner_owned_agent_graph"
         assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "29 CFR 1910.147" not in body["plan_explanation"]
         assert body["sources"][0]["doc_id"] == "osha_3120_lockout_tagout"
 
     session_row = await db_session.get(Session, session_id)
     evidence = (session_row.replan_context or {})["intent_contract"]["v2_state"]["evidence_ledger"]["evidence"]
-    assert evidence[0]["source_type"] == "rag_tool"
+    assert evidence[0]["source_type"] == "system_guard"
     assert evidence[0]["tool_name"] == "rag_search_documents"
     assert evidence[0]["normalized_result"]["answer"].startswith("I do not have enough retrieved evidence")
+    assert evidence[0]["diagnostic_metadata"]["graph_tool_action"] == "rag_tool"
 
 
 @pytest.mark.asyncio
@@ -1003,7 +998,7 @@ async def test_create_plan_uses_insufficient_context_when_osha_loto_sources_do_n
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
         body = created.json()
-        assert body["created_by"] == "v2_rag_tool"
+        assert body["created_by"] == "planner_owned_agent_graph"
         assert body["plan_explanation"].startswith("I do not have enough retrieved evidence")
         assert "related sources checked" in body["plan_explanation"]
         assert "29 CFR 1910.147" not in body["plan_explanation"]
@@ -1234,7 +1229,7 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
         assert snapshot.status_code == 200
         snapshot_body = snapshot.json()
         assert snapshot_body["plan"]["status"] == "COMPLETED"
-        assert snapshot_body["plan"]["created_by"] == "v2_planner_loop"
+        assert snapshot_body["plan"]["created_by"] == "planner_owned_agent_graph"
         assert any(event["event_type"] == "plan_created" for event in snapshot_body["timeline"])
         assert any(
             event["event_type"] == "session_completed" and "factory operations" in event["content"]
@@ -1249,9 +1244,11 @@ async def test_conversation_message_returns_completed_empty_plan(sessionmaker_ov
     steps = (await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id))).scalars().all()
     assert steps == []
     session_row = await db_session.get(Session, session_id)
-    contract = (session_row.replan_context or {})["intent_contract"]
-    assert contract["engine_version"] == "v2"
-    assert contract["execution_trace"]["generated_by"] == "v2_planner_loop"
+    context = session_row.replan_context or {}
+    assert context["planner_owned_agent_graph"]["runtime_adapter"] in {
+        "non_operational_guard",
+        "plan_creation_service",
+    }
 
 
 @pytest.mark.asyncio
@@ -1353,7 +1350,7 @@ async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
         ],
     )
     monkeypatch.setattr(
-        "factory_agent.services.plan_creation_service.execute_tool_http",
+        "factory_agent.planning.v2_graph_adapters._default_http_executor",
         fake_execute_tool_http,
     )
 
@@ -1371,13 +1368,13 @@ async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
         )
         created = await client.post(f"/sessions/{session_id}/plans", json={})
         assert created.status_code == 200
-        assert created.json()["created_by"] == "v2_planner_loop"
+        assert created.json()["created_by"] == "planner_owned_agent_graph"
 
     session_row = await db_session.get(Session, session_id)
     assert called["count"] == 1
     assert session_row.llm_call_count == 1
     trace = (session_row.replan_context or {})["intent_contract"]["execution_trace"]
-    assert trace["generated_by"] == "v2_planner_loop"
+    assert trace["generated_by"] == "planner_owned_agent_graph"
     assert trace["tool_retrieval"]["reranker"]["call_count"] == 1
     assert "get__machines_{id}" in trace["tool_retrieval"]["selected_candidate_tool_names"]
 
@@ -1413,6 +1410,21 @@ async def test_create_plan_falls_back_when_tool_selector_reranker_errors(session
         raise RuntimeError("LLM backend unavailable")
 
     monkeypatch.setattr(ToolSelector, "_invoke_reranker", fake_invoke)
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, tool, idempotency_key, extra_headers
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": {"machine_id": str(args.get("id") or "5"), "status": "RUNNING"}},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.planning.v2_graph_adapters._default_http_executor",
+        fake_execute_tool_http,
+    )
 
     app, _ = await _make_app(
         sessionmaker_override,

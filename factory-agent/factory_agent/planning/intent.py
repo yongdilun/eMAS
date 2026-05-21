@@ -1046,9 +1046,33 @@ def loto_query_with_resolved_machine_context(text: str, machine_id: str | None) 
     normalized_machine_id = (machine_id or "").strip().upper()
     if not normalized_machine_id:
         return raw
+    return f"{raw.rstrip()} (resolved context from the immediately previous turn: machine {normalized_machine_id})"
+
+
+def rag_query_with_required_machine_context(
+    query: str,
+    *,
+    intent: str,
+    semantic_frame: SemanticFrame | None = None,
+) -> str:
+    frame_entities = getattr(semantic_frame, "normalized_entities", None)
+    machine_ids: list[str] = []
+    if isinstance(frame_entities, dict):
+        raw_values = frame_entities.get("machine_id") or []
+        if isinstance(raw_values, str):
+            raw_values = [raw_values]
+        machine_ids = [str(value).strip().upper() for value in raw_values if str(value or "").strip()]
+    if not machine_ids:
+        machine_ids = intent_constraint_values(intent, "machine_id")
+    if not machine_ids:
+        return query
+    query_text = str(query or intent or "")
+    upper_query = query_text.upper()
+    if any(machine_id in upper_query for machine_id in machine_ids):
+        return query_text
     return (
-        f"{raw.rstrip()}\n\n"
-        f"Resolved context from the immediately previous turn: machine {normalized_machine_id}."
+        f"{query_text.rstrip()}\n\n"
+        f"Required machine context from the routed request: machine {machine_ids[0]}."
     )
 
 

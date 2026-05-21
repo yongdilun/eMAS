@@ -11,6 +11,7 @@ from pydantic import Field
 
 from ..rag.source_metadata import is_insufficient_context_answer
 from ..config import Settings, get_settings
+from ..planning.api_result_projection import api_row_id, project_api_body
 from ..planning.v2_agent_state import (
     GraphToolCall,
     PendingApprovalState,
@@ -34,6 +35,7 @@ from ..planning.v2_contracts import (
     UserInterrupt,
     V2ContractModel,
 )
+from ..planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
 from ..planning.v2_graph_adapters import (
     GraphToolExecutionResult,
     GraphToolHttpExecutor,
@@ -129,6 +131,7 @@ class PlannerOwnedAgentGraphAdapters:
         tool_selector: ToolSelector | None = None,
         tool_retriever: V2CapabilityToolRetriever | None = None,
         retrieval_mode: str = "normal",
+        session_id: str | None = None,
         http_executor: GraphToolHttpExecutor | None = None,
         rag_pipeline: Any | None = None,
         approval_preview_provider: Any | None = None,
@@ -139,6 +142,7 @@ class PlannerOwnedAgentGraphAdapters:
         self._tool_selector = tool_selector or ToolSelector(self._settings)
         self._tool_retriever = tool_retriever or V2CapabilityToolRetriever(self._tool_selector)
         self._retrieval_mode = retrieval_mode
+        self._session_id = session_id
         self._http_executor = http_executor
         self._rag_pipeline = rag_pipeline
         self._approval_preview_provider = approval_preview_provider
@@ -197,7 +201,7 @@ class PlannerOwnedAgentGraphAdapters:
         self,
         state: PlannerOwnedAgentGraphState,
         decision: PlannerDecisionRecord,
-    ) -> GraphToolCall:
+    ) -> GraphToolCall | list[GraphToolCall]:
         requirement_id = decision.requirement_id
         if requirement_id is None:
             raise ValueError("choose_tool transition requires a requirement id")
@@ -205,16 +209,14 @@ class PlannerOwnedAgentGraphAdapters:
         cards = _hydrated_cards_for_requirement(state, requirement_id)
         if requirement is None or not cards:
             raise ValueError("choose_tool transition requires hydrated cards")
-        card = cards[0]
+        card = _select_graph_tool_card(requirement, cards)
         capability_need = decision.capability_need or _capability_need_for_requirement(state, requirement_id)
-        args = _args_for_tool_call(card, requirement, capability_need)
-        return GraphToolCall(
-            call_id=f"call-{len(state.planner_decisions) + 1:03d}",
-            kind="rag_tool" if card.source_of_truth == "document_knowledge" else "api_tool",
-            tool_name=card.tool_name,
-            args=args,
+        return _tool_calls_for_card(
+            state=state,
+            card=card,
+            requirement=requirement,
+            capability_need=capability_need,
             requirement_id=requirement_id,
-            candidate_window_id=_candidate_window_id_for_requirement(state, requirement_id),
         )
 
     async def execute_tool(
@@ -229,6 +231,7 @@ class PlannerOwnedAgentGraphAdapters:
             tools_by_name=self.tools_by_name,
             http_executor=self._http_executor,
             rag_pipeline=self._rag_pipeline,
+            session_id=self._session_id,
         )
 
     async def observe_tool_result(
@@ -255,7 +258,16 @@ class PlannerOwnedAgentGraphAdapters:
                 )
             )
             return _normalize_approval_preview(raw_preview)
-        return _default_approval_preview(tool_call=tool_call, requirement=requirement, card=card)
+        return await _graph_write_approval_preview(
+            settings=self._settings,
+            state=state,
+            tool_call=tool_call,
+            requirement=requirement,
+            card=card,
+            cards=_hydrated_cards_for_requirement(state, tool_call.requirement_id),
+            tools_by_name=self.tools_by_name,
+            http_executor=self._http_executor,
+        )
 
     async def persist_approval_request(
         self,
@@ -387,10 +399,16 @@ class PlannerOwnedAgentGraph:
         await self._finalize_node(state)
         await self._response_document_node(state)
         node_order = list(state.execution_trace.diagnostics.get("phase3_node_order") or [])
+        saved_config = await self._compiled_graph.aupdate_state(
+            checkpoint_config,
+            _state_update(state),
+            as_node="response_document_node",
+        )
+        state.execution_trace.diagnostics["phase8_resume_checkpoint"]["saved_checkpoint_config"] = saved_config
         return PlannerOwnedGraphResult(
             state=state,
             node_order=node_order,
-            checkpoint_config=checkpoint_config,
+            checkpoint_config=saved_config,
             trace_events=list(self._tracer.events[event_start:]),
         )
 
@@ -638,6 +656,11 @@ class PlannerOwnedAgentGraph:
                 )
             )
             state.execution_trace.tool_retrieval.backend_used = retrieval.trace.backend_used
+            state.execution_trace.tool_retrieval.reranker.call_count += retrieval.trace.reranker.call_count
+            state.execution_trace.tool_retrieval.compatibility_fallback_used = (
+                state.execution_trace.tool_retrieval.compatibility_fallback_used
+                or retrieval.trace.compatibility_fallback_used
+            )
 
         if len(retrievals) == 1 and not blocked:
             state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = retrievals[0].trace.diagnostics
@@ -671,22 +694,24 @@ class PlannerOwnedAgentGraph:
 
         decisions: list[PlannerDecisionRecord] = []
         for retrieve_decision in retrieve_decisions:
-            tool_call = await _maybe_await(self._adapters.choose_tool(state, retrieve_decision))
-            decision = PlannerDecisionRecord(
-                decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
-                decision_kind="choose_tool",
-                requirement_id=tool_call.requirement_id,
-                ledger_revision=state.requirement_ledger.revision,
-                capability_need=retrieve_decision.capability_need,
-                selected_tool_call=tool_call,
-                reason="Graph selects from the hydrated candidate window.",
-            )
-            tool_call.decision_id = decision.decision_id
-            record_planner_decision(state, decision)
-            decisions.append(decision)
-            state.execution_trace.selected_tool_names = list(
-                dict.fromkeys([*state.execution_trace.selected_tool_names, tool_call.tool_name])
-            )
+            raw_tool_calls = await _maybe_await(self._adapters.choose_tool(state, retrieve_decision))
+            tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else [raw_tool_calls]
+            for tool_call in tool_calls:
+                decision = PlannerDecisionRecord(
+                    decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
+                    decision_kind="choose_tool",
+                    requirement_id=tool_call.requirement_id,
+                    ledger_revision=state.requirement_ledger.revision,
+                    capability_need=retrieve_decision.capability_need,
+                    selected_tool_call=tool_call,
+                    reason="Graph selects from the hydrated candidate window.",
+                )
+                tool_call.decision_id = decision.decision_id
+                record_planner_decision(state, decision)
+                decisions.append(decision)
+                state.execution_trace.selected_tool_names = list(
+                    dict.fromkeys([*state.execution_trace.selected_tool_names, tool_call.tool_name])
+                )
 
         state.execution_trace.planner.call_count += len(decisions)
         state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {
@@ -697,6 +722,7 @@ class PlannerOwnedAgentGraph:
                 for decision in decisions
                 if decision.selected_tool_call is not None
             ],
+            "batched_tool_call_count": len(decisions),
         }
         if len(decisions) == 1 and decisions[0].selected_tool_call is not None:
             state.execution_trace.planner.diagnostics["planner_choose_tool_node"].update(
@@ -845,6 +871,36 @@ class PlannerOwnedAgentGraph:
             }
             for evidence in evidence_items
         ]
+        aggregated = aggregate_multi_entity_status_evidence(
+            requirement_ledger=state.requirement_ledger,
+            evidence_ledger=state.evidence_ledger,
+            diagnostic_metadata={
+                "graph_execution_authority": True,
+                "graph_evidence_aggregation": True,
+                "direct_v2_execution": False,
+            },
+            replace=False,
+        )
+        if aggregated:
+            executed_requirement_ids = {evidence.requirement_id for evidence in evidence_items}
+            evidence_items = [
+                evidence
+                for evidence in state.evidence_ledger.evidence
+                if evidence.requirement_id in executed_requirement_ids
+                and _evidence_can_satisfy_active_revision(state, evidence)
+            ]
+            graph_evidence_events = [
+                {
+                    "evidence_ref": evidence.id,
+                    "tool_name": evidence.tool_name,
+                    "requirement_id": evidence.requirement_id,
+                    "source_type": evidence.source_type,
+                    "source_of_truth": evidence.source_of_truth,
+                    "graph_tool_action": evidence.diagnostic_metadata.get("graph_tool_action"),
+                    "legacy_shortcut_used": False,
+                }
+                for evidence in evidence_items
+            ]
         state.execution_trace.diagnostics["evidence_observation"] = {
             "status": "recorded",
             "evidence_refs": [evidence.id for evidence in evidence_items],
@@ -853,6 +909,7 @@ class PlannerOwnedAgentGraph:
             "graph_evidence": graph_evidence_events,
             "ignored_results": ignored_results,
             "stale_checked_by_graph_revision_and_checkpoint": True,
+            "multi_entity_evidence_aggregated": aggregated,
         }
         if len(evidence_items) == 1:
             state.execution_trace.diagnostics["evidence_observation"].update(
@@ -1063,10 +1120,6 @@ class PlannerOwnedAgentGraph:
             raise ValueError("approval staging requires requirement and hydrated tool card")
 
         preview = await self._adapters.build_approval_preview(state, call, requirement, card)
-        if preview.commit_args:
-            call.args.update(preview.commit_args)
-        else:
-            call.args.update(_commit_args_from_preview(card=card, requirement=requirement, rows=preview.rows))
         if not preview.rows:
             evidence = _append_no_record_preview_evidence(
                 state,
@@ -1101,6 +1154,41 @@ class PlannerOwnedAgentGraph:
             }
             return
 
+        staged_tool_calls = _staged_write_tool_calls_from_preview(
+            state=state,
+            base_call=call,
+            card=card,
+            requirement=requirement,
+            preview=preview,
+        )
+        if staged_tool_calls:
+            call.args = dict(staged_tool_calls[0].args)
+        else:
+            if preview.commit_args:
+                call.args.update(preview.commit_args)
+            else:
+                call.args.update(_commit_args_from_preview(card=card, requirement=requirement, rows=preview.rows))
+            staged_tool_calls = [call]
+
+        staged_choose_decision_ids: list[str] = []
+        for staged_call in staged_tool_calls:
+            staged_choose = PlannerDecisionRecord(
+                decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="choose_tool",
+                requirement_id=requirement.id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=choose_decision.capability_need,
+                selected_tool_call=staged_call,
+                reason="Graph expands an approval preview row into an exact staged write call.",
+                diagnostics={
+                    "approval_preview_expansion": True,
+                    "source_decision_id": choose_decision.decision_id,
+                },
+            )
+            record_planner_decision(state, staged_choose)
+            staged_call.decision_id = staged_choose.decision_id
+            staged_choose_decision_ids.append(staged_choose.decision_id)
+
         approval_index = _next_approval_index(state)
         approval_label = f"Approval {approval_index}"
         request_decision = PlannerDecisionRecord(
@@ -1109,22 +1197,24 @@ class PlannerOwnedAgentGraph:
             requirement_id=requirement.id,
             ledger_revision=state.requirement_ledger.revision,
             capability_need=choose_decision.capability_need,
-            selected_tool_call=call,
+            selected_tool_call=staged_tool_calls[0],
             reason="Graph stages a write preview and pauses for approval before commit.",
             diagnostics={
                 "approval_index": approval_index,
                 "approval_label": approval_label,
                 "approval_node": "approval_node",
+                "staged_tool_call_count": len(staged_tool_calls),
             },
         )
         record_planner_decision(state, request_decision)
         staged = [
             {
-                "tool_name": call.tool_name,
-                "args": dict(call.args),
-                "output_ref": call.call_id,
+                "tool_name": staged_call.tool_name,
+                "args": dict(staged_call.args),
+                "output_ref": staged_call.call_id,
                 "requirement_id": requirement.id,
             }
+            for staged_call in staged_tool_calls
         ]
         payload = build_approval_required_payload(staged, intent_text=state.original_query)
         checkpoint_identity = dict(
@@ -1140,13 +1230,19 @@ class PlannerOwnedAgentGraph:
                 "requirement_ledger_revision": state.requirement_ledger.revision,
                 "graph_checkpoint_identity": checkpoint_identity,
                 "checkpoint_id": checkpoint_identity.get("checkpoint_id"),
-                "selected_graph_tool_call": call.model_dump(mode="json"),
+                "selected_graph_tool_call": staged_tool_calls[0].model_dump(mode="json"),
+                "staged_graph_tool_calls": [
+                    staged_call.model_dump(mode="json") for staged_call in staged_tool_calls
+                ],
+                "staged_graph_tool_decision_ids": staged_choose_decision_ids,
                 "selected_graph_tool_decision_id": choose_decision.decision_id,
                 "approval_decision_id": request_decision.decision_id,
                 "requirement_id": requirement.id,
                 "preview_rows": preview.rows,
                 "preview_details": dict(preview.details),
                 "excluded_rows": preview.excluded_rows,
+                "locked_constraints": dict(getattr(requirement, "constraints", {}) or {}),
+                "entity_type": getattr(requirement, "entity", None),
                 "blocked_rows_excluded": any(
                     str(row.get("status") or "").lower() == "blocked"
                     for row in preview.excluded_rows
@@ -1170,7 +1266,7 @@ class PlannerOwnedAgentGraph:
             decision_id=request_decision.decision_id,
             ledger_revision=state.requirement_ledger.revision,
             checkpoint_id=str(payload["checkpoint_id"]),
-            tool_call=call,
+            tool_call=staged_tool_calls[0],
             payload=payload,
         )
         state.execution_trace.diagnostics["phase8_approval_staging"] = {
@@ -1180,7 +1276,8 @@ class PlannerOwnedAgentGraph:
             "requirement_id": requirement.id,
             "ledger_revision": state.requirement_ledger.revision,
             "checkpoint_id": state.pending_approval.checkpoint_id,
-            "selected_graph_tool_call": call.model_dump(mode="json"),
+            "selected_graph_tool_call": staged_tool_calls[0].model_dump(mode="json"),
+            "staged_graph_tool_call_count": len(staged_tool_calls),
             "preview_row_count": len(preview.rows),
             "excluded_row_count": len(preview.excluded_rows),
             "legacy_shortcut_used": False,
@@ -1217,57 +1314,68 @@ class PlannerOwnedAgentGraph:
             return
         requirement = _requirement_by_id(state, call.requirement_id)
         need = _capability_need_for_requirement(state, call.requirement_id)
-        guard_decision = PlannerDecisionRecord(
-            decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
-            decision_kind="execute_tool",
-            author="deterministic_guard",
-            requirement_id=call.requirement_id,
-            ledger_revision=state.requirement_ledger.revision,
-            capability_need=need,
-            selected_tool_call=call,
-            reason="Execute graph-staged write after matching approval evidence.",
-        )
-        record_planner_decision(state, guard_decision)
         _record_node_visit(state, "tool_execution_node", self._tracer)
-        execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
-        _attach_graph_work_identity(state, execution)
+        staged_calls = _pending_staged_tool_calls(pending, fallback=call)
+        executions: list[GraphToolExecutionResult] = []
+        action_events: list[dict[str, Any]] = []
+        for staged_call in staged_calls:
+            guard_decision = PlannerDecisionRecord(
+                decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="execute_tool",
+                author="deterministic_guard",
+                requirement_id=staged_call.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=need,
+                selected_tool_call=staged_call,
+                reason="Execute graph-staged write after matching approval evidence.",
+            )
+            record_planner_decision(state, guard_decision)
+            execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+            _attach_graph_work_identity(state, execution)
+            executions.append(execution)
+            action_events.append(
+                {
+                    "decision_id": guard_decision.decision_id,
+                    "tool_call_id": execution.tool_call.call_id,
+                    "tool_call_kind": execution.tool_call.kind,
+                    "tool_name": execution.tool_call.tool_name,
+                    "requirement_id": execution.tool_call.requirement_id,
+                    "source_type": execution.source_type,
+                    "source_of_truth": execution.source_of_truth,
+                    "graph_tool_action": execution.diagnostic_metadata.get(
+                        "graph_tool_action",
+                        execution.tool_call.kind,
+                    ),
+                    "approval_id": pending.approval_id,
+                    "legacy_shortcut_used": False,
+                }
+            )
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
-            "execution_results": [execution.model_dump(mode="json")],
-            "execution_result": execution.model_dump(mode="json"),
+            "execution_results": [execution.model_dump(mode="json") for execution in executions],
             "approval_id": pending.approval_id,
         }
+        if len(executions) == 1:
+            state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY]["execution_result"] = (
+                executions[0].model_dump(mode="json")
+            )
         previous_actions = list(state.execution_trace.diagnostics.get("graph_tool_actions") or [])
-        previous_actions.append(
-            {
-                "decision_id": guard_decision.decision_id,
-                "tool_call_id": execution.tool_call.call_id,
-                "tool_call_kind": execution.tool_call.kind,
-                "tool_name": execution.tool_call.tool_name,
-                "requirement_id": execution.tool_call.requirement_id,
-                "source_type": execution.source_type,
-                "source_of_truth": execution.source_of_truth,
-                "graph_tool_action": execution.diagnostic_metadata.get("graph_tool_action", execution.tool_call.kind),
-                "approval_id": pending.approval_id,
-                "legacy_shortcut_used": False,
-            }
-        )
-        state.execution_trace.diagnostics["graph_tool_actions"] = previous_actions
+        state.execution_trace.diagnostics["graph_tool_actions"] = [*previous_actions, *action_events]
         await self._evidence_observation_node(state)
-        api_evidence = next(
-            (
-                evidence
-                for evidence in reversed(state.evidence_ledger.evidence)
-                if evidence.requirement_id == call.requirement_id and evidence.source_type == "api_tool"
-            ),
-            None,
-        )
-        if requirement is not None and api_evidence is not None:
+        api_evidence = [
+            evidence
+            for evidence in state.evidence_ledger.evidence
+            if evidence.requirement_id == call.requirement_id
+            and evidence.source_type == "api_tool"
+            and _evidence_can_satisfy_active_revision(state, evidence)
+        ]
+        execution_ok = bool(executions) and all(execution.ok for execution in executions)
+        if requirement is not None and api_evidence:
             _record_graph_requirement_update(
                 state,
                 requirement,
-                status="satisfied" if execution.ok else "failed",
-                evidence_refs=[approval_evidence.id, api_evidence.id],
+                status="satisfied" if execution_ok else "failed",
+                evidence_refs=[approval_evidence.id, *[evidence.id for evidence in api_evidence]],
                 checks=[
                     SatisfactionCheck(
                         check="approval_evidence",
@@ -1279,12 +1387,13 @@ class PlannerOwnedAgentGraph:
                     SatisfactionCheck(
                         check="write_commit_after_approval",
                         expected="api_tool_result_ok",
-                        actual=api_evidence.normalized_result.get("status_code"),
-                        passed=bool(execution.ok),
-                        evidence_ref=api_evidence.id,
+                        actual=[evidence.normalized_result.get("status_code") for evidence in api_evidence],
+                        actual_count=len(api_evidence),
+                        passed=execution_ok,
+                        evidence_ref=api_evidence[-1].id,
                     ),
                 ],
-                reason="approval_evidence_and_write_result" if execution.ok else "approved_write_failed",
+                reason="approval_evidence_and_write_result" if execution_ok else "approved_write_failed",
             )
         state.pending_approval = PendingApprovalState(status="none")
 
@@ -1803,6 +1912,334 @@ def _normalize_approval_preview(value: Any) -> PlannerOwnedGraphApprovalPreview:
     )
 
 
+async def _graph_write_approval_preview(
+    *,
+    settings: Settings,
+    state: PlannerOwnedAgentGraphState,
+    tool_call: GraphToolCall,
+    requirement: Any,
+    card: HydratedToolCard,
+    cards: list[HydratedToolCard],
+    tools_by_name: Mapping[str, ToolInfo],
+    http_executor: GraphToolHttpExecutor | None,
+) -> PlannerOwnedGraphApprovalPreview:
+    read_card = _approval_preview_read_card(requirement, cards)
+    read_tool = tools_by_name.get(read_card.tool_name) if read_card is not None else None
+    if read_card is None or read_tool is None:
+        return _default_approval_preview(tool_call=tool_call, requirement=requirement, card=card)
+
+    read_args = _approval_preview_read_args(read_card, requirement)
+    env = await _execute_approval_preview_read(
+        settings=settings,
+        tool=read_tool,
+        args=read_args,
+        state=state,
+        requirement_id=tool_call.requirement_id,
+        http_executor=http_executor,
+    )
+    body = _mapping_or_empty(env.get("body"))
+    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
+    projected = project_api_body(body, requirement=requirement, entity=entity)
+    source_rows = _rows_from_projected_body(projected)
+    rows, excluded_rows = _approval_preview_rows_from_read(
+        rows=source_rows,
+        state=state,
+        requirement=requirement,
+    )
+    details = {
+        "source": "graph_read_preview",
+        "read_tool_name": read_card.tool_name,
+        "read_args": read_args,
+        "http_status": env.get("http_status"),
+        "ok": bool(env.get("ok")),
+        "source_row_count": len(source_rows),
+        "preview_row_count": len(rows),
+        "excluded_row_count": len(excluded_rows),
+        "graph_execution_authority": True,
+    }
+    if not bool(env.get("ok")):
+        details["reason"] = "approval_preview_read_failed"
+        return PlannerOwnedGraphApprovalPreview(
+            rows=[],
+            excluded_rows=excluded_rows,
+            details=details,
+            no_records_message="The graph could not build a safe approval preview from current records.",
+        )
+    return PlannerOwnedGraphApprovalPreview(
+        rows=rows,
+        excluded_rows=excluded_rows,
+        details=details,
+        no_records_message=_no_records_preview_message(requirement),
+    )
+
+
+def _mapping_or_empty(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _approval_preview_read_card(
+    requirement: Any,
+    cards: list[HydratedToolCard],
+) -> HydratedToolCard | None:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    constrained_fields = {str(key) for key, value in constraints.items() if value not in (None, "", [], {})}
+    for candidate in cards:
+        if candidate.source_of_truth != "operational_state":
+            continue
+        if not candidate.is_read_only or candidate.requires_approval:
+            continue
+        if not _card_supports_collection_read(candidate):
+            continue
+        filter_names = set(candidate.query_params) | set(candidate.metadata.get("filter_fields") or [])
+        if constrained_fields and filter_names.intersection(constrained_fields):
+            return candidate
+    for candidate in cards:
+        if (
+            candidate.source_of_truth == "operational_state"
+            and candidate.is_read_only
+            and not candidate.requires_approval
+            and _card_supports_collection_read(candidate)
+        ):
+            return candidate
+    return None
+
+
+def _approval_preview_read_args(card: HydratedToolCard, requirement: Any) -> dict[str, Any]:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    filter_names = set(card.query_params) | set(card.metadata.get("filter_fields") or [])
+    args: dict[str, Any] = {}
+    for key, value in constraints.items():
+        if key.startswith("new_") or key in {"requires_approval"}:
+            continue
+        if value in (None, "", [], {}):
+            continue
+        if key in filter_names or card.supports_filters:
+            args[key] = value
+    if "fields" in set(card.query_params):
+        entity = str(getattr(requirement, "entity", "") or "").strip().lower()
+        fields = list(dict.fromkeys([f"{entity}_id" if entity else "id", "priority", "status"]))
+        args.setdefault("fields", ",".join(field for field in fields if field))
+    return args
+
+
+async def _execute_approval_preview_read(
+    *,
+    settings: Settings,
+    tool: ToolInfo,
+    args: dict[str, Any],
+    state: PlannerOwnedAgentGraphState,
+    requirement_id: str,
+    http_executor: GraphToolHttpExecutor | None,
+) -> dict[str, Any]:
+    idempotency_key = (
+        f"graph-preview-{state.requirement_ledger.revision}-"
+        f"{requirement_id}-{tool.name}"
+    )
+    if http_executor is not None:
+        return await http_executor(
+            settings,
+            tool,
+            dict(args),
+            idempotency_key=idempotency_key,
+        )
+    from .http_tool_client import execute_tool_http
+
+    return await execute_tool_http(settings, tool, dict(args), idempotency_key=idempotency_key)
+
+
+def _rows_from_projected_body(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [dict(row) for row in body if isinstance(row, Mapping)]
+    if not isinstance(body, Mapping):
+        return []
+    data = body.get("data")
+    if isinstance(data, list):
+        return [dict(row) for row in data if isinstance(row, Mapping)]
+    if isinstance(data, Mapping):
+        return [dict(data)]
+    rows = body.get("rows") or body.get("records") or body.get("items")
+    if isinstance(rows, list):
+        return [dict(row) for row in rows if isinstance(row, Mapping)]
+    if any(key not in {"success", "ok", "message", "count", "total", "meta"} for key in body):
+        return [dict(body)]
+    return []
+
+
+def _approval_preview_rows_from_read(
+    *,
+    rows: list[dict[str, Any]],
+    state: PlannerOwnedAgentGraphState,
+    requirement: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
+    source_priority = _source_priority_constraint(constraints)
+    target_priority = _target_priority_constraint(constraints)
+    prior_write_excluded_ids = _prior_write_ids_moved_into_source_priority(
+        state=state,
+        requirement=requirement,
+        source_priority=source_priority,
+    )
+    preview_rows: list[dict[str, Any]] = []
+    excluded_rows: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = dict(row)
+        row_id = api_row_id(normalized, entity=entity)
+        if row_id not in (None, "") and str(row_id) in prior_write_excluded_ids:
+            excluded = dict(normalized)
+            excluded["exclusion_reason"] = "changed_by_prior_requirement"
+            excluded_rows.append(excluded)
+            continue
+        row_priority = str(normalized.get("priority") or "").strip().lower()
+        if source_priority and row_priority and row_priority != source_priority:
+            excluded = dict(normalized)
+            excluded["exclusion_reason"] = "priority_constraint"
+            excluded_rows.append(excluded)
+            continue
+        if row_id not in (None, ""):
+            if entity:
+                normalized.setdefault(f"{entity}_id", row_id)
+            normalized.setdefault("id", row_id)
+            if entity == "job":
+                normalized.setdefault("job_id", row_id)
+        if source_priority:
+            normalized.setdefault("previous_priority", normalized.get("priority") or source_priority)
+            normalized.setdefault("original_priority", normalized.get("previous_priority") or source_priority)
+        if target_priority:
+            normalized["new_priority"] = target_priority
+        preview_rows.append(normalized)
+    return preview_rows, excluded_rows
+
+
+def _prior_write_ids_moved_into_source_priority(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    requirement: Any,
+    source_priority: str | None,
+) -> set[str]:
+    if not source_priority:
+        return set()
+    current_requirement_id = str(getattr(requirement, "id", "") or "")
+    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
+    excluded: set[str] = set()
+    for evidence in state.evidence_ledger.evidence:
+        if evidence.source_type != "approval" or evidence.requirement_id == current_requirement_id:
+            continue
+        metadata = evidence.diagnostic_metadata if isinstance(evidence.diagnostic_metadata, Mapping) else {}
+        if metadata.get("approval_status") != "approved":
+            continue
+        locked = metadata.get("locked_constraints") if isinstance(metadata.get("locked_constraints"), Mapping) else {}
+        previous_source = _source_priority_constraint(locked)
+        previous_target = _target_priority_constraint(locked)
+        rows = [row for row in (metadata.get("preview_rows") or []) if isinstance(row, Mapping)]
+        if previous_source is None or previous_target is None:
+            row_source, row_target = _priority_pair_from_preview_rows(rows)
+            previous_source = previous_source or row_source
+            previous_target = previous_target or row_target
+        if previous_target != source_priority or previous_source == source_priority:
+            continue
+        for row in rows:
+            row_id = api_row_id(dict(row), entity=entity)
+            if row_id not in (None, ""):
+                excluded.add(str(row_id))
+    return excluded
+
+
+def _priority_pair_from_preview_rows(rows: list[Mapping[str, Any]]) -> tuple[str | None, str | None]:
+    sources = {
+        str(row.get("previous_priority") or row.get("original_priority") or row.get("priority") or "").strip().lower()
+        for row in rows
+        if str(row.get("previous_priority") or row.get("original_priority") or row.get("priority") or "").strip()
+    }
+    targets = {
+        str(row.get("new_priority") or "").strip().lower()
+        for row in rows
+        if str(row.get("new_priority") or "").strip()
+    }
+    source = next(iter(sources)) if len(sources) == 1 else None
+    target = next(iter(targets)) if len(targets) == 1 else None
+    return source, target
+
+
+def _staged_write_tool_calls_from_preview(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    base_call: GraphToolCall,
+    card: HydratedToolCard,
+    requirement: Any,
+    preview: PlannerOwnedGraphApprovalPreview,
+) -> list[GraphToolCall]:
+    if not preview.rows:
+        return []
+    calls: list[GraphToolCall] = []
+    for index, row in enumerate(preview.rows, start=1):
+        args = _commit_args_from_preview(card=card, requirement=requirement, rows=[row])
+        common_args = {
+            key: value
+            for key, value in preview.commit_args.items()
+            if key not in set(card.path_params) and value not in (None, "", [], {})
+        }
+        args = {**common_args, **args}
+        if not args:
+            continue
+        calls.append(
+            GraphToolCall(
+                call_id=f"{base_call.call_id}-stage-{index:03d}",
+                kind=base_call.kind,
+                tool_name=base_call.tool_name,
+                args=args,
+                requirement_id=base_call.requirement_id,
+                candidate_window_id=base_call.candidate_window_id,
+            )
+        )
+    if calls:
+        return calls
+    return [base_call]
+
+
+def _pending_staged_tool_calls(
+    pending: PendingApprovalState,
+    *,
+    fallback: GraphToolCall,
+) -> list[GraphToolCall]:
+    payload = pending.payload if isinstance(pending.payload, Mapping) else {}
+    raw_calls = payload.get("staged_graph_tool_calls")
+    if not isinstance(raw_calls, list):
+        return [fallback]
+    calls: list[GraphToolCall] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, Mapping):
+            continue
+        try:
+            calls.append(GraphToolCall.model_validate(dict(raw_call)))
+        except Exception:
+            continue
+    return calls or [fallback]
+
+
+def _source_priority_constraint(constraints: Mapping[str, Any]) -> str | None:
+    raw = constraints.get("priority") or constraints.get("priority_from") or constraints.get("source_priority")
+    if raw in (None, "", [], {}):
+        return None
+    return str(raw).strip().lower()
+
+
+def _target_priority_constraint(constraints: Mapping[str, Any]) -> str | None:
+    raw = constraints.get("new_priority") or constraints.get("priority_to") or constraints.get("target_priority")
+    if raw in (None, "", [], {}):
+        return None
+    return str(raw).strip().lower()
+
+
+def _no_records_preview_message(requirement: Any) -> str:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    entity = str(getattr(requirement, "entity", "") or "records").strip().lower()
+    source_priority = _source_priority_constraint(constraints)
+    if source_priority:
+        return f"No matching {entity} records were found for priority = {source_priority}."
+    return "No matching records were found."
+
+
 def _default_approval_preview(
     *,
     tool_call: GraphToolCall,
@@ -1898,11 +2335,133 @@ def _tool_choice_requires_graph_approval(
         return False
     requirement = _requirement_by_id(state, call.requirement_id)
     card = _hydrated_card_for_tool_call(state, call)
+    if card is not None:
+        return bool(card.requires_approval) or not bool(card.is_read_only)
+    return getattr(requirement, "requirement_type", None) in {"mutation_request", "approval_request"}
+
+
+def _tool_calls_for_card(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    card: HydratedToolCard,
+    requirement: Any,
+    capability_need: Any,
+    requirement_id: str,
+) -> GraphToolCall | list[GraphToolCall]:
+    candidate_window_id = _candidate_window_id_for_requirement(state, requirement_id)
+    kind = "rag_tool" if card.source_of_truth == "document_knowledge" else "api_tool"
+    args = _args_for_tool_call(card, requirement, capability_need)
+    identity_values = _multi_entity_identity_values(requirement, capability_need)
+    batch_arg = _batch_identity_arg(card, requirement)
+    if (
+        getattr(requirement, "requirement_type", None) == "multi_entity_status"
+        and batch_arg is not None
+        and len(identity_values) > 1
+    ):
+        base_args = {key: value for key, value in args.items() if key != batch_arg}
+        return [
+            GraphToolCall(
+                call_id=f"call-{len(state.planner_decisions) + 1:03d}-{index:03d}",
+                kind=kind,
+                tool_name=card.tool_name,
+                args={**base_args, batch_arg: value},
+                requirement_id=requirement_id,
+                candidate_window_id=candidate_window_id,
+            )
+            for index, value in enumerate(identity_values, start=1)
+            if value not in (None, "", [], {})
+        ]
+    return GraphToolCall(
+        call_id=f"call-{len(state.planner_decisions) + 1:03d}",
+        kind=kind,
+        tool_name=card.tool_name,
+        args=args,
+        requirement_id=requirement_id,
+        candidate_window_id=candidate_window_id,
+    )
+
+
+def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> HydratedToolCard:
     if getattr(requirement, "requirement_type", None) in {"mutation_request", "approval_request"}:
-        return True
-    if card is None:
+        for card in cards:
+            if bool(card.requires_approval) or not bool(card.is_read_only):
+                return card
+    if getattr(requirement, "requirement_type", None) == "multi_entity_status":
+        for card in cards:
+            if _card_supports_collection_identity_read(card, requirement):
+                return card
+        for card in cards:
+            if _card_supports_batched_item_read(card, requirement):
+                return card
+        for card in cards:
+            if _card_supports_collection_read(card):
+                return card
+        for card in cards:
+            if "{id}" not in card.tool_name and "id" not in set(card.required_args):
+                return card
+    if getattr(requirement, "requirement_type", None) == "filtered_collection":
+        for card in cards:
+            if _card_supports_collection_read(card):
+                return card
+        for card in cards:
+            if "{id}" not in card.tool_name and "id" not in set(card.required_args):
+                return card
+    return cards[0]
+
+
+def _card_supports_collection_read(card: HydratedToolCard) -> bool:
+    if card.path_params:
         return False
-    return bool(card.requires_approval) or not bool(card.is_read_only)
+    if "{id}" in card.tool_name or "id" in set(card.required_args):
+        return False
+    if "list" in set(card.actions):
+        return True
+    return bool(card.supports_filters or card.supports_sort or card.supports_limit)
+
+
+def _card_supports_collection_identity_read(card: HydratedToolCard, requirement: Any) -> bool:
+    if not _card_supports_collection_read(card):
+        return False
+    return bool(set(card.query_params).intersection(_identity_arg_names(requirement)))
+
+
+def _card_supports_batched_item_read(card: HydratedToolCard, requirement: Any) -> bool:
+    if not bool(card.is_read_only) or bool(card.requires_approval):
+        return False
+    if getattr(requirement, "requirement_type", None) != "multi_entity_status":
+        return False
+    return _batch_identity_arg(card, requirement) is not None
+
+
+def _batch_identity_arg(card: HydratedToolCard, requirement: Any) -> str | None:
+    path_or_required = list(dict.fromkeys([*card.path_params, *card.required_args]))
+    if not path_or_required:
+        return None
+    identity_names = _identity_arg_names(requirement)
+    for arg_name in path_or_required:
+        if arg_name in identity_names:
+            return arg_name
+    if "id" in path_or_required:
+        return "id"
+    return path_or_required[0]
+
+
+def _identity_arg_names(requirement: Any) -> set[str]:
+    entity = str(getattr(requirement, "entity", "") or "").strip()
+    names = {"id", "entity_id", "record_id"}
+    if entity:
+        names.update({f"{entity}_id", f"{entity}_ref"})
+    return names
+
+
+def _multi_entity_identity_values(requirement: Any, capability_need: Any) -> list[Any]:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    constraints.update(getattr(capability_need, "known_args", {}) or {})
+    for key in _identity_arg_names(requirement):
+        value = constraints.get(key)
+        if isinstance(value, list):
+            return list(value)
+    return []
 
 
 def _hydrated_card_for_tool_call(
@@ -2014,6 +2573,17 @@ def _record_graph_approval_decision_evidence(
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
             "selected_graph_tool_call": pending.tool_call.model_dump(mode="json") if pending.tool_call else None,
+            "locked_constraints": (
+                dict(pending.payload.get("locked_constraints"))
+                if isinstance(pending.payload.get("locked_constraints"), Mapping)
+                else {}
+            ),
+            "preview_rows": [
+                dict(row) for row in (pending.payload.get("preview_rows") or []) if isinstance(row, Mapping)
+            ],
+            "staged_graph_tool_calls": [
+                dict(call) for call in (pending.payload.get("staged_graph_tool_calls") or []) if isinstance(call, Mapping)
+            ],
         },
     )
     state.evidence_ledger.evidence.append(evidence)
@@ -2345,9 +2915,15 @@ def _argument_value_for(arg_name: str, requirement: Any, capability_need: Any) -
     if arg_name in constraints:
         return constraints[arg_name]
     if arg_name == "id" and requirement.entity:
-        return constraints.get(f"{requirement.entity}_id")
+        entity_id = constraints.get(f"{requirement.entity}_id")
+        if isinstance(entity_id, list):
+            return None
+        if entity_id not in (None, "", [], {}):
+            return entity_id
     if arg_name == "id":
         for key, value in constraints.items():
+            if isinstance(value, list):
+                continue
             if key.endswith("_id") or key in {"machine_ref"}:
                 return value
     if arg_name == "query" and requirement.source_of_truth == "document_knowledge":

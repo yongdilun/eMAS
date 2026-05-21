@@ -79,6 +79,8 @@ class ApprovalResumeService:
                 return
 
         intent = str(sess.current_intent or "")
+        if await self._resume_planner_owned_agent_graph_approval(db=db, row=row, sess=sess, intent=intent):
+            return
         if await self._resume_direct_v2_planner_approval(db=db, row=row, sess=sess, intent=intent):
             return
         try:
@@ -257,6 +259,64 @@ class ApprovalResumeService:
 
     def should_resume_graph_approval_inline(self, ) -> bool:
         return self._planner_adapter_is_none and self._settings.database_url.startswith("sqlite+aiosqlite:///:memory:")
+
+    async def _resume_planner_owned_agent_graph_approval(
+        self,
+        *,
+        db: AsyncSession,
+        row: ApprovalRow,
+        sess: Any,
+        intent: str,
+    ) -> bool:
+        payload = row.args if isinstance(row.args, dict) else {}
+        if payload.get("kind") != "graph_write_approval_required":
+            return False
+
+        tools_by_name = await self._plan_service._ensure_registry_health(db=db)
+        result = await self._plan_service.resume_planner_owned_graph_approval(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            approval_id=row.approval_id,
+            approved=row.status == "APPROVED",
+            ledger_revision=payload.get("ledger_revision") or payload.get("requirement_ledger_revision"),
+            checkpoint_id=payload.get("checkpoint_id"),
+            decided_by=row.decided_by or "user",
+        )
+        await db.refresh(sess)
+        if execution_result_is_stale_after_interrupt(
+            session_status=sess.status,
+            current_intent=sess.current_intent,
+            started_intent=intent,
+            replan_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
+        ):
+            log_event(
+                "planner_owned_graph_approval_resume_result_ignored_after_interrupt",
+                session_id=sess.session_id,
+                approval_id=row.approval_id,
+            )
+            return True
+
+        await self._plan_service.persist_planner_owned_graph_result(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            mode="normal",
+            result=result,
+        )
+        await self.publish_agent_event(
+            "session_resume",
+            sess.session_id,
+            {
+                "approval_id": row.approval_id,
+                "status": "WAITING_APPROVAL" if result.state.pending_approval.status == "pending" else "COMPLETED",
+                "subject_type": "graph",
+                "runtime": "planner_owned_agent_graph",
+            },
+        )
+        return True
 
     async def _resume_direct_v2_planner_approval(
         self,

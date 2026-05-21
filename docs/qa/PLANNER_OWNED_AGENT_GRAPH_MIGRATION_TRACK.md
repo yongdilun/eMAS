@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 9 complete. The explicit planner-owned graph test/debug path now handles user interruptions, requirement revisions, superseded evidence, stale approvals, and stale background results through graph ledger revision and checkpoint identity. Normal runtime has not been switched.
+Status: Phase 10 complete. Normal v2 runtime now enters `PlannerOwnedAgentGraph` through a service adapter, uses the session id as stable graph thread/checkpoint identity, and resumes approvals from native LangGraph checkpoint state. Direct-v2 service execution remains only as historical/test/compatibility code and no longer owns normal runtime.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -50,7 +50,7 @@ State/checkpoint decision:
 | 7 | RAG as a graph tool | Complete | `765069b2` | Citation/insufficient-context tests without legacy RAG route |
 | 8 | Writes, approval pause, and resume | Complete | `83911fa9` | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Complete | `04876615` | Interrupt/revision/stale-work tests |
-| 10 | Runtime switch to graph | Not started |  | Full backend plus frontend response-document and seeded-oracle gates |
+| 10 | Runtime switch to graph | Complete | pending final commit | Full backend plus frontend response-document, seeded-oracle, and real-LangGraph gates |
 | 11 | Test cleanup and legacy quarantine | Not started |  | Full backend with no new xfail/skips and static cleanup guardrails |
 | 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
 
@@ -371,22 +371,50 @@ Next phase recommendation:
 
 ### Phase 10: Runtime Switch To Graph
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
 - `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/factory_agent/services/planner_owned_graph_runtime.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/services/session_revision.py`
 - `factory-agent/factory_agent/graph/v2_agent_graph.py`
-- runtime switch tests.
+- `factory-agent/factory_agent/planning/api_result_projection.py`
+- `factory-agent/factory_agent/planning/v2_evidence_aggregation.py`
+- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
+- `factory-agent/factory_agent/planning/v2_tool_retriever.py`
+- `factory-agent/factory_agent/planning/v2_capability_map.py`
+- `factory-agent/factory_agent/planning/v2_satisfaction.py`
+- `factory-agent/factory_agent/planning/intent.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py`
+- existing backend regression tests updated for graph-owned normal runtime evidence/projection expectations.
 
-Completion evidence to record:
+Completion evidence:
 
-- normal runtime enters graph path,
-- service-level direct execution no longer owns normal v2 runtime,
-- runtime uses stable graph thread id and configured LangGraph checkpointer,
-- resume does not rebuild authoritative state from `session.replan_context`,
-- full backend count,
-- frontend response-document and seeded-oracle counts.
+- Normal v2 runtime now calls `PlannerOwnedGraphRuntimeAdapter`, which builds `PlannerOwnedAgentGraph` with the configured `build_graph_checkpointer(settings)` seam and invokes graph runs/resumes with `thread_id = sess.session_id`.
+- `_create_direct_v2_plan()` is now a thin graph adapter for normal runtime. Static/behavioral Phase 10 tests prove it delegates to `_create_planner_owned_graph_v2_plan()` and does not call `_execute_direct_v2_steps()` or the historical direct-v2 path.
+- Approval resume now routes graph-subject approvals through native LangGraph checkpoint resume before historical direct-v2 resume. Resume stores only pointer/UI metadata in `session.replan_context`; graph checkpoint state remains execution truth.
+- The runtime adapter persists graph results into existing plan/session/UI rows without rebuilding planner decisions, evidence, approval state, RAG, ToolSelector, or response-document rendering in `plan_creation_service.py`.
+- The graph trace/context now records graph planner decisions, node order, retrieval/tool evidence refs, approval/revision/checkpoint metadata, satisfaction/final validation status, and response-document context.
+- Product behavior was preserved for read, RAG, write approval, cascaded approvals, response document aggregation, seeded oracles, and real LangGraph. Real LangGraph RD-001 now receives business-change projection from graph approval evidence instead of row-only write results.
+- The response-document fix is generic: graph-approved write evidence is enriched from approved graph preview metadata keyed by requirement and record id. It adds no exact-prompt, seeded-ID, source-ID, or hard-query runtime branch.
+- `FACTORY_AGENT_ENGINE=legacy` remains governed by the prior Phase 15 cleanup semantics and does not restore legacy/shadow runtime authority.
+- Direct-v2 helpers were not broadly deleted in Phase 10; Phase 11 should quarantine/remove only where graph-owned replacement coverage already proves the same product guarantee.
+- Tests run: PowerShell-expanded `python -m pytest @phaseTests -q` for `tests/test_planner_owned_agent_graph_phase*_*.py` reported `66 passed, 6 warnings`.
+- Tests run: default-temp `python -m pytest -q` reported `980 passed, 3 skipped, 1257 warnings, 5 errors`. All errors were `PermissionError: [WinError 5] Access is denied: 'C:\Users\dilun\AppData\Local\Temp\pytest-of-dilun'` from pytest `tmp_path` setup.
+- Tests run: workspace-local `TEMP/TMP` rerun of `python -m pytest -q` reported `985 passed, 3 skipped, 1257 warnings`.
+- Frontend unit: `npm test` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `131 passed`.
+- Frontend response-document E2E: first `npm run test:e2e:response-document` run reported `29 passed, 1 failed`; failure was a frontend mock/state timing race where backend `response_document.state` was already `waiting_approval` while mocked `session.status` still showed `PLANNING`. Immediate rerun reported `30 passed`; no migration waiver is carried forward.
+- Frontend seeded-oracles: `npm run test:e2e:seeded-oracles` reported `35 passed`.
+- Frontend real-LangGraph: `npm run test:e2e:real-langgraph` reported `3 passed`.
+- `git diff --check`: passed.
+- Blockers/waivers: none. The default TEMP/TMP backend failure and first response-document E2E race both have clean reruns and are recorded here.
+- Commit: pending final commit.
+
+Next phase recommendation:
+
+- Proceed to Phase 11: test cleanup and legacy quarantine. Classify direct-v2 helpers/tests as historical/test-only only where graph-owned coverage proves the same product behavior; add static guards for no service-level direct runtime authority, no legacy RAG/scaffold/cursor authority, and no exact-prompt/seeded-ID/source-ID branches.
 
 ### Phase 11: Test Cleanup And Legacy Quarantine
 
@@ -441,38 +469,36 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 10 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 11 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
+- factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/graph/v2_agent_graph.py
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
-- factory-agent/factory_agent/planning/v2_interrupts.py
-- factory-agent/factory_agent/graph/checkpointing.py
 - factory-agent/factory_agent/services/plan_creation_service.py
-- factory-agent/factory_agent/services/execution_service.py
 - factory-agent/factory_agent/services/approval_resume_service.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase9_interrupts.py
+- direct-v2 and legacy cleanup tests before editing them
 
 Scope:
-- Implement only Phase 10: Runtime Switch To Graph.
-- Switch normal v2 runtime to the planner-owned graph path.
-- Preserve product behavior.
-- Do not delete direct-v2 helpers yet unless a test proves they are historical/test-only and replacement coverage exists.
+- Implement only Phase 11: Test Cleanup And Legacy Quarantine.
+- Remove, rewrite, or quarantine tests/helpers that still reward direct-v2 service-level runtime authority, but only after graph-owned tests prove the same product guarantee.
+- Preserve product behavior and all Phase 10 graph runtime coverage.
 - Do not restore legacy/shadow runtime authority.
+- Do not change normal runtime back away from `PlannerOwnedAgentGraph`.
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- `plan_creation_service.py` normal v2 runtime must call `PlannerOwnedAgentGraph` through a small adapter/interface.
-- Normal runtime must use a stable graph thread id, usually the session id, with the configured LangGraph checkpointer.
-- Approval resume must reconstruct from the native LangGraph checkpoint, not from a hand-built `session.replan_context` state.
-- `_execute_direct_v2_steps()` must not be used for normal runtime.
-- `_create_direct_v2_plan()` must become a thin graph adapter, be renamed historical/test-only, or be bypassed by a tested graph path.
-- Trace must show graph planner decisions, retrieval calls, tool/RAG evidence refs, approval/revision/checkpoint metadata, satisfaction, final validation, and response-document context.
-- `FACTORY_AGENT_ENGINE=legacy` must continue to resolve according to the Phase 15 cleanup behavior and must not restore old legacy paths.
+- Add or keep static guards proving normal runtime cannot call `_execute_direct_v2_steps()` or historical direct-v2 execution.
+- Classify remaining direct-v2 helpers as historical/test-only/adapters, or delete them only when replacement graph coverage proves the same behavior.
+- Keep approval resume native-checkpoint based; `session.replan_context` must remain pointer/UI metadata only.
+- Preserve response-document, seeded-oracle, real-LangGraph, RAG citation, approval safety, stale approval, interruption, and hardcode guardrails.
+- Do not weaken tests to make cleanup pass. Port or replace tests with graph-owned coverage first.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
@@ -484,7 +510,7 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
 - python -m pytest -q
 - cd "..\eMas Front"
 - npm test
@@ -496,7 +522,7 @@ Verification:
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: switch normal runtime to planner-owned graph
+test: quarantine legacy direct-v2 runtime coverage
 
 Final response format:
 Use exactly these sections:

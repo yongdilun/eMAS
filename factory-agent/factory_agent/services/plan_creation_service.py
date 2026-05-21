@@ -39,12 +39,21 @@ from factory_agent.planning.intent import (
     assess_intent,
     intent_constraint_values,
     loto_query_with_resolved_machine_context,
+    rag_query_with_required_machine_context,
     resolve_contextual_loto_machine_id,
     semantic_frame_for_text,
+)
+from factory_agent.planning.api_result_projection import (
+    api_row_id,
+    canonical_output_key,
+    identity_fields,
+    project_api_body,
+    project_api_row,
 )
 from factory_agent.planning.plan_validator import validate_plan
 from factory_agent.planning.tool_output_alignment import align_tool_outputs_to_steps
 from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
 from factory_agent.planning.v2_planner_loop import (
     PlannerOwnedV2Loop,
     attach_direct_v2_trace_to_intent_contract,
@@ -62,16 +71,12 @@ from factory_agent.planning.v2_satisfaction import (
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
 from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
 from factory_agent.registry.tool_registry import ToolRegistry
-from factory_agent.schemas import PlanCreateRequest, PlanResponse, ToolInfo
+from factory_agent.schemas import PlanCreateRequest, PlanDraft, PlanResponse, ToolInfo
 from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
+from factory_agent.services.planner_owned_graph_runtime import PlannerOwnedGraphRuntimeAdapter
+from factory_agent.services.session_revision import bump_session_revision as _bump_session_revision
 from factory_agent.session_state import is_user_cancelled_session
 from factory_agent.tools.arguments import compute_idempotency_key
-
-
-def _bump_session_revision(sess: SessionRow) -> None:
-    """Advance both DB and response-document revisions for state-changing writes."""
-    sess.version = (getattr(sess, "version", None) or 0) + 1
-    sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
 
 
 PLANNER_NO_ACTION_REASON = "planner_no_action"
@@ -80,7 +85,7 @@ PLANNER_NO_ACTION_MESSAGE = (
     "request. Current state: blocked before execution. Next action: refine the request or check tool availability, "
     "then retry."
 )
-EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_planner_loop", "v2_rag_tool"}
+EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_planner_loop", "v2_rag_tool", "planner_owned_agent_graph"}
 
 
 class PlanCreationService:
@@ -162,24 +167,10 @@ class PlanCreationService:
         intent: str,
         semantic_frame: Any | None,
     ) -> str:
-        frame_entities = getattr(semantic_frame, "normalized_entities", None)
-        machine_ids = []
-        if isinstance(frame_entities, dict):
-            raw_values = frame_entities.get("machine_id") or []
-            if isinstance(raw_values, str):
-                raw_values = [raw_values]
-            machine_ids = [str(value).strip().upper() for value in raw_values if str(value or "").strip()]
-        if not machine_ids:
-            machine_ids = intent_constraint_values(intent, "machine_id")
-        if not machine_ids:
-            return query
-        query_text = str(query or intent or "")
-        upper_query = query_text.upper()
-        if any(machine_id in upper_query for machine_id in machine_ids):
-            return query_text
-        return (
-            f"{query_text.rstrip()}\n\n"
-            f"Required machine context from the routed request: machine {machine_ids[0]}."
+        return rag_query_with_required_machine_context(
+            query,
+            intent=intent,
+            semantic_frame=semantic_frame,
         )
 
     async def _resolve_loto_machine_context(
@@ -258,7 +249,7 @@ class PlanCreationService:
         limit = int(self._settings.max_plan_steps)
         steps = getattr(draft, "steps", []) or []
         if (
-            backend_used in {"langgraph", "v2_planner_loop"}
+            backend_used in {"langgraph", "v2_planner_loop", "planner_owned_agent_graph"}
             and kind == "execution"
             and status == "COMPLETED"
             and tool_outputs
@@ -593,6 +584,99 @@ class PlanCreationService:
         semantic_frame: Any | None = None,
         assessment: Any | None = None,
     ) -> PlanResponse:
+        """Compatibility name for the normal v2 graph runtime adapter.
+
+        The historical direct-v2 implementation remains below for old tests and
+        compatibility repair only. Normal runtime enters the planner-owned
+        graph through this adapter and never calls service-level direct step
+        execution.
+        """
+        return await self._create_planner_owned_graph_v2_plan(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            mode=mode,
+            semantic_frame=semantic_frame,
+            assessment=assessment,
+        )
+
+    async def _create_planner_owned_graph_v2_plan(
+        self,
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+        mode: str,
+        semantic_frame: Any | None = None,
+        assessment: Any | None = None,
+    ) -> PlanResponse:
+        tools_by_name = ensure_v2_rag_tool(tools_by_name)
+        if (
+            semantic_frame is not None
+            and str(getattr(semantic_frame, "route", "") or "").startswith("clarification.")
+            and getattr(semantic_frame, "missing_required_entities", None)
+            and not self._seeded_planner_handles_intent(intent)
+        ):
+            context = dict(sess.replan_context or {})
+            if hasattr(semantic_frame, "to_payload"):
+                context["semantic_frame"] = semantic_frame.to_payload()
+            context["planner_owned_agent_graph"] = {
+                "runtime_adapter": "semantic_clarification_guard",
+                "graph_execution_authority": False,
+                "reason": "clarification_required_before_execution",
+            }
+            return await self._persist_conversation_reply_as_empty_plan(
+                db=db,
+                sess=sess,
+                reply=self._semantic_clarification_reply(semantic_frame),
+                mode=mode,
+                tools_by_name=tools_by_name,
+                intent=intent,
+                context_to_keep=context,
+                backend_used="planner_owned_agent_graph",
+            )
+
+        if assessment is not None and getattr(assessment, "kind", None) != "operations":
+            reply = getattr(assessment, "reply", None)
+            if reply:
+                context = dict(sess.replan_context or {})
+                context["planner_owned_agent_graph"] = {
+                    "runtime_adapter": "non_operational_guard",
+                    "graph_execution_authority": False,
+                    "reason": "non_operational_request",
+                }
+                return await self._persist_conversation_reply_as_empty_plan(
+                    db=db,
+                    sess=sess,
+                    reply=reply,
+                    mode=mode,
+                    tools_by_name=tools_by_name,
+                    intent=intent,
+                    context_to_keep=context,
+                    backend_used="planner_owned_agent_graph",
+                )
+
+        return await self._planner_owned_graph_runtime().run_plan(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            mode=mode,
+        )
+
+    async def _create_historical_direct_v2_plan(
+        self,
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+        mode: str,
+        semantic_frame: Any | None = None,
+        assessment: Any | None = None,
+    ) -> PlanResponse:
         tools_by_name = ensure_v2_rag_tool(tools_by_name)
         v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
             intent=intent,
@@ -721,6 +805,60 @@ class PlanCreationService:
             intent=intent,
             context_to_keep=context,
             tool_outputs=tool_outputs or v2_run.tool_outputs,
+        )
+
+    def _planner_owned_graph_runtime(self) -> PlannerOwnedGraphRuntimeAdapter:
+        return PlannerOwnedGraphRuntimeAdapter(
+            settings=self._settings,
+            tool_selector=self._tool_selector,
+            rag_pipeline=self._rag_pipeline,
+            uuid_factory=self._generate_uuid,
+            persist_plan=self._persist_plan,
+            session_lookup=self._session_mgr.get_session,
+        )
+
+    async def resume_planner_owned_graph_approval(
+        self,
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+        approval_id: str,
+        approved: bool,
+        ledger_revision: Any,
+        checkpoint_id: Any,
+        decided_by: str,
+    ) -> Any:
+        return await self._planner_owned_graph_runtime().resume_approval(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            approval_id=approval_id,
+            approved=approved,
+            ledger_revision=ledger_revision,
+            checkpoint_id=checkpoint_id,
+            decided_by=decided_by,
+        )
+
+    async def persist_planner_owned_graph_result(
+        self,
+        *,
+        db: AsyncSession,
+        sess: SessionRow,
+        tools_by_name: dict[str, ToolInfo],
+        intent: str,
+        mode: str,
+        result: Any,
+    ) -> PlanResponse:
+        return await self._planner_owned_graph_runtime().persist_result(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            intent=intent,
+            mode=mode,
+            result=result,
         )
 
     def _direct_v2_llm_call_count(self, v2_run: Any) -> int:
@@ -1016,76 +1154,11 @@ class PlanCreationService:
         evidence_ledger = getattr(state, "evidence_ledger", None)
         if ledger is None or evidence_ledger is None:
             return
-
-        evidence_items = list(getattr(evidence_ledger, "evidence", []) or [])
-        requirements = list(getattr(ledger, "requirements", []) or [])
-        multi_requirement_ids = {
-            str(getattr(requirement, "id", "") or "")
-            for requirement in requirements
-            if getattr(requirement, "requirement_type", "") == "multi_entity_status"
-        }
-        if not multi_requirement_ids:
-            return
-
-        requirements_by_id = {str(getattr(requirement, "id", "") or ""): requirement for requirement in requirements}
-        replacements: dict[str, EvidenceLedgerEntry] = {}
-        replaced_ids: set[str] = set()
-        for requirement_id in multi_requirement_ids:
-            matches = [
-                evidence
-                for evidence in evidence_items
-                if evidence.requirement_id == requirement_id
-                and evidence.source_type == "api_tool"
-                and evidence.source_of_truth == "operational_state"
-                and not self._direct_v2_evidence_has_error(evidence)
-            ]
-            if len(matches) < 2:
-                continue
-            requirement = requirements_by_id.get(requirement_id)
-            entity = str(getattr(requirement, "entity", "") or "").strip()
-            rows: list[dict[str, Any]] = []
-            for evidence in matches:
-                rows.extend(self._direct_v2_rows_from_evidence(evidence, entity=entity))
-            if len(rows) < 2:
-                continue
-            normalized_result: dict[str, Any] = {"rows": rows}
-            if entity:
-                normalized_result["entity"] = entity
-            first_filters = self._direct_v2_first_mapping(matches, "applied_filters")
-            if first_filters:
-                normalized_result["applied_filters"] = first_filters
-            first_args = self._direct_v2_first_mapping(matches, "request_args")
-            if first_args:
-                normalized_result["request_args"] = first_args
-            aggregate = EvidenceLedgerEntry(
-                id=f"ev-api-{requirement_id}-aggregate",
-                requirement_id=requirement_id,
-                source_type="api_tool",
-                source_of_truth="operational_state",
-                tool_name=matches[0].tool_name,
-                normalized_result=normalized_result,
-                diagnostic_metadata={
-                    "direct_v2_execution": True,
-                    "aggregated_from": [evidence.id for evidence in matches],
-                },
-            )
-            replacements[requirement_id] = aggregate
-            replaced_ids.update(evidence.id for evidence in matches)
-
-        if not replacements:
-            return
-
-        new_evidence: list[EvidenceLedgerEntry] = []
-        inserted: set[str] = set()
-        for evidence in evidence_items:
-            replacement = replacements.get(evidence.requirement_id)
-            if replacement is not None and evidence.id in replaced_ids:
-                if evidence.requirement_id not in inserted:
-                    new_evidence.append(replacement)
-                    inserted.add(evidence.requirement_id)
-                continue
-            new_evidence.append(evidence)
-        evidence_ledger.evidence = new_evidence
+        aggregate_multi_entity_status_evidence(
+            requirement_ledger=ledger,
+            evidence_ledger=evidence_ledger,
+            diagnostic_metadata={"direct_v2_execution": True},
+        )
 
     def _direct_v2_rows_from_evidence(self, evidence: EvidenceLedgerEntry, *, entity: str) -> list[dict[str, Any]]:
         result = evidence.normalized_result if isinstance(evidence.normalized_result, dict) else {}
@@ -1173,18 +1246,8 @@ class PlanCreationService:
         return None
 
     def _direct_v2_row_id(self, row: dict[str, Any], entity: str | None) -> str | None:
-        keys = []
-        if entity:
-            keys.append(f"{entity}_id")
-        keys.extend(["id", "job_id", "machine_id"])
-        for key in keys:
-            value = row.get(key)
-            if value not in (None, ""):
-                return str(value)
-        for key, value in row.items():
-            if str(key).lower().endswith("_id") and value not in (None, ""):
-                return str(value)
-        return None
+        row_id = api_row_id(row, entity=entity)
+        return str(row_id) if row_id not in (None, "") else None
 
     def _direct_v2_project_api_body(
         self,
@@ -1193,40 +1256,8 @@ class PlanCreationService:
         requirement: Any | None,
         tool: ToolInfo,
     ) -> dict[str, Any]:
-        if not isinstance(body, dict):
-            return body
         entity = str(getattr(requirement, "entity", "") or self._direct_v2_entity_from_tool(tool) or "").strip().lower()
-        requested_fields = [
-            self._direct_v2_canonical_output_key(str(field), entity)
-            for field in (getattr(requirement, "requested_fields", []) or [])
-            if str(field).strip()
-        ]
-        constraints = dict(getattr(requirement, "constraints", {}) or {})
-        if constraints.get("sort_by") not in (None, "", [], {}):
-            requested_fields.append(self._direct_v2_canonical_output_key(str(constraints.get("sort_by")), entity))
-        for key in ("priority", "status"):
-            if constraints.get(key) not in (None, "", [], {}):
-                requested_fields.append(self._direct_v2_canonical_output_key(key, entity))
-        requested_fields = list(dict.fromkeys(requested_fields))
-        identity_fields = self._direct_v2_identity_fields(entity)
-        allowed_fields = set(requested_fields) | set(identity_fields) if requested_fields else set()
-
-        data = body.get("data")
-        if isinstance(data, dict):
-            return {**body, "data": self._direct_v2_project_api_row(data, entity=entity, allowed_fields=allowed_fields)}
-        if isinstance(data, list):
-            return {
-                **body,
-                "data": [
-                    self._direct_v2_project_api_row(item, entity=entity, allowed_fields=allowed_fields)
-                    if isinstance(item, dict)
-                    else item
-                    for item in data
-                ],
-            }
-        if any(key not in {"success", "ok", "message", "count", "total", "meta"} for key in body):
-            return self._direct_v2_project_api_row(body, entity=entity, allowed_fields=allowed_fields)
-        return body
+        return project_api_body(body, requirement=requirement, entity=entity)
 
     def _direct_v2_project_api_row(
         self,
@@ -1235,29 +1266,13 @@ class PlanCreationService:
         entity: str,
         allowed_fields: set[str],
     ) -> dict[str, Any]:
-        normalized: dict[str, Any] = {}
-        for key, value in row.items():
-            canonical = self._direct_v2_canonical_output_key(str(key), entity)
-            normalized[canonical] = value
-        if not allowed_fields:
-            return normalized
-        return {key: value for key, value in normalized.items() if key in allowed_fields}
+        return project_api_row(row, entity=entity, allowed_fields=allowed_fields)
 
     def _direct_v2_identity_fields(self, entity: str | None) -> list[str]:
-        fields = ["id", "entity_id"]
-        if entity:
-            fields.insert(0, f"{entity}_id")
-        fields.extend(["job_id", "machine_id"])
-        return list(dict.fromkeys(fields))
+        return identity_fields(entity)
 
     def _direct_v2_canonical_output_key(self, key: str, entity: str | None) -> str:
-        normalized = key.strip().replace("-", "_").replace(" ", "_")
-        normalized = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", normalized)
-        normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", normalized)
-        normalized = re.sub(r"_+", "_", normalized).strip("_").lower()
-        if normalized == "id" and entity:
-            return f"{entity}_id"
-        return normalized
+        return canonical_output_key(key, entity)
 
     def _direct_v2_error_summary(self, *, tool: ToolInfo, body: dict[str, Any] | None) -> str:
         payload = body if isinstance(body, dict) else {}
@@ -2254,6 +2269,7 @@ class PlanCreationService:
         if resolved_loto_machine_id:
             semantic_frame = semantic_frame_for_text(loto_rag_intent)
         assessment = assess_intent(loto_rag_intent if resolved_loto_machine_id else intent)
+        runtime_intent = loto_rag_intent if resolved_loto_machine_id else intent
 
         tools_by_name = await self._tool_registry.get_tools_by_name(db)
         tools_by_name = filter_tools_for_role(tools_by_name, role=role_from_claims(user))
@@ -2274,7 +2290,7 @@ class PlanCreationService:
                 db=db,
                 sess=sess,
                 tools_by_name=tools_by_name,
-                intent=intent,
+                intent=runtime_intent,
                 mode=mode,
                 semantic_frame=semantic_frame,
                 assessment=assessment,
@@ -2306,7 +2322,10 @@ class PlanCreationService:
             metrics.observe("plan_generation_latency_ms", (time.perf_counter() - started) * 1000.0)
             return plan_resp
 
-        if semantic_frame.route in {"rag.loto_procedure", "rag.procedure", "rag.safety_policy"}:
+        if (
+            semantic_frame.route in {"rag.loto_procedure", "rag.procedure", "rag.safety_policy"}
+            and not seeded_planner_handles_intent
+        ):
             context_to_keep = resolved_loto_context
             if semantic_frame.route != "unknown":
                 context_to_keep = dict(context_to_keep or sess.replan_context or {})

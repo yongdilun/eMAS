@@ -9,6 +9,7 @@ from factory_agent.planning.v2_agent_state import GraphToolCall
 from factory_agent.planning.v2_graph_adapters import GraphToolExecutionResult
 from tests.test_planner_owned_agent_graph_phase8_approval_resume import (
     PLAN_CREATION_SOURCE,
+    RUNTIME_ADAPTER_SOURCE,
     _approval_decision,
     _graph,
 )
@@ -257,9 +258,11 @@ async def test_phase9_new_revision_produces_new_trace_and_revision_metadata():
     assert metadata["interrupt"]["interrupt_type"] == "append_requirement"
 
 
-def test_phase9_normal_runtime_is_still_not_switched_to_graph():
+def test_phase9_normal_runtime_switches_to_graph_after_phase10():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
 
-    assert "PlannerOwnedAgentGraph" not in source
-    assert "factory_agent.graph.v2_agent_graph" not in source
-
+    assert "PlannerOwnedGraphRuntimeAdapter" in source
+    assert "PlannerOwnedAgentGraph" in runtime_source
+    assert '"thread_id": sess.session_id' in runtime_source
+    assert "_create_historical_direct_v2_plan" in source

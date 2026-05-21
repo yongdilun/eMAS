@@ -457,8 +457,6 @@ def _endpoint_shape_for_need(capability_need: CapabilityNeed) -> EndpointShape:
         return "document_search"
     if capability_need.action == "read_one":
         return "single"
-    if capability_need.action in {"read_many", "list"} and _need_has_multiple_entity_ids(capability_need):
-        return "single"
     if capability_need.action in {"read_many", "list"}:
         return "collection"
     if capability_need.action in {"update", "create", "cancel"}:

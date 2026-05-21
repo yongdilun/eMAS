@@ -1,0 +1,368 @@
+from __future__ import annotations
+
+import ast
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from factory_agent.config import Settings
+from factory_agent.graph.v2_agent_graph import PlannerOwnedGraphResult
+from factory_agent.planning.tool_selector import ToolSelectionResult
+from factory_agent.planning.v2_contracts import CapabilityNeed, EvidenceLedgerEntry, RequirementLedgerEntry
+from factory_agent.planning.v2_agent_state import build_initial_planner_owned_agent_graph_state
+from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
+from factory_agent.schemas import PlanResponse, ToolInfo
+from factory_agent.services.plan_creation_service import PlanCreationService
+from factory_agent.services.planner_owned_graph_runtime import PlannerOwnedGraphRuntimeAdapter
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PLAN_CREATION_SOURCE = REPO_ROOT / "factory_agent" / "services" / "plan_creation_service.py"
+APPROVAL_RESUME_SOURCE = REPO_ROOT / "factory_agent" / "services" / "approval_resume_service.py"
+RUNTIME_ADAPTER_SOURCE = REPO_ROOT / "factory_agent" / "services" / "planner_owned_graph_runtime.py"
+
+
+def _settings() -> Settings:
+    return Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        redis_url=None,
+        go_api_base_url="http://testserver",
+        worker_count=0,
+        session_queue_size=10,
+        max_plan_steps=10,
+        max_session_steps=50,
+        max_replans=5,
+        max_llm_calls=20,
+        max_session_duration_s=1800,
+        http_timeout_s=1.0,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+    )
+
+
+def _tool() -> ToolInfo:
+    return ToolInfo(
+        name="get__machines_{id}",
+        description="Read machine status",
+        endpoint="/machines/{id}",
+        method="GET",
+        input_schema={"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+        output_schema={"type": "object"},
+        path_params=["id"],
+        is_read_only=True,
+        capability_tags=["machine", "status", "operational_state"],
+    )
+
+
+def _job_tool(
+    name: str,
+    *,
+    endpoint: str,
+    required: list[str] | None = None,
+    query_params: list[str] | None = None,
+) -> ToolInfo:
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+            "job_id": {"type": "array", "items": {"type": "string"}, "x-ai-entity": "job"},
+            "fields": {"type": "string"},
+        },
+    }
+    if required:
+        input_schema["required"] = list(required)
+    return ToolInfo(
+        name=name,
+        description=name.replace("_", " "),
+        endpoint=endpoint,
+        method="GET",
+        input_schema=input_schema,
+        output_schema={
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}, "status": {"type": "string"}},
+            "x-ai-entity": "job",
+            "x-ai-response-contracts": ["entity_status_v1"],
+        },
+        path_params=[field for field in required or [] if f"{{{field}}}" in endpoint],
+        query_params=list(query_params or []),
+        param_sources={field: "path" for field in required or [] if f"{{{field}}}" in endpoint}
+        | {field: "query" for field in query_params or []},
+        is_read_only=True,
+        capability_tags=["job", "status", "operational_state"],
+    )
+
+
+def _service() -> PlanCreationService:
+    return PlanCreationService(
+        settings=_settings(),
+        session_mgr=SimpleNamespace(),
+        memory_manager=SimpleNamespace(),
+        planner=SimpleNamespace(),
+        tool_selector=SimpleNamespace(),
+        summary_adapter=SimpleNamespace(),
+        tool_registry=SimpleNamespace(),
+        uuid_factory=lambda: "uuid",
+    )
+
+
+def _function_node(source: str, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    module = ast.parse(source)
+    for node in ast.walk(module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    raise AssertionError(f"missing function {name}")
+
+
+def _called_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Name):
+            names.add(func.id)
+        elif isinstance(func, ast.Attribute):
+            names.add(func.attr)
+    return names
+
+
+def test_phase10_static_normal_runtime_adapter_uses_graph_not_direct_execution():
+    source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
+
+    direct_adapter = _function_node(source, "_create_direct_v2_plan")
+    graph_adapter = _function_node(source, "_create_planner_owned_graph_v2_plan")
+    runtime_run = _function_node(runtime_source, "run_plan")
+
+    direct_calls = _called_names(direct_adapter)
+    graph_calls = _called_names(graph_adapter)
+    runtime_calls = _called_names(runtime_run)
+
+    assert "_create_planner_owned_graph_v2_plan" in direct_calls
+    assert "_execute_direct_v2_steps" not in direct_calls
+    assert "_create_historical_direct_v2_plan" not in direct_calls
+    assert "_execute_direct_v2_steps" not in graph_calls
+    assert "_create_historical_direct_v2_plan" not in graph_calls
+    assert "_planner_owned_graph_runtime" in graph_calls
+    assert "run_plan" in graph_calls
+    assert "_build_graph" in runtime_calls
+    assert "run" in runtime_calls
+    assert '"thread_id": sess.session_id' in runtime_source
+
+
+@pytest.mark.asyncio
+async def test_phase10_behavior_normal_v2_plan_creation_enters_graph_path(monkeypatch):
+    service = _service()
+    calls: list[dict[str, Any]] = []
+
+    class FakeRuntime:
+        async def run_plan(self, *, db, sess, tools_by_name, intent, mode):
+            calls.append(
+                {
+                    "user_message": intent,
+                    "session_context": sess,
+                    "options": {"thread_id": sess.session_id},
+                    "mode": mode,
+                }
+            )
+            state = build_initial_planner_owned_agent_graph_state(intent, tools_by_name={"get__machines_{id}": _tool()})
+            result = PlannerOwnedGraphResult(
+                state=state,
+                node_order=["semantic_intake_node"],
+                checkpoint_config={"configurable": {"thread_id": sess.session_id}},
+            )
+            assert result.state.execution_trace.generated_by == "planner_owned_agent_graph"
+            assert result.checkpoint_config["configurable"]["thread_id"] == "phase10-session"
+            return PlanResponse(
+                plan_id="plan-graph",
+                session_id="phase10-session",
+                version=1,
+                kind="execution",
+                status="COMPLETED",
+                plan_hash="hash",
+                plan_explanation="graph path",
+                risk_summary="graph runtime",
+                created_at=datetime.utcnow(),
+                created_by="planner_owned_agent_graph",
+            )
+
+    async def fail_direct_execution(*args, **kwargs):  # pragma: no cover - should never run
+        raise AssertionError("_execute_direct_v2_steps must not own normal runtime")
+
+    monkeypatch.setattr(service, "_planner_owned_graph_runtime", lambda: FakeRuntime())
+    monkeypatch.setattr(service, "_execute_direct_v2_steps", fail_direct_execution)
+
+    sess = SimpleNamespace(session_id="phase10-session", replan_context={}, llm_call_count=0)
+    response = await service._create_direct_v2_plan(
+        db=SimpleNamespace(),
+        sess=sess,
+        tools_by_name={"get__machines_{id}": _tool()},
+        intent="Show machine M-100 status.",
+        mode="normal",
+    )
+
+    assert response.created_by == "planner_owned_agent_graph"
+    assert calls == [
+        {
+            "user_message": "Show machine M-100 status.",
+            "session_context": sess,
+            "options": {"thread_id": "phase10-session"},
+            "mode": "normal",
+        }
+    ]
+
+
+def test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume():
+    source = APPROVAL_RESUME_SOURCE.read_text(encoding="utf-8")
+    resume = _function_node(source, "resume_approved_graph_approval")
+    calls = _called_names(resume)
+
+    assert "_resume_planner_owned_agent_graph_approval" in calls
+    assert source.index("_resume_planner_owned_agent_graph_approval") < source.index("_resume_direct_v2_planner_approval")
+    graph_resume = _function_node(source, "_resume_planner_owned_agent_graph_approval")
+    graph_calls = _called_names(graph_resume)
+    assert "resume_planner_owned_graph_approval" in graph_calls
+    assert "persist_planner_owned_graph_result" in graph_calls
+    assert "session_replan_context_authoritative" not in ast.get_source_segment(source, graph_resume)
+
+
+@pytest.mark.asyncio
+async def test_phase10_multi_id_graph_retrieval_completes_collection_reader_when_selector_returns_item_only():
+    class ItemOnlySelector:
+        async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+            request = kwargs["context"]["v2_tool_selector_adapter_request"]
+            assert request["endpoint_shape"] == "collection"
+            return ToolSelectionResult(["get__jobs_{id}"], backend_used="retrieval", llm_calls=0)
+
+    retriever = V2CapabilityToolRetriever(ItemOnlySelector())  # type: ignore[arg-type]
+    result = await retriever.retrieve_tools_for_need(
+        CapabilityNeed(
+            requirement_id="req-jobs",
+            source_of_truth="operational_state",
+            entity="job",
+            action="read_many",
+            constraints={"job_id": ["JOB-1", "JOB-2"]},
+            requested_fields=["job_id", "status"],
+        ),
+        tools_by_name={
+            "get__jobs_{id}": _job_tool("get__jobs_{id}", endpoint="/jobs/{id}", required=["id"], query_params=["fields"]),
+            "get__jobs": _job_tool("get__jobs", endpoint="/jobs", query_params=["job_id", "fields"]),
+        },
+    )
+
+    assert result.status == "ok"
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "get__jobs_{id}",
+        "get__jobs",
+    ]
+    assert result.trace.diagnostics["metadata_read_completion_used"] is True
+    collection_card = next(card for card in result.hydrated_tool_cards.cards if card.tool_name == "get__jobs")
+    assert collection_card.path_params == []
+    assert collection_card.query_params == ["job_id", "fields"]
+
+
+def test_phase10_static_no_legacy_or_seed_runtime_branches_added():
+    source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
+    runtime = ast.get_source_segment(source, _function_node(source, "_create_planner_owned_graph_v2_plan")) or ""
+    runtime_adapter = ast.get_source_segment(runtime_source, _function_node(runtime_source, "run_plan")) or ""
+
+    banned = [
+        "legacy_rag_route",
+        "working_intents",
+        "intent_cursor",
+        "intent_completed",
+        "JOB-SEED",
+        "M-CNC-01",
+        "src-loto",
+    ]
+    for literal in banned:
+        assert literal not in runtime
+        assert literal not in runtime_adapter
+
+
+def test_phase10_graph_runtime_projects_approval_business_change_metadata_into_tool_outputs():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change medium-priority jobs to high priority.",
+        tools_by_name={},
+    )
+    state.requirement_ledger.requirements = [
+        RequirementLedgerEntry(
+            id="req-job-priority",
+            goal="Change medium-priority jobs to high priority.",
+            requirement_type="mutation_request",
+            entity="job",
+            intent_operation="stage_mutation",
+            source_of_truth="operational_state",
+            constraints={"priority": "medium", "new_priority": "high"},
+        )
+    ]
+    state.evidence_ledger.evidence.extend(
+        [
+            EvidenceLedgerEntry(
+                id="ev-approval-approved",
+                requirement_id="req-job-priority",
+                source_type="approval",
+                source_of_truth="operational_state",
+                approval_id="approval-graph-1",
+                normalized_result={"approval_status": "approved", "status": "approved"},
+                diagnostic_metadata={
+                    "approval_id": "approval-graph-1",
+                    "locked_constraints": {"priority": "medium", "new_priority": "high"},
+                    "preview_rows": [
+                        {"job_id": "JOB-A", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+                        {"job_id": "JOB-B", "priority": "medium", "previous_priority": "medium", "new_priority": "high"},
+                    ],
+                    "staged_graph_tool_calls": [
+                        {"tool_name": "put__jobs_{id}", "args": {"id": "JOB-A", "priority": "high"}},
+                        {"tool_name": "put__jobs_{id}", "args": {"id": "JOB-B", "priority": "high"}},
+                    ],
+                },
+            ),
+            EvidenceLedgerEntry(
+                id="ev-api-write",
+                requirement_id="req-job-priority",
+                source_type="api_tool",
+                source_of_truth="operational_state",
+                tool_name="put__jobs_{id}",
+                args={"id": "JOB-A", "priority": "high"},
+                normalized_result={"status_code": 200, "fields": {"job_id": "JOB-A", "priority": "high"}},
+                satisfies=["operational_state_tool_result"],
+                diagnostic_metadata={"graph_authorized_execution": True},
+            ),
+        ]
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+
+    outputs = adapter._tool_outputs(
+        PlannerOwnedGraphResult(
+            state=state,
+            node_order=["tool_execution_node", "response_document_node"],
+            checkpoint_config={"configurable": {"thread_id": "phase10-session"}},
+        )
+    )
+
+    assert len(outputs) == 1
+    output = outputs[0]
+    assert output["approval_id"] == "approval-graph-1"
+    assert output["summary"] == "Updated 2 medium-priority jobs to high."
+    assert output["args"]["previous_priority"] == "medium"
+    assert output["args"]["new_priority"] == "high"
+    data = output["result"]["data"]
+    assert data["approval_id"] == "approval-graph-1"
+    assert data["entity_type"] == "job"
+    assert data["previous_priority"] == "medium"
+    assert data["new_priority"] == "high"
+    assert data["selector_summary"] == "priority = medium"
+    assert data["field_changes"] == [{"field": "priority", "label": "Priority", "from": "medium", "to": "high"}]
