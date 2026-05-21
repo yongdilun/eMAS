@@ -544,8 +544,9 @@ Verification:
 cd factory-agent
 python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
 python -m pytest tests/test_response_document*.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
-cd ..
+cd "..\eMas Front"
 npm run test:e2e:response-document
+cd ..
 git diff --check
 ```
 
@@ -604,9 +605,10 @@ Verification:
 cd factory-agent
 python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
 python -m pytest tests/test_stateful*.py tests/test_approval*.py tests/test_response_document*.py -q
-cd ..
+cd "..\eMas Front"
 npm run test:e2e:response-document
 npm run test:e2e:seeded-oracles
+cd ..
 git diff --check
 ```
 
@@ -665,10 +667,11 @@ Verification:
 cd factory-agent
 python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
 python -m pytest -q
-cd ..
+cd "..\eMas Front"
 npm test
 npm run test:e2e:response-document
 npm run test:e2e:seeded-oracles
+cd ..
 git diff --check
 ```
 
@@ -728,12 +731,13 @@ cd factory-agent
 python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
 python -m pytest tests/test_route_to_execution_contract.py tests/test_intent_splitter.py tests/test_tool_selector.py tests/test_hardcode*.py -q
 python -m pytest -q
-cd ..
+cd "..\eMas Front"
 npm test
 npm run test:e2e:response-document
 npm run test:e2e:seeded-oracles
 npm run test:e2e:real-langgraph
 npm run test:e2e:release
+cd ..
 git diff --check
 ```
 

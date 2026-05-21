@@ -390,7 +390,7 @@ Do not mark a phase complete if:
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 6 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
+You are implementing Phase 7 of docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md
@@ -399,34 +399,34 @@ Read first:
 - factory-agent/factory_agent/planning/v2_agent_state.py
 - factory-agent/factory_agent/planning/v2_planner_decisions.py
 - factory-agent/factory_agent/planning/v2_graph_adapters.py
-- factory-agent/factory_agent/planning/v2_tool_retriever.py
-- factory-agent/factory_agent/planning/v2_satisfaction.py
 - factory-agent/factory_agent/planning/v2_rag_tool.py
+- factory-agent/factory_agent/planning/v2_satisfaction.py
+- factory-agent/factory_agent/rag/
 - factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py
-- factory-agent/tests/test_response_document*.py as needed
+- factory-agent/tests/test_planner_owned_agent_graph_phase6_read_flows.py
 
 Scope:
-- Implement only Phase 6: Read-Only Product Flows.
+- Implement only Phase 7: RAG As A Graph Tool.
 - Do not switch runtime.
 - Do not call the graph from normal plan creation.
 - Do not remove direct-v2 helpers.
+- Do not add a legacy RAG shortcut.
 - Do not change product behavior outside explicit graph test/debug entry points.
 - Update the graph migration tracker after implementation.
 
 Implementation requirements:
-- Prove read-only behavior through the graph test/debug path while preserving product-facing response semantics for later runtime switch.
-- Cover simple machine status, job status, multi-ID status, filtered jobs with sort/limit/fields, mixed machine/job/list queries, mixed operational/RAG reads, and empty-result list queries.
-- Keep API/RAG execution behind Phase 5 graph-authorized adapters and typed evidence observation.
-- Ensure summaries and response-document context reflect all fulfilled requirements, not only the final requirement.
-- Empty result evidence must say no matching records were found and must not reuse stale preview/approval/response context.
-- Keep response document rendering as placeholder/context only unless adapting existing response-document code is necessary for contract proof.
-- Preserve repeated retrieval guard tracing and final validation from typed evidence.
+- Route document requirements through graph-owned `rag_tool` execution selected from bounded hydrated candidates.
+- RAG execution must create citation-backed evidence when retrieved content proves the claim.
+- If retrieved content does not prove the claim, create explicit insufficient-context evidence and safe final state.
+- Safety notices remain product behavior, not substitutes for evidence.
+- Trace must identify graph `rag_tool` action/evidence and must not use `legacy_rag_route`.
+- Preserve source/citation metadata without source-ID runtime branches.
+- Keep response document rendering as context/contract proof unless existing response-document code can be adapted safely.
 - Direct service execution helpers remain untouched until runtime switch; graph tests must not use them as graph authority.
-- `session.replan_context` must remain pointer/UI metadata only, not authoritative graph state.
 
 Maintainability and hardcode rules:
 - No exact-prompt runtime branches.
-- No seeded-ID runtime branches such as M-CNC-01, JOB-SEED-*, hard query IDs, or source IDs.
+- No seeded-ID or source-ID runtime branches such as M-CNC-01, JOB-SEED-*, OSHA source IDs, hard query IDs, or exact prompts.
 - No new retriever, RAG, approval, or response-document stack.
 - Keep requirement, capability need, tool call, evidence, and response document separate.
 - Use the existing LangGraph checkpointer seam for checkpoint/resume work in later phases. Do not make `session.replan_context` authoritative graph state.
@@ -434,15 +434,17 @@ Maintainability and hardcode rules:
 
 Verification:
 - cd factory-agent
-- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py -q
-- python -m pytest tests/test_response_document*.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
+- python -m pytest tests/test_planner_owned_agent_graph_phase1_state.py tests/test_planner_owned_agent_graph_phase2_decisions.py tests/test_planner_owned_agent_graph_phase3_shell.py tests/test_planner_owned_agent_graph_phase4_retrieval.py tests/test_planner_owned_agent_graph_phase5_execution_observation.py tests/test_planner_owned_agent_graph_phase6_read_flows.py tests/test_planner_owned_agent_graph_phase7_rag.py -q
+- python -m pytest tests/test_response_document*.py tests/test_rag*.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- cd "..\eMas Front"
+- npm run test:e2e:seeded-oracles
+- npm run test:e2e:real-langgraph
 - cd ..
-- npm run test:e2e:response-document
 - If a planned pytest command uses `*`, expand it in PowerShell before running and record the expanded command/count.
 - git diff --check
 
 Commit only if the required gate passes. Suggested commit message:
-feat: prove graph read-only product flows
+feat: route planner-owned graph rag evidence
 
 Final response format:
 Use exactly these sections:
