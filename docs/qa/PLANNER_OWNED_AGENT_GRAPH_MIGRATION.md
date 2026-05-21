@@ -243,6 +243,23 @@ python -m pytest @phaseTests -q
 
 If a wildcard command reports that no tests ran, do not count it as a pass. Rerun with an explicit file list or PowerShell-expanded list and record the actual count.
 
+## Seeded And Real-LangGraph E2E Gate Schedule
+
+The seeded-oracle and real-LangGraph suites were reported green before this migration began. Use them as regression gates according to phase risk:
+
+| Phase | Seeded-oracle | Real-LangGraph | Gate Meaning |
+| --- | --- | --- | --- |
+| 1-5 | Optional | Optional | Contract, shell, retrieval, and internal execution work. Runtime is not switched. Run only if a change looks suspicious. |
+| 6 | Run targeted or full seeded when feasible | Optional | Read-only product flows and response document behavior become in scope. |
+| 7 | Run seeded | Run if RAG/semantic cases changed | RAG becomes graph-owned evidence, so document-answer regressions matter. |
+| 8 | Run seeded | Optional or targeted | Write approval, preview, and UI behavior become in scope. |
+| 9 | Run seeded | Run real-LangGraph | Interruption, stale work, and stateful graph behavior become in scope. |
+| 10 | Mandatory | Mandatory | Normal runtime switches to graph. Both suites are release blockers. |
+| 11 | Mandatory | Mandatory | Test cleanup can hide wrong behavior. Both suites are release blockers. |
+| 12 | Mandatory | Mandatory | Final release proof. Both suites must be green unless a failure is proven external/environmental with owner and removal gate. |
+
+Do not treat seeded-oracle or real-LangGraph failures as inherited debt in this migration. Since they were green at the start, a later failure is a migration regression unless the tracker proves otherwise.
+
 ## Phase 1: Graph State And Trace Contracts
 
 Goal: define the serializable state contract for the new graph without switching runtime.
