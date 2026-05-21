@@ -23,6 +23,7 @@ from ..planning.v2_agent_state import (
 from ..planning.v2_capability_map import build_capability_needs_for_text
 from ..planning.v2_contracts import (
     CandidateToolWindow,
+    EvidenceLedger,
     EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
@@ -30,6 +31,7 @@ from ..planning.v2_contracts import (
     RequirementSatisfactionState,
     SatisfactionCheck,
     ToolRetrievalTrace,
+    UserInterrupt,
     V2ContractModel,
 )
 from ..planning.v2_graph_adapters import (
@@ -38,6 +40,7 @@ from ..planning.v2_graph_adapters import (
     execute_graph_tool_call,
     observe_graph_tool_result,
 )
+from ..planning.v2_interrupts import apply_user_interrupt_to_v2_state, classify_user_interrupt
 from ..planning.v2_planner_decisions import record_planner_decision, validate_planner_decision
 from ..planning.v2_rag_tool import ensure_v2_rag_tool
 from ..planning.v2_satisfaction import V2RepeatedRetrievalGuard, apply_deterministic_evidence_satisfaction
@@ -397,7 +400,99 @@ class PlannerOwnedAgentGraph:
         new_user_message: str,
         options: PlannerOwnedAgentGraphRunOptions | Mapping[str, Any] | None = None,
     ) -> PlannerOwnedGraphResult:
-        raise NotImplementedError("graph interruption is scheduled for a later planner-owned graph phase")
+        if self._checkpointer is None:
+            raise ValueError("planner-owned graph interruption requires a LangGraph checkpointer")
+
+        normalized_options = _normalize_options(options)
+        checkpoint_config = _checkpoint_config(normalized_options, session_context=session_context)
+        event_start = len(self._tracer.events)
+        state, checkpoint_tuple = await self._load_checkpoint_state(checkpoint_config)
+        previous_revision = state.requirement_ledger.revision
+        previous_checkpoint_identity = dict(
+            state.execution_trace.diagnostics.get("graph_checkpoint_identity")
+            or _graph_checkpoint_identity(checkpoint_config, ledger_revision=previous_revision)
+        )
+        loaded_checkpoint_id = _checkpoint_tuple_id(checkpoint_tuple)
+        pending_before = state.pending_approval.model_copy(deep=True)
+        old_evidence_ids = [evidence.id for evidence in state.evidence_ledger.evidence]
+
+        interrupt = classify_user_interrupt(
+            new_user_message,
+            session_status=str(_session_context_value(session_context, "status") or ""),
+            awaiting_approval=state.pending_approval.status == "pending",
+            previous_goal=state.requirement_ledger.user_goal,
+            target_requirement_id=_session_context_value(session_context, "target_requirement_id"),
+            approval_id=state.pending_approval.approval_id,
+            created_from_revision=previous_revision,
+        )
+        loop_state = state.as_loop_compat_state()
+        apply_user_interrupt_to_v2_state(loop_state, interrupt, capability_map=state.capability_map)
+        if loop_state.requirement_ledger is not None:
+            state.requirement_ledger = loop_state.requirement_ledger
+            state.original_query = state.requirement_ledger.user_goal
+        state.evidence_ledger = loop_state.evidence_ledger
+        state.satisfaction_state = loop_state.satisfaction_state
+        state.final_validation_result = loop_state.final_validation_result
+        state.revision_history = loop_state.revision_history
+        state.execution_trace = loop_state.execution_trace
+
+        carry_forward_refs = _explicit_carried_forward_evidence_refs(
+            session_context=session_context,
+            options=normalized_options,
+        )
+        evidence_policy = _apply_graph_revision_evidence_policy(
+            state,
+            previous_revision=previous_revision,
+            old_evidence_ids=old_evidence_ids,
+            carry_forward_evidence_refs=carry_forward_refs,
+        )
+        stale_work = _invalidate_graph_work_after_interrupt(
+            state,
+            interrupt=interrupt,
+            previous_revision=previous_revision,
+            previous_checkpoint_identity=previous_checkpoint_identity,
+            pending_before=pending_before,
+        )
+        if interrupt.interrupt_type == "cancel_current_run":
+            _close_graph_after_cancel_interrupt(state, interrupt)
+
+        new_checkpoint_identity = _graph_checkpoint_identity(
+            checkpoint_config,
+            ledger_revision=state.requirement_ledger.revision,
+        )
+        state.execution_trace.diagnostics["graph_checkpoint_identity"] = new_checkpoint_identity
+        _record_graph_interrupt_revision_trace(
+            state,
+            interrupt=interrupt,
+            previous_revision=previous_revision,
+            loaded_checkpoint_id=loaded_checkpoint_id,
+            previous_checkpoint_identity=previous_checkpoint_identity,
+            new_checkpoint_identity=new_checkpoint_identity,
+            evidence_policy=evidence_policy,
+            stale_work=stale_work,
+        )
+        _store_graph_interrupt_pointer_for_ui(
+            session_context,
+            interrupt=interrupt,
+            previous_revision=previous_revision,
+            current_revision=state.requirement_ledger.revision,
+            previous_checkpoint_identity=previous_checkpoint_identity,
+            current_checkpoint_identity=new_checkpoint_identity,
+        )
+
+        await self._response_document_node(state)
+        saved_config = await self._compiled_graph.aupdate_state(
+            checkpoint_config,
+            _state_update(state),
+            as_node="response_document_node",
+        )
+        state.execution_trace.diagnostics["phase9_interruption_revision"]["saved_checkpoint_config"] = saved_config
+        return PlannerOwnedGraphResult(
+            state=state,
+            node_order=list(state.execution_trace.diagnostics.get("phase3_node_order") or []),
+            checkpoint_config=saved_config,
+            trace_events=list(self._tracer.events[event_start:]),
+        )
 
     def _compile_graph(self) -> Any:
         graph = StateGraph(PlannerOwnedAgentGraphState)
@@ -498,6 +593,7 @@ class PlannerOwnedAgentGraph:
             decision
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
+            and _planner_decision_is_active_for_graph_revision(state, decision)
             and decision.requirement_id is not None
             and not _has_candidate_window_for_requirement(state, decision.requirement_id)
             and not _has_evidence_for_requirement(state, decision.requirement_id)
@@ -563,6 +659,7 @@ class PlannerOwnedAgentGraph:
             decision
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
+            and _planner_decision_is_active_for_graph_revision(state, decision)
             and decision.requirement_id is not None
             and _has_candidate_window_for_requirement(state, decision.requirement_id)
             and not _has_choice_for_requirement(state, decision.requirement_id)
@@ -618,11 +715,19 @@ class PlannerOwnedAgentGraph:
                 "approval_id": state.pending_approval.approval_id,
             }
             return _state_update(state)
+        pending_execution = state.execution_trace.diagnostics.get(_PENDING_EXECUTION_DIAGNOSTIC_KEY)
+        if isinstance(pending_execution, Mapping) and pending_execution.get("status") == "observed_by_next_node":
+            state.execution_trace.diagnostics["phase9_background_work"] = {
+                "status": "awaiting_observation",
+                "stale_check_deferred_to_evidence_observation": True,
+            }
+            return _state_update(state)
 
         choose_decisions = [
             decision
             for decision in state.planner_decisions
             if decision.decision_kind == "choose_tool"
+            and _planner_decision_is_active_for_graph_revision(state, decision)
             and decision.selected_tool_call is not None
             and not _has_evidence_for_requirement(state, decision.selected_tool_call.requirement_id)
             and not _has_execution_decision_for_call(state, decision.selected_tool_call)
@@ -650,6 +755,7 @@ class PlannerOwnedAgentGraph:
             )
             record_planner_decision(state, guard_decision)
             execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+            _attach_graph_work_identity(state, execution)
             executions.append(execution)
             action_events.append(
                 {
@@ -690,11 +796,43 @@ class PlannerOwnedAgentGraph:
         if not isinstance(raw_executions, list):
             raw_executions = [pending["execution_result"]]
         evidence_items: list[EvidenceLedgerEntry] = []
+        ignored_results: list[dict[str, Any]] = []
         for raw_execution in raw_executions:
             execution = GraphToolExecutionResult.model_validate(raw_execution)
+            stale = _stale_background_result_reason(state, execution)
+            if stale is not None:
+                ignored_results.append(
+                    {
+                        "tool_call_id": execution.tool_call.call_id,
+                        "tool_name": execution.tool_call.tool_name,
+                        "requirement_id": execution.tool_call.requirement_id,
+                        "reason": stale,
+                        "result_ledger_revision": execution.diagnostic_metadata.get("ledger_revision"),
+                        "active_ledger_revision": state.requirement_ledger.revision,
+                        "result_checkpoint_id": execution.diagnostic_metadata.get("checkpoint_id"),
+                        "active_checkpoint_id": _current_graph_checkpoint_id(state),
+                    }
+                )
+                continue
             evidence = await _maybe_await(self._adapters.observe_tool_result(state, execution))
+            _attach_graph_evidence_identity(state, evidence)
             state.evidence_ledger.evidence.append(evidence)
             evidence_items.append(evidence)
+        if ignored_results:
+            previous_ignored = list(state.execution_trace.diagnostics.get("stale_background_results_ignored") or [])
+            state.execution_trace.diagnostics["stale_background_results_ignored"] = [
+                *previous_ignored,
+                *ignored_results,
+            ]
+        if not evidence_items:
+            state.execution_trace.diagnostics["evidence_observation"] = {
+                "status": "ignored_stale_background_result" if ignored_results else "no_pending_execution",
+                "ignored_results": ignored_results,
+                "stale_background_results_ignored": bool(ignored_results),
+                "stale_checked_by_graph_revision_and_checkpoint": bool(ignored_results),
+            }
+            state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
+            return _state_update(state)
         graph_evidence_events = [
             {
                 "evidence_ref": evidence.id,
@@ -713,6 +851,8 @@ class PlannerOwnedAgentGraph:
             "source_types": [evidence.source_type for evidence in evidence_items],
             "source_of_truths": [evidence.source_of_truth for evidence in evidence_items],
             "graph_evidence": graph_evidence_events,
+            "ignored_results": ignored_results,
+            "stale_checked_by_graph_revision_and_checkpoint": True,
         }
         if len(evidence_items) == 1:
             state.execution_trace.diagnostics["evidence_observation"].update(
@@ -741,12 +881,32 @@ class PlannerOwnedAgentGraph:
                 "final_validation_deferred": True,
             }
             return _state_update(state)
+        historical_evidence = state.evidence_ledger
         loop_state = state.as_loop_compat_state()
+        active_evidence = [
+            evidence
+            for evidence in historical_evidence.evidence
+            if _evidence_can_satisfy_active_revision(state, evidence)
+        ]
+        loop_state.evidence_ledger = EvidenceLedger(evidence=active_evidence)
         apply_deterministic_evidence_satisfaction(loop_state)
         state.requirement_ledger = loop_state.requirement_ledger or state.requirement_ledger
         state.satisfaction_state = loop_state.satisfaction_state
         state.revision_history = loop_state.revision_history
         state.execution_trace = loop_state.execution_trace
+        state.evidence_ledger = historical_evidence
+        state.execution_trace.diagnostics["phase9_active_revision_evidence"] = {
+            "active_evidence_refs": [evidence.id for evidence in active_evidence],
+            "historical_evidence_refs": [
+                evidence.id
+                for evidence in historical_evidence.evidence
+                if evidence.id not in {active.id for active in active_evidence}
+            ],
+            "stale_evidence_excluded_from_satisfaction": any(
+                not _evidence_can_satisfy_active_revision(state, evidence)
+                for evidence in historical_evidence.evidence
+            ),
+        }
         validate_graph_state_final_state(state)
         return _state_update(state)
 
@@ -820,6 +980,16 @@ class PlannerOwnedAgentGraph:
         response_summary = _phase6_response_summary(state, response_blocks)
         pending = state.pending_approval.status == "pending"
         graph_write_activity = _has_graph_write_activity(state)
+        active_evidence_refs = [
+            evidence.id
+            for evidence in state.evidence_ledger.evidence
+            if _evidence_can_satisfy_active_revision(state, evidence)
+        ]
+        historical_evidence_refs = [
+            evidence.id
+            for evidence in state.evidence_ledger.evidence
+            if evidence.id not in set(active_evidence_refs)
+        ]
         state.response_document_context = ResponseDocumentContext(
             state="draft" if pending or validation_status == "deferred" else ("rendered" if validation_status == "passed" else "failed"),
             document_id=(
@@ -829,7 +999,7 @@ class PlannerOwnedAgentGraph:
             ),
             revision=state.requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in state.requirement_ledger.requirements],
-            evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
+            evidence_refs=active_evidence_refs,
             pending_approval_id=state.pending_approval.approval_id if pending else None,
             render_contract=(
                 "phase8_graph_write_approval_response_document_context"
@@ -842,6 +1012,9 @@ class PlannerOwnedAgentGraph:
                 "final_validation_status": validation_status,
                 "summary": response_summary,
                 "blocks": response_blocks,
+                "active_evidence_refs": active_evidence_refs,
+                "historical_evidence_refs": historical_evidence_refs,
+                "stale_evidence_excluded_from_active_revision": bool(historical_evidence_refs),
                 "fulfilled_requirement_ids": [
                     requirement.id
                     for requirement in state.requirement_ledger.requirements
@@ -1017,6 +1190,7 @@ class PlannerOwnedAgentGraph:
         for choose_decision in state.planner_decisions:
             if (
                 choose_decision.decision_kind == "choose_tool"
+                and _planner_decision_is_active_for_graph_revision(state, choose_decision)
                 and choose_decision.selected_tool_call is not None
                 and not _has_evidence_for_requirement(state, choose_decision.selected_tool_call.requirement_id)
                 and _tool_choice_requires_graph_approval(state, choose_decision)
@@ -1056,6 +1230,7 @@ class PlannerOwnedAgentGraph:
         record_planner_decision(state, guard_decision)
         _record_node_visit(state, "tool_execution_node", self._tracer)
         execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+        _attach_graph_work_identity(state, execution)
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
             "execution_results": [execution.model_dump(mode="json")],
@@ -1131,6 +1306,429 @@ class PlannerOwnedAgentGraph:
         allowed = set(PlannerOwnedAgentGraphState.model_fields)
         payload = {key: value for key, value in channel_values.items() if key in allowed}
         return PlannerOwnedAgentGraphState.model_validate(payload), checkpoint_tuple
+
+
+def _explicit_carried_forward_evidence_refs(
+    *,
+    session_context: Mapping[str, Any] | Any | None,
+    options: PlannerOwnedAgentGraphRunOptions,
+) -> set[str]:
+    values: list[Any] = []
+    configured = options.configurable.get("carry_forward_evidence_refs")
+    if configured is not None:
+        values.append(configured)
+    context_value = _session_context_value(session_context, "carry_forward_evidence_refs")
+    if context_value is not None:
+        values.append(context_value)
+    replan_context = _session_context_value(session_context, "replan_context")
+    if isinstance(replan_context, Mapping):
+        nested = replan_context.get("planner_owned_graph_carry_forward_evidence_refs")
+        if nested is not None:
+            values.append(nested)
+
+    refs: set[str] = set()
+    for value in values:
+        if value is True or value == "all":
+            refs.add("*")
+        elif isinstance(value, str):
+            if value.strip():
+                refs.add(value.strip())
+        elif isinstance(value, (list, tuple, set)):
+            refs.update(str(item).strip() for item in value if str(item).strip())
+    return refs
+
+
+def _apply_graph_revision_evidence_policy(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    previous_revision: int,
+    old_evidence_ids: list[str],
+    carry_forward_evidence_refs: set[str],
+) -> dict[str, Any]:
+    old_ids = set(old_evidence_ids)
+    carry_all = "*" in carry_forward_evidence_refs
+    carried: list[str] = []
+    stale: list[str] = []
+    active_requirement_ids = {
+        requirement.id
+        for requirement in state.requirement_ledger.requirements
+        if requirement.status not in {"superseded", "skipped"}
+    }
+    for evidence in state.evidence_ledger.evidence:
+        if evidence.id not in old_ids:
+            continue
+        metadata = dict(evidence.diagnostic_metadata or {})
+        explicit_carry = carry_all or evidence.id in carry_forward_evidence_refs
+        if explicit_carry and evidence.requirement_id in active_requirement_ids:
+            metadata["carried_forward_explicit"] = True
+            metadata["carried_forward_from_ledger_revision"] = previous_revision
+            metadata["carried_forward_to_ledger_revision"] = state.requirement_ledger.revision
+            metadata["active_revision_satisfaction"] = True
+            carried.append(evidence.id)
+        else:
+            metadata["stale_after_user_interrupt"] = True
+            metadata["stale_after_graph_revision"] = True
+            metadata["active_revision_satisfaction"] = False
+            metadata["superseded_by_ledger_revision"] = state.requirement_ledger.revision
+            metadata.setdefault("superseded_reason", "graph_user_interrupt")
+            stale.append(evidence.id)
+        evidence.diagnostic_metadata = metadata
+
+    stale_set = set(stale)
+    for requirement in state.requirement_ledger.requirements:
+        if requirement.status in {"superseded", "skipped"}:
+            continue
+        previous_refs = list(requirement.evidence_refs)
+        requirement.evidence_refs = [
+            evidence_ref for evidence_ref in requirement.evidence_refs if evidence_ref not in stale_set
+        ]
+        requirement.satisfaction_checks = [
+            check
+            for check in requirement.satisfaction_checks
+            if check.evidence_ref is None or check.evidence_ref not in stale_set
+        ]
+        if previous_refs and not requirement.evidence_refs and requirement.status in {
+            "satisfied",
+            "impossible",
+            "blocked",
+            "failed",
+        }:
+            requirement.status = "open"
+            requirement.blockers = []
+            requirement.satisfaction_checks = []
+
+    _sync_graph_satisfaction_state(state)
+    return {
+        "previous_ledger_revision": previous_revision,
+        "current_ledger_revision": state.requirement_ledger.revision,
+        "stale_evidence_refs": stale,
+        "carried_forward_evidence_refs": carried,
+        "explicit_carry_forward_required": True,
+    }
+
+
+def _invalidate_graph_work_after_interrupt(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    interrupt: UserInterrupt,
+    previous_revision: int,
+    previous_checkpoint_identity: Mapping[str, Any],
+    pending_before: PendingApprovalState,
+) -> dict[str, Any]:
+    stale_decision_ids = [
+        decision.decision_id
+        for decision in state.planner_decisions
+        if decision.ledger_revision <= previous_revision
+    ]
+    cleared_candidate_windows = len(state.candidate_tool_windows)
+    cleared_hydrated_cards = len(state.hydrated_tool_cards)
+    state.candidate_tool_windows = []
+    state.hydrated_tool_cards = []
+
+    stale_pending_approval: dict[str, Any] | None = None
+    if pending_before.status == "pending":
+        payload = dict(pending_before.payload)
+        payload.update(
+            {
+                "stale_after_interrupt_id": interrupt.interrupt_id,
+                "stale_after_ledger_revision": state.requirement_ledger.revision,
+                "stale_reason": "graph_user_interrupt_revised_ledger",
+                "previous_graph_checkpoint_identity": dict(previous_checkpoint_identity),
+            }
+        )
+        state.pending_approval = PendingApprovalState(
+            status="stale",
+            approval_id=pending_before.approval_id,
+            requirement_id=pending_before.requirement_id,
+            decision_id=pending_before.decision_id,
+            ledger_revision=pending_before.ledger_revision,
+            checkpoint_id=pending_before.checkpoint_id,
+            tool_call=pending_before.tool_call,
+            payload=payload,
+        )
+        stale_pending_approval = {
+            "approval_id": pending_before.approval_id,
+            "requirement_id": pending_before.requirement_id,
+            "approval_ledger_revision": pending_before.ledger_revision,
+            "approval_checkpoint_id": pending_before.checkpoint_id,
+            "stale_after_ledger_revision": state.requirement_ledger.revision,
+        }
+
+    diagnostics = {
+        "previous_ledger_revision": previous_revision,
+        "current_ledger_revision": state.requirement_ledger.revision,
+        "stale_planner_decision_ids": stale_decision_ids,
+        "cleared_candidate_window_count": cleared_candidate_windows,
+        "cleared_hydrated_card_count": cleared_hydrated_cards,
+        "stale_pending_approval": stale_pending_approval,
+        "stale_checks_use_graph_revision_and_checkpoint": True,
+    }
+    state.execution_trace.diagnostics["phase9_stale_work"] = diagnostics
+    return diagnostics
+
+
+def _close_graph_after_cancel_interrupt(
+    state: PlannerOwnedAgentGraphState,
+    interrupt: UserInterrupt,
+) -> None:
+    closed_requirement_ids: list[str] = []
+    for requirement in state.requirement_ledger.requirements:
+        if requirement.status in {"superseded", "impossible"}:
+            continue
+        evidence = EvidenceLedgerEntry(
+            id=_unique_graph_evidence_id(state, f"ev-user-cancel-{requirement.id}"),
+            requirement_id=requirement.id,
+            source_type="system_guard",
+            source_of_truth=requirement.source_of_truth,
+            confidence="deterministic",
+            normalized_result={
+                "status": "cancelled",
+                "reason": "user_cancelled_current_run",
+                "interrupt_id": interrupt.interrupt_id,
+                "ledger_revision": state.requirement_ledger.revision,
+            },
+            satisfies=["user_cancelled_current_run"],
+            diagnostic_metadata={
+                "graph_user_interrupt": True,
+                "interrupt_id": interrupt.interrupt_id,
+                "interrupt_type": interrupt.interrupt_type,
+                "ledger_revision": state.requirement_ledger.revision,
+                "active_revision_satisfaction": True,
+            },
+        )
+        state.evidence_ledger.evidence.append(evidence)
+        requirement.status = "impossible"
+        requirement.evidence_refs = [evidence.id]
+        requirement.satisfaction_checks = [
+            SatisfactionCheck(
+                check="user_cancelled_current_run",
+                expected="continue_execution",
+                actual="cancelled_by_user",
+                passed=True,
+                evidence_ref=evidence.id,
+                message="The user cancelled the active graph run.",
+            )
+        ]
+        if "user_cancelled_current_run" not in requirement.blockers:
+            requirement.blockers.append("user_cancelled_current_run")
+        closed_requirement_ids.append(requirement.id)
+
+    state.pending_approval = PendingApprovalState(status="none")
+    _sync_graph_satisfaction_state(state)
+    validate_graph_state_final_state(state)
+    if state.final_validation_result is not None and state.final_validation_result.status == "passed":
+        decision = PlannerDecisionRecord(
+            decision_id=f"dec-finalize-{len(state.planner_decisions) + 1:03d}",
+            decision_kind="finalize",
+            author="deterministic_guard",
+            ledger_revision=state.requirement_ledger.revision,
+            evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
+            reason="User cancelled the active graph run and the graph closed it with typed cancellation evidence.",
+        )
+        record_planner_decision(state, decision)
+    state.execution_trace.diagnostics["phase9_cancel_interrupt"] = {
+        "status": "closed",
+        "closed_requirement_ids": closed_requirement_ids,
+        "final_validation_status": state.final_validation_result.status if state.final_validation_result else None,
+    }
+
+
+def _record_graph_interrupt_revision_trace(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    interrupt: UserInterrupt,
+    previous_revision: int,
+    loaded_checkpoint_id: str | None,
+    previous_checkpoint_identity: Mapping[str, Any],
+    new_checkpoint_identity: Mapping[str, Any],
+    evidence_policy: Mapping[str, Any],
+    stale_work: Mapping[str, Any],
+) -> None:
+    event = {
+        "status": "applied",
+        "interrupt": interrupt.model_dump(mode="json"),
+        "previous_ledger_revision": previous_revision,
+        "new_ledger_revision": state.requirement_ledger.revision,
+        "loaded_checkpoint_id": loaded_checkpoint_id,
+        "previous_checkpoint_identity": dict(previous_checkpoint_identity),
+        "new_checkpoint_identity": dict(new_checkpoint_identity),
+        "native_langgraph_checkpoint_used": True,
+        "session_replan_context_authoritative": False,
+        "evidence_policy": dict(evidence_policy),
+        "stale_work": dict(stale_work),
+    }
+    state.execution_trace.diagnostics["phase9_interruption_revision"] = event
+    state.execution_trace.planner.diagnostics["phase9_interruption_revision"] = {
+        "interrupt_id": interrupt.interrupt_id,
+        "interrupt_type": interrupt.interrupt_type,
+        "previous_ledger_revision": previous_revision,
+        "new_ledger_revision": state.requirement_ledger.revision,
+    }
+    history = [
+        item
+        for item in state.execution_trace.diagnostics.get("graph_revision_metadata", [])
+        if isinstance(item, dict)
+    ]
+    history.append(event)
+    state.execution_trace.diagnostics["graph_revision_metadata"] = history
+
+
+def _store_graph_interrupt_pointer_for_ui(
+    session_context: Mapping[str, Any] | Any | None,
+    *,
+    interrupt: UserInterrupt,
+    previous_revision: int,
+    current_revision: int,
+    previous_checkpoint_identity: Mapping[str, Any],
+    current_checkpoint_identity: Mapping[str, Any],
+) -> None:
+    pointer = {
+        "interrupt_id": interrupt.interrupt_id,
+        "interrupt_type": interrupt.interrupt_type,
+        "ledger_revision": current_revision,
+        "previous_ledger_revision": previous_revision,
+        "checkpoint_id": current_checkpoint_identity.get("checkpoint_id"),
+        "previous_checkpoint_id": previous_checkpoint_identity.get("checkpoint_id"),
+        "session_replan_context_authoritative": False,
+        "source": "planner_owned_agent_graph_checkpoint_pointer",
+    }
+    if session_context is None:
+        return
+    existing = _session_context_value(session_context, "replan_context")
+    context = dict(existing) if isinstance(existing, Mapping) else {}
+    context["planner_owned_graph_interrupt"] = pointer
+    history = [item for item in context.get("planner_owned_graph_interrupt_history", []) if isinstance(item, dict)]
+    history.append(pointer)
+    context["planner_owned_graph_interrupt_history"] = history
+    if isinstance(session_context, dict):
+        session_context["replan_context"] = context
+        return
+    try:
+        setattr(session_context, "replan_context", context)
+    except Exception:
+        return
+
+
+def _attach_graph_work_identity(
+    state: PlannerOwnedAgentGraphState,
+    execution: GraphToolExecutionResult,
+) -> None:
+    metadata = dict(execution.diagnostic_metadata or {})
+    metadata.setdefault("ledger_revision", state.requirement_ledger.revision)
+    checkpoint_id = _current_graph_checkpoint_id(state)
+    if checkpoint_id is not None:
+        metadata.setdefault("checkpoint_id", checkpoint_id)
+    metadata.setdefault("graph_checkpoint_identity", state.execution_trace.diagnostics.get("graph_checkpoint_identity"))
+    execution.diagnostic_metadata = metadata
+
+
+def _attach_graph_evidence_identity(
+    state: PlannerOwnedAgentGraphState,
+    evidence: EvidenceLedgerEntry,
+) -> None:
+    metadata = dict(evidence.diagnostic_metadata or {})
+    metadata.setdefault("ledger_revision", state.requirement_ledger.revision)
+    checkpoint_id = _current_graph_checkpoint_id(state)
+    if checkpoint_id is not None:
+        metadata.setdefault("checkpoint_id", checkpoint_id)
+    metadata.setdefault("active_revision_satisfaction", True)
+    evidence.diagnostic_metadata = metadata
+
+
+def _stale_background_result_reason(
+    state: PlannerOwnedAgentGraphState,
+    execution: GraphToolExecutionResult,
+) -> str | None:
+    metadata = dict(execution.diagnostic_metadata or {})
+    result_revision = _coerce_positive_int(metadata.get("ledger_revision"))
+    if result_revision is not None and result_revision != state.requirement_ledger.revision:
+        return "ledger_revision_mismatch"
+    result_checkpoint_id = metadata.get("checkpoint_id")
+    current_checkpoint_id = _current_graph_checkpoint_id(state)
+    if (
+        result_checkpoint_id not in (None, "")
+        and current_checkpoint_id not in (None, "")
+        and str(result_checkpoint_id) != str(current_checkpoint_id)
+    ):
+        return "checkpoint_id_mismatch"
+    requirement = _requirement_by_id(state, execution.tool_call.requirement_id)
+    if requirement is None:
+        return "requirement_missing"
+    if requirement.status == "superseded":
+        return "requirement_superseded"
+    if metadata.get("stale_after_graph_revision") is True or metadata.get("active_revision_satisfaction") is False:
+        return "result_marked_stale"
+    return None
+
+
+def _evidence_can_satisfy_active_revision(
+    state: PlannerOwnedAgentGraphState,
+    evidence: EvidenceLedgerEntry,
+) -> bool:
+    metadata = dict(evidence.diagnostic_metadata or {})
+    if metadata.get("active_revision_satisfaction") is False:
+        return False
+    if metadata.get("stale_after_graph_revision") is True or metadata.get("stale_after_user_interrupt") is True:
+        return False
+    requirement = _requirement_by_id(state, evidence.requirement_id)
+    if requirement is None or requirement.status == "superseded":
+        return False
+
+    current_revision = state.requirement_ledger.revision
+    carried_to = _coerce_positive_int(metadata.get("carried_forward_to_ledger_revision"))
+    if carried_to == current_revision:
+        return True
+    superseded_by = _coerce_positive_int(metadata.get("superseded_by_ledger_revision"))
+    if superseded_by is not None and superseded_by <= current_revision:
+        return False
+    return True
+
+
+def _planner_decision_is_active_for_graph_revision(
+    state: PlannerOwnedAgentGraphState,
+    decision: PlannerDecisionRecord,
+) -> bool:
+    stale = state.execution_trace.diagnostics.get("phase9_stale_work")
+    if not isinstance(stale, Mapping):
+        return True
+    stale_ids = {
+        str(decision_id)
+        for decision_id in stale.get("stale_planner_decision_ids", [])
+        if str(decision_id)
+    }
+    return decision.decision_id not in stale_ids
+
+
+def _current_graph_checkpoint_id(state: PlannerOwnedAgentGraphState) -> str | None:
+    identity = state.execution_trace.diagnostics.get("graph_checkpoint_identity")
+    if isinstance(identity, Mapping):
+        checkpoint_id = identity.get("checkpoint_id")
+        return str(checkpoint_id) if checkpoint_id not in (None, "") else None
+    return None
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 1:
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+        return parsed if parsed >= 1 else None
+    return None
+
+
+def _sync_graph_satisfaction_state(state: PlannerOwnedAgentGraphState) -> None:
+    state.satisfaction_state.requirements = [
+        RequirementSatisfactionState(
+            requirement_id=requirement.id,
+            status=requirement.status,
+            evidence_refs=list(requirement.evidence_refs),
+            satisfaction_checks=list(requirement.satisfaction_checks),
+            blocker_reason=requirement.blockers[-1] if requirement.blockers else None,
+        )
+        for requirement in state.requirement_ledger.requirements
+    ]
 
 
 def _record_node_visit(
@@ -1616,7 +2214,11 @@ def _record_repeated_retrieval_guard_trace(
 
 
 def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
-    evidence_requirement_ids = {evidence.requirement_id for evidence in state.evidence_ledger.evidence}
+    evidence_requirement_ids = {
+        evidence.requirement_id
+        for evidence in state.evidence_ledger.evidence
+        if _evidence_can_satisfy_active_revision(state, evidence)
+    }
     return [
         requirement
         for requirement in state.requirement_ledger.requirements
@@ -1631,6 +2233,7 @@ def _has_decision_for_requirement(
 ) -> bool:
     return any(
         decision.decision_kind == decision_kind and decision.requirement_id == requirement_id
+        and _planner_decision_is_active_for_graph_revision(state, decision)
         for decision in state.planner_decisions
     )
 
@@ -1643,13 +2246,19 @@ def _has_candidate_window_for_requirement(state: PlannerOwnedAgentGraphState, re
 
 def _has_choice_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
     return any(
-        decision.decision_kind == "choose_tool" and decision.requirement_id == requirement_id
+        decision.decision_kind == "choose_tool"
+        and decision.requirement_id == requirement_id
+        and _planner_decision_is_active_for_graph_revision(state, decision)
         for decision in state.planner_decisions
     )
 
 
 def _has_evidence_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
-    return any(evidence.requirement_id == requirement_id for evidence in state.evidence_ledger.evidence)
+    return any(
+        evidence.requirement_id == requirement_id
+        and _evidence_can_satisfy_active_revision(state, evidence)
+        for evidence in state.evidence_ledger.evidence
+    )
 
 
 def _has_execution_decision_for_call(
@@ -1658,6 +2267,7 @@ def _has_execution_decision_for_call(
 ) -> bool:
     return any(
         decision.decision_kind == "execute_tool"
+        and _planner_decision_is_active_for_graph_revision(state, decision)
         and decision.selected_tool_call is not None
         and decision.selected_tool_call.call_id == tool_call.call_id
         for decision in state.planner_decisions
@@ -1749,6 +2359,8 @@ def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str
     requirements_by_id = {requirement.id: requirement for requirement in state.requirement_ledger.requirements}
     blocks: list[dict[str, Any]] = []
     for evidence in state.evidence_ledger.evidence:
+        if not _evidence_can_satisfy_active_revision(state, evidence):
+            continue
         requirement = requirements_by_id.get(evidence.requirement_id)
         block = _phase6_response_block_for_evidence(requirement, evidence)
         if block:

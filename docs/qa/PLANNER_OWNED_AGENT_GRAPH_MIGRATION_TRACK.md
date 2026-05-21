@@ -48,8 +48,8 @@ State/checkpoint decision:
 | 5 | Tool/RAG execution and evidence observation | Complete | pending final commit | Evidence observation tests plus satisfaction guard |
 | 6 | Read-only product flows | Complete | `d5f69242` | Mixed read, empty-result, response-document tests and E2E |
 | 7 | RAG as a graph tool | Complete | pending final commit | Citation/insufficient-context tests without legacy RAG route |
-| 8 | Writes, approval pause, and resume | Not started |  | Approval resume, stale approval, and UI approval tests |
-| 9 | Interruptions, revisions, and stale work | Not started |  | Interrupt/revision/stale-work tests |
+| 8 | Writes, approval pause, and resume | Complete | `83911fa9` | Approval resume, stale approval, and UI approval tests |
+| 9 | Interruptions, revisions, and stale work | Complete | pending final commit | Interrupt/revision/stale-work tests |
 | 10 | Runtime switch to graph | Not started |  | Full backend plus frontend response-document and seeded-oracle gates |
 | 11 | Test cleanup and legacy quarantine | Not started |  | Full backend with no new xfail/skips and static cleanup guardrails |
 | 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
@@ -336,20 +336,38 @@ Next phase recommendation:
 
 ### Phase 9: Interruptions, Revisions, And Stale Work
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
 - `factory-agent/tests/test_planner_owned_agent_graph_phase9_interrupts.py`
-- interrupt/graph adapter files as needed.
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/planning/v2_planner_decisions.py`
+- this tracker.
 
-Completion evidence to record:
+Completion evidence:
 
-- revision history proof,
-- superseded evidence proof,
-- stale background result ignored,
-- stale approval rejected,
-- stale-work checks tied to graph revision/checkpoint identity.
+- `PlannerOwnedAgentGraph.interrupt_with_user_message()` now loads native LangGraph checkpoint state, classifies the user message through the existing `v2_interrupts` contract, applies append/modify/replace/cancel revisions to the graph-owned ledger, writes the revised graph state back through LangGraph `aupdate_state()`, and records UI-compatible pointers in `session.replan_context` without making that context authoritative.
+- Requirement revisions preserve locked constraints and revision history through the existing v2 interrupt/revision contracts. Cancel interruptions close active graph requirements with typed cancellation evidence and passed graph final validation.
+- Old evidence remains in the evidence ledger as historical state. After a user revision it is excluded from active satisfaction/response-document evidence unless `carry_forward_evidence_refs` is explicitly supplied.
+- Old candidate windows, hydrated cards, planner decisions, approval checkpoints, and pending background results are marked stale/ignored by graph revision/checkpoint identity. Deterministic approval continuation still allows internal non-interrupt ledger revisions, so Phase 8 multi-approval behavior remains intact.
+- Stale approvals from a pre-interruption checkpoint are rejected without commit after the graph state has been revised.
+- New revision/trace metadata is recorded under `phase9_interruption_revision`, `graph_revision_metadata`, `phase9_stale_work`, and response-document active/historical evidence diagnostics.
+- Normal runtime remains unswitched; `plan_creation_service.py` still does not import or call `PlannerOwnedAgentGraph`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase9_interrupts.py -q` reported `9 passed, 3 warnings`.
+- Tests run: `python -m pytest tests/test_planner_owned_agent_graph_phase9_interrupts.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q` reported `17 passed, 9 warnings`.
+- Tests run: PowerShell-expanded stateful/approval/response-document command (`$stateful = Get-ChildItem tests -Filter 'test_stateful*.py'`; `$approval = Get-ChildItem tests -Filter 'test_approval*.py'`; `$response = Get-ChildItem tests -Filter 'test_response_document*.py'`; `python -m pytest @stateful @approval @response -q`) reported `67 passed, 169 warnings`.
+- Tests run: Phase 1 through Phase 9 graph sweep reported `60 passed, 5 warnings`.
+- Frontend E2E: `npm run test:e2e:seeded-oracles` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `35 passed`.
+- Frontend E2E: first `npm run test:e2e:real-langgraph` run reported `2 passed, 1 failed`; failure was RD-001 ending with `GET /sessions/null/messages` after the page and backend logs showed the aggregate completion rendered and the real session completed. This was classified as a transient test harness/localStorage capture race, not a product regression, and rerun immediately.
+- Frontend E2E: clean rerun of `npm run test:e2e:real-langgraph` from `C:\Users\dilun\OneDrive\Documents\eMas APi\eMas Front` reported `3 passed`.
+- `git diff --check`: passed with Git line-ending warnings only.
+- Blockers/waivers: none. The transient real-LangGraph first-run failure has proof and a clean rerun; no migration waiver is carried forward.
+- Commit: pending final commit.
+
+Next phase recommendation:
+
+- Proceed to Phase 10: switch normal runtime to the planner-owned graph path, using stable graph thread ids and native checkpoint resume while preserving direct-v2 helpers only as historical/adaptation code until test cleanup.
 
 ### Phase 10: Runtime Switch To Graph
 

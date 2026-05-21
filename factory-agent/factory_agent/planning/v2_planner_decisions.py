@@ -399,6 +399,7 @@ def _state_has_prior_tool_choice(state: PlannerOwnedAgentGraphState, call: Graph
     return any(
         previous.decision_kind == "choose_tool"
         and previous.author in {"planner", "system"}
+        and _decision_is_not_stale_after_graph_interrupt(state, previous)
         and any(_same_tool_call(call, previous_call) for previous_call in _selected_tool_calls(previous))
         for previous in state.planner_decisions
     )
@@ -450,3 +451,19 @@ def _json_key(value: Any) -> str:
     if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray, Mapping)):
         value = list(value)
     return json.dumps(value, sort_keys=True, default=str)
+
+
+def _decision_is_not_stale_after_graph_interrupt(
+    state: PlannerOwnedAgentGraphState,
+    decision: PlannerDecisionRecord,
+) -> bool:
+    diagnostics = getattr(state.execution_trace, "diagnostics", {}) or {}
+    stale = diagnostics.get("phase9_stale_work") if isinstance(diagnostics, Mapping) else None
+    if not isinstance(stale, Mapping):
+        return True
+    stale_ids = {
+        str(decision_id)
+        for decision_id in stale.get("stale_planner_decision_ids", [])
+        if str(decision_id)
+    }
+    return decision.decision_id not in stale_ids
