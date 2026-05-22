@@ -1626,6 +1626,15 @@ def _record_planner_proposer_acceptance(
                 "requirement_id": decision.requirement_id,
                 "requested_decision_kind": context.requested_decision_kind,
                 "adapter": proposer_diagnostics.get("adapter"),
+                "llm_invoked": proposer_diagnostics.get("llm_invoked"),
+                "offline_contract_mode": proposer_diagnostics.get("offline_contract_mode"),
+                "real_llm_mode": proposer_diagnostics.get("real_llm_mode"),
+                "openai_compatible_planner_adapter": proposer_diagnostics.get(
+                    "openai_compatible_planner_adapter"
+                ),
+                "model_name": proposer_diagnostics.get("model_name"),
+                "base_url_type": proposer_diagnostics.get("base_url_type"),
+                "base_url_configured": proposer_diagnostics.get("base_url_configured"),
                 "bounded_state_view": proposer_diagnostics.get("bounded_state_view"),
                 "full_openapi_catalog_visible": proposer_diagnostics.get("full_openapi_catalog_visible"),
                 "validation": dict(validation_diagnostics),
@@ -1657,6 +1666,12 @@ def _record_planner_proposer_rejection(
         "requirement_id": context.requirement_id,
         "reason": reason,
         "diagnostics": dict(diagnostics),
+        "adapter": diagnostics.get("adapter"),
+        "llm_invoked": diagnostics.get("llm_invoked"),
+        "offline_contract_mode": diagnostics.get("offline_contract_mode"),
+        "real_llm_mode": diagnostics.get("real_llm_mode"),
+        "model_name": diagnostics.get("model_name"),
+        "base_url_type": diagnostics.get("base_url_type"),
         "fail_closed": True,
         "tool_execution_allowed": False,
     }

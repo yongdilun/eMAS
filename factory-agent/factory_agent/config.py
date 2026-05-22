@@ -101,6 +101,7 @@ class Settings:
     tool_selector_max_tokens: int = 256
     llm_json_timeout_s: float = 12.0
     llm_json_max_tokens: int = 320
+    allow_offline_planner_proposer: bool = False
     tool_result_summary_timeout_s: float = 12.0
     tool_result_summary_max_tokens: int = 320
     force_llm_trace_all: bool = False
@@ -317,6 +318,10 @@ def get_settings() -> Settings:
         ),
         llm_json_timeout_s=float(os.getenv("LLM_JSON_TIMEOUT_S", "12")),
         llm_json_max_tokens=int(os.getenv("LLM_JSON_MAX_TOKENS", "320")),
+        allow_offline_planner_proposer=_env_truthy(
+            "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER",
+            "0",
+        ),
         tool_result_summary_timeout_s=float(
             os.getenv(
                 "TOOL_RESULT_SUMMARY_TIMEOUT_S",

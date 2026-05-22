@@ -117,6 +117,48 @@ class OfflineStructuredPlannerDecisionProposer:
             diagnostics={
                 "llm_invoked": False,
                 "offline_contract_mode": True,
+                "real_llm_mode": False,
+            },
+        )
+
+
+class PlannerLLMConfigurationRequiredProposer:
+    """Fail-closed adapter used when planner LLM config is missing.
+
+    The factory returns this adapter instead of silently falling back to the
+    offline contract proposer, so graph execution records clear diagnostics and
+    cannot execute tools without an explicit planner policy.
+    """
+
+    adapter_name = "planner_llm_configuration_required"
+
+    async def propose_decision(
+        self,
+        *,
+        state: PlannerOwnedAgentGraphState,
+        context: PlannerDecisionProposalContext,
+    ) -> PlannerDecisionProposalResult:
+        _ = state
+        raise PlannerDecisionProposerError(
+            "No planner LLM endpoint/API key is configured and "
+            "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER is not enabled.",
+            diagnostics={
+                "adapter": self.adapter_name,
+                "configuration_missing": True,
+                "llm_invoked": False,
+                "offline_contract_mode": False,
+                "real_llm_mode": False,
+                "tool_execution_allowed": False,
+                "required_any_of": [
+                    "PLANNER_OPENAI_BASE_URL",
+                    "OPENAI_BASE_URL",
+                    "LLM_BASE_URL",
+                    "OPENAI_API_KEY",
+                    "LLM_API_KEY",
+                ],
+                "explicit_offline_flag": "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER",
+                "decision_id": context.decision_id,
+                "requested_decision_kind": context.requested_decision_kind,
             },
         )
 
@@ -178,8 +220,13 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
             duration_ms = _duration_ms(started)
             error_diagnostics = {
                 "adapter": self.adapter_name,
+                "llm_invoked": True,
+                "offline_contract_mode": False,
+                "real_llm_mode": True,
+                "openai_compatible_planner_adapter": True,
                 "model_name": self._settings.planner_model,
                 "base_url_type": _base_url_type(self._settings.planner_openai_base_url),
+                "base_url_configured": bool(self._settings.planner_openai_base_url),
                 "duration_ms": duration_ms,
                 "prompt_chars": len(prompt),
                 "error": str(exc),
@@ -205,8 +252,12 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
         response_metadata = _message_response_metadata(raw_response)
         diagnostics = {
             "llm_invoked": True,
+            "offline_contract_mode": False,
+            "real_llm_mode": True,
+            "openai_compatible_planner_adapter": True,
             "model_name": self._settings.planner_model,
             "base_url_type": _base_url_type(self._settings.planner_openai_base_url),
+            "base_url_configured": bool(self._settings.planner_openai_base_url),
             "duration_ms": duration_ms,
             "prompt_chars": len(prompt),
             "content_chars": len(content),
@@ -280,7 +331,37 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
 def build_planner_decision_proposer(settings: Settings) -> PlannerDecisionProposer:
     if settings.planner_openai_base_url or settings.openai_api_key:
         return OpenAICompatibleQwenPlannerDecisionProposer(settings)
-    return OfflineStructuredPlannerDecisionProposer()
+    if settings.allow_offline_planner_proposer:
+        return OfflineStructuredPlannerDecisionProposer()
+    return PlannerLLMConfigurationRequiredProposer()
+
+
+def planner_proposer_diagnostics_satisfy_real_llm_release_proof(
+    diagnostics: Mapping[str, Any],
+) -> bool:
+    proposer = diagnostics.get("planner_proposer")
+    if isinstance(proposer, Mapping):
+        diagnostics = proposer
+
+    adapter = str(diagnostics.get("adapter") or "")
+    if adapter == OfflineStructuredPlannerDecisionProposer.adapter_name:
+        return False
+    if diagnostics.get("offline_contract_mode") is True:
+        return False
+    if diagnostics.get("llm_invoked") is not True:
+        return False
+    if diagnostics.get("real_llm_mode") is not True:
+        return False
+    if not (
+        adapter == OpenAICompatibleQwenPlannerDecisionProposer.adapter_name
+        or diagnostics.get("openai_compatible_planner_adapter") is True
+    ):
+        return False
+    if not diagnostics.get("model_name"):
+        return False
+    if not diagnostics.get("base_url_type"):
+        return False
+    return True
 
 
 def _with_proposer_diagnostics(
@@ -938,9 +1019,11 @@ def _dump_model(value: Any) -> Any:
 __all__ = [
     "OfflineStructuredPlannerDecisionProposer",
     "OpenAICompatibleQwenPlannerDecisionProposer",
+    "PlannerLLMConfigurationRequiredProposer",
     "PlannerDecisionProposalContext",
     "PlannerDecisionProposalResult",
     "PlannerDecisionProposer",
     "PlannerDecisionProposerError",
     "build_planner_decision_proposer",
+    "planner_proposer_diagnostics_satisfy_real_llm_release_proof",
 ]
