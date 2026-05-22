@@ -35,6 +35,7 @@ PLAN_CREATION_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "services" / "plan_creation_
 PLANNER_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "planner_service.py"
 EXECUTION_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "execution_service.py"
 APPROVAL_RESUME_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "approval_resume_service.py"
+APPROVALS_ROUTER_SOURCE = RUNTIME_ROOT / "api" / "routers" / "approvals.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
 OLD_GRAPH_HELPERS_SOURCE = RUNTIME_ROOT / "graph" / "planner_graph_helpers.py"
@@ -274,16 +275,22 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     planner_service_source = PLANNER_SERVICE_SOURCE.read_text(encoding="utf-8")
     execution_service_source = EXECUTION_SERVICE_SOURCE.read_text(encoding="utf-8")
     approval_resume_source = APPROVAL_RESUME_SERVICE_SOURCE.read_text(encoding="utf-8")
+    approvals_router_source = APPROVALS_ROUTER_SOURCE.read_text(encoding="utf-8")
     plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     plan_creation_compatibility_source = PLAN_CREATION_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     structured_output_source = STRUCTURED_OUTPUT_SOURCE.read_text(encoding="utf-8")
     old_graph_helpers_source = OLD_GRAPH_HELPERS_SOURCE.read_text(encoding="utf-8")
     plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
 
-    assert "from ..graph.planner_graph import LangGraphPlanner as planner_cls" in planner_service_source
+    assert "LangGraphPlanner" not in planner_service_source
+    assert "_langgraph_planner_cls" not in planner_service_source
+    assert "async def generate_plan(" not in planner_service_source
+    assert "async def resume_after_approval(" not in planner_service_source
     assert "run_langgraph_session" not in execution_service_source
     assert "await self._planner.generate_plan(" not in execution_service_source
     assert "await self._plan_service.create_plan(" in execution_service_source
+    assert "planner.resume_after_approval" not in approvals_router_source
+    assert "planner:" not in approvals_router_source
     assert "self._planner =" not in approval_resume_source
     assert "self._planner.resume_after_approval" not in approval_resume_source
     assert "seed_resume_context" not in approval_resume_source
@@ -298,11 +305,7 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "def _normalize_plan_dict(" not in old_graph_helpers_source
     assert "def _normalize_plan_dict(" in plan_parsing_source
 
-    for owner in (
-        "PlannerService.generate_plan()",
-        "PlannerService.resume_after_approval()",
-    ):
-        assert owner in tracker
+    assert "PlannerService old graph adapter boundary retired" in tracker
 
     assert "ApprovalResumeService graph approval fallback retired" in tracker
     assert "ExecutionService execution trigger" in tracker

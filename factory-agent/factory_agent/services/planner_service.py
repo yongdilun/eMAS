@@ -1,76 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal
+from typing import Any
 
 from ..config import Settings
-from ..security.guardrails import promote_user_provenance, strip_unsupported_optional_args
-from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
-from ..observability.telemetry import log_event
 from ..registry.tool_registry import ToolRegistry
+from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
 
-PlannerBackendName = Literal["langgraph"]
+PlannerBackendName = str
 
 
 class PlannerBackendError(RuntimeError):
-    """Transient or infrastructure planner failure — maps to HTTP 503."""
+    """Transient or infrastructure planner failure - maps to HTTP 503."""
 
     pass
 
 
 class PlannerPlanRejected(RuntimeError):
-    """Planner produced no valid plan (validation, JSON, graph outcome) — maps to HTTP 400."""
+    """Planner produced no valid plan (validation, JSON, graph outcome) - maps to HTTP 400."""
 
     pass
-
-
-def _is_transient_exception(exc: BaseException) -> bool:
-    """True when the failure is likely retryable (timeouts, transport, overload)."""
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if isinstance(cur, (TimeoutError, asyncio.TimeoutError, ConnectionError)):
-            return True
-        mod = getattr(type(cur), "__module__", "") or ""
-        name = type(cur).__name__
-        if mod.startswith("httpx"):
-            if name.endswith("Timeout") or name in ("ConnectError", "ReadTimeout", "WriteTimeout", "PoolTimeout"):
-                return True
-        if name in ("ConnectError", "ReadTimeout", "WriteTimeout", "PoolTimeout", "RemoteProtocolError"):
-            return True
-        cur = cur.__cause__ or cur.__context__
-
-    lowered = str(exc).lower()
-    return any(
-        phrase in lowered
-        for phrase in (
-            "timeout",
-            "timed out",
-            "connection refused",
-            "connection reset",
-            "temporarily unavailable",
-            "rate limit",
-            "try again",
-            "overload",
-            "eof occurred",
-        )
-    )
-
-
-def _planner_attempt_count(settings: Settings) -> int:
-    retries = max(0, int(getattr(settings, "planner_max_retries", 2) or 0))
-    return retries + 1
-
-
-async def _sleep_before_retry(settings: Settings, *, attempt_index: int) -> None:
-    base = max(0.0, float(getattr(settings, "retry_base_delay_s", 0.25) or 0.0))
-    cap = max(base, float(getattr(settings, "retry_max_delay_s", 5.0) or base))
-    delay = min(cap, base * (2 ** max(0, attempt_index)))
-    if delay > 0:
-        await asyncio.sleep(delay)
 
 
 class PlannerClarificationError(PlannerBackendError):
@@ -254,244 +204,19 @@ def _split_compound_intent(intent: str) -> list[str]:
     return [_finalize_clause(text)]
 
 
-def _lookup_contract_clause(
-    *,
-    intent_contract: dict[str, Any] | None,
-    step_index: int,
-    tool_name: str,
-) -> dict[str, Any] | None:
-    if not isinstance(intent_contract, dict):
-        return None
-    steps = intent_contract.get("steps")
-    if not isinstance(steps, list):
-        return None
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        if step.get("step_index") == step_index and step.get("tool_name") == tool_name:
-            return step
-    return None
-
-
-def _mark_contract_fields_stripped(
-    *,
-    intent_contract: dict[str, Any] | None,
-    step_index: int,
-    tool_name: str,
-    dropped_fields: list[str],
-) -> None:
-    clause = _lookup_contract_clause(intent_contract=intent_contract, step_index=step_index, tool_name=tool_name)
-    if not isinstance(clause, dict):
-        return
-    existing = clause.get("provenance_dropped")
-    provenance_dropped = list(existing) if isinstance(existing, list) else []
-    provenance_dropped.extend(dropped_fields)
-    clause["provenance_dropped"] = sorted(set(str(field) for field in provenance_dropped if str(field)))
-
-
 class PlannerService:
-    """LangGraph-backed planning with post-processing (dedupe, provenance gates)."""
+    """Retired planner adapter placeholder for default route wiring.
 
-    _langgraph_planner_cls: ClassVar[type | None] = None
+    Normal runtime is owned by PlanCreationService and PlannerOwnedAgentGraph.
+    Seeded test adapters are injected explicitly and handled by
+    plan_creation_compatibility.py; this service no longer exposes the old
+    graph generate/resume boundary.
+    """
 
     def __init__(self, *, settings: Settings, tool_registry: ToolRegistry):
         self._settings = settings
         self._tool_registry = tool_registry
 
-    async def generate_plan(
-        self,
-        *,
-        intent: str,
-        scoped_tools: list[ToolInfo],
-        context: dict[str, Any] | None = None,
-    ) -> PlannerResult:
-        from ..graph.errors import (
-            LangGraphPlannerApprovalRequired,
-            LangGraphPlannerClarification,
-            LangGraphPlannerError,
-        )
-
-        planner_cls = PlannerService._langgraph_planner_cls
-        if planner_cls is None:
-            try:
-                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415 — optional heavy deps
-            except Exception as exc:
-                raise PlannerBackendError("LangGraph planner unavailable.") from exc
-
-        self._tool_registry.load_tools_markdown()
-
-        last_backend_error: PlannerBackendError | None = None
-        for attempt in range(_planner_attempt_count(self._settings)):
-            try:
-                draft, contract, tool_outputs = await planner_cls(self._settings).generate(
-                    intent=intent,
-                    scoped_tools=scoped_tools,
-                    context=context,
-                )
-                break
-            except LangGraphPlannerClarification as exc:
-                raise PlannerClarificationError(str(exc)) from exc
-            except LangGraphPlannerApprovalRequired as exc:
-                payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
-                raise PlannerApprovalRequired(str(exc), approval=payload) from exc
-            except PlannerConfirmationRequired:
-                raise
-            except LangGraphPlannerError as exc:
-                if not _is_transient_exception(exc):
-                    raise PlannerPlanRejected(str(exc)) from exc
-                last_backend_error = PlannerBackendError(str(exc))
-            except Exception as exc:
-                if not _is_transient_exception(exc):
-                    raise PlannerBackendError(str(exc)) from exc
-                last_backend_error = PlannerBackendError(str(exc))
-
-            if attempt >= _planner_attempt_count(self._settings) - 1:
-                assert last_backend_error is not None
-                raise last_backend_error
-            log_event(
-                "planner_transient_retry",
-                level="WARNING",
-                intent=intent,
-                attempt=attempt + 1,
-                max_attempts=_planner_attempt_count(self._settings),
-                error=str(last_backend_error),
-            )
-            await _sleep_before_retry(self._settings, attempt_index=attempt)
-        else:  # pragma: no cover - loop always breaks or raises
-            raise PlannerBackendError("Planner retry loop exited without a result.")
-
-        result = PlannerResult(
-            draft=draft,
-            backend_used="langgraph",
-            llm_calls=1,
-            intent_contract=contract,
-            tool_outputs=tool_outputs,
-        )
-
-        deduped_draft, dropped_steps = _dedupe_plan_steps(result.draft)
-        if dropped_steps > 0:
-            result = PlannerResult(
-                draft=deduped_draft,
-                backend_used=result.backend_used,
-                llm_calls=result.llm_calls,
-                intent_contract=result.intent_contract,
-                tool_outputs=result.tool_outputs,
-            )
-            log_event(
-                "planner_duplicate_steps_deduped",
-                level="INFO",
-                intent=intent,
-                dropped_steps=dropped_steps,
-                remaining_steps=len(deduped_draft.steps),
-                backend_used=result.backend_used,
-            )
-
-        tools_by_name = {t.name: t for t in scoped_tools}
-        intent_memory = context if isinstance(context, dict) else {}
-        for step in result.draft.steps:
-            tool = tools_by_name.get(step.tool_name)
-            if not tool:
-                continue
-            clause = _lookup_contract_clause(
-                intent_contract=result.intent_contract,
-                step_index=step.step_index,
-                tool_name=tool.name,
-            )
-            arg_provenance = clause.get("arg_provenance") if isinstance(clause, dict) and isinstance(clause.get("arg_provenance"), dict) else None
-            evidence = clause.get("evidence") if isinstance(clause, dict) and isinstance(clause.get("evidence"), dict) else {}
-            arg_provenance = promote_user_provenance(
-                tool=tool,
-                args=step.args or {},
-                intent=intent,
-                evidence=evidence,
-                arg_provenance=arg_provenance,
-            )
-            if isinstance(clause, dict):
-                clause["arg_provenance"] = arg_provenance
-
-            clean_args, dropped = strip_unsupported_optional_args(
-                tool=tool,
-                args=step.args or {},
-                intent=intent,
-                intent_memory=intent_memory if isinstance(intent_memory, dict) else {},
-                arg_provenance=arg_provenance,
-            )
-            if dropped:
-                step.args = clean_args
-                _mark_contract_fields_stripped(
-                    intent_contract=result.intent_contract,
-                    step_index=step.step_index,
-                    tool_name=tool.name,
-                    dropped_fields=dropped,
-                )
-                log_event(
-                    "planner_universal_provenance_gate",
-                    level="INFO",
-                    tool_name=tool.name,
-                    dropped_fields=dropped,
-                    intent=intent,
-                )
-        return result
-
-    async def resume_after_approval(
-        self,
-        *,
-        session_id: str,
-        approved: bool,
-    ) -> PlannerResult:
-        from ..graph.errors import (
-            LangGraphPlannerApprovalRequired,
-            LangGraphPlannerClarification,
-            LangGraphPlannerError,
-        )
-
-        planner_cls = PlannerService._langgraph_planner_cls
-        if planner_cls is None:
-            try:
-                from ..graph.planner_graph import LangGraphPlanner as planner_cls  # noqa: PLC0415
-            except Exception as exc:
-                raise PlannerBackendError("LangGraph planner unavailable.") from exc
-        last_backend_error: PlannerBackendError | None = None
-        for attempt in range(_planner_attempt_count(self._settings)):
-            try:
-                draft, contract, tool_outputs = await planner_cls(self._settings).resume_after_approval(
-                    session_id=session_id,
-                    approved=approved,
-                )
-                break
-            except LangGraphPlannerClarification as exc:
-                raise PlannerClarificationError(str(exc)) from exc
-            except LangGraphPlannerApprovalRequired as exc:
-                payload = exc.payload if isinstance(exc.payload, dict) else {"kind": "approval_required"}
-                raise PlannerApprovalRequired(str(exc), approval=payload) from exc
-            except LangGraphPlannerError as exc:
-                if not _is_transient_exception(exc):
-                    raise PlannerPlanRejected(str(exc)) from exc
-                last_backend_error = PlannerBackendError(str(exc))
-            except Exception as exc:
-                if not _is_transient_exception(exc):
-                    raise PlannerBackendError(str(exc)) from exc
-                last_backend_error = PlannerBackendError(str(exc))
-
-            if attempt >= _planner_attempt_count(self._settings) - 1:
-                assert last_backend_error is not None
-                raise last_backend_error
-            log_event(
-                "planner_resume_transient_retry",
-                level="WARNING",
-                session_id=session_id,
-                approved=approved,
-                attempt=attempt + 1,
-                max_attempts=_planner_attempt_count(self._settings),
-                error=str(last_backend_error),
-            )
-            await _sleep_before_retry(self._settings, attempt_index=attempt)
-        else:  # pragma: no cover - loop always breaks or raises
-            raise PlannerBackendError("Planner retry loop exited without a result.")
-        return PlannerResult(
-            draft=draft,
-            backend_used="langgraph",
-            llm_calls=1,
-            intent_contract=contract,
-            tool_outputs=tool_outputs,
-        )
+    def handles_seeded_intent(self, intent: str) -> bool:
+        del intent
+        return False

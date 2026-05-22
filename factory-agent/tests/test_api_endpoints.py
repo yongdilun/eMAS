@@ -2390,6 +2390,78 @@ async def test_graph_approval_old_graph_fallback_is_retired_and_fails_closed(ses
 
 
 @pytest.mark.asyncio
+async def test_graph_approval_reject_does_not_call_retired_planner_adapter(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Approval, Session
+
+    class RetiredPlanner:
+        def __init__(self):
+            self.calls = 0
+
+        async def resume_after_approval(self, *, session_id: str, approved: bool):
+            self.calls += 1
+            raise AssertionError("retired PlannerService resume adapter should not be called")
+
+    created_at = datetime.utcnow() - timedelta(minutes=5)
+    session_id = "graph-approval-reject-no-planner"
+    approval_id = "graph-approval-reject-no-planner-apr"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_APPROVAL",
+            current_intent="Set JOB-SEED-002 priority to high",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={
+                "langgraph_pending_approval": {
+                    "approval_id": approval_id,
+                    "thread_id": session_id,
+                }
+            },
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__langgraph_commit__",
+            args={"kind": "old_graph_approval_required"},
+            risk_summary="1 job will be updated.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=created_at + timedelta(hours=1),
+            created_at=created_at + timedelta(seconds=1),
+        )
+    )
+    await db_session.commit()
+
+    planner = RetiredPlanner()
+    app, event_bus = await _make_app(
+        sessionmaker_override,
+        planner_adapter=planner,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/approvals/{approval_id}/reject",
+            json={"decided_by": "u1", "rejection_reason": "operator declined"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert planner.calls == 0
+    session = await db_session.get(Session, session_id)
+    approval = await db_session.get(Approval, approval_id)
+    assert approval.status == "REJECTED"
+    assert session.status == "IDLE"
+    assert session.replan_context == {}
+    assert any(event.event_type == "approval_decided" for event in event_bus.published)
+
+
+@pytest.mark.asyncio
 async def test_execute_expected_version_conflict_returns_409(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Session, generate_uuid
 

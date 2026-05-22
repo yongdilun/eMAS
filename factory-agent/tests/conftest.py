@@ -65,12 +65,3 @@ async def db_session(sessionmaker_override):
     async with sessionmaker_override() as session:
         yield session
 
-
-@pytest.fixture(autouse=True)
-def _offline_langgraph_planner(monkeypatch):
-    """Avoid importing langgraph/OpenAI in API tests; tests using FakePlanner override the adapter."""
-    from factory_agent.services.planner_service import PlannerService
-    from tests.offline_langgraph_planner import OfflineLangGraphPlanner
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", OfflineLangGraphPlanner)
-

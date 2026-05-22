@@ -15,17 +15,11 @@ from factory_agent.graph.planner_graph_helpers import (
 )
 from factory_agent.llm.plan_parsing import _normalize_plan_dict
 from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep
-from factory_agent.graph.errors import LangGraphPlannerError
 from factory_agent.planner import (
-    PlannerAdapter,
-    PlannerBackendError,
-    PlannerPlanRejected,
-    PlannerService,
     _assign_parallel_groups,
     _dedupe_plan_steps,
 )
 from factory_agent.schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
-from factory_agent.registry.tool_registry import ToolRegistry
 
 from tests.graph_state_fixtures import stub_agent_state
 
@@ -112,96 +106,6 @@ def _write_tool(name: str, endpoint: str, method: str = "DELETE") -> ToolInfo:
         is_strongly_idempotent=False,
         capability_tags=["write"],
     )
-
-
-@pytest.mark.asyncio
-async def test_planner_service_maps_langgraph_validation_error_to_plan_rejected(monkeypatch):
-    """M3: Invalid graph outcome is a client-visible 400, not a bogus 503."""
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-    tool = _read_tool("get__machines", "/machines")
-
-    class BadOutcomePlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            raise LangGraphPlannerError("LangGraph planner did not return a validated PlanDraft.")
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", BadOutcomePlanner)
-
-    with pytest.raises(PlannerPlanRejected):
-        await adapter.generate_plan(intent="show machines", scoped_tools=[tool])
-
-
-@pytest.mark.asyncio
-async def test_planner_service_maps_transient_langgraph_error_to_backend_error(monkeypatch):
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-    tool = _read_tool("get__machines", "/machines")
-
-    class TimeoutPlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            err = LangGraphPlannerError("upstream stalled")
-            err.__cause__ = TimeoutError()
-            raise err
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", TimeoutPlanner)
-
-    with pytest.raises(PlannerBackendError):
-        await adapter.generate_plan(intent="show machines", scoped_tools=[tool])
-
-
-@pytest.mark.asyncio
-async def test_planner_service_propagates_backend_errors(monkeypatch):
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-    tool = _read_tool("get__machines", "/machines")
-
-    class BoomPlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            raise PlannerBackendError("LangGraph planner unavailable")
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", BoomPlanner)
-
-    with pytest.raises(PlannerBackendError):
-        await adapter.generate_plan(intent="show machines", scoped_tools=[tool])
-
-
-@pytest.mark.asyncio
-async def test_planner_service_returns_langgraph_plan(monkeypatch):
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-    tool = _read_tool("get__machines", "/machines")
-
-    class FakeLGPlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            draft = PlanDraft(
-                plan_explanation="Graph plan",
-                risk_summary="Read-only graph plan.",
-                steps=[PlanStepDraft(step_index=0, tool_name="get__machines", args={})],
-            )
-            return draft, {"backend": "langgraph"}, []
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", FakeLGPlanner)
-
-    result = await adapter.generate_plan(intent="show machines", scoped_tools=[tool])
-
-    assert result.backend_used == "langgraph"
-    assert result.draft.steps[0].tool_name == "get__machines"
 
 
 @pytest.mark.parametrize(
@@ -1092,40 +996,6 @@ def test_assign_parallel_groups_skips_bound_steps():
 
 
 
-@pytest.mark.asyncio
-async def test_planner_service_dedupes_duplicate_steps(monkeypatch):
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-
-    class FakeLGPlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            draft = PlanDraft(
-                plan_explanation="dup",
-                risk_summary="low",
-                steps=[
-                    PlanStepDraft(step_index=0, tool_name="get__jobs", args={"priority": "low"}, depends_on=[]),
-                    PlanStepDraft(step_index=1, tool_name="get__jobs", args={"priority": "low"}, depends_on=[]),
-                ],
-            )
-            return draft, {"steps": []}, []
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", FakeLGPlanner)
-
-    result = await adapter.generate_plan(
-        intent="find all low priority job and find all low priority job",
-        scoped_tools=[_jobs_list_tool()],
-    )
-
-    assert len(result.draft.steps) == 1
-    assert result.draft.steps[0].step_index == 0
-    assert result.draft.steps[0].tool_name == "get__jobs"
-    assert result.draft.steps[0].args == {"priority": "low"}
-
-
 def test_dedupe_plan_steps_handles_nested_and_list_args():
     draft = PlanDraft(
         plan_explanation="dup",
@@ -1424,55 +1294,6 @@ def test_langgraph_repair_prefers_metadata_matched_child_read_before_generic_loo
     assert repaired is not None
     assert [step.tool_name for step in repaired.steps] == ["work_order_window_reader"]
     assert repaired.steps[0].args == {"id": "JOB-SEED-001"}
-
-
-@pytest.mark.asyncio
-async def test_planner_service_strips_ungrounded_args_via_contract(monkeypatch):
-    settings = _settings()
-    adapter = PlannerAdapter(settings=settings, tool_registry=ToolRegistry())
-
-    class FakeLGPlanner:
-        def __init__(self, settings):
-            pass
-
-        async def generate(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            draft = PlanDraft(
-                plan_explanation="list high priority jobs",
-                risk_summary="read only",
-                steps=[
-                    PlanStepDraft(
-                        step_index=0,
-                        tool_name="get__jobs",
-                        args={"priority": "high", "sort_by": "deadline"},
-                        depends_on=[],
-                    )
-                ],
-            )
-            contract = {
-                "intent": "find all high priority job",
-                "steps": [
-                    {
-                        "step_index": 0,
-                        "tool_name": "get__jobs",
-                        "args": {"priority": "high", "sort_by": "deadline"},
-                        "arg_provenance": {
-                            "priority": {"value": "high", "source": "llm"},
-                            "sort_by": {"value": "deadline", "source": "llm"},
-                        },
-                    }
-                ],
-            }
-            return draft, contract, []
-
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", FakeLGPlanner)
-
-    result = await adapter.generate_plan(
-        intent="find all high priority job",
-        scoped_tools=[_jobs_list_tool()],
-    )
-
-    assert result.draft.steps[0].args == {"priority": "high"}
 
 
 @pytest.mark.asyncio

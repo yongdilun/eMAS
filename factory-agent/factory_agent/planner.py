@@ -13,8 +13,6 @@ from .services.planner_service import (
     PlannerService,
     _assign_parallel_groups,
     _dedupe_plan_steps,
-    _lookup_contract_clause,
-    _mark_contract_fields_stripped,
     _split_compound_intent,
 )
 
@@ -32,7 +30,5 @@ __all__ = [
     "PlannerService",
     "_assign_parallel_groups",
     "_dedupe_plan_steps",
-    "_lookup_contract_clause",
-    "_mark_contract_fields_stripped",
     "_split_compound_intent",
 ]

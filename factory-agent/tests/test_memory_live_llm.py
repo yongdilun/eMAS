@@ -14,12 +14,6 @@ from factory_agent.orchestration.memory_manager import MemoryManager
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Session, Tool, VectorMemory, generate_uuid
 from factory_agent.registry.tool_registry import ToolRegistry
-from factory_agent.services.planner_service import PlannerService
-
-
-@pytest.fixture(autouse=True)
-def _enable_live_planner(monkeypatch):
-    monkeypatch.setattr(PlannerService, "_langgraph_planner_cls", None)
 
 
 class _FakeEventBus(EventBus):

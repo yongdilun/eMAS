@@ -30,7 +30,6 @@ from ..registry.tool_registry import ToolRegistry
 from ..services.approval_resume_service import ApprovalResumeService
 from ..services.execution_service import ExecutionService
 from ..services.plan_creation_service import PlanCreationService
-from ..services.planner_service import PlannerService
 from ..services.session_snapshot_service import (
     SessionSnapshotService,
     _activity_steps_for_snapshot,
@@ -50,7 +49,7 @@ def build_router(
     tool_registry: ToolRegistry,
     event_bus: EventBus,
     enqueue_session: Any | None = None,
-    planner_adapter: PlannerService | None = None,
+    planner_adapter: Any | None = None,
     rag_pipeline_adapter: Any | None = None,
 ) -> APIRouter:
     del enqueue_session
@@ -58,7 +57,7 @@ def build_router(
     router = APIRouter()
     session_mgr = SessionManager(settings)
     memory_manager = MemoryManager(settings)
-    planner = planner_adapter or PlannerService(settings=settings, tool_registry=tool_registry)
+    planner = planner_adapter
     tool_selector = ToolSelector(settings)
     summary_adapter = SummaryAdapter(settings)
     require_admin = build_require_admin(settings)
@@ -164,7 +163,6 @@ def build_router(
     router.include_router(
         build_approvals_router(
             session_mgr=session_mgr,
-            planner=planner,
             require_jwt=require_jwt,
             publish_agent_event=approval_resume_service.publish_agent_event,
             start_graph_approval_resume_task=approval_resume_service.start_graph_approval_resume_task,

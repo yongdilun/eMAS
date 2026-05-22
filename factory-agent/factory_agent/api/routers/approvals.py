@@ -13,7 +13,6 @@ from factory_agent.api.response_mappers import approval_to_response
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Approval as ApprovalRow
-from factory_agent.planner import PlannerBackendError, PlannerPlanRejected
 from factory_agent.planning.v2_interrupts import approval_payload_matches_newest_ledger_revision
 from factory_agent.schemas import ApprovalDecisionRequest, ApprovalResponse
 
@@ -36,7 +35,6 @@ def _merge_approval_args(existing: Any, override: dict[str, Any]) -> dict[str, A
 def build_approvals_router(
     *,
     session_mgr: SessionManager,
-    planner: Any,
     require_jwt: Callable[..., dict[str, Any]],
     publish_agent_event: PublishAgentEvent,
     start_graph_approval_resume_task: StartGraphApprovalResumeTask,
@@ -242,20 +240,6 @@ def build_approvals_router(
                 row.rejection_reason = "Approval is stale because the session changed state"
                 await db.commit()
                 raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
-            try:
-                await planner.resume_after_approval(session_id=sess.session_id, approved=False)
-            except PlannerPlanRejected as e:
-                sess.status = "BLOCKED"
-                sess.error = str(e)
-                sess.version += 1
-                await db.commit()
-                raise HTTPException(status_code=400, detail={"errors": [str(e)]}) from e
-            except PlannerBackendError as e:
-                sess.status = "FAILED"
-                sess.error = str(e)
-                sess.version += 1
-                await db.commit()
-                raise HTTPException(status_code=503, detail={"errors": [str(e)]}) from e
             row.status = "REJECTED"
             row.decided_by = req.decided_by
             row.decided_at = datetime.utcnow()
