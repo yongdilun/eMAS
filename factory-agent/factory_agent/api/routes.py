@@ -83,7 +83,6 @@ def build_router(
     approval_resume_service = ApprovalResumeService(
         settings=settings,
         session_mgr=session_mgr,
-        planner=planner,
         plan_service=plan_creation_service,
         event_bus=event_bus,
         planner_adapter_is_none=planner_adapter is None,

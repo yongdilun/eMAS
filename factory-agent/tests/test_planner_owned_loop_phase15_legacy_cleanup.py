@@ -284,7 +284,12 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "run_langgraph_session" not in execution_service_source
     assert "await self._planner.generate_plan(" not in execution_service_source
     assert "await self._plan_service.create_plan(" in execution_service_source
-    assert "await self._planner.resume_after_approval(" in approval_resume_source
+    assert "self._planner =" not in approval_resume_source
+    assert "self._planner.resume_after_approval" not in approval_resume_source
+    assert "seed_resume_context" not in approval_resume_source
+    assert "old graph fallback is retired" in approval_resume_source
+    assert "resume_planner_owned_graph_approval(" in approval_resume_source
+    assert "_resume_direct_v2_planner_approval(" in approval_resume_source
     assert "await self._planner.generate_plan(" not in plan_creation_source
     assert "generate_seeded_planner_compatibility_plan(" in plan_creation_source
     assert "await generate_plan(" in plan_creation_compatibility_source
@@ -296,10 +301,10 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     for owner in (
         "PlannerService.generate_plan()",
         "PlannerService.resume_after_approval()",
-        "ApprovalResumeService graph approval fallback",
     ):
         assert owner in tracker
 
+    assert "ApprovalResumeService graph approval fallback retired" in tracker
     assert "ExecutionService execution trigger" in tracker
     assert "ExecutionService.run_langgraph_session() retired" in tracker
     assert "structured-output parsing owner resolved" in tracker

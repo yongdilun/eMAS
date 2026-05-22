@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 3.3 ExecutionService old graph owner cleanup complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. Old graph scaffold deletion remains blocked by active PlannerService and ApprovalResumeService owners; frontend fixture rewrites and broad migration-test consolidation remain out of scope.
+Status: Phase 3.4 ApprovalResumeService old graph fallback cleanup complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume and historical direct-v2 approval payload compatibility, and fails closed for unsupported old graph approval payloads. Old graph scaffold deletion remains blocked by the active PlannerService owner; frontend fixture rewrites and broad migration-test consolidation remain out of scope.
 
 Plan:
 
@@ -21,7 +21,7 @@ Baseline release-proof commit:
 | 0 | Baseline and cleanup manifest | Complete | `511755adcdd8def8ff4585276b65e9823f3c9a4d` | Docs diff check and recorded baseline |
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
-| 3 | Old graph scaffold deletion | Blocked; PlanCreation and ExecutionService owners resolved | pending final commit hash | Full backend, real-LangGraph, release |
+| 3 | Old graph scaffold deletion | Blocked; PlanCreation, ExecutionService, and ApprovalResumeService owners resolved | pending final commit hash | Full backend, real-LangGraph, release |
 | 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
@@ -991,13 +991,66 @@ Next recommended phase:
 
 - Resolve the PlannerService old graph adapter boundary or ApprovalResumeService graph approval fallback without changing normal planner-owned graph runtime behavior.
 
+## Phase 3.4: ApprovalResumeService Old Graph Fallback Retirement
+
+Phase result:
+
+- `ApprovalResumeService graph approval fallback retired`.
+- `ApprovalResumeService` no longer stores or calls the injected planner adapter and no longer calls `PlannerService.resume_after_approval()` after planner-owned/direct-v2 resume handlers decline.
+- Planner-owned graph approval resume remains first-class through `_resume_planner_owned_agent_graph_approval()` and `PlanCreationService.resume_planner_owned_graph_approval()`.
+- Historical direct-v2 approval payload compatibility remains in `_resume_direct_v2_planner_approval()`.
+- Unsupported graph approval payloads now fail closed with session `FAILED`, pending approval context cleared, and a `graph_approval_resume_unsupported_payload` event, rather than silently entering the old graph scaffold.
+- No `LangGraphPlanner`, old graph nodes, PlannerService boundary, frontend fixture, release harness, Qwen/proposer policy, graph runtime behavior, exact-prompt branch, seeded-ID branch, or source-ID branch changed.
+
+Files changed:
+
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/api/routes.py`
+- `factory-agent/tests/test_api_endpoints.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition changes:
+
+| Candidate | Current disposition | Evidence | Next owner/blocker |
+| --- | --- | --- | --- |
+| Planner-owned graph approval resume | Preserved | `ApprovalResumeService._resume_planner_owned_agent_graph_approval()` still handles `kind=graph_write_approval_required` and calls `PlanCreationService.resume_planner_owned_graph_approval()` | Planner-owned graph runtime |
+| Historical direct-v2 approval payload compatibility | Preserved | `ApprovalResumeService._resume_direct_v2_planner_approval()` still handles `bundle_ui.kind=v2_planner_owned_approval_preview` and queues follow-up approvals | ApprovalResumeService compatibility owner |
+| ApprovalResumeService graph approval fallback retired | Resolved for old graph scaffold deletion | `ApprovalResumeService` has no `self._planner` reference and unsupported graph payloads fail closed instead of calling `resume_after_approval()` | None |
+| Unsupported old graph approval payloads | Fail-closed compatibility boundary | API regression proves injected planner `resume_after_approval()` is not called and the session is marked `FAILED` with approval context cleared | None |
+| `PlannerService.generate_plan()` / `resume_after_approval()` | Still blocked | Lazy old graph adapter remains in service boundary | Planner service owner |
+
+Static cleanup guards:
+
+- `test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned()` now requires `ApprovalResumeService` to be free of `self._planner`.
+- The same guard requires the retired fallback marker, planner-owned graph approval resume handler, and direct-v2 approval compatibility handler to remain explicit.
+
+Verification:
+
+- `python -m py_compile factory_agent\services\approval_resume_service.py factory_agent\api\routes.py` -> passed, no output.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `16 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_api_endpoints.py::test_graph_approval_old_graph_fallback_is_retired_and_fails_closed tests/test_api_endpoints.py::test_phase14_historical_approval_payload_resume_queues_second_actionable_approval tests/test_api_endpoints.py::test_planner_owned_graph_background_resume_failure_marks_session_failed -q` -> `3 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `75 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_planner_owned_agent_graph_phase9_interrupts.py -q` -> `19 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_api_endpoints.py -q` -> `40 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `798 warnings`.
+- `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `python -m pytest -q` -> `1030 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1401 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Remaining blockers:
+
+- `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` still own the lazy old graph adapter.
+
+Next recommended phase:
+
+- Resolve the PlannerService old graph adapter boundary without changing normal planner-owned graph runtime behavior.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 3.3 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 3.4 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 3.2 resolved the PlanCreationService old graph fallback blocker and Phase 3.3 retired the ExecutionService old graph session owner. Old graph scaffold deletion is still blocked by PlannerService and ApprovalResumeService owners. Normal runtime remains `PlannerOwnedAgentGraph`.
+Continue cleanup without changing product behavior. Phase 3.2 resolved the PlanCreationService old graph fallback blocker, Phase 3.3 retired the ExecutionService old graph session owner, and Phase 3.4 retired the ApprovalResumeService old graph approval fallback while preserving planner-owned graph resume and historical direct-v2 approval payload compatibility. Old graph scaffold deletion is still blocked by the PlannerService owner. Normal runtime remains `PlannerOwnedAgentGraph`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -1024,8 +1077,8 @@ Scope:
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
 - Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
 - `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.
-- Do not delete old graph scaffold unless the active `PlannerService` and `ApprovalResumeService` blockers are explicitly resolved.
-- Prefer the next narrow move: retire or rehome one remaining old graph service owner with no behavior change, now that structured-output parsing, PlanCreationService, and ExecutionService have explicit outcomes.
+- Do not delete old graph scaffold unless the active `PlannerService` blocker is explicitly resolved.
+- Prefer the next narrow move: resolve the PlannerService old graph adapter boundary with no behavior change, now that structured-output parsing, PlanCreationService, ExecutionService, and ApprovalResumeService have explicit outcomes.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 
@@ -1049,7 +1102,7 @@ Verification:
 Commit only if cleanup stays within the recorded blocker scope and verification passes.
 
 Suggested commit:
-refactor: retire remaining old graph owner
+refactor: retire planner old graph adapter
 
 Final response format:
 Phase Result

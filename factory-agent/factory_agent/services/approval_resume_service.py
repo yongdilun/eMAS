@@ -166,14 +166,12 @@ class ApprovalResumeService:
         *,
         settings: Settings,
         session_mgr: SessionManager,
-        planner: Any,
         plan_service: PlanCreationService,
         event_bus: EventBus,
         planner_adapter_is_none: bool,
     ) -> None:
         self._settings = settings
         self._session_mgr = session_mgr
-        self._planner = planner
         self._plan_service = plan_service
         self._event_bus = event_bus
         self._planner_adapter_is_none = planner_adapter_is_none
@@ -245,56 +243,22 @@ class ApprovalResumeService:
                 return
             if await self._resume_direct_v2_planner_approval(db=db, row=row, sess=sess, intent=intent):
                 return
-            tools_by_name = await self._plan_service._ensure_registry_health(db=db)
-            seed_resume_context = getattr(self._planner, "seed_resume_context", None)
-            if callable(seed_resume_context):
-                approval_payload = dict(row.args) if isinstance(row.args, dict) else {}
-                approval_payload["_approval_id"] = row_approval_id
-                seed_resume_context(
-                    session_id=sess.session_id,
-                    intent=intent,
-                    approval_payload=approval_payload,
-                )
-            resumed = await self._planner.resume_after_approval(session_id=sess.session_id, approved=True)
-            await db.refresh(sess)
-            if execution_result_is_stale_after_interrupt(
-                session_status=sess.status,
-                current_intent=sess.current_intent,
-                started_intent=intent,
-                replan_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
-            ):
-                log_event(
-                    "graph_approval_resume_result_ignored_after_interrupt",
-                    session_id=sess.session_id,
-                    approval_id=row_approval_id,
-                )
-                return
-            draft = resumed.draft
-            backend_used = resumed.backend_used
-            context = dict(sess.replan_context or {})
-            if resumed.intent_contract:
-                context["intent_contract"] = resumed.intent_contract
-            context.pop("langgraph_pending_approval", None)
-            context.pop("langgraph_approval_resume", None)
-            sess.replan_context = context
-            sess.error = None
-            await self._plan_service._persist_plan(
-                db=db,
-                sess=sess,
-                draft=draft,
-                tools_by_name=tools_by_name,
-                backend_used=backend_used,
-                kind="execution",
-                status="COMPLETED",
-                intent=intent,
-                context_to_keep=context,
-                tool_outputs=getattr(resumed, "tool_outputs", None),
+            log_event(
+                "graph_approval_resume_unsupported_payload",
+                level="ERROR",
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                payload_kind=(row.args or {}).get("kind") if isinstance(row.args, dict) else None,
             )
-            await db.commit()
-            await self.publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row_approval_id, "status": "COMPLETED", "subject_type": "graph"},
+            await self._mark_graph_approval_resume_stopped(
+                db=db,
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                status="FAILED",
+                error=(
+                    "Unsupported graph approval resume payload. Planner-owned graph and "
+                    "historical direct-v2 handlers did not match; old graph fallback is retired."
+                ),
             )
         except PlannerApprovalRequired as e:
             log_event(

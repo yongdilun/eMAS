@@ -2253,44 +2253,16 @@ async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline
 
 
 @pytest.mark.asyncio
-async def test_graph_approval_returns_before_resume_and_keeps_one_activity_operation(sessionmaker_override, db_session):
+async def test_graph_approval_old_graph_fallback_is_retired_and_fails_closed(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, Message, Plan, Session
-    from factory_agent.services.planner_service import PlannerResult
 
-    class BlockingResumePlanner:
+    class RetiredFallbackPlanner:
         def __init__(self):
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
             self.calls = 0
 
         async def resume_after_approval(self, *, session_id: str, approved: bool):
             self.calls += 1
-            assert approved is True
-            self.started.set()
-            await self.release.wait()
-            return PlannerResult(
-                draft=PlanDraft(
-                    plan_explanation="Updated job priority after approval.",
-                    risk_summary="Approved write completed.",
-                    steps=[
-                        PlanStepDraft(
-                            step_index=0,
-                            tool_name="put__jobs_{id}",
-                            args={"id": "JOB-SEED-002", "priority": "high"},
-                        )
-                    ],
-                ),
-                backend_used="langgraph",
-                intent_contract={"backend": "langgraph", "steps": []},
-                tool_outputs=[
-                    {
-                        "tool_name": "put__jobs_{id}",
-                        "status": "DONE",
-                        "summary": "Updated job JOB-SEED-002 to high priority.",
-                        "result": {"job_id": "JOB-SEED-002", "priority": "high"},
-                    }
-                ],
-            )
+            raise AssertionError("old graph approval fallback should not be called")
 
     created_at = datetime.utcnow() - timedelta(minutes=5)
     session_id = "graph-approval-nonblocking"
@@ -2371,7 +2343,7 @@ async def test_graph_approval_returns_before_resume_and_keeps_one_activity_opera
         requires_approval=True,
     )
 
-    planner = BlockingResumePlanner()
+    planner = RetiredFallbackPlanner()
     app, event_bus = await _make_app(
         sessionmaker_override,
         planner_adapter=planner,
@@ -2383,53 +2355,35 @@ async def test_graph_approval_returns_before_resume_and_keeps_one_activity_opera
         assert approved.status_code == 200
         assert approved.json()["status"] == "APPROVED"
 
-        await asyncio.wait_for(planner.started.wait(), timeout=1)
-        during = (await client.get(f"/sessions/{session_id}/snapshot")).json()
-        assert during["session"]["status"] == "EXECUTING"
-        assert during["pending_approval"] is None
-        during_doc = during["response_document"]
-        assert during_doc["revision_source"] == "event_seq"
-        assert during_doc["revision"] >= 1
-        assert during_doc["state"] == "running"
-        assert "approval_required" not in {block["type"] for block in during_doc["blocks"]}
-        during_events = [event["event_type"] for event in during["timeline"]]
-        assert "approval_required" in during_events
-        assert "approval_decided" in during_events
-        assert any(event.event_type == "approval_decided" for event in event_bus.published)
-
-        planner.release.set()
         final_body = None
         for _ in range(40):
             await asyncio.sleep(0.025)
             final_body = (await client.get(f"/sessions/{session_id}/snapshot")).json()
-            if final_body["session"]["status"] == "COMPLETED":
+            if final_body["session"]["status"] == "FAILED":
                 break
 
     assert final_body is not None
-    assert final_body["session"]["status"] == "COMPLETED"
+    assert planner.calls == 0
+    assert final_body["session"]["status"] == "FAILED"
+    assert "old graph fallback is retired" in (final_body["session"]["error"] or "")
+    assert final_body["pending_approval"] is None
     final_doc = final_body["response_document"]
-    assert final_doc["revision"] > during_doc["revision"]
-    assert final_doc["state"] == "completed"
+    assert final_doc["revision_source"] == "event_seq"
+    assert final_doc["revision"] >= 1
+    assert final_doc["state"] == "failed"
     assert "approval_required" not in {block["type"] for block in final_doc["blocks"]}
     assert not any(
         step["kind"] == "approval" and step["state"] in {"waiting", "current"}
         for step in final_doc["run_steps"]
     )
+    assert any(event.event_type == "approval_decided" for event in event_bus.published)
     event_types = [event["event_type"] for event in final_body["timeline"]]
     assert event_types.index("plan_created") < event_types.index("approval_required")
     assert event_types.index("approval_required") < event_types.index("approval_decided")
-    assert event_types.index("approval_decided") < event_types.index("tool_result")
-    assert event_types.index("tool_result") < event_types.index("session_completed")
-    plan_events = [event for event in final_body["timeline"] if event["event_type"] == "plan_created"]
-    assert len(plan_events) >= 2
-    assert plan_events[-1]["details"]["status"] == "COMPLETED"
-    assert "JOB-SEED-002" in plan_events[-1]["content"]
-    assert "high" in plan_events[-1]["content"].lower()
-    assert plan_events[-1]["content"] != "1 job will be updated."
     operation_events = [
         event
         for event in final_body["timeline"]
-        if event["event_type"] in {"plan_created", "approval_required", "approval_decided", "tool_result", "session_completed"}
+        if event["event_type"] in {"plan_created", "approval_required", "approval_decided", "session_resume"}
     ]
     operation_ids = {event.get("operation_id") for event in operation_events}
     assert operation_ids == {final_body["session"]["operation_id"]}
