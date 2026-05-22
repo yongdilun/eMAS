@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from factory_agent.graph.state import AgentPlanOutput
-from factory_agent.schemas import ToolInfo
+from factory_agent.schemas import AgentPlanOutput, ToolInfo
 
 
 def stub_agent_state(

@@ -10,17 +10,17 @@ from ...config import Settings
 from ...llm.models import build_planner_chat_model
 from ...observability.telemetry import log_event, log_llm_prompt
 from ...planning.query_shape import infer_collection_query_args, infer_lookup_query_args, merge_inferred_read_args
-from ...schemas import ControlAction, PlannerDecision, ToolCall, ToolInfo
+from ...schemas import AgentPlanOutput, AgentPlanStep, ControlAction, PlannerDecision, ToolCall, ToolInfo
 from ...security.guardrails import promote_user_provenance, sanitize_tool_args_against_schema, strip_unsupported_optional_args
+from ..approval_summary import _infer_bulk_job_priority_mutation
 from ..errors import LangGraphPlannerError
 from ..noop_mutations import no_op_mutation_for_selector
 from ..planner_graph_helpers import (
     _deterministic_plan_repair,
-    _infer_bulk_job_priority_mutation,
     _message_content_text,
     _tool_cards,
 )
-from ..state import AgentPlanOutput, AgentPlanStep, AgentState, user_query_text
+from ..state import AgentState, user_query_text
 
 RouteKey = Literal["clarify_end", "continue_planner", "decision_guard", "synthesize_plan"]
 

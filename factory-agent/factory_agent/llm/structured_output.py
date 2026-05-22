@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.state import AgentPlanOutput
+from ..schemas import AgentPlanOutput
 from .plan_parsing import _normalize_plan_dict
 
 

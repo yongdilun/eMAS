@@ -39,8 +39,11 @@ APPROVALS_ROUTER_SOURCE = RUNTIME_ROOT / "api" / "routers" / "approvals.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
 OLD_GRAPH_HELPERS_SOURCE = RUNTIME_ROOT / "graph" / "planner_graph_helpers.py"
+GRAPH_STATE_SOURCE = RUNTIME_ROOT / "graph" / "state.py"
+APPROVAL_SUMMARY_SOURCE = RUNTIME_ROOT / "graph" / "approval_summary.py"
 STRUCTURED_OUTPUT_SOURCE = RUNTIME_ROOT / "llm" / "structured_output.py"
 PLAN_PARSING_SOURCE = RUNTIME_ROOT / "llm" / "plan_parsing.py"
+SCHEMAS_SOURCE = RUNTIME_ROOT / "schemas.py"
 V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
 V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
 CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
@@ -134,18 +137,7 @@ OLD_GRAPH_SCAFFOLD_IMPORT_MODULES = {
     "factory_agent.graph.nodes.validate",
 }
 
-ACTIVE_RUNTIME_OLD_GRAPH_COMPATIBILITY_IMPORTS = {
-    (
-        "graph/approval_summary.py",
-        "factory_agent.graph.planner_graph_helpers",
-        ("_infer_bulk_job_priority_mutation",),
-    ),
-    (
-        "llm/structured_output.py",
-        "factory_agent.graph.state",
-        ("AgentPlanOutput",),
-    ),
-}
+ACTIVE_RUNTIME_OLD_GRAPH_COMPATIBILITY_IMPORTS: set[tuple[str, str, tuple[str, ...]]] = set()
 
 DISALLOWED_RUNTIME_AUTHORITY_FRAGMENTS = (
     "test_only_legacy_engine_enabled",
@@ -387,7 +379,10 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     plan_creation_compatibility_source = PLAN_CREATION_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     structured_output_source = STRUCTURED_OUTPUT_SOURCE.read_text(encoding="utf-8")
     old_graph_helpers_source = OLD_GRAPH_HELPERS_SOURCE.read_text(encoding="utf-8")
+    graph_state_source = GRAPH_STATE_SOURCE.read_text(encoding="utf-8")
+    approval_summary_source = APPROVAL_SUMMARY_SOURCE.read_text(encoding="utf-8")
     plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
+    schemas_source = SCHEMAS_SOURCE.read_text(encoding="utf-8")
 
     assert "LangGraphPlanner" not in planner_service_source
     assert "_langgraph_planner_cls" not in planner_service_source
@@ -408,11 +403,21 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "generate_seeded_planner_compatibility_plan(" in plan_creation_source
     assert "await generate_plan(" in plan_creation_compatibility_source
     assert "factory_agent.graph.planner_graph_helpers" not in structured_output_source
+    assert "from ..graph.state import AgentPlanOutput" not in structured_output_source
+    assert "from ..schemas import AgentPlanOutput" in structured_output_source
+    assert "def _infer_bulk_job_priority_mutation(" not in old_graph_helpers_source
+    assert "def _infer_bulk_job_priority_mutation(" in approval_summary_source
+    assert "from .planner_graph_helpers import _infer_bulk_job_priority_mutation" not in approval_summary_source
+    assert "class AgentPlanOutput" not in graph_state_source
+    assert "class AgentPlanStep" not in graph_state_source
+    assert "class AgentPlanOutput" in schemas_source
+    assert "class AgentPlanStep" in schemas_source
     assert "from .plan_parsing import _normalize_plan_dict" in structured_output_source
     assert "def _normalize_plan_dict(" not in old_graph_helpers_source
     assert "def _normalize_plan_dict(" in plan_parsing_source
 
     assert "PlannerService old graph adapter boundary retired" in tracker
+    assert "Phase 3.7 compatibility seams split" in tracker
 
     assert "ApprovalResumeService graph approval fallback retired" in tracker
     assert "ExecutionService execution trigger" in tracker

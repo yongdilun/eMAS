@@ -2181,7 +2181,7 @@ Commands run for Phase 11 investigation:
 Set-Location "factory-agent"
 @'
 from factory_agent.planning.intent import split_user_intents
-from factory_agent.graph.planner_graph_helpers import _infer_bulk_job_priority_mutation
+from factory_agent.graph.approval_summary import _infer_bulk_job_priority_mutation
 p = "change all medium priority job to high then change all high priority job to low"
 for it in split_user_intents(p):
     print(it.description, _infer_bulk_job_priority_mutation(it.description))

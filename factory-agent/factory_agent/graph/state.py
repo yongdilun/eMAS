@@ -5,9 +5,8 @@ from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
 
-from ..schemas import AgentGraphRunStatus, PlanBinding, PlanDraft, ToolInfo
+from ..schemas import AgentGraphRunStatus, AgentPlanOutput, PlanDraft, ToolInfo
 
 
 def replaceable_list_reducer(left: list[Any] | None, right: list[Any] | None) -> list[Any]:
@@ -25,24 +24,6 @@ def replaceable_list_reducer(left: list[Any] | None, right: list[Any] | None) ->
 
 def replace_list(value: list[Any] | None = None) -> list[dict[str, Any]]:
     return [{"__replace__": True, "value": list(value or [])}]
-
-
-class AgentPlanStep(BaseModel):
-    tool_name: str
-    args: dict[str, Any] = Field(default_factory=dict)
-    evidence: dict[str, Any] = Field(default_factory=dict)
-    confidence: float = 0.0
-    missing_required: list[str] = Field(default_factory=list)
-    depends_on: list[int] = Field(default_factory=list)
-    execution_mode: str = "single"
-    bindings: list[PlanBinding] = Field(default_factory=list)
-
-
-class AgentPlanOutput(BaseModel):
-    plan_explanation: str
-    risk_summary: str
-    steps: list[AgentPlanStep] = Field(default_factory=list)
-    clarification: str | None = None
 
 
 def normalize_graph_messages(raw: Any) -> list[AnyMessage]:

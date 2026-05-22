@@ -14,12 +14,11 @@ from factory_agent.graph.planner_graph_helpers import (
     _deterministic_plan_repair,
 )
 from factory_agent.llm.plan_parsing import _normalize_plan_dict
-from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep
 from factory_agent.planner import (
     _assign_parallel_groups,
     _dedupe_plan_steps,
 )
-from factory_agent.schemas import PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
+from factory_agent.schemas import AgentPlanOutput, AgentPlanStep, PlanBinding, PlanDraft, PlanStepDraft, ToolInfo
 
 from tests.graph_state_fixtures import stub_agent_state
 

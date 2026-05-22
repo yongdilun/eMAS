@@ -136,6 +136,24 @@ class PlanBinding(BaseModel):
     mode: BindingMode = "single"
 
 
+class AgentPlanStep(BaseModel):
+    tool_name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.0
+    missing_required: list[str] = Field(default_factory=list)
+    depends_on: list[int] = Field(default_factory=list)
+    execution_mode: str = "single"
+    bindings: list[PlanBinding] = Field(default_factory=list)
+
+
+class AgentPlanOutput(BaseModel):
+    plan_explanation: str
+    risk_summary: str
+    steps: list[AgentPlanStep] = Field(default_factory=list)
+    clarification: str | None = None
+
+
 class PlanStepDraft(BaseModel):
     step_index: int = Field(ge=0)
     tool_name: str

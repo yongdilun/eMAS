@@ -12,8 +12,7 @@ from factory_agent.graph.nodes.tool_pipeline import commit_node_impl
 from factory_agent.graph.nodes.validate import make_final_validator_node, make_validate_node
 from factory_agent.graph.nodes.tool_pipeline import route_after_bundle, route_after_commit, route_after_validate
 from factory_agent.graph.planner_graph import LangGraphPlanner
-from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep
-from factory_agent.schemas import PlanDraft, PlanStepDraft
+from factory_agent.schemas import AgentPlanOutput, AgentPlanStep, PlanDraft, PlanStepDraft
 from factory_agent.schemas import ToolInfo
 from tests.support.operation_assertions import assert_audit_rows_match
 from tests.support.operation_assertions import assert_final_state_matches_oracle

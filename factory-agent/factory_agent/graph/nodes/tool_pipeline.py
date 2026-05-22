@@ -13,8 +13,9 @@ import httpx
 from ...config import Settings
 from ...llm.models import build_planner_chat_model
 from ...schemas import ToolInfo
+from ..approval_summary import _infer_bulk_job_priority_mutation
 from ..http_tool_client import compute_planner_write_idempotency_key, execute_tool_http, stable_json
-from ..planner_graph_helpers import _infer_bulk_job_priority_mutation, _message_content_text
+from ..planner_graph_helpers import _message_content_text
 from .planner_loop import planner_tool_output_tail
 from ..state import AgentState, user_query_text
 

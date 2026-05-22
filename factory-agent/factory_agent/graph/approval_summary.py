@@ -10,6 +10,51 @@ _UUID_TAIL = re.compile(
     r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     re.IGNORECASE,
 )
+_JOB_PRIORITY_VALUES = ("urgent", "medium", "high", "low")
+
+
+def _priority_filter_phrase(intent: str) -> str | None:
+    lowered = (intent or "").lower()
+    for value in _JOB_PRIORITY_VALUES:
+        if re.search(rf"\b{re.escape(value)}[\s_-]+priority\s+jobs?\b", lowered):
+            return value
+    return None
+
+
+def _target_priority_phrase(intent: str, *, source_priority: str | None = None) -> str | None:
+    lowered = (intent or "").lower()
+    for value in _JOB_PRIORITY_VALUES:
+        if source_priority and value == source_priority:
+            continue
+        patterns = [
+            rf"\b(?:to|as)\s+{re.escape(value)}(?:[\s_-]+priority)?\b",
+            rf"\bpriority\s+(?:to|as|=|:)\s+{re.escape(value)}\b",
+        ]
+        if any(re.search(pattern, lowered) for pattern in patterns):
+            return value
+    return None
+
+
+def _infer_bulk_job_priority_mutation(intent: str) -> dict[str, str] | None:
+    """Infer "all low-priority jobs" style bulk job mutations.
+
+    The source priority must be expressed as a filter phrase near "jobs" so the
+    planner performs a scoped lookup instead of reading the whole job table.
+    """
+    lowered = (intent or "").lower()
+    if not re.search(r"\bjobs?\b", lowered):
+        return None
+    source = _priority_filter_phrase(intent)
+    if not source:
+        return None
+    if re.search(r"\b(?:delete|remove)\b", lowered):
+        return {"action": "delete", "source_priority": source}
+    if not re.search(r"\b(?:change|set|update|mark|make)\b", lowered):
+        return None
+    target = _target_priority_phrase(intent, source_priority=source)
+    if not target:
+        return None
+    return {"action": "update_priority", "source_priority": source, "target_priority": target}
 
 
 def _staged_job_ids(staged: list[dict[str, Any]]) -> list[str]:
@@ -122,8 +167,6 @@ def build_job_priority_bundle_uiview(
     Returned shape is stable for API/UI:
     ``{ "kind": "job_priority_bundle", "headline": str, "rows": [...], "previous_priority": str, "new_priority": str }``
     """
-    from .planner_graph_helpers import _infer_bulk_job_priority_mutation
-
     clean = [x for x in staged if isinstance(x, dict)]
     if not clean or not all(_tool_is_job_put(x.get("tool_name")) for x in clean):
         return None
