@@ -78,7 +78,7 @@ EXPECTED_PATH_METHODS = {
     "/dlq/{dlq_id}/replay-request": ["post"],
     "/documents/{doc_id}/pdf": ["get"],
     "/metrics": ["get"],
-    "/sessions": ["get", "post"],
+    "/sessions": ["delete", "get", "post"],
     "/sessions/{session_id}": ["delete", "get", "patch"],
     "/sessions/{session_id}/cancel": ["post"],
     "/sessions/{session_id}/confirm": ["post"],
@@ -96,6 +96,7 @@ EXPECTED_PATH_METHODS = {
 
 EXPECTED_RESPONSE_REFS = {
     ("post", "/sessions", "200"): "#/components/schemas/SessionResponse",
+    ("delete", "/sessions", "200"): "#/components/schemas/SessionBulkDeleteResponse",
     ("get", "/sessions/{session_id}/snapshot", "200"): "#/components/schemas/SessionSnapshotResponse",
     ("get", "/sessions/{session_id}/messages", "200"): {
         "items": {"$ref": "#/components/schemas/MessageResponse"},
@@ -114,6 +115,7 @@ EXPECTED_RESPONSE_REFS = {
 
 
 USER_AUTH_CONTRACTS = [
+    ("delete", "/sessions"),
     ("get", "/sessions/{session_id}/snapshot"),
     ("get", "/sessions/{session_id}/events"),
     ("get", "/sessions/{session_id}/events/activity"),
@@ -169,6 +171,7 @@ async def test_openapi_route_contract_snapshot(sessionmaker_override):
         "DeadLetterResponse",
         "MessageResponse",
         "PlanResponse",
+        "SessionBulkDeleteResponse",
         "SessionResponse",
         "SessionSnapshotResponse",
     }

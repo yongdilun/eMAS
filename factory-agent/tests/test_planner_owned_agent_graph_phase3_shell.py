@@ -8,12 +8,14 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from factory_agent.config import get_settings
+from factory_agent.graph.checkpointing import build_graph_checkpointer, clear_graph_checkpointer_cache
 from factory_agent.graph.v2_agent_graph import (
     PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER,
     LocalPlannerOwnedGraphTracer,
     PlannerOwnedAgentGraph,
     PlannerOwnedAgentGraphAdapters,
 )
+from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
 
 
@@ -131,6 +133,7 @@ def _graph(*, checkpointer: Any = None, tracer: LocalPlannerOwnedGraphTracer | N
             tools_by_name=_tools(),
             http_executor=_fake_http_executor,
         ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=checkpointer,
         tracer=tracer,
     )
@@ -234,6 +237,31 @@ async def test_phase3_graph_accepts_injected_and_configured_checkpointers(monkey
     )
 
     assert configured_graph.compiled_graph.checkpointer is configured
+
+
+def test_phase3_postgres_checkpointer_config_falls_back_when_adapter_unavailable(monkeypatch):
+    import builtins
+
+    clear_graph_checkpointer_cache()
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "langgraph.checkpoint.postgres.aio":
+            raise ModuleNotFoundError("No module named 'langgraph.checkpoint.postgres'")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    settings = replace(
+        get_settings(),
+        database_url="sqlite+aiosqlite:///:memory:",
+        graph_checkpoint_backend="postgres",
+        graph_checkpoint_postgres_dsn="postgresql://local/unavailable",
+    )
+
+    checkpointer = build_graph_checkpointer(settings)
+
+    assert checkpointer is not None
+    assert hasattr(checkpointer, "aget_tuple")
 
 
 @pytest.mark.asyncio

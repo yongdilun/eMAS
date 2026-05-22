@@ -1201,6 +1201,41 @@ async def test_delete_session_removes_session_and_related_rows(sessionmaker_over
 
 
 @pytest.mark.asyncio
+async def test_delete_sessions_removes_all_sessions_for_requesting_user(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Session
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        jwt_required=True,
+        jwt_secret="test-secret",
+    )
+    headers_u1 = _auth_headers("test-secret", sub="u1")
+    headers_u2 = _auth_headers("test-secret", sub="u2")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/sessions", json={"user_id": "u1", "name": "First"}, headers=headers_u1)
+        second = await client.post("/sessions", json={"user_id": "u1", "name": "Second"}, headers=headers_u1)
+        other = await client.post("/sessions", json={"user_id": "u2", "name": "Other"}, headers=headers_u2)
+
+        denied = await client.delete("/sessions?user_id=u2", headers=headers_u1)
+        assert denied.status_code == 403
+
+        deleted = await client.delete("/sessions?user_id=u1", headers=headers_u1)
+        assert deleted.status_code == 200
+        body = deleted.json()
+        assert body["ok"] is True
+        assert body["user_id"] == "u1"
+        assert body["deleted_count"] == 2
+        assert set(body["session_ids"]) == {first.json()["session_id"], second.json()["session_id"]}
+
+        remaining = await client.get("/sessions?user_id=u2", headers=headers_u2)
+        assert [row["session_id"] for row in remaining.json()] == [other.json()["session_id"]]
+
+    rows = (await db_session.execute(select(Session).order_by(Session.name))).scalars().all()
+    assert [(row.user_id, row.name) for row in rows] == [("u2", "Other")]
+
+
+@pytest.mark.asyncio
 async def test_conversation_message_returns_completed_empty_plan(sessionmaker_override, db_session):
     from factory_agent.persistence.models import PlanStep, Session
 
@@ -1511,6 +1546,464 @@ async def test_graph_runtime_low_medium_high_resume_queues_second_approval_witho
     ]
     assert [row.status for row in approval_rows] == ["APPROVED", "PENDING"]
     assert session_row.llm_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_no_low_records_still_stages_medium_priority_approval_without_llm(
+    sessionmaker_override, db_session, monkeypatch
+):
+    from factory_agent.persistence.models import Approval, Session
+
+    priority_schema = {"type": "string", "enum": ["low", "medium", "high", "urgent"]}
+    await _seed_tool(
+        db_session,
+        name="get__jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "priority": priority_schema,
+                "fields": {"type": "string"},
+            },
+        },
+        capability_tags='["job","list","priority","operational_state"]',
+        is_read_only=True,
+    )
+    await _seed_tool(
+        db_session,
+        name="patch__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PATCH",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "priority": priority_schema,
+            },
+            "required": ["id"],
+        },
+        capability_tags='["job","update","priority","operational_state"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    rows = [{"job_id": "JOB-MED-ONLY-001", "priority": "medium"}]
+    calls: list[dict[str, object]] = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, idempotency_key, extra_headers
+        calls.append({"tool_name": tool.name, "method": tool.method, "args": dict(args)})
+        if tool.method == "GET":
+            priority = args.get("priority")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "body": {
+                    "data": [
+                        dict(row)
+                        for row in rows
+                        if priority in (None, "", [], {}) or row.get("priority") == priority
+                    ]
+                },
+                "latency_ms": 1,
+                "infrastructure_error": False,
+            }
+        raise AssertionError("write execution must wait for approval")
+
+    monkeypatch.setattr(
+        "factory_agent.graph.http_tool_client.execute_tool_http",
+        fake_execute_tool_http,
+    )
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": "Change all low priority job to medium, then change all medium priority job to high",
+                "mode": "normal",
+            },
+        )
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+
+    pending = snapshot["pending_approval"]
+    args = pending["args"]
+    session_row = await db_session.get(Session, session_id)
+    approval_rows = (
+        await db_session.execute(select(Approval).where(Approval.session_id == session_id).order_by(Approval.created_at))
+    ).scalars().all()
+
+    assert snapshot["session"]["status"] == "WAITING_APPROVAL"
+    assert args["kind"] == "graph_write_approval_required"
+    assert args["approval_label"] == "Approval 1"
+    assert args["requirement_id"] == "req-002"
+    assert args["bundle_ui"]["previous_priority"] == "medium"
+    assert args["bundle_ui"]["new_priority"] == "high"
+    assert args["preview"][0]["args"] == {"id": "JOB-MED-ONLY-001", "priority": "high"}
+    assert [call for call in calls if call["method"] == "PATCH"] == []
+    assert [row.status for row in approval_rows] == ["PENDING"]
+    assert session_row.llm_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_no_record_branch_is_not_counted_as_business_change_after_approval(
+    sessionmaker_override, db_session, monkeypatch
+):
+    from factory_agent.persistence.models import PlanStep, Session
+
+    priority_schema = {"type": "string", "enum": ["low", "medium", "high", "urgent"]}
+    await _seed_tool(
+        db_session,
+        name="get__jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "priority": priority_schema,
+                "fields": {"type": "string"},
+            },
+        },
+        capability_tags='["job","list","priority","operational_state"]',
+        is_read_only=True,
+    )
+    await _seed_tool(
+        db_session,
+        name="patch__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PATCH",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "priority": priority_schema,
+            },
+            "required": ["id"],
+        },
+        capability_tags='["job","update","priority","operational_state"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    rows = [{"job_id": "JOB-MED-ONLY-001", "priority": "medium"}]
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, idempotency_key, extra_headers
+        if tool.method == "GET":
+            priority = args.get("priority")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "body": {
+                    "data": [
+                        dict(row)
+                        for row in rows
+                        if priority in (None, "", [], {}) or row.get("priority") == priority
+                    ]
+                },
+                "latency_ms": 1,
+                "infrastructure_error": False,
+            }
+
+        job_id = str(args.get("id") or "")
+        priority = args.get("priority")
+        for row in rows:
+            if row.get("job_id") == job_id:
+                row["priority"] = priority
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": {"job_id": job_id, "priority": priority}},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.graph.http_tool_client.execute_tool_http",
+        fake_execute_tool_http,
+    )
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+    )
+    final_snapshot = None
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": "Change all low priority job to medium, then change all medium priority job to high",
+                "mode": "normal",
+            },
+        )
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        first_snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        approval_id = first_snapshot["pending_approval"]["approval_id"]
+
+        approved = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
+        assert approved.status_code == 200
+
+        for _ in range(80):
+            snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+            if snapshot["session"]["status"] == "COMPLETED":
+                final_snapshot = snapshot
+                break
+            await asyncio.sleep(0.025)
+
+    assert final_snapshot is not None
+    response_document = final_snapshot["response_document"]
+    document_text = json.dumps(response_document, default=str)
+    session_row = await db_session.get(Session, session_id)
+    plan_steps = (
+        await db_session.execute(select(PlanStep).where(PlanStep.session_id == session_id).order_by(PlanStep.step_index))
+    ).scalars().all()
+
+    assert rows == [{"job_id": "JOB-MED-ONLY-001", "priority": "high"}]
+    assert session_row.status == "COMPLETED"
+    assert len(plan_steps) == 1
+    assert plan_steps[0].tool_name == "patch__jobs_{id}"
+    assert plan_steps[0].result["data"]["job_id"] == "JOB-MED-ONLY-001"
+    assert response_document["invariants"]["affected_record_count"] == 1
+    assert response_document["invariants"]["approved_business_change_count"] == 1
+    assert response_document["invariants"]["not_changed_group_count"] == 1
+    assert "1 approved business change" in response_document["message"]
+    assert "2 approved business changes" not in response_document["message"]
+    assert "Business change 2" not in document_text
+    assert "Not changed" in document_text
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm(
+    sessionmaker_override, db_session, monkeypatch
+):
+    from factory_agent.persistence.models import Approval, Session
+
+    priority_schema = {"type": "string", "enum": ["low", "medium", "high", "urgent"]}
+    await _seed_tool(
+        db_session,
+        name="get__jobs",
+        endpoint="/jobs",
+        method="GET",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "priority": priority_schema,
+                "fields": {"type": "string"},
+            },
+        },
+        capability_tags='["job","list","priority","operational_state"]',
+        is_read_only=True,
+    )
+    await _seed_tool(
+        db_session,
+        name="patch__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PATCH",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "priority": priority_schema,
+            },
+            "required": ["id"],
+        },
+        capability_tags='["job","update","priority","operational_state"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    rows = [
+        {"job_id": "JOB-BG-LOW-001", "priority": "low"},
+        {"job_id": "JOB-BG-MED-001", "priority": "medium"},
+    ]
+    calls: list[dict[str, object]] = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        del settings, idempotency_key, extra_headers
+        calls.append({"tool_name": tool.name, "method": tool.method, "args": dict(args)})
+        if tool.method == "GET":
+            priority = args.get("priority")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "body": {
+                    "data": [
+                        dict(row)
+                        for row in rows
+                        if priority in (None, "", [], {}) or row.get("priority") == priority
+                    ]
+                },
+                "latency_ms": 1,
+                "infrastructure_error": False,
+            }
+
+        job_id = str(args.get("id") or "")
+        priority = args.get("priority")
+        for row in rows:
+            if row.get("job_id") == job_id:
+                row["priority"] = priority
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {"data": {"job_id": job_id, "priority": priority}},
+            "latency_ms": 1,
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.graph.http_tool_client.execute_tool_http",
+        fake_execute_tool_http,
+    )
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=object(),
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+    )
+    second_snapshot = None
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
+        await client.post(
+            f"/sessions/{session_id}/messages",
+            json={
+                "role": "user",
+                "content": "Change all low priority job to medium, then change all medium priority job to high",
+                "mode": "normal",
+            },
+        )
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200
+        first_snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+        first_approval_id = first_snapshot["pending_approval"]["approval_id"]
+
+        approved = await client.post(f"/approvals/{first_approval_id}/approve", json={"decided_by": "u1"})
+        assert approved.status_code == 200
+
+        for _ in range(80):
+            await asyncio.sleep(0.025)
+            snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+            pending = snapshot.get("pending_approval")
+            if (
+                snapshot["session"]["status"] == "WAITING_APPROVAL"
+                and pending is not None
+                and pending["approval_id"] != first_approval_id
+            ):
+                second_snapshot = snapshot
+                break
+
+    assert second_snapshot is not None
+    second_pending = second_snapshot["pending_approval"]
+    second_args = second_pending["args"]
+    session_row = await db_session.get(Session, session_id)
+    approval_rows = (
+        await db_session.execute(select(Approval).where(Approval.session_id == session_id).order_by(Approval.created_at))
+    ).scalars().all()
+
+    assert second_pending["approval_id"] != first_approval_id
+    assert second_args["kind"] == "graph_write_approval_required"
+    assert second_args["approval_label"] == "Approval 2"
+    assert second_args["ledger_revision"] == 2
+    assert second_args["bundle_ui"]["previous_priority"] == "medium"
+    assert second_args["bundle_ui"]["new_priority"] == "high"
+    assert [call for call in calls if call["method"] == "PATCH"] == [
+        {"tool_name": "patch__jobs_{id}", "method": "PATCH", "args": {"id": "JOB-BG-LOW-001", "priority": "medium"}}
+    ]
+    assert rows == [
+        {"job_id": "JOB-BG-LOW-001", "priority": "medium"},
+        {"job_id": "JOB-BG-MED-001", "priority": "medium"},
+    ]
+    assert [row.status for row in approval_rows] == ["APPROVED", "PENDING"]
+    assert session_row.llm_call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_planner_owned_graph_background_resume_failure_marks_session_failed(
+    sessionmaker_override, db_session
+):
+    from factory_agent.persistence.models import Approval, Session
+
+    created_at = datetime.utcnow() - timedelta(minutes=1)
+    session_id = "planner-owned-background-failure"
+    approval_id = "planner-owned-background-failure-approval"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_APPROVAL",
+            current_intent="Change matching jobs safely.",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={
+                "langgraph_pending_approval": {
+                    "approval_id": approval_id,
+                    "thread_id": session_id,
+                    "ledger_revision": 1,
+                }
+            },
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__planner_owned_graph_commit__",
+            args={
+                "kind": "graph_write_approval_required",
+                "ledger_revision": 1,
+                "requirement_ledger_revision": 1,
+                "checkpoint_id": f"{session_id}:missing-checkpoint",
+            },
+            risk_summary="A graph write needs approval.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=created_at + timedelta(hours=1),
+            created_at=created_at,
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=object(),
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+    )
+    failed_snapshot = None
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        approved = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
+        assert approved.status_code == 200
+
+        for _ in range(80):
+            await asyncio.sleep(0.025)
+            snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+            if snapshot["session"]["status"] == "FAILED":
+                failed_snapshot = snapshot
+                break
+
+    assert failed_snapshot is not None
+    session_row = await db_session.get(Session, session_id)
+    assert session_row.status == "FAILED"
+    assert "checkpoint" in (session_row.error or "").lower()
+    assert failed_snapshot["pending_approval"] is None
 
 
 @pytest.mark.asyncio

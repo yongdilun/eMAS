@@ -133,6 +133,12 @@ export const factoryAgentApi = {
   getSnapshot: (sessionId, options) => request('GET', `/sessions/${sessionId}/snapshot`, undefined, options),
   getMessages: (sessionId, options) => request('GET', `/sessions/${sessionId}/messages`, undefined, options),
   getSteps: (sessionId, options) => request('GET', `/sessions/${sessionId}/steps`, undefined, options),
+  deleteSessions: (params = {}, options) => {
+    const q = new URLSearchParams()
+    if (params.user_id) q.set('user_id', params.user_id)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return request('DELETE', `/sessions${suffix}`, undefined, options)
+  },
   deleteSession: (sessionId, options) => request('DELETE', `/sessions/${sessionId}`, undefined, options),
 
   listTools: (params = {}, options) => {

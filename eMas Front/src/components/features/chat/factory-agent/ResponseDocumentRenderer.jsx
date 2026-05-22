@@ -725,11 +725,12 @@ function SourceHoverCard({ source, anchorRef }) {
   )
 }
 
-function SourceChip({ citation, index, activeHoverId, setActiveHoverId, onOpenSource }) {
+function SourceChip({ citation, index, hoverId, activeHoverId, setActiveHoverId, onOpenSource }) {
   const source = citationFromSource(citation)
   const chipRef = useRef(null)
   if (!source) return null
-  const id = citationKey(source) || `citation:${index + 1}`
+  const sourceId = citationKey(source) || `citation:${index + 1}`
+  const id = hoverId || `${sourceId}:chip:${index}`
   const label = `[${source.source_number || index + 1}]`
   const openTarget = sourceOpenTarget(source)
   return (
@@ -1673,6 +1674,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, activeH
                   key={`${citationKey(citation)}:${citationIndex}`}
                   citation={citation}
                   index={citationIndex}
+                  hoverId={`${block.id || 'knowledge'}:segment:${segmentIndex}:citation:${citationIndex}:${citationKey(citation) || 'source'}`}
                   activeHoverId={activeHoverId}
                   setActiveHoverId={setActiveHoverId}
                   onOpenSource={onOpenSource}

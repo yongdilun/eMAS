@@ -14,6 +14,8 @@ const FactoryAgentSessionSidebar = ({
   onStopEditing,
   onRenameSession,
   onDeleteSession,
+  onClearAllChats,
+  clearAllChatsDisabled = false,
 }) => (
   <aside
     className={`${collapsed ? 'sm:w-14' : 'sm:w-72'} hidden shrink-0 border-r border-hairline bg-surface-1 transition-all duration-200 sm:flex sm:flex-col`}
@@ -30,6 +32,16 @@ const FactoryAgentSessionSidebar = ({
             className="flex-1 px-2.5 py-2 rounded-md text-xs font-semibold bg-primary text-white hover:bg-primary-hover"
           >
             New Session
+          </button>
+          <button
+            type="button"
+            onClick={onClearAllChats}
+            disabled={clearAllChatsDisabled}
+            className="p-2 rounded-md hover:bg-surface-2 text-ink-subtle disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label="Clear all chats"
+            title="Clear all chats"
+          >
+            <span className="material-symbols-outlined text-lg">delete_sweep</span>
           </button>
           <button
             type="button"

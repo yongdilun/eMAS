@@ -4,6 +4,7 @@ import {
   React,
   click,
   createViteSsrServer,
+  hover,
   installDom,
   render,
   waitFor,
@@ -57,6 +58,7 @@ function createChatState(overrides = {}) {
     switchSession: () => {},
     renameSession: () => {},
     deleteSession: () => {},
+    clearAllSessions: () => {},
     ...overrides,
   }
 }
@@ -1488,6 +1490,59 @@ test('FactoryAgentChatPanel renders RAG source block from response_document type
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel keeps repeated source-chip hover to one tooltip', async () => {
+  const citationId = 'citation:LOTO-M-CNC-01#chunk-1'
+  const rd = baseResponseDocument({
+    message: 'I found a source-backed answer.',
+    blocks: [
+      { id: 'message:knowledge', type: 'short_message', message: 'I found a source-backed answer.', status: 'completed' },
+      {
+        id: 'knowledge:grouped-hover',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: '1. Prepare for shutdown. 2. Shut down the machine. 3. Disconnect energy sources.',
+        segments: [
+          { text: '1. Prepare for shutdown.', citation_ids: [citationId] },
+          { text: '2. Shut down the machine.', citation_ids: [citationId] },
+          { text: '3. Disconnect energy sources.', citation_ids: [citationId] },
+        ],
+        citations: [
+          {
+            contract: 'source_citation_v1',
+            citation_id: citationId,
+            source_id: 'LOTO-M-CNC-01#chunk-1',
+            source_number: 1,
+            title: 'Machine LOTO Procedure',
+            doc_id: 'LOTO-M-CNC-01',
+            chunk_id: 'chunk-1',
+            organization: 'Factory Safety',
+            snippet: 'Prepare, shut down, and isolate energy before service.',
+          },
+        ],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-hover', name: 'RD hover', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-hover', name: 'RD hover', status: 'COMPLETED' }],
+    activeSessionName: 'RD hover',
+    turns: [responseDocumentTurn(rd)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.equal(view.container.querySelectorAll('[data-source-chip]').length, 3))
+  const chips = Array.from(view.container.querySelectorAll('[data-source-chip]'))
+  await hover(chips[0])
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-source-chip-hover]').length, 1))
+  await hover(chips[1])
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-source-chip-hover]').length, 1))
+  assert.match(document.querySelector('[data-source-chip-hover]')?.textContent || '', /Machine LOTO Procedure/)
+
+  await view.unmount()
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-source-chip-hover]').length, 0))
+})
+
 test('FactoryAgentChatPanel strips legacy raw safety markdown from response_document answers', async () => {
   const document = baseResponseDocument({
     message: 'I found a source-backed answer.',
@@ -1901,10 +1956,14 @@ test('FactoryAgentSessionSidebar uses separate controls for select, rename, and 
       onStopEditing: () => calls.push(['stop-edit']),
       onRenameSession: (id, name) => calls.push(['rename', id, name]),
       onDeleteSession: (item) => calls.push(['delete', item.session_id]),
+      onClearAllChats: () => calls.push(['clear-all']),
     }),
   )
 
   assert.ok(!view.container.querySelector('button button'))
+
+  await click(view.container.querySelector('button[aria-label="Clear all chats"]'))
+  assert.deepEqual(calls.at(-1), ['clear-all'])
 
   await click(view.container.querySelector('button[aria-label="Rename session Priority review"]'))
   assert.deepEqual(calls.at(-1), ['edit', 'session-1'])
@@ -1914,6 +1973,41 @@ test('FactoryAgentSessionSidebar uses separate controls for select, rename, and 
 
   await click(view.container.querySelector('button[aria-label="Open session Priority review"]'))
   assert.deepEqual(calls.at(-1), ['switch', 'session-1'])
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel confirms before clearing all chats', async () => {
+  const calls = []
+  const chatState = createChatState({
+    session: { session_id: 'session-1', name: 'Priority review', status: 'COMPLETED' },
+    sessionList: [
+      { session_id: 'session-1', name: 'Priority review', status: 'COMPLETED' },
+      { session_id: 'session-2', name: 'Machine audit', status: 'FAILED' },
+    ],
+    activeSessionName: 'Priority review',
+    clearAllSessions: async () => {
+      calls.push('clear-all')
+      return true
+    },
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await click(view.container.querySelector('button[aria-label="Clear all chats"]'))
+  assert.match(view.text(), /Clear all chats\?/)
+  assert.match(view.text(), /2 chats will be cleared\./)
+  assert.deepEqual(calls, [])
+
+  const confirmButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
+    button.textContent.trim() === 'Clear all',
+  )
+  await click(confirmButton)
+
+  await waitFor(() => {
+    assert.deepEqual(calls, ['clear-all'])
+    assert.doesNotMatch(view.text(), /Clear all chats\?/)
+  })
 
   await view.unmount()
 })

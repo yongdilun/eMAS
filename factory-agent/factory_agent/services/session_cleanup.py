@@ -35,6 +35,16 @@ class SessionDeletionResult:
     deleted: bool
 
 
+@dataclass(frozen=True)
+class SessionBulkDeletionResult:
+    user_id: str
+    session_ids: list[str]
+
+    @property
+    def deleted_count(self) -> int:
+        return len(self.session_ids)
+
+
 async def delete_session_tree(db: AsyncSession, *, session_id: str) -> SessionDeletionResult:
     existing_session_id = (
         await db.execute(select(SessionRow.session_id).where(SessionRow.session_id == session_id))
@@ -48,3 +58,22 @@ async def delete_session_tree(db: AsyncSession, *, session_id: str) -> SessionDe
     await db.execute(delete(SessionRow).where(SessionRow.session_id == session_id))
     await db.commit()
     return SessionDeletionResult(session_id=session_id, deleted=True)
+
+
+async def delete_sessions_for_user(db: AsyncSession, *, user_id: str) -> SessionBulkDeletionResult:
+    session_ids = list(
+        (
+            await db.execute(select(SessionRow.session_id).where(SessionRow.user_id == user_id))
+        )
+        .scalars()
+        .all()
+    )
+    if not session_ids:
+        return SessionBulkDeletionResult(user_id=user_id, session_ids=[])
+
+    for model in SESSION_OWNED_CHILD_MODELS:
+        await db.execute(delete(model).where(model.session_id.in_(session_ids)))
+
+    await db.execute(delete(SessionRow).where(SessionRow.session_id.in_(session_ids)))
+    await db.commit()
+    return SessionBulkDeletionResult(user_id=user_id, session_ids=session_ids)

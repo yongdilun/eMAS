@@ -91,10 +91,10 @@ class Settings:
     rag_answer_max_tokens: int = 600
     embedding_backend: str = "disabled"  # sentence-transformers|disabled
     embedding_model: str = "BAAI/bge-small-en-v1.5"
-    llm_default_timeout_s: float = 20.0
-    llm_default_max_tokens: int = 1024
-    planner_timeout_s: float = 20.0
-    planner_max_tokens: int = 1024
+    llm_default_timeout_s: float = 60.0
+    llm_default_max_tokens: int = 4096
+    planner_timeout_s: float = 60.0
+    planner_max_tokens: int = 2048
     summary_timeout_s: float = 20.0
     summary_max_tokens: int = 512
     tool_selector_timeout_s: float = 8.0
@@ -289,13 +289,13 @@ def get_settings() -> Settings:
         tool_selector_reranker_max_tokens=int(os.getenv("TOOL_SELECTOR_RERANKER_MAX_TOKENS", "220")),
         embedding_backend=os.getenv("EMBEDDING_BACKEND", "disabled").strip().lower(),
         embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5").strip(),
-        llm_default_timeout_s=float(os.getenv("LLM_DEFAULT_TIMEOUT_S", "20")),
-        llm_default_max_tokens=int(os.getenv("LLM_DEFAULT_MAX_TOKENS", "1024")),
+        llm_default_timeout_s=float(os.getenv("LLM_DEFAULT_TIMEOUT_S", "60")),
+        llm_default_max_tokens=int(os.getenv("LLM_DEFAULT_MAX_TOKENS", "4096")),
         planner_timeout_s=float(
-            os.getenv("PLANNER_TIMEOUT_S", os.getenv("LLM_JSON_TIMEOUT_S", os.getenv("LLM_DEFAULT_TIMEOUT_S", "20")))
+            os.getenv("PLANNER_TIMEOUT_S", os.getenv("LLM_JSON_TIMEOUT_S", os.getenv("LLM_DEFAULT_TIMEOUT_S", "60")))
         ),
         planner_max_tokens=int(
-            os.getenv("PLANNER_MAX_TOKENS", os.getenv("LLM_JSON_MAX_TOKENS", os.getenv("LLM_DEFAULT_MAX_TOKENS", "1024")))
+            os.getenv("PLANNER_MAX_TOKENS", os.getenv("LLM_JSON_MAX_TOKENS", "2048"))
         ),
         summary_timeout_s=float(
             os.getenv("SUMMARY_TIMEOUT_S", os.getenv("LLM_DEFAULT_TIMEOUT_S", "20"))

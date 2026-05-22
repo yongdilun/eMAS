@@ -74,6 +74,13 @@ export async function click(element) {
   })
 }
 
+export async function hover(element) {
+  assert.ok(element, 'Expected element to hover')
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }))
+  })
+}
+
 export async function flushEffects() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0))

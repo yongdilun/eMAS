@@ -56,21 +56,24 @@ If the context does not prove the answer, respond exactly with:
 ### Citation Contract
 - Use citation markers exactly like [^1], [^2], etc.
 - Use only source numbers that appear in the context.
-- Every factual claim must have a citation marker in the same sentence or list item.
-- For procedures, output a numbered list.
-- Every procedure step must end with a citation marker.
+- Cite coherent answer groups, not every sentence.
+- Group adjacent sentences or related procedure steps under one citation marker when the same source supports them.
+- Prefer 1 citation marker per paragraph or per 2-4 related procedure steps; repeat a marker only when the support source changes or a separate critical claim needs its own evidence.
+- For procedures, output a numbered list and keep grouped citations at natural breakpoints.
+- Start procedure answers directly at step 1 when possible. If a brief lead-in is necessary, make it introduce the numbered list and cite the whole lead-in plus list as one grouped procedure block.
 - Do not output an incomplete numbered item such as a bare "3" or "3.".
-- Do not put one citation at the end of a multi-step list unless it is repeated on every step.
+- Do not scatter the same citation after every sentence when one grouped citation covers the paragraph or step group.
 - Do not output [SOURCE 1], source titles, footnote definitions, or a bibliography.
 - Do not include uncited introductions, summaries, conclusions, or safety warnings.
 
 ### Output Format
 For procedures:
-1. <step proven by context>.[^N]
-2. <step proven by context>.[^N]
+1. <step proven by context>.
+2. <step proven by context>.
+3. <step proven by context>.[^N]
 
 For non-procedures:
-<direct answer sentence with citation>.[^N]
+<direct answer paragraph with grouped citation>.[^N]
 
 ### Context
 {context}
@@ -81,8 +84,8 @@ For non-procedures:
 {query}
 
 ### Final Checks Before Answering
-- Every factual sentence/list item has a valid [^N] citation.
-- Every procedure step is numbered and cited.
+- Every factual paragraph or procedure group has a valid [^N] citation.
+- Adjacent facts supported by the same source are grouped under one marker.
 - No numbered item is left blank or cut off.
 - Unsupported or partially supported claims are omitted.
 - If no supported answer remains, output exactly the insufficient-context sentence.

@@ -16,6 +16,12 @@ _NUMBERED_PROCEDURE_LINE_RE = re.compile(r"^\s*(?:\d+[\.)]|[-*]\s*\d+[\.)])\s+")
 _NUMBERED_PROCEDURE_STEP_RE = re.compile(r"(?<!\w)(?:[-*]\s*)?\d+[\.)]\s+")
 _INCOMPLETE_NUMBERED_ITEM_RE = re.compile(r"^\s*(?:[-*]\s*)?\d+[\.)]?\s*$")
 _INCOMPLETE_NUMBERED_AFTER_CITATION_TAIL_RE = re.compile(r"\[(?:\^)?\d+\][\s;]+(?:[-*]\s*)?\d+[\.)]?\s*$")
+_PROCEDURE_INTRO_RE = re.compile(
+    r"\b(?:following|these)\b.{0,120}\b(?:steps?|sequence|procedure)\b|"
+    r"\b(?:before|prior to)\b.{0,120}\b(?:service|maintenance|shutdown)\b.{0,120}\b(?:steps?|complete|accomplished)\b",
+    re.IGNORECASE,
+)
+_CITATION_FRAMING_LINE_MAX_CHARS = 240
 _WORD_RE = re.compile(r"[A-Za-z0-9]")
 
 
@@ -119,8 +125,11 @@ def _has_uncited_claim_line(answer: str) -> bool:
     if not lines:
         return False
     has_cited_line = any(_CITATION_MARKER_RE.search(line) for line in lines)
+    grouped_procedure_lines = _grouped_cited_procedure_line_indexes(lines)
     for index, line in enumerate(lines):
         if _CITATION_MARKER_RE.search(line):
+            continue
+        if index in grouped_procedure_lines:
             continue
         if _is_citation_framing_line(line, index=index, has_cited_line=has_cited_line):
             continue
@@ -148,15 +157,41 @@ def _has_incomplete_numbered_item(answer: str) -> bool:
 
 
 def _has_uncited_procedure_step(answer: str) -> bool:
+    lines = [line.strip() for line in re.split(r"[\r\n]+", answer or "") if line.strip()]
+    if any(_NUMBERED_PROCEDURE_LINE_RE.search(line) for line in lines):
+        for start, end in _procedure_line_runs(lines):
+            if not _CITATION_MARKER_RE.search("\n".join(lines[start:end])):
+                return True
+        return False
+
     matches = list(_NUMBERED_PROCEDURE_STEP_RE.finditer(answer or ""))
     if not matches:
         return False
-    for index, match in enumerate(matches):
-        segment_end = matches[index + 1].start() if index + 1 < len(matches) else len(answer)
-        segment = answer[match.start() : segment_end]
-        if _looks_like_claim_line(segment) and not _CITATION_MARKER_RE.search(segment):
-            return True
-    return False
+    return not bool(_CITATION_MARKER_RE.search(answer or ""))
+
+
+def _procedure_line_runs(lines: list[str]) -> list[tuple[int, int]]:
+    runs: list[tuple[int, int]] = []
+    index = 0
+    while index < len(lines):
+        if not _NUMBERED_PROCEDURE_LINE_RE.search(lines[index]):
+            index += 1
+            continue
+        start = index
+        index += 1
+        while index < len(lines) and _NUMBERED_PROCEDURE_LINE_RE.search(lines[index]):
+            index += 1
+        runs.append((start, index))
+    return runs
+
+
+def _grouped_cited_procedure_line_indexes(lines: list[str]) -> set[int]:
+    indexes: set[int] = set()
+    for start, end in _procedure_line_runs(lines):
+        block = "\n".join(lines[start:end])
+        if _CITATION_MARKER_RE.search(block):
+            indexes.update(range(start, end))
+    return indexes
 
 
 def _has_uncited_tail_after_last_citation(answer: str) -> bool:
@@ -169,7 +204,9 @@ def _has_uncited_tail_after_last_citation(answer: str) -> bool:
 
 
 def _is_citation_framing_line(line: str, *, index: int, has_cited_line: bool) -> bool:
-    return index == 0 and has_cited_line and len(line) <= 160 and line.endswith(":")
+    if index != 0 or not has_cited_line or len(line) > _CITATION_FRAMING_LINE_MAX_CHARS:
+        return False
+    return line.endswith(":") or bool(_PROCEDURE_INTRO_RE.search(line))
 
 
 def _looks_like_claim_line(line: str) -> bool:

@@ -74,6 +74,14 @@ async def execute_graph_tool_call(
 
     persisted_decision = require_graph_execution_authorization(state, decision)
     call = persisted_decision.selected_tool_call
+    if persisted_decision.decision_kind == "execute_parallel_read_batch":
+        requested_call = decision.selected_tool_call
+        authorized_call_ids = {selected.call_id for selected in persisted_decision.selected_tool_calls}
+        if requested_call is None or requested_call.call_id not in authorized_call_ids:
+            raise GraphExecutionAuthorizationError(
+                "parallel read batch execution requires an authorized selected tool call"
+            )
+        call = requested_call
     if call is None:
         raise GraphExecutionAuthorizationError("execute_tool decision requires a selected tool call")
 
@@ -118,7 +126,7 @@ def require_graph_execution_authorization(
         raise GraphExecutionAuthorizationError(
             "graph execution requires a persisted validated planner or guard decision"
         )
-    if persisted.decision_kind != "execute_tool":
+    if persisted.decision_kind not in {"execute_tool", "execute_parallel_read_batch"}:
         raise GraphExecutionAuthorizationError("graph execution requires an execute_tool decision")
     validate_planner_decision(state, persisted)
     return persisted

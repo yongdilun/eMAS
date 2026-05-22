@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 10 complete. Normal v2 runtime now enters `PlannerOwnedAgentGraph` through a service adapter, uses the session id as stable graph thread/checkpoint identity, and resumes approvals from native LangGraph checkpoint state. Direct-v2 service execution remains only as historical/test/compatibility code and no longer owns normal runtime. Phase 10.5 is now required before cleanup so planner-authored decisions come from a real LLM proposer seam and deterministic validation gate, not hand-built graph code labelled as planner output.
+Status: Phase 10.5 complete. Normal v2 runtime enters `PlannerOwnedAgentGraph` through the service adapter, and planner-authored decisions now pass through the LLM proposer seam before deterministic validation accepts or rejects them. Direct-v2 service execution remains only as historical/test/compatibility code and no longer owns normal runtime. Phase 11 cleanup remains blocked until the legacy/direct coverage is classified and quarantined without weakening tests.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -51,7 +51,7 @@ State/checkpoint decision:
 | 8 | Writes, approval pause, and resume | Complete | `83911fa9` | Approval resume, stale approval, and UI approval tests |
 | 9 | Interruptions, revisions, and stale work | Complete | `04876615` | Interrupt/revision/stale-work tests |
 | 10 | Runtime switch to graph | Complete | `49e3a5ba` | Full backend plus frontend response-document, seeded-oracle, and real-LangGraph gates |
-| 10.5 | LLM planner decision proposer | Not started |  | Proposer seam tests plus seeded-oracle and real-LangGraph gates |
+| 10.5 | LLM planner decision proposer | Complete |  | Proposer seam tests plus seeded-oracle and real-LangGraph gates |
 | 11 | Test cleanup and legacy quarantine | Blocked by Phase 10.5 |  | Full backend with no new xfail/skips and static cleanup guardrails |
 | 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
 
@@ -419,23 +419,101 @@ Next phase recommendation:
 
 ### Phase 10.5: LLM Planner Decision Proposer
 
-Status: not started.
+Status: complete.
 
-Planned files:
+Files changed:
 
-- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
+- `factory-agent/factory_agent/config.py`
 - `factory-agent/factory_agent/graph/v2_agent_graph.py`
-- `factory-agent/factory_agent/config.py` only if a small config flag or model setting is needed
+- `factory-agent/factory_agent/planning/v2_graph_adapters.py`
+- `factory-agent/factory_agent/planning/v2_planner_decisions.py`
+- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
 - `factory-agent/tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase2_decisions.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase3_shell.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase6_read_flows.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
 
-Completion evidence to record:
+Completion evidence:
 
-- planner proposer interface and local/OpenAI-compatible Qwen adapter,
-- graph planner-decision nodes using the proposer seam for planner-authored decisions,
-- deterministic validation accepting valid proposals and rejecting invalid/stale/unsafe proposals,
-- static guard proving `author = "planner"` decisions in graph runtime are not hand-built without proposer diagnostics,
-- seeded-oracle and real-LangGraph counts,
-- optional local Qwen smoke result when a local endpoint is configured.
+- Added the small `PlannerDecisionProposer` interface and a local/OpenAI-compatible Qwen proposer adapter behind existing planner settings and `build_planner_chat_model(..., json_mode=True)`.
+- Graph planner-authored decisions are proposed through the proposer seam and then persisted only through `validate_planner_decision()` / `record_planner_decision()`.
+- Deterministic validation now rejects malformed/stale/unsafe planner proposals and accepts only proven mechanical guards, including single bounded document-tool choice and read-batch execution.
+- The proposer does not execute tools, mutate graph state, or see the full OpenAPI catalog before bounded retrieval.
+- Compact Qwen prompt/parse/normalization remains inside the proposer adapter; graph nodes receive `PlannerDecisionSubmission`.
+- Multi-call choices preserve `selected_tool_calls` so multi-entity status reads execute every accepted bounded call instead of collapsing to the first call.
+- Static guard proves graph-created `PlannerDecisionRecord` instances are not authored as `planner`; planner authorship requires proposer diagnostics.
+
+Tests run:
+
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py -q` -> `17 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd factory-agent; $tests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; python -m pytest $tests -q` -> `78 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q` -> `50 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd "eMas Front"; npm run test:e2e:response-document` -> `30 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`.
+- Targeted post-fix regression slice: `npx playwright test --project=chromium-seeded --grep "HQ-9-MULTI-ID|SO-021/SO-023" --reporter=list` -> `2 passed`, `0 failed`.
+- `git diff --check` -> passed; CRLF warnings only.
+
+Seeded-oracle and real-LangGraph:
+
+- Seeded-oracle passed: yes, `35 passed`.
+- Real-LangGraph passed: yes, `3 passed`.
+
+Optional local Qwen smoke:
+
+- Separate opt-in smoke trace not run. The seeded/real-LangGraph gates used the configured local Qwen-compatible endpoint and logged proposer diagnostics for model `Qwen2.5-7B-Instruct-Q4_K_M.gguf`, `base_url_type=local`, prompt size, timeout, token usage, finish reason, and duration.
+
+Blockers/waivers:
+
+- None. Intermediate seeded failures exposed two general architecture bugs and were fixed without exact-prompt, seeded-ID, source-ID, or legacy-stack branches: compact multi-call choices now preserve `selected_tool_calls`, and single bounded document-tool choices use a validated deterministic guard.
+
+Commit:
+
+- Not created in this tracker update.
+
+Post-completion approval-resume fix:
+
+- Fixed planner-owned graph approval resume so planner-owned/direct graph resume exceptions run through the same fail-closed session-status handling as legacy graph resume, instead of leaving background resumes stuck in `EXECUTING`.
+- Reloaded the session after rollback before marking graph resume `FAILED` or `BLOCKED`, avoiding async SQLAlchemy expired-object access during the failure handler.
+- Tightened the offline proposer adapter to prefer approval-gated/write candidate calls for write capability needs, while still passing through the proposer seam and deterministic validation.
+- Fixed the checkpointer factory so a configured Postgres LangGraph checkpointer falls back to the existing database/memory checkpointer adapter when the optional Postgres saver package is unavailable. This prevents new graph approvals from being staged without a resumable native checkpoint.
+- Fixed graph-native snapshot detection so planner-owned graph plans are recognized from the plan marker before checkpoint probing, and checkpoint probing no longer sorts while selecting the large checkpoint JSON payload.
+- Fixed multi-requirement write staging when an earlier write preview has no matching records. The graph now records typed no-record evidence for that requirement, continues to the next open write requirement, and only finalizes once no open graph-write requirements remain. No-record previews no longer consume the user-visible approval number.
+- Fixed response-document projection for graph no-record approval previews. Non-actionable no-record preview evidence is no longer projected as executable `tool_outputs` or persisted plan steps, and the same proven no-op is exposed through the existing typed `no_op_mutations` UI contract so it renders as "Not changed" without inflating approved business-change counts.
+
+Additional files changed:
+
+- `factory-agent/factory_agent/graph/checkpointing.py`
+- `factory-agent/factory_agent/graph/session_detection.py`
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/memory/checkpoint.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/services/planner_owned_graph_runtime.py`
+- `factory-agent/tests/test_graph_session_detection.py`
+- `factory-agent/tests/test_api_endpoints.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py`
+
+Additional tests run:
+
+- `cd factory-agent; python -m pytest tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_resume_queues_second_approval_without_llm tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm tests/test_api_endpoints.py::test_planner_owned_graph_background_resume_failure_marks_session_failed tests/test_planner_owned_agent_graph_phase8_approval_resume.py::test_phase8_low_to_medium_then_medium_to_high_stages_second_approval_without_llm -q` -> `4 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_api_endpoints.py::test_graph_approval_returns_before_resume_and_keeps_one_activity_operation -q` -> `1 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase3_shell.py::test_phase3_postgres_checkpointer_config_falls_back_when_adapter_unavailable tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm tests/test_planner_owned_agent_graph_phase8_approval_resume.py::test_phase8_low_to_medium_then_medium_to_high_stages_second_approval_without_llm -q` -> `3 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_graph_session_detection.py tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm tests/test_planner_owned_agent_graph_phase3_shell.py::test_phase3_postgres_checkpointer_config_falls_back_when_adapter_unavailable -q` -> `4 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase3_shell.py::test_phase3_postgres_checkpointer_config_falls_back_when_adapter_unavailable -q` -> `18 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_graph_session_detection.py -q` -> `19 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_api_endpoints.py::test_graph_runtime_no_low_records_still_stages_medium_priority_approval_without_llm tests/test_planner_owned_agent_graph_phase8_approval_resume.py::test_phase8_no_records_for_first_write_continues_to_second_approval -q` -> `2 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_api_endpoints.py::test_graph_runtime_no_low_records_still_stages_medium_priority_approval_without_llm tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_resume_queues_second_approval_without_llm tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm -q` -> `13 passed`, `0 failed`.
+- `cd factory-agent; $tests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; python -m pytest $tests -q` -> `80 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py -q` -> `17 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_runtime_switch.py::test_phase10_graph_runtime_keeps_no_record_preview_out_of_executable_tool_outputs tests/test_api_endpoints.py::test_graph_runtime_no_record_branch_is_not_counted_as_business_change_after_approval -q` -> `2 passed`, `0 failed`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase8_approval_resume.py tests/test_api_endpoints.py::test_graph_runtime_no_low_records_still_stages_medium_priority_approval_without_llm tests/test_api_endpoints.py::test_graph_runtime_no_record_branch_is_not_counted_as_business_change_after_approval tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_resume_queues_second_approval_without_llm tests/test_api_endpoints.py::test_graph_runtime_low_medium_high_background_resume_queues_second_approval_without_llm -q` -> `21 passed`, `0 failed`.
+- `git diff --check` -> passed; CRLF warnings only.
 
 ### Phase 11: Test Cleanup And Legacy Quarantine
 

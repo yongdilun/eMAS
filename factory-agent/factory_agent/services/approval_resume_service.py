@@ -56,6 +56,33 @@ class ApprovalResumeService:
                 )
             )
 
+    async def _mark_graph_approval_resume_stopped(
+        self,
+        *,
+        db: AsyncSession,
+        session_id: str,
+        approval_id: str,
+        status: str,
+        error: str,
+    ) -> None:
+        await db.rollback()
+        sess = await self._session_mgr.get_session(db, session_id=session_id)
+        if not sess:
+            return
+        context = dict(sess.replan_context or {})
+        context.pop("langgraph_approval_resume", None)
+        context.pop("langgraph_pending_approval", None)
+        sess.replan_context = context
+        sess.status = status
+        sess.error = error
+        _bump_session_revision(sess)
+        await db.commit()
+        await self.publish_agent_event(
+            "session_resume",
+            sess.session_id,
+            {"approval_id": approval_id, "status": status, "subject_type": "graph"},
+        )
+
     async def resume_approved_graph_approval(self,
         *,
         db: AsyncSession,
@@ -79,11 +106,11 @@ class ApprovalResumeService:
                 return
 
         intent = str(sess.current_intent or "")
-        if await self._resume_planner_owned_agent_graph_approval(db=db, row=row, sess=sess, intent=intent):
-            return
-        if await self._resume_direct_v2_planner_approval(db=db, row=row, sess=sess, intent=intent):
-            return
         try:
+            if await self._resume_planner_owned_agent_graph_approval(db=db, row=row, sess=sess, intent=intent):
+                return
+            if await self._resume_direct_v2_planner_approval(db=db, row=row, sess=sess, intent=intent):
+                return
             tools_by_name = await self._plan_service._ensure_registry_health(db=db)
             seed_resume_context = getattr(self._planner, "seed_resume_context", None)
             if callable(seed_resume_context):
@@ -161,49 +188,28 @@ class ApprovalResumeService:
                 {"approval_id": row_approval_id, "status": "WAITING_APPROVAL", "subject_type": "graph"},
             )
         except PlannerClarificationError as e:
-            await db.rollback()
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "BLOCKED"
-            sess.error = str(e)
-            _bump_session_revision(sess)
-            await db.commit()
-            await self.publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row_approval_id, "status": "BLOCKED", "subject_type": "graph"},
+            await self._mark_graph_approval_resume_stopped(
+                db=db,
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                status="BLOCKED",
+                error=str(e),
             )
         except PlannerPlanRejected as e:
-            await db.rollback()
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "BLOCKED"
-            sess.error = str(e)
-            _bump_session_revision(sess)
-            await db.commit()
-            await self.publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row_approval_id, "status": "BLOCKED", "subject_type": "graph"},
+            await self._mark_graph_approval_resume_stopped(
+                db=db,
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                status="BLOCKED",
+                error=str(e),
             )
         except PlannerBackendError as e:
-            await db.rollback()
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "FAILED"
-            sess.error = str(e)
-            _bump_session_revision(sess)
-            await db.commit()
-            await self.publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row_approval_id, "status": "FAILED", "subject_type": "graph"},
+            await self._mark_graph_approval_resume_stopped(
+                db=db,
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                status="FAILED",
+                error=str(e),
             )
         except Exception as e:
             log_event(
@@ -213,19 +219,12 @@ class ApprovalResumeService:
                 approval_id=row_approval_id,
                 error=str(e),
             )
-            await db.rollback()
-            context = dict(sess.replan_context or {})
-            context.pop("langgraph_approval_resume", None)
-            context.pop("langgraph_pending_approval", None)
-            sess.replan_context = context
-            sess.status = "FAILED"
-            sess.error = str(e)
-            _bump_session_revision(sess)
-            await db.commit()
-            await self.publish_agent_event(
-                "session_resume",
-                sess.session_id,
-                {"approval_id": row_approval_id, "status": "FAILED", "subject_type": "graph"},
+            await self._mark_graph_approval_resume_stopped(
+                db=db,
+                session_id=row_session_id,
+                approval_id=row_approval_id,
+                status="FAILED",
+                error=str(e),
             )
 
     def start_graph_approval_resume_task(self, db: AsyncSession, approval_id: str) -> None:

@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.tool_selector import ToolSelectionResult
+from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
 
 
@@ -221,6 +222,7 @@ def _graph(*, preview: Phase8PreviewProvider | None = None):
             approval_preview_provider=preview or Phase8PreviewProvider(),
             approval_persister=persister,
         ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=checkpointer,
     )
     return graph, selector, executor, persister
@@ -268,6 +270,37 @@ async def test_phase8_write_query_stages_preview_and_pauses_at_approval_node():
     assert context["approval_blocks"] == 1
     assert context["blocks"][-1]["type"] == "approval_required"
     assert context["blocks"][-1]["approval_label"] == "Approval 1"
+
+
+@pytest.mark.asyncio
+async def test_phase8_no_records_for_first_write_continues_to_second_approval():
+    preview = Phase8PreviewProvider(no_records_for={"req-001"})
+    graph, _selector, executor, persister = _graph(preview=preview)
+
+    result = await graph.run(
+        "Change all low priority job to medium, then change all medium priority job to high",
+        session_context={"session_id": "phase8-no-records-then-approval"},
+    )
+
+    requirements = {requirement.id: requirement for requirement in result.state.requirement_ledger.requirements}
+    pending = result.state.pending_approval
+    payload = pending.payload
+
+    assert requirements["req-001"].status == "impossible"
+    assert requirements["req-001"].blockers == ["approval_preview_no_records"]
+    assert requirements["req-002"].status == "open"
+    assert pending.status == "pending"
+    assert pending.requirement_id == "req-002"
+    assert payload["approval_label"] == "Approval 1"
+    assert payload["requirement_id"] == "req-002"
+    assert payload["locked_constraints"]["priority"] == "medium"
+    assert payload["locked_constraints"]["new_priority"] == "high"
+    assert payload["preview_rows"][0]["job_id"] == "JOB-MED-001"
+    assert payload["preview_rows"][0]["new_priority"] == "high"
+    assert executor.calls == []
+    assert len(persister.payloads) == 1
+    assert [call["requirement_id"] for call in preview.calls] == ["req-001", "req-002"]
+    assert result.state.execution_trace.planner.diagnostics["finalize_node"]["decision_kind"] == "deferred"
 
 
 @pytest.mark.asyncio
@@ -433,6 +466,7 @@ async def test_phase8_low_to_medium_then_medium_to_high_stages_second_approval_w
             http_executor=executor,
             approval_persister=persister,
         ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=MemorySaver(),
     )
 
@@ -475,22 +509,24 @@ async def test_phase8_no_record_first_operation_does_not_show_stale_or_future_ap
     context = result.state.response_document_context.diagnostics
 
     assert executor.calls == []
-    assert result.state.pending_approval.status == "none"
-    assert result.state.response_document_context.pending_approval_id is None
-    assert context["approval_blocks"] == 0
+    assert result.state.pending_approval.status == "pending"
+    assert result.state.pending_approval.requirement_id == "req-002"
+    assert result.state.response_document_context.pending_approval_id == "phase8-approval-1"
+    assert context["approval_blocks"] == 1
     assert context["no_record_evidence_refs"] == [result.state.evidence_ledger.evidence[0].id]
-    assert context["blocks"] == [
-        {
-            "type": "no_record",
-            "requirement_id": "req-001",
-            "evidence_ref": result.state.evidence_ledger.evidence[0].id,
-            "entity_type": "job",
-            "summary": "No matching records were found for the first operation.",
-            "source_type": "system_guard",
-        }
-    ]
-    assert context["pending_approval"] is None
-    assert all(block["type"] != "approval_required" for block in context["blocks"])
+    assert context["blocks"][0] == {
+        "type": "no_record",
+        "requirement_id": "req-001",
+        "evidence_ref": result.state.evidence_ledger.evidence[0].id,
+        "entity_type": "job",
+        "summary": "No matching records were found for the first operation.",
+        "source_type": "system_guard",
+    }
+    assert context["blocks"][1]["type"] == "approval_required"
+    assert context["blocks"][1]["approval_label"] == "Approval 1"
+    assert context["blocks"][1]["requirement_id"] == "req-002"
+    assert context["blocks"][1]["rows"][0]["job_id"] == "JOB-MED-001"
+    assert context["pending_approval"]["requirement_id"] == "req-002"
 
 
 def test_phase8_runtime_has_no_prompt_seed_or_source_id_branches():

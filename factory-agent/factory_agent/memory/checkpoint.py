@@ -49,12 +49,20 @@ class SqlCheckpointStore:
 
     async def load_by_session(self, session_id: str) -> dict[str, Any] | None:
         now = datetime.utcnow()
-        row = (
+        checkpoint_id = (
             await self._db.execute(
-                select(WorkflowCheckpointRow)
+                select(WorkflowCheckpointRow.checkpoint_id)
                 .where(WorkflowCheckpointRow.session_id == session_id)
                 .where((WorkflowCheckpointRow.expires_at.is_(None)) | (WorkflowCheckpointRow.expires_at > now))
                 .order_by(WorkflowCheckpointRow.updated_at.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if checkpoint_id is None:
+            return None
+        row = (
+            await self._db.execute(
+                select(WorkflowCheckpointRow).where(WorkflowCheckpointRow.checkpoint_id == checkpoint_id)
             )
         ).scalars().first()
         if row is None:
@@ -123,7 +131,6 @@ class SqlCheckpointStore:
                 select(WorkflowCheckpointRow)
                 .where(WorkflowCheckpointRow.thread_id == thread_id)
                 .where((WorkflowCheckpointRow.expires_at.is_(None)) | (WorkflowCheckpointRow.expires_at > now))
-                .order_by(WorkflowCheckpointRow.updated_at.desc())
+                .limit(1)
             )
         ).scalars().first()
-

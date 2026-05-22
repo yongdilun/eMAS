@@ -9,8 +9,12 @@ import pytest
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.tool_selector import ToolSelectionResult
-from factory_agent.planning.v2_agent_state import GraphToolCall
-from factory_agent.planning.v2_planner_decisions import PlannerDecisionValidationError
+from factory_agent.planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord
+from factory_agent.planning.v2_planner_decisions import PlannerDecisionSubmission
+from factory_agent.planning.v2_planner_proposer import (
+    OfflineStructuredPlannerDecisionProposer,
+    PlannerDecisionProposalResult,
+)
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.schemas import ToolInfo
 
@@ -163,7 +167,12 @@ def _graph(
         http_executor=_fake_http_executor,
         rag_pipeline=FakeRAGPipeline(),
     )
-    return PlannerOwnedAgentGraph(settings=settings, adapters=graph_adapters, checkpointer=None)
+    return PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=graph_adapters,
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=None,
+    )
 
 
 class RecordingSelector:
@@ -252,17 +261,58 @@ class BadChoiceAdapters(PlannerOwnedAgentGraphAdapters):
         )
 
 
+class BadChoiceProposer(OfflineStructuredPlannerDecisionProposer):
+    async def propose_decision(self, *, state, context):  # type: ignore[override]
+        if context.requested_decision_kind != "choose_tool":
+            return await super().propose_decision(state=state, context=context)
+        decision = PlannerDecisionRecord(
+            decision_id=context.decision_id,
+            decision_kind="choose_tool",
+            requirement_id=context.requirement_id,
+            ledger_revision=state.requirement_ledger.revision,
+            capability_need=context.capability_need,
+            selected_tool_call=GraphToolCall(
+                call_id="call-outside-window",
+                kind="api_tool",
+                tool_name="not_a_candidate_tool",
+                args={},
+                requirement_id=context.requirement_id or "req-001",
+            ),
+            reason="Test proposer selected a tool outside the hydrated window.",
+            diagnostics={
+                "planner_proposer": {
+                    "proposer_seam": True,
+                    "adapter": "phase4_bad_choice_test_proposer",
+                    "bounded_state_view": True,
+                    "full_openapi_catalog_visible": False,
+                }
+            },
+        )
+        return PlannerDecisionProposalResult(
+            submission=PlannerDecisionSubmission(decision=decision),
+            diagnostics=decision.diagnostics["planner_proposer"],
+        )
+
+
 @pytest.mark.asyncio
 async def test_phase4_planner_cannot_choose_non_candidate_tool():
     settings = _settings()
     adapters = BadChoiceAdapters(settings=settings, tools_by_name={"get__machines_{id}": _machine_status_tool()})
-    graph = PlannerOwnedAgentGraph(settings=settings, adapters=adapters, checkpointer=None)
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=adapters,
+        proposer=BadChoiceProposer(),
+        checkpointer=None,
+    )
 
-    with pytest.raises(PlannerDecisionValidationError, match="selected tool is not in the hydrated candidate window"):
-        await graph.run(
-            "Show machine M-LTH-77 status.",
-            session_context={"session_id": "phase4-bad-choice"},
-        )
+    result = await graph.run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "phase4-bad-choice"},
+    )
+
+    rejections = result.state.execution_trace.planner.diagnostics["planner_decision_proposer"]["rejected"]
+    assert "selected tool is not in the hydrated candidate window" in rejections[0]["reason"]
+    assert result.state.evidence_ledger.evidence == []
 
 
 @pytest.mark.asyncio

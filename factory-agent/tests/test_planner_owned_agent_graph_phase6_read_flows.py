@@ -8,6 +8,7 @@ import pytest
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.tool_selector import ToolSelectionResult
+from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
 
 
@@ -250,6 +251,7 @@ def _graph(*, http_executor: Phase6HttpExecutor | None = None) -> tuple[PlannerO
             http_executor=executor,
             rag_pipeline=Phase6RAGPipeline(),
         ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=None,
     )
     return graph, selector, executor

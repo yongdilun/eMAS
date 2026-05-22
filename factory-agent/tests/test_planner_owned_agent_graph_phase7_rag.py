@@ -9,6 +9,7 @@ import pytest
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.tool_selector import ToolSelectionResult
+from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 
 
 FACTORY_AGENT_ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,7 @@ def _graph(rag_pipeline: Phase7RAGPipeline) -> tuple[PlannerOwnedAgentGraph, Pha
             tool_selector=selector,  # type: ignore[arg-type]
             rag_pipeline=rag_pipeline,
         ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=None,
     )
     return graph, selector

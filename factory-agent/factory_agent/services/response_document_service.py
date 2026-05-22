@@ -430,6 +430,7 @@ _FOOTNOTE_DEFINITION_RE = re.compile(
 )
 _FOOTNOTE_MARKER_RE = re.compile(r"\[\^([^\]\n]+)\]|\[(\d+)\]")
 _FOOTNOTE_MARKER_CLUSTER_RE = re.compile(r"((?:\s*(?:\[\^[^\]\n]+\]|\[\d+\]))+)")
+_NUMBERED_SEGMENT_START_RE = re.compile(r"^\s*(?:[-*]\s*)?\d+[\.)]\s+")
 
 
 def _strip_footnote_markup(value: Any) -> str:
@@ -448,6 +449,38 @@ def _citation_marker_values(value: str) -> list[str]:
         if marker:
             markers.append(marker)
     return markers
+
+
+def _merge_adjacent_knowledge_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for segment in segments:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        citation_ids = [
+            str(citation_id)
+            for citation_id in dict.fromkeys(segment.get("citation_ids") or [])
+            if str(citation_id or "").strip()
+        ]
+        normalized = {"text": text, "citation_ids": citation_ids}
+        if merged and merged[-1].get("citation_ids") == citation_ids:
+            previous = str(merged[-1].get("text") or "").strip()
+            separator = "\n" if _should_join_knowledge_segments_with_newline(previous, text) else " "
+            merged[-1]["text"] = f"{previous}{separator}{text}".strip()
+            continue
+        merged.append(normalized)
+    return merged
+
+
+def _should_join_knowledge_segments_with_newline(previous: str, current: str) -> bool:
+    return (
+        "\n" in previous
+        or "\n" in current
+        or (
+            _NUMBERED_SEGMENT_START_RE.search(previous) is not None
+            and _NUMBERED_SEGMENT_START_RE.search(current) is not None
+        )
+    )
 
 
 def _source_key(value: Any) -> str:
@@ -541,7 +574,7 @@ def _knowledge_answer_payload(answer: Any, sources: list[dict[str, Any]]) -> tup
         else:
             cited_segments = [segment for segment in segments if segment.get("citation_ids")]
             if cited_segments:
-                segments = cited_segments
+                segments = _merge_adjacent_knowledge_segments(cited_segments)
                 clean_answer = "\n\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
             else:
                 clean_answer = insufficient_context_answer(has_sources=True)

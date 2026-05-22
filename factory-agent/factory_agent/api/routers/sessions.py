@@ -13,8 +13,8 @@ from factory_agent.api.response_mappers import normalize_session_name, session_t
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.database import get_db
 from factory_agent.persistence.models import Session as SessionRow
-from factory_agent.schemas import SessionCreateRequest, SessionResponse, SessionUpdateRequest
-from factory_agent.services.session_cleanup import delete_session_tree
+from factory_agent.schemas import SessionBulkDeleteResponse, SessionCreateRequest, SessionResponse, SessionUpdateRequest
+from factory_agent.services.session_cleanup import delete_session_tree, delete_sessions_for_user
 
 
 def build_sessions_router(
@@ -55,6 +55,31 @@ def build_sessions_router(
             stmt = stmt.where(SessionRow.user_id == user_id)
         rows = (await db.execute(stmt)).scalars().all()
         return [session_to_response(row) for row in rows]
+
+    @router.delete("/sessions", response_model=SessionBulkDeleteResponse)
+    async def delete_sessions(
+        user_id: str | None = Query(None),
+        user: dict[str, Any] = Depends(require_jwt),
+        db: AsyncSession = Depends(get_db),
+    ):
+        principal = principal_user_id(user)
+        if principal and not is_admin_claims(user):
+            if user_id and user_id != principal:
+                raise HTTPException(status_code=403, detail="cannot delete sessions for another user")
+            target_user_id = principal
+        else:
+            target_user_id = user_id
+
+        if not target_user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+
+        result = await delete_sessions_for_user(db, user_id=target_user_id)
+        return SessionBulkDeleteResponse(
+            ok=True,
+            user_id=result.user_id,
+            deleted_count=result.deleted_count,
+            session_ids=result.session_ids,
+        )
 
     @router.get("/sessions/{session_id}", response_model=SessionResponse)
     async def get_session(

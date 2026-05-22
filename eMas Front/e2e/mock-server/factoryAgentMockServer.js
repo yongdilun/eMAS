@@ -724,6 +724,24 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'DELETE' && url.pathname === '/sessions') {
+    if (!authorizeUserRequest(req, url, res, { allowMissing: false })) return
+    const userId = requestUserId(req)
+    const deletedIds = []
+    for (const [sessionId, session] of sessions.entries()) {
+      if (session.user_id !== userId) continue
+      sessions.delete(sessionId)
+      deletedIds.push(sessionId)
+    }
+    sendJson(req, url, res, 200, {
+      ok: true,
+      user_id: userId,
+      deleted_count: deletedIds.length,
+      session_ids: deletedIds,
+    })
+    return
+  }
+
   if (req.method === 'POST' && url.pathname === '/sessions') {
     const body = await readJson(req)
     if (!authorizeUserRequest(req, url, res, { body, requiredUserId: body.user_id || 'playwright-user' })) return
@@ -738,6 +756,22 @@ const server = http.createServer(async (req, res) => {
       sessionId: id,
       scenarioName: session.scenario_name,
       body,
+    })
+    return
+  }
+
+  const deleteSessionMatch = url.pathname.match(/^\/sessions\/([^/]+)$/)
+  if (req.method === 'DELETE' && deleteSessionMatch) {
+    const session = sessions.get(deleteSessionMatch[1])
+    if (!session) {
+      sendJson(req, url, res, 404, { detail: 'Session not found' }, { sessionId: deleteSessionMatch[1] })
+      return
+    }
+    if (!authorizeSessionRequest(req, url, res, session)) return
+    sessions.delete(session.session_id)
+    sendJson(req, url, res, 200, { ok: true, session_id: session.session_id }, {
+      sessionId: session.session_id,
+      scenarioName: session.scenario_name,
     })
     return
   }

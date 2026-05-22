@@ -26,6 +26,7 @@ from factory_agent.services.response_document_service import (
     _business_change_summary,
     _business_group_sort_key,
     _failure_reason,
+    _knowledge_answer_payload,
     _merge_mutation_groups_by_business_change,
     _read_evidence_collection_summary,
     _status_result_from_read_rows,
@@ -2717,6 +2718,61 @@ async def test_rag_response_document_includes_knowledge_answer_and_source_blocks
     assert source_payload["text_search"] == "Notify affected employees before lockout starts."
     assert "C:/local/docs" not in json.dumps(document)
     assert any(step["kind"] == "knowledge" for step in document["run_steps"])
+
+
+def test_knowledge_answer_payload_groups_adjacent_repeated_citations():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#c0027",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "c0027",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Before beginning service or maintenance, steps must be completed in sequence.",
+    }
+    answer = (
+        "1. Prepare for shutdown.[^1]\n"
+        "2. Shut down the machine.[^1]\n"
+        "3. Disconnect or isolate energy sources.[^1]"
+    )
+
+    clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert clean_answer == (
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
+        "3. Disconnect or isolate energy sources."
+    )
+    assert len(segments) == 1
+    assert segments[0]["text"] == clean_answer
+    assert segments[0]["citation_ids"] == [citations[0]["citation_id"]]
+
+
+def test_knowledge_answer_payload_keeps_grouped_procedure_intro_citation():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#c0027",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "c0027",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Before beginning service or maintenance, steps must be completed in sequence.",
+    }
+    answer = (
+        "Before beginning service or maintenance, workers must complete the following steps in sequence "
+        "according to the employer's energy-control procedure:\n"
+        "1. Prepare for shutdown;\n"
+        "2. Shut down the machine;\n"
+        "3. Disconnect or isolate the machine from the energy source(s).[^1]"
+    )
+
+    clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert clean_answer.startswith("Before beginning service or maintenance")
+    assert "I do not have enough retrieved evidence" not in clean_answer
+    assert len(segments) == 1
+    assert segments[0]["text"] == clean_answer
+    assert segments[0]["citation_ids"] == [citations[0]["citation_id"]]
 
 
 @pytest.mark.asyncio

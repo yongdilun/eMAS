@@ -240,6 +240,13 @@ class SessionResponse(BaseModel):
     error: str | None = None
 
 
+class SessionBulkDeleteResponse(BaseModel):
+    ok: bool
+    user_id: str
+    deleted_count: int
+    session_ids: list[str] = Field(default_factory=list)
+
+
 class MessageCreateRequest(BaseModel):
     role: Literal["user", "assistant", "system", "tool_result"] = "user"
     content: str

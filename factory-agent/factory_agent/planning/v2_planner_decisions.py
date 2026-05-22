@@ -43,6 +43,7 @@ _DECISION_KINDS_REQUIRING_REQUIREMENT = {
     "request_clarification",
 }
 _ACTIVE_REQUIREMENT_STATUSES = {"open", "blocked"}
+_PLANNER_PROPOSER_DIAGNOSTIC_KEY = "planner_proposer"
 
 
 class PlannerDecisionValidationError(ValueError):
@@ -82,6 +83,7 @@ def validate_planner_decision(
     errors: list[str] = []
 
     _validate_decision_shape(state, normalized, errors)
+    _validate_planner_author_has_proposer_diagnostics(normalized, errors)
     _validate_locked_constraints_preserved(state, normalized, errors)
     _validate_kind_specific_transition(state, normalized, errors)
     _validate_deterministic_guard_authority(state, normalized, errors)
@@ -157,6 +159,25 @@ def _validate_decision_shape(
         errors.append(f"planner decision references missing evidence: {', '.join(sorted(missing_evidence))}")
 
 
+def _validate_planner_author_has_proposer_diagnostics(
+    submission: PlannerDecisionSubmission,
+    errors: list[str],
+) -> None:
+    decision = submission.decision
+    if decision.author != "planner":
+        return
+    diagnostics = decision.diagnostics.get(_PLANNER_PROPOSER_DIAGNOSTIC_KEY)
+    if not isinstance(diagnostics, Mapping) or diagnostics.get("proposer_seam") is not True:
+        errors.append("planner-authored decisions require planner proposer diagnostics")
+        return
+    if not diagnostics.get("adapter"):
+        errors.append("planner proposer diagnostics must name the adapter")
+    if diagnostics.get("bounded_state_view") is not True:
+        errors.append("planner proposer diagnostics must prove bounded state view")
+    if diagnostics.get("full_openapi_catalog_visible") is not False:
+        errors.append("planner proposer must not receive the full OpenAPI catalog")
+
+
 def _validate_capability_need_matches_requirement(
     capability_need: CapabilityNeed,
     requirement_id: str | None,
@@ -226,9 +247,18 @@ def _validate_kind_specific_transition(
         return
 
     if kind == "choose_tool":
-        call = _single_selected_tool_call(decision, errors)
-        if call is not None:
-            _validate_tool_call_from_hydrated_window(state, call, errors)
+        calls = _selected_tool_calls(decision)
+        if not calls:
+            errors.append("choose_tool decision requires a selected API/RAG tool call")
+            return
+        cards_by_call_id: dict[str, HydratedToolCard | None] = {}
+        for call in calls:
+            cards_by_call_id[call.call_id] = _validate_tool_call_from_hydrated_window(state, call, errors)
+        if len(calls) > 1:
+            for call in calls:
+                card = cards_by_call_id.get(call.call_id)
+                if card is not None and (not card.is_read_only or card.requires_approval):
+                    errors.append(f"choose_tool batch cannot include mutating or approval tool: {call.tool_name}")
         return
 
     if kind == "execute_tool":
@@ -292,6 +322,11 @@ def _validate_deterministic_guard_authority(
     if kind == "retrieve_tools":
         if decision.capability_need is None or not _state_proves_retrieval_needed(state, decision.capability_need):
             errors.append("deterministic retrieve_tools guard requires an active unmet requirement with no candidates")
+        return
+
+    if kind == "choose_tool":
+        if not _state_proves_single_document_tool_choice(state, decision):
+            errors.append("deterministic choose_tool guard requires exactly one bounded document tool choice")
         return
 
     if kind == "execute_tool":
@@ -395,10 +430,46 @@ def _state_proves_retrieval_needed(
     return not has_candidates and not has_hydrated_cards and not has_evidence
 
 
+def _state_proves_single_document_tool_choice(
+    state: PlannerOwnedAgentGraphState,
+    decision: PlannerDecisionRecord,
+) -> bool:
+    calls = _selected_tool_calls(decision)
+    if len(calls) != 1:
+        return False
+    call = calls[0]
+    requirement = _requirement_by_id(state, call.requirement_id)
+    if requirement is None or not requirement.required or requirement.status != "open":
+        return False
+    candidate_names = {
+        candidate.tool_name
+        for window in state.candidate_tool_windows
+        if window.requirement_id == call.requirement_id
+        for candidate in window.candidates
+    }
+    hydrated_cards = [
+        card
+        for group in state.hydrated_tool_cards
+        if group.requirement_id == call.requirement_id
+        for card in group.cards
+        if not candidate_names or card.tool_name in candidate_names
+    ]
+    if len(hydrated_cards) != 1:
+        return False
+    card = hydrated_cards[0]
+    return (
+        call.kind == "rag_tool"
+        and call.tool_name == card.tool_name
+        and card.source_of_truth == "document_knowledge"
+        and card.is_read_only
+        and not card.requires_approval
+    )
+
+
 def _state_has_prior_tool_choice(state: PlannerOwnedAgentGraphState, call: GraphToolCall) -> bool:
     return any(
         previous.decision_kind == "choose_tool"
-        and previous.author in {"planner", "system"}
+        and previous.author in {"planner", "system", "deterministic_guard"}
         and _decision_is_not_stale_after_graph_interrupt(state, previous)
         and any(_same_tool_call(call, previous_call) for previous_call in _selected_tool_calls(previous))
         for previous in state.planner_decisions

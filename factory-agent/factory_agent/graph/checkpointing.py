@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ..config import Settings
 from ..observability.metrics import metrics
+from ..observability.telemetry import log_event
 from ..persistence.models import WorkflowCheckpoint as WorkflowCheckpointRow
 
 try:
@@ -387,11 +388,16 @@ def build_graph_checkpointer(settings: Settings) -> Any | None:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver  # type: ignore
 
             return AsyncPostgresSaver.from_conn_string(postgres_dsn)
-        except Exception:
-            if backend == "postgres":
-                return None
+        except Exception as exc:
+            log_event(
+                "graph_postgres_checkpointer_unavailable",
+                level="WARNING",
+                backend=backend,
+                fallback="database_or_memory",
+                error=str(exc),
+            )
 
-    if backend in {"auto", "db", "database", "sqlalchemy"}:
+    if backend in {"auto", "postgres", "db", "database", "sqlalchemy"}:
         database_url = (settings.database_url or "").strip()
         if database_url:
             if database_url.endswith(":memory:") and backend == "auto":
@@ -402,13 +408,20 @@ def build_graph_checkpointer(settings: Settings) -> Any | None:
                     try:
                         saver = SqlAlchemyLangGraphCheckpointSaver(database_url)
                         _DB_CHECKPOINTERS[database_url] = saver
-                    except Exception:
-                        if backend != "auto":
+                    except Exception as exc:
+                        log_event(
+                            "graph_database_checkpointer_unavailable",
+                            level="WARNING",
+                            backend=backend,
+                            fallback="memory" if backend in {"auto", "postgres"} else "none",
+                            error=str(exc),
+                        )
+                        if backend not in {"auto", "postgres"}:
                             return None
                 if saver is not None:
                     return saver
 
-    if backend in {"auto", "memory"}:
+    if backend in {"auto", "postgres", "memory"}:
         try:
             return get_process_memory_checkpointer()
         except Exception:

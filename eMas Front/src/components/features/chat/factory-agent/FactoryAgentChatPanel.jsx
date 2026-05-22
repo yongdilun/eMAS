@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import ChatMessage from '../ChatMessage'
 import ApprovalCard from './ApprovalCard'
 import ActivityTimeline from './ActivityTimeline'
+import ClearAllChatsDialog from './ClearAllChatsDialog'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import FactoryAgentChatComposer from './FactoryAgentChatComposer'
 import FactoryAgentSessionSidebar from './FactoryAgentSessionSidebar'
@@ -868,12 +869,15 @@ const FactoryAgentChatPanel = ({
     switchSession,
     renameSession,
     deleteSession,
+    clearAllSessions,
   } = useChatState()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [editingName, setEditingName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [isDeletingSession, setIsDeletingSession] = useState(false)
+  const [clearAllChatsOpen, setClearAllChatsOpen] = useState(false)
+  const [isClearingAllChats, setIsClearingAllChats] = useState(false)
   const [sourceEvidence, setSourceEvidence] = useState(null)
   const [sourceEvidencePdf, setSourceEvidencePdf] = useState(null)
   const activeSourceEvidence = useMemo(() => {
@@ -986,6 +990,21 @@ const FactoryAgentChatPanel = ({
           }
         }}
       />
+      <ClearAllChatsDialog
+        open={clearAllChatsOpen}
+        sessionCount={sessionList.length}
+        clearing={isClearingAllChats}
+        onCancel={() => setClearAllChatsOpen(false)}
+        onConfirm={async () => {
+          setIsClearingAllChats(true)
+          try {
+            const ok = await clearAllSessions()
+            if (ok) setClearAllChatsOpen(false)
+          } finally {
+            setIsClearingAllChats(false)
+          }
+        }}
+      />
       <FactoryAgentSessionSidebar
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
@@ -1003,6 +1022,8 @@ const FactoryAgentChatPanel = ({
         onStopEditing={() => setEditingSessionId(null)}
         onRenameSession={renameSession}
         onDeleteSession={setDeleteTarget}
+        onClearAllChats={() => setClearAllChatsOpen(true)}
+        clearAllChatsDisabled={!sessionList.length || isClearingAllChats}
       />
 
       <div className="flex-1 flex flex-col min-w-0">

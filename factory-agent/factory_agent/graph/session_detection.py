@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factory_agent.persistence.models import Plan as PlanRow
@@ -11,7 +11,8 @@ from factory_agent.persistence.models import WorkflowCheckpoint as WorkflowCheck
 
 
 def is_langgraph_plan(plan: PlanRow | None) -> bool:
-    return bool(plan and str(getattr(plan, "created_by", "") or "").strip().lower() == "langgraph")
+    created_by = str(getattr(plan, "created_by", "") or "").strip().lower()
+    return created_by in {"langgraph", "planner_owned_agent_graph"}
 
 
 def is_planner_owned_v2_plan(plan: PlanRow | None) -> bool:
@@ -28,15 +29,35 @@ def checkpoint_state_is_langgraph_native(state: object) -> bool:
 
 async def has_langgraph_native_checkpoint(db: AsyncSession, *, session_id: str) -> bool:
     now = datetime.utcnow()
-    row = (
+    thread_state = (
         await db.execute(
-            select(WorkflowCheckpointRow)
-            .where(or_(WorkflowCheckpointRow.session_id == session_id, WorkflowCheckpointRow.thread_id == session_id))
+            select(WorkflowCheckpointRow.state)
+            .where(WorkflowCheckpointRow.thread_id == session_id)
             .where((WorkflowCheckpointRow.expires_at.is_(None)) | (WorkflowCheckpointRow.expires_at > now))
-            .order_by(WorkflowCheckpointRow.updated_at.desc())
+            .limit(1)
         )
     ).scalars().first()
-    return bool(row and checkpoint_state_is_langgraph_native(row.state))
+    if checkpoint_state_is_langgraph_native(thread_state):
+        return True
+
+    checkpoint_id = (
+        await db.execute(
+            select(WorkflowCheckpointRow.checkpoint_id)
+            .where(WorkflowCheckpointRow.session_id == session_id)
+            .where((WorkflowCheckpointRow.expires_at.is_(None)) | (WorkflowCheckpointRow.expires_at > now))
+            .order_by(WorkflowCheckpointRow.updated_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if checkpoint_id is None:
+        return False
+
+    session_state = (
+        await db.execute(
+            select(WorkflowCheckpointRow.state).where(WorkflowCheckpointRow.checkpoint_id == checkpoint_id)
+        )
+    ).scalars().first()
+    return checkpoint_state_is_langgraph_native(session_state)
 
 
 async def is_graph_native_session(

@@ -358,6 +358,11 @@ class PlannerOwnedGraphRuntimeAdapter:
             "v2_state": loop_state.model_dump(mode="json"),
             "planner_owned_agent_graph_state": graph_state,
         }
+        context.pop("no_op_mutations", None)
+        no_op_mutations = self._no_op_mutations(state)
+        if no_op_mutations:
+            context["intent_contract"]["no_op_mutations"] = no_op_mutations
+            context["no_op_mutations"] = no_op_mutations
         context["planner_owned_agent_graph"] = {
             "runtime_adapter": "planner_owned_graph_runtime",
             "graph_execution_authority": True,
@@ -420,6 +425,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         for evidence in state.evidence_ledger.evidence:
             if not evidence.tool_name:
                 continue
+            if self._is_non_actionable_preview_evidence(evidence):
+                continue
             if evidence.diagnostic_metadata.get("aggregated_from"):
                 continue
             block = blocks_by_evidence.get(evidence.id, {})
@@ -464,6 +471,88 @@ class PlannerOwnedGraphRuntimeAdapter:
                 }
             )
         return outputs
+
+    def _is_non_actionable_preview_evidence(self, evidence: EvidenceLedgerEntry) -> bool:
+        metadata = evidence.diagnostic_metadata if isinstance(evidence.diagnostic_metadata, Mapping) else {}
+        result = evidence.normalized_result if isinstance(evidence.normalized_result, Mapping) else {}
+        if str(metadata.get("reason") or "").strip() == "approval_preview_no_records":
+            return True
+        return (
+            str(evidence.source_type or "").strip() == "system_guard"
+            and str(metadata.get("graph_tool_action") or "").strip() == "approval_preview"
+            and (
+                result.get("no_match") is True
+                or str(result.get("match_status") or "").strip().lower() == "no_match"
+                or str(result.get("status") or "").strip().lower() == "no_match"
+            )
+        )
+
+    def _no_op_mutations(self, state: Any) -> list[dict[str, Any]]:
+        no_ops: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for evidence in state.evidence_ledger.evidence:
+            if not self._is_non_actionable_preview_evidence(evidence):
+                continue
+            requirement = self._requirement_by_id(state, evidence.requirement_id)
+            result = evidence.normalized_result if isinstance(evidence.normalized_result, Mapping) else {}
+            entity = str(
+                getattr(requirement, "entity", None)
+                or result.get("entity")
+                or "record"
+            ).strip().lower() or "record"
+            selector_summary = self._no_op_selector_summary(requirement, evidence)
+            change_summary = self._no_op_change_summary(requirement, evidence)
+            key = (entity, selector_summary, change_summary)
+            if key in seen:
+                continue
+            seen.add(key)
+            no_ops.append(
+                {
+                    "entity_type": entity,
+                    "selector_summary": selector_summary,
+                    "change_summary": change_summary,
+                    "matched_count": 0,
+                    "changed_count": 0,
+                    "status": "not_changed",
+                    "reason": "no_matching_records",
+                }
+            )
+        return no_ops
+
+    def _no_op_selector_summary(self, requirement: Any | None, evidence: EvidenceLedgerEntry) -> str:
+        constraints = dict(getattr(requirement, "constraints", {}) or {}) if requirement is not None else {}
+        selector_parts = []
+        for key, value in constraints.items():
+            if value in (None, "", [], {}):
+                continue
+            key_text = str(key).strip()
+            if not key_text or key_text.startswith("new_") or key_text in {"requires_approval"}:
+                continue
+            selector_parts.append(f"{key_text} = {value}")
+        if selector_parts:
+            return ", ".join(selector_parts)
+        args = evidence.args if isinstance(evidence.args, Mapping) else {}
+        arg_parts = [
+            f"{key} = {value}"
+            for key, value in args.items()
+            if value not in (None, "", [], {}) and not str(key).strip().startswith("new_")
+        ]
+        return ", ".join(arg_parts) if arg_parts else "matching records"
+
+    def _no_op_change_summary(self, requirement: Any | None, evidence: EvidenceLedgerEntry) -> str:
+        constraints = dict(getattr(requirement, "constraints", {}) or {}) if requirement is not None else {}
+        priority_target = constraints.get("new_priority")
+        if priority_target not in (None, "", [], {}):
+            return f"priority -> {priority_target}"
+        for key, value in constraints.items():
+            key_text = str(key).strip()
+            if key_text.startswith("new_") and value not in (None, "", [], {}):
+                return f"{key_text[4:]} -> {value}"
+        args = evidence.args if isinstance(evidence.args, Mapping) else {}
+        for key, value in args.items():
+            if value not in (None, "", [], {}):
+                return f"{key} -> {value}"
+        return "no matching records"
 
     def _business_change_hints_by_requirement(self, state: Any) -> dict[str, dict[str, Any]]:
         hints: dict[str, dict[str, Any]] = {}

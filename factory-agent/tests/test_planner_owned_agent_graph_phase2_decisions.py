@@ -174,6 +174,19 @@ def _machine_call(*, call_id: str = "call-machine-status") -> GraphToolCall:
     )
 
 
+def _planner_diagnostics(decision_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        **extra,
+        "planner_proposer": {
+            "proposer_seam": True,
+            "adapter": "phase2_test_proposer",
+            "decision_id": decision_id,
+            "bounded_state_view": True,
+            "full_openapi_catalog_visible": False,
+        },
+    }
+
+
 def test_phase2_supports_declared_planner_decision_kinds():
     assert SUPPORTED_PLANNER_DECISION_KINDS == (
         "retrieve_tools",
@@ -200,6 +213,7 @@ def test_phase2_rejects_planner_decision_that_changes_locked_constraints():
         requirement_id=requirement.id,
         ledger_revision=state.requirement_ledger.revision,
         reason="Planner tried to revise the requirement ledger.",
+        diagnostics=_planner_diagnostics("dec-revise-locked"),
     )
 
     with pytest.raises(PlannerDecisionValidationError, match="locked constraint value changed"):
@@ -225,6 +239,7 @@ def test_phase2_rejects_choosing_tool_outside_hydrated_candidate_window():
         ledger_revision=state.requirement_ledger.revision,
         selected_tool_call=non_candidate_call,
         reason="Planner selected a tool outside the hydrated window.",
+        diagnostics=_planner_diagnostics("dec-choose-wrong-tool"),
     )
 
     with pytest.raises(PlannerDecisionValidationError, match="selected tool is not in the hydrated candidate window"):
@@ -239,6 +254,7 @@ def test_phase2_rejects_execute_tool_without_selected_api_or_rag_action():
         requirement_id=requirement.id,
         ledger_revision=state.requirement_ledger.revision,
         reason="Planner tried to execute without choosing an action.",
+        diagnostics=_planner_diagnostics("dec-execute-without-call"),
     )
 
     with pytest.raises(PlannerDecisionValidationError, match="requires a selected API/RAG tool call"):
@@ -252,6 +268,7 @@ def test_phase2_rejects_finalize_without_required_evidence():
         decision_kind="finalize",
         ledger_revision=state.requirement_ledger.revision,
         reason="Planner tried to finalize before evidence was observed.",
+        diagnostics=_planner_diagnostics("dec-finalize-without-evidence"),
     )
 
     with pytest.raises(PlannerDecisionValidationError, match="required_requirement_open"):
@@ -267,6 +284,7 @@ def test_phase2_accepts_valid_retrieve_tools_decision_and_records_it():
         ledger_revision=state.requirement_ledger.revision,
         capability_need=need,
         reason="Need a bounded tool window for the machine status requirement.",
+        diagnostics=_planner_diagnostics("dec-retrieve-tools"),
     )
 
     result = record_planner_decision(state, decision)
@@ -301,6 +319,7 @@ def test_phase2_deterministic_execute_guard_is_accepted_only_when_state_proves_p
         ledger_revision=state.requirement_ledger.revision,
         selected_tool_call=call,
         reason="Planner selected the hydrated machine status reader.",
+        diagnostics=_planner_diagnostics("dec-choose-machine-tool"),
     )
     record_planner_decision(state, choose_decision)
 
@@ -322,7 +341,7 @@ def test_phase2_planner_decision_submission_serializes_and_deserializes():
         selected_tool_calls=[call],
         evidence_refs=[],
         reason="Batch contains only already bounded read actions.",
-        diagnostics={"batch_size": 1},
+        diagnostics=_planner_diagnostics("dec-parallel-read-batch", batch_size=1),
     )
     submission = PlannerDecisionSubmission(decision=decision)
 

@@ -366,3 +366,112 @@ def test_phase10_graph_runtime_projects_approval_business_change_metadata_into_t
     assert data["new_priority"] == "high"
     assert data["selector_summary"] == "priority = medium"
     assert data["field_changes"] == [{"field": "priority", "label": "Priority", "from": "medium", "to": "high"}]
+
+
+def test_phase10_graph_runtime_keeps_no_record_preview_out_of_executable_tool_outputs():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change low-priority jobs to medium, then medium-priority jobs to high.",
+        tools_by_name={},
+    )
+    state.requirement_ledger.requirements = [
+        RequirementLedgerEntry(
+            id="req-low-medium",
+            goal="Change low-priority jobs to medium.",
+            requirement_type="mutation_request",
+            entity="job",
+            intent_operation="stage_mutation",
+            source_of_truth="operational_state",
+            constraints={"priority": "low", "new_priority": "medium"},
+        ),
+        RequirementLedgerEntry(
+            id="req-medium-high",
+            goal="Change medium-priority jobs to high.",
+            requirement_type="mutation_request",
+            entity="job",
+            intent_operation="stage_mutation",
+            source_of_truth="operational_state",
+            constraints={"priority": "medium", "new_priority": "high"},
+        ),
+    ]
+    state.evidence_ledger.evidence.extend(
+        [
+            EvidenceLedgerEntry(
+                id="ev-low-no-records",
+                requirement_id="req-low-medium",
+                source_type="system_guard",
+                source_of_truth="operational_state",
+                tool_name="patch__jobs_{id}",
+                args={"priority": "medium"},
+                normalized_result={
+                    "match_status": "no_match",
+                    "no_match": True,
+                    "summary": "No matching records were found for low-priority jobs.",
+                    "entity": "job",
+                    "preview_rows": [],
+                },
+                diagnostic_metadata={
+                    "graph_tool_action": "approval_preview",
+                    "reason": "approval_preview_no_records",
+                },
+            ),
+            EvidenceLedgerEntry(
+                id="ev-approval-medium-high",
+                requirement_id="req-medium-high",
+                source_type="approval",
+                source_of_truth="operational_state",
+                approval_id="approval-medium-high",
+                normalized_result={"approval_status": "approved", "status": "approved"},
+                diagnostic_metadata={
+                    "approval_id": "approval-medium-high",
+                    "locked_constraints": {"priority": "medium", "new_priority": "high"},
+                    "preview_rows": [
+                        {"job_id": "JOB-MED-A", "priority": "medium", "new_priority": "high"},
+                    ],
+                    "staged_graph_tool_calls": [
+                        {"tool_name": "patch__jobs_{id}", "args": {"id": "JOB-MED-A", "priority": "high"}},
+                    ],
+                },
+            ),
+            EvidenceLedgerEntry(
+                id="ev-api-medium-high",
+                requirement_id="req-medium-high",
+                source_type="api_tool",
+                source_of_truth="operational_state",
+                tool_name="patch__jobs_{id}",
+                args={"id": "JOB-MED-A", "priority": "high"},
+                normalized_result={"status_code": 200, "fields": {"job_id": "JOB-MED-A", "priority": "high"}},
+                satisfies=["operational_state_tool_result"],
+                diagnostic_metadata={"graph_authorized_execution": True},
+            ),
+        ]
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "phase10-session"}},
+    )
+
+    outputs = adapter._tool_outputs(result)
+    context = adapter._graph_context(result=result, intent="update priorities", base_context=None)
+
+    assert [output["evidence_ref"] for output in outputs] == ["ev-api-medium-high"]
+    assert outputs[0]["approval_id"] == "approval-medium-high"
+    assert context["no_op_mutations"] == [
+        {
+            "entity_type": "job",
+            "selector_summary": "priority = low",
+            "change_summary": "priority -> medium",
+            "matched_count": 0,
+            "changed_count": 0,
+            "status": "not_changed",
+            "reason": "no_matching_records",
+        }
+    ]

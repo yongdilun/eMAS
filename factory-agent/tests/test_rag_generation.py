@@ -177,8 +177,8 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
     )
     response = MagicMock()
     response.content = (
-        "1. Prepare for shutdown.[^1]\n"
-        "2. Shut down the machine.[^1]\n"
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
         "3. Disconnect or isolate the machine from the energy sources.[^1]"
     )
     mock_llm = MagicMock()
@@ -194,11 +194,66 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
     assert result.answer == response.content
     assert mock_llm.invoke.call_count == 1
     prompt = mock_llm.invoke.call_args.args[0][1].content
-    assert "Every procedure step must end with a citation marker" in prompt
-    assert "Do not put one citation at the end of a multi-step list" in prompt
+    assert "Cite coherent answer groups, not every sentence" in prompt
+    assert "Group adjacent sentences or related procedure steps under one citation marker" in prompt
+    assert "cite the whole lead-in plus list as one grouped procedure block" in prompt
+    assert "Do not scatter the same citation after every sentence" in prompt
     assert "If no supported answer remains, output exactly the insufficient-context sentence" in prompt
     assert result.sources[0].source_number == 1
     assert result.sources[0].doc_id == "osha_3120_lockout_tagout"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_preserves_grouped_loto_procedure_with_long_intro(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0027",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 14,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    answer = (
+        "Before beginning service or maintenance, workers must complete the following steps in sequence "
+        "according to the specific provisions of the employer's energy-control procedure:\n"
+        "1. Prepare for shutdown;\n"
+        "2. Shut down the machine;\n"
+        "3. Disconnect or isolate the machine from the energy source(s);\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s);\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy.[^1]"
+    )
+    mock_response = MagicMock()
+    mock_response.content = answer
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert result.answer == answer
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.sources[0].source_number == 1
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

@@ -28,6 +28,7 @@ from ..planning.v2_contracts import (
     EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
+    RequirementLedger,
     RequirementRevisionRecord,
     RequirementSatisfactionState,
     SatisfactionCheck,
@@ -43,7 +44,17 @@ from ..planning.v2_graph_adapters import (
     observe_graph_tool_result,
 )
 from ..planning.v2_interrupts import apply_user_interrupt_to_v2_state, classify_user_interrupt
-from ..planning.v2_planner_decisions import record_planner_decision, validate_planner_decision
+from ..planning.v2_planner_decisions import (
+    PlannerDecisionValidationError,
+    record_planner_decision,
+    validate_planner_decision,
+)
+from ..planning.v2_planner_proposer import (
+    PlannerDecisionProposalContext,
+    PlannerDecisionProposer,
+    PlannerDecisionProposerError,
+    build_planner_decision_proposer,
+)
 from ..planning.v2_rag_tool import ensure_v2_rag_tool
 from ..planning.v2_satisfaction import V2RepeatedRetrievalGuard, apply_deterministic_evidence_satisfaction
 from ..planning.v2_tool_retriever import V2CapabilityToolRetriever
@@ -290,11 +301,13 @@ class PlannerOwnedAgentGraph:
         *,
         settings: Settings | None = None,
         adapters: PlannerOwnedAgentGraphAdapters | None = None,
+        proposer: PlannerDecisionProposer | None = None,
         checkpointer: Any = _CHECKPOINTER_UNSET,
         tracer: LocalPlannerOwnedGraphTracer | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._adapters = adapters or PlannerOwnedAgentGraphAdapters(settings=self._settings)
+        self._proposer = proposer or build_planner_decision_proposer(self._settings)
         self._tracer = tracer or LocalPlannerOwnedGraphTracer()
         self._checkpointer = (
             build_graph_checkpointer(self._settings)
@@ -564,6 +577,46 @@ class PlannerOwnedAgentGraph:
         }
         return _state_update(state)
 
+    async def _propose_and_record_planner_decision(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        context: PlannerDecisionProposalContext,
+        *,
+        node_name: str,
+    ) -> PlannerDecisionRecord | None:
+        state.execution_trace.planner.call_count += 1
+        try:
+            proposal = await _maybe_await(
+                self._proposer.propose_decision(state=state, context=context)
+            )
+            validation = record_planner_decision(state, proposal.submission)
+        except (PlannerDecisionProposerError, PlannerDecisionValidationError, ValueError) as exc:
+            diagnostics = getattr(exc, "diagnostics", {}) or {}
+            _record_planner_proposer_rejection(
+                state,
+                node_name=node_name,
+                context=context,
+                reason=str(exc),
+                diagnostics=diagnostics,
+            )
+            return None
+
+        decision = proposal.submission.decision
+        _record_planner_proposer_acceptance(
+            state,
+            node_name=node_name,
+            context=context,
+            decision=decision,
+            validation_diagnostics=validation.diagnostics,
+            proposer_diagnostics=proposal.diagnostics,
+        )
+        if (
+            decision.decision_kind == "revise_requirements"
+            and proposal.submission.proposed_requirement_ledger is not None
+        ):
+            _apply_planner_proposed_requirement_ledger(state, proposal.submission.proposed_requirement_ledger)
+        return decision
+
     async def _planner_decision_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "planner_decision_node", self._tracer)
         requirements = [
@@ -578,18 +631,31 @@ class PlannerOwnedAgentGraph:
         decisions: list[PlannerDecisionRecord] = []
         for requirement in requirements:
             need = _capability_need_for_requirement(state, requirement.id)
-            decision = PlannerDecisionRecord(
-                decision_id=f"dec-retrieve-{len(state.planner_decisions) + 1:03d}",
-                decision_kind="retrieve_tools",
-                requirement_id=requirement.id,
-                ledger_revision=state.requirement_ledger.revision,
-                capability_need=need,
-                reason="Graph requests a bounded retriever-backed candidate window.",
+            decision = await self._propose_and_record_planner_decision(
+                state,
+                PlannerDecisionProposalContext(
+                    decision_id=f"dec-retrieve-{len(state.planner_decisions) + 1:03d}",
+                    requested_decision_kind="retrieve_tools",
+                    allowed_decision_kinds=[
+                        "retrieve_tools",
+                        "revise_requirements",
+                        "request_clarification",
+                        "finalize",
+                        "fail",
+                    ],
+                    requirement_id=requirement.id,
+                    capability_need=need,
+                    reason="Declare the next bounded retrieval need.",
+                ),
+                node_name="planner_decision_node",
             )
-            record_planner_decision(state, decision)
+            if decision is None:
+                continue
+            if decision.decision_kind != "retrieve_tools":
+                decisions.append(decision)
+                continue
             decisions.append(decision)
 
-        state.execution_trace.planner.call_count += len(decisions)
         state.execution_trace.planner.diagnostics["planner_decision_node"] = {
             "decision_count": len(decisions),
             "decision_ids": [decision.decision_id for decision in decisions],
@@ -694,35 +760,74 @@ class PlannerOwnedAgentGraph:
 
         decisions: list[PlannerDecisionRecord] = []
         for retrieve_decision in retrieve_decisions:
-            raw_tool_calls = await _maybe_await(self._adapters.choose_tool(state, retrieve_decision))
-            tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else [raw_tool_calls]
-            for tool_call in tool_calls:
-                decision = PlannerDecisionRecord(
-                    decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
-                    decision_kind="choose_tool",
-                    requirement_id=tool_call.requirement_id,
-                    ledger_revision=state.requirement_ledger.revision,
-                    capability_need=retrieve_decision.capability_need,
-                    selected_tool_call=tool_call,
-                    reason="Graph selects from the hydrated candidate window.",
+            candidate_tool_calls = _candidate_tool_calls_for_requirement(
+                state,
+                requirement_id=retrieve_decision.requirement_id,
+                capability_need=retrieve_decision.capability_need,
+            )
+            decision_id = f"dec-choose-{len(state.planner_decisions) + 1:03d}"
+            decision = _deterministic_choose_tool_if_state_proves_single_document_tool(
+                state=state,
+                retrieve_decision=retrieve_decision,
+                candidate_tool_calls=candidate_tool_calls,
+                decision_id=decision_id,
+            )
+            if decision is not None:
+                validation = validate_planner_decision(state, decision)
+                if validation.accepted:
+                    record_planner_decision(state, decision)
+                else:
+                    decision = None
+            if decision is None:
+                decision = await self._propose_and_record_planner_decision(
+                    state,
+                    PlannerDecisionProposalContext(
+                        decision_id=decision_id,
+                        requested_decision_kind="choose_tool",
+                        allowed_decision_kinds=[
+                            "choose_tool",
+                            "revise_requirements",
+                            "request_clarification",
+                            "fail",
+                        ],
+                        requirement_id=retrieve_decision.requirement_id,
+                        capability_need=retrieve_decision.capability_need,
+                        candidate_tool_calls=candidate_tool_calls,
+                        prior_decision_id=retrieve_decision.decision_id,
+                        reason="Select an executable action from the hydrated candidate window.",
+                    ),
+                    node_name="planner_choose_tool_node",
                 )
+            if decision is None:
+                continue
+            if decision.selected_tool_call is not None:
+                decision.selected_tool_call.decision_id = decision.decision_id
+                state.execution_trace.selected_tool_names = list(
+                    dict.fromkeys(
+                        [
+                            *state.execution_trace.selected_tool_names,
+                            decision.selected_tool_call.tool_name,
+                        ]
+                    )
+                )
+            for tool_call in decision.selected_tool_calls:
                 tool_call.decision_id = decision.decision_id
-                record_planner_decision(state, decision)
-                decisions.append(decision)
                 state.execution_trace.selected_tool_names = list(
                     dict.fromkeys([*state.execution_trace.selected_tool_names, tool_call.tool_name])
                 )
+            decisions.append(decision)
 
-        state.execution_trace.planner.call_count += len(decisions)
         state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {
             "decision_count": len(decisions),
             "decision_ids": [decision.decision_id for decision in decisions],
             "tool_names": [
-                decision.selected_tool_call.tool_name
+                tool_call.tool_name
                 for decision in decisions
-                if decision.selected_tool_call is not None
+                for tool_call in _planner_decision_selected_tool_calls(decision)
             ],
-            "batched_tool_call_count": len(decisions),
+            "batched_tool_call_count": sum(
+                len(_planner_decision_selected_tool_calls(decision)) for decision in decisions
+            ),
         }
         if len(decisions) == 1 and decisions[0].selected_tool_call is not None:
             state.execution_trace.planner.diagnostics["planner_choose_tool_node"].update(
@@ -754,9 +859,15 @@ class PlannerOwnedAgentGraph:
             for decision in state.planner_decisions
             if decision.decision_kind == "choose_tool"
             and _planner_decision_is_active_for_graph_revision(state, decision)
-            and decision.selected_tool_call is not None
-            and not _has_evidence_for_requirement(state, decision.selected_tool_call.requirement_id)
-            and not _has_execution_decision_for_call(state, decision.selected_tool_call)
+            and _planner_decision_selected_tool_calls(decision)
+            and not _has_evidence_for_requirement(
+                state,
+                _planner_decision_selected_tool_calls(decision)[0].requirement_id,
+            )
+            and not all(
+                _has_execution_decision_for_call(state, tool_call)
+                for tool_call in _planner_decision_selected_tool_calls(decision)
+            )
         ]
         if not choose_decisions:
             state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {"status": "no_tool_choice"}
@@ -765,8 +876,58 @@ class PlannerOwnedAgentGraph:
         executions: list[GraphToolExecutionResult] = []
         action_events: list[dict[str, Any]] = []
         for choose_decision in choose_decisions:
+            selected_calls = [
+                tool_call
+                for tool_call in _planner_decision_selected_tool_calls(choose_decision)
+                if not _has_execution_decision_for_call(state, tool_call)
+            ]
+            if not selected_calls:
+                continue
+            if len(selected_calls) > 1:
+                guard_decision = PlannerDecisionRecord(
+                    decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
+                    decision_kind="execute_parallel_read_batch",
+                    author="deterministic_guard",
+                    requirement_id=choose_decision.requirement_id,
+                    ledger_revision=state.requirement_ledger.revision,
+                    capability_need=choose_decision.capability_need,
+                    selected_tool_calls=selected_calls,
+                    reason="Execute the persisted planner-selected read batch.",
+                )
+                record_planner_decision(state, guard_decision)
+                for selected_call in selected_calls:
+                    execution_decision = guard_decision.model_copy(
+                        update={"selected_tool_call": selected_call, "selected_tool_calls": []}
+                    )
+                    execution = await _maybe_await(self._adapters.execute_tool(state, execution_decision))
+                    _attach_graph_work_identity(state, execution)
+                    executions.append(execution)
+                    action_events.append(
+                        {
+                            "decision_id": guard_decision.decision_id,
+                            "tool_call_id": execution.tool_call.call_id,
+                            "tool_call_kind": execution.tool_call.kind,
+                            "tool_name": execution.tool_call.tool_name,
+                            "requirement_id": execution.tool_call.requirement_id,
+                            "source_type": execution.source_type,
+                            "source_of_truth": execution.source_of_truth,
+                            "graph_tool_action": execution.diagnostic_metadata.get(
+                                "graph_tool_action",
+                                execution.tool_call.kind,
+                            ),
+                            "legacy_shortcut_used": False,
+                        }
+                    )
+                continue
+
+            selected_call = selected_calls[0]
             if _tool_choice_requires_graph_approval(state, choose_decision):
                 await self._stage_write_approval(state, choose_decision)
+                if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
+                    state,
+                    choose_decision,
+                ):
+                    continue
                 return _state_update(state)
 
             guard_decision = PlannerDecisionRecord(
@@ -776,7 +937,7 @@ class PlannerOwnedAgentGraph:
                 requirement_id=choose_decision.requirement_id,
                 ledger_revision=state.requirement_ledger.revision,
                 capability_need=choose_decision.capability_need,
-                selected_tool_call=choose_decision.selected_tool_call,
+                selected_tool_call=selected_call,
                 reason="Execute the persisted planner-selected read action.",
             )
             record_planner_decision(state, guard_decision)
@@ -1119,6 +1280,38 @@ class PlannerOwnedAgentGraph:
         if requirement is None or card is None:
             raise ValueError("approval staging requires requirement and hydrated tool card")
 
+        approval_index = _next_approval_index(state)
+        approval_label = f"Approval {approval_index}"
+        request_decision = await self._propose_and_record_planner_decision(
+            state,
+            PlannerDecisionProposalContext(
+                decision_id=f"dec-approval-{len(state.planner_decisions) + 1:03d}",
+                requested_decision_kind="request_approval",
+                allowed_decision_kinds=[
+                    "request_approval",
+                    "revise_requirements",
+                    "request_clarification",
+                    "fail",
+                ],
+                requirement_id=requirement.id,
+                capability_need=choose_decision.capability_need,
+                candidate_tool_calls=[call],
+                prior_decision_id=choose_decision.decision_id,
+                reason="Request approval before committing a graph-selected write action.",
+            ),
+            node_name="approval_node",
+        )
+        if request_decision is None or request_decision.decision_kind != "request_approval":
+            state.execution_trace.diagnostics["phase8_approval_staging"] = {
+                "status": "not_authorized_by_planner_proposer",
+                "requirement_id": requirement.id,
+                "source_decision_id": choose_decision.decision_id,
+                "accepted_decision_kind": (
+                    request_decision.decision_kind if request_decision is not None else None
+                ),
+            }
+            return
+
         preview = await self._adapters.build_approval_preview(state, call, requirement, card)
         if not preview.rows:
             evidence = _append_no_record_preview_evidence(
@@ -1175,6 +1368,7 @@ class PlannerOwnedAgentGraph:
             staged_choose = PlannerDecisionRecord(
                 decision_id=f"dec-choose-{len(state.planner_decisions) + 1:03d}",
                 decision_kind="choose_tool",
+                author="system",
                 requirement_id=requirement.id,
                 ledger_revision=state.requirement_ledger.revision,
                 capability_need=choose_decision.capability_need,
@@ -1189,24 +1383,10 @@ class PlannerOwnedAgentGraph:
             staged_call.decision_id = staged_choose.decision_id
             staged_choose_decision_ids.append(staged_choose.decision_id)
 
-        approval_index = _next_approval_index(state)
-        approval_label = f"Approval {approval_index}"
-        request_decision = PlannerDecisionRecord(
-            decision_id=f"dec-approval-{len(state.planner_decisions) + 1:03d}",
-            decision_kind="request_approval",
-            requirement_id=requirement.id,
-            ledger_revision=state.requirement_ledger.revision,
-            capability_need=choose_decision.capability_need,
-            selected_tool_call=staged_tool_calls[0],
-            reason="Graph stages a write preview and pauses for approval before commit.",
-            diagnostics={
-                "approval_index": approval_index,
-                "approval_label": approval_label,
-                "approval_node": "approval_node",
-                "staged_tool_call_count": len(staged_tool_calls),
-            },
-        )
-        record_planner_decision(state, request_decision)
+        request_decision.diagnostics["approval_index"] = approval_index
+        request_decision.diagnostics["approval_label"] = approval_label
+        request_decision.diagnostics["approval_node"] = "approval_node"
+        request_decision.diagnostics["staged_tool_call_count"] = len(staged_tool_calls)
         staged = [
             {
                 "tool_name": staged_call.tool_name,
@@ -1292,6 +1472,11 @@ class PlannerOwnedAgentGraph:
             ):
                 _record_node_visit(state, "tool_execution_node", self._tracer)
                 await self._stage_write_approval(state, choose_decision)
+                if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
+                    state,
+                    choose_decision,
+                ):
+                    continue
                 return
 
     async def _resume_approved_graph_approval(
@@ -1413,6 +1598,122 @@ class PlannerOwnedAgentGraph:
         allowed = set(PlannerOwnedAgentGraphState.model_fields)
         payload = {key: value for key, value in channel_values.items() if key in allowed}
         return PlannerOwnedAgentGraphState.model_validate(payload), checkpoint_tuple
+
+
+def _record_planner_proposer_acceptance(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    node_name: str,
+    context: PlannerDecisionProposalContext,
+    decision: PlannerDecisionRecord,
+    validation_diagnostics: Mapping[str, Any],
+    proposer_diagnostics: Mapping[str, Any],
+) -> None:
+    trace = state.execution_trace.planner.diagnostics.setdefault(
+        "planner_decision_proposer",
+        {"accepted": [], "rejected": []},
+    )
+    if not isinstance(trace, dict):
+        trace = {"accepted": [], "rejected": []}
+        state.execution_trace.planner.diagnostics["planner_decision_proposer"] = trace
+    accepted = trace.setdefault("accepted", [])
+    if isinstance(accepted, list):
+        accepted.append(
+            {
+                "node": node_name,
+                "decision_id": decision.decision_id,
+                "decision_kind": decision.decision_kind,
+                "requirement_id": decision.requirement_id,
+                "requested_decision_kind": context.requested_decision_kind,
+                "adapter": proposer_diagnostics.get("adapter"),
+                "bounded_state_view": proposer_diagnostics.get("bounded_state_view"),
+                "full_openapi_catalog_visible": proposer_diagnostics.get("full_openapi_catalog_visible"),
+                "validation": dict(validation_diagnostics),
+            }
+        )
+
+
+def _record_planner_proposer_rejection(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    node_name: str,
+    context: PlannerDecisionProposalContext,
+    reason: str,
+    diagnostics: Mapping[str, Any],
+) -> None:
+    trace = state.execution_trace.planner.diagnostics.setdefault(
+        "planner_decision_proposer",
+        {"accepted": [], "rejected": []},
+    )
+    if not isinstance(trace, dict):
+        trace = {"accepted": [], "rejected": []}
+        state.execution_trace.planner.diagnostics["planner_decision_proposer"] = trace
+    rejected = trace.setdefault("rejected", [])
+    event = {
+        "node": node_name,
+        "decision_id": context.decision_id,
+        "requested_decision_kind": context.requested_decision_kind,
+        "allowed_decision_kinds": list(context.allowed_decision_kinds),
+        "requirement_id": context.requirement_id,
+        "reason": reason,
+        "diagnostics": dict(diagnostics),
+        "fail_closed": True,
+        "tool_execution_allowed": False,
+    }
+    if isinstance(rejected, list):
+        rejected.append(event)
+    state.execution_trace.planner.diagnostics[node_name] = {
+        "decision": "rejected",
+        "reason": reason,
+        "fail_closed": True,
+        "tool_execution_allowed": False,
+    }
+
+
+def _apply_planner_proposed_requirement_ledger(
+    state: PlannerOwnedAgentGraphState,
+    proposed: RequirementLedger,
+) -> None:
+    previous_revision = state.requirement_ledger.revision
+    state.requirement_ledger = proposed
+    state.revision_history = list(proposed.revision_history)
+    state.response_document_context = state.response_document_context.model_copy(
+        update={
+            "revision": proposed.revision,
+            "requirement_ids": [requirement.id for requirement in proposed.requirements],
+        }
+    )
+    state.execution_trace.diagnostics["planner_requirement_revision"] = {
+        "previous_revision": previous_revision,
+        "current_revision": proposed.revision,
+        "author": "planner",
+        "accepted_through_proposer": True,
+    }
+
+
+def _candidate_tool_calls_for_requirement(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    requirement_id: str,
+    capability_need: Any | None,
+) -> list[GraphToolCall]:
+    requirement = _requirement_by_id(state, requirement_id)
+    if requirement is None:
+        return []
+    calls: list[GraphToolCall] = []
+    for card in _hydrated_cards_for_requirement(state, requirement_id):
+        raw = _tool_calls_for_card(
+            state=state,
+            card=card,
+            requirement=requirement,
+            capability_need=capability_need or _capability_need_for_requirement(state, requirement_id),
+            requirement_id=requirement_id,
+        )
+        if isinstance(raw, list):
+            calls.extend(raw)
+        else:
+            calls.append(raw)
+    return calls
 
 
 def _explicit_carried_forward_evidence_refs(
@@ -2342,11 +2643,42 @@ def _checkpoint_tuple_id(checkpoint_tuple: Any) -> str | None:
     return None
 
 
+def _deterministic_choose_tool_if_state_proves_single_document_tool(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    retrieve_decision: PlannerDecisionRecord,
+    candidate_tool_calls: list[GraphToolCall],
+    decision_id: str,
+) -> PlannerDecisionRecord | None:
+    if len(candidate_tool_calls) != 1:
+        return None
+    call = candidate_tool_calls[0]
+    if call.kind != "rag_tool":
+        return None
+    requirement = _requirement_by_id(state, call.requirement_id)
+    card = _hydrated_card_for_tool_call(state, call)
+    if requirement is None or requirement.status != "open" or card is None:
+        return None
+    if card.source_of_truth != "document_knowledge" or not card.is_read_only or card.requires_approval:
+        return None
+    return PlannerDecisionRecord(
+        decision_id=decision_id,
+        decision_kind="choose_tool",
+        author="deterministic_guard",
+        requirement_id=retrieve_decision.requirement_id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=retrieve_decision.capability_need,
+        selected_tool_call=call,
+        reason="Choose the only bounded document-knowledge tool call proven by retrieval.",
+    )
+
+
 def _tool_choice_requires_graph_approval(
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
 ) -> bool:
-    call = decision.selected_tool_call
+    calls = _planner_decision_selected_tool_calls(decision)
+    call = calls[0] if len(calls) == 1 else None
     if call is None or call.kind != "api_tool":
         return False
     requirement = _requirement_by_id(state, call.requirement_id)
@@ -2488,7 +2820,27 @@ def _hydrated_card_for_tool_call(
 
 
 def _next_approval_index(state: PlannerOwnedAgentGraphState) -> int:
-    return 1 + sum(1 for decision in state.planner_decisions if decision.decision_kind == "request_approval")
+    return 1 + sum(
+        1
+        for decision in state.planner_decisions
+        if decision.decision_kind == "request_approval"
+        and decision.diagnostics.get("approval_index") is not None
+    )
+
+
+def _write_choice_finished_without_pending_approval(
+    state: PlannerOwnedAgentGraphState,
+    choose_decision: PlannerDecisionRecord,
+) -> bool:
+    requirement_id = choose_decision.requirement_id
+    if requirement_id is None:
+        return False
+    requirement = _requirement_by_id(state, requirement_id)
+    return bool(
+        requirement is not None
+        and requirement.status != "open"
+        and _has_evidence_for_requirement(state, requirement_id)
+    )
 
 
 def _approval_decision_matches_pending(
@@ -2852,12 +3204,26 @@ def _has_execution_decision_for_call(
     tool_call: GraphToolCall,
 ) -> bool:
     return any(
-        decision.decision_kind == "execute_tool"
+        decision.decision_kind in {"execute_tool", "execute_parallel_read_batch"}
         and _planner_decision_is_active_for_graph_revision(state, decision)
-        and decision.selected_tool_call is not None
-        and decision.selected_tool_call.call_id == tool_call.call_id
+        and any(selected.call_id == tool_call.call_id for selected in _planner_decision_selected_tool_calls(decision))
         for decision in state.planner_decisions
     )
+
+
+def _planner_decision_selected_tool_calls(decision: PlannerDecisionRecord) -> list[GraphToolCall]:
+    calls: list[GraphToolCall] = []
+    if decision.selected_tool_call is not None:
+        calls.append(decision.selected_tool_call)
+    calls.extend(decision.selected_tool_calls)
+    deduped: list[GraphToolCall] = []
+    seen_call_ids: set[str] = set()
+    for call in calls:
+        if call.call_id in seen_call_ids:
+            continue
+        seen_call_ids.add(call.call_id)
+        deduped.append(call)
+    return deduped
 
 
 def _capability_need_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str):

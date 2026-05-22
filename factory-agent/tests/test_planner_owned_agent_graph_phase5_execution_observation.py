@@ -19,6 +19,7 @@ from factory_agent.planning.v2_contracts import (
 )
 from factory_agent.planning.v2_graph_adapters import GraphExecutionAuthorizationError
 from factory_agent.planning.v2_planner_decisions import record_planner_decision
+from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
 
 
@@ -177,7 +178,12 @@ def _graph(
         http_executor=http_executor,
         rag_pipeline=rag_pipeline,
     )
-    return PlannerOwnedAgentGraph(settings=settings, adapters=adapters, checkpointer=None)
+    return PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=adapters,
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=None,
+    )
 
 
 def _state_with_persisted_choice():
@@ -241,6 +247,15 @@ def _state_with_persisted_choice():
         capability_need=need,
         selected_tool_call=call,
         reason="Planner selected the bounded machine reader.",
+        diagnostics={
+            "planner_proposer": {
+                "proposer_seam": True,
+                "adapter": "phase5_test_proposer",
+                "decision_id": "dec-choose-machine",
+                "bounded_state_view": True,
+                "full_openapi_catalog_visible": False,
+            }
+        },
     )
     record_planner_decision(state, choose)
     return state, requirement, need, call

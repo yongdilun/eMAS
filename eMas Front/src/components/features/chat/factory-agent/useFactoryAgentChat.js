@@ -698,6 +698,27 @@ export function useFactoryAgentChat() {
     }
   }, [clearSnapshotState, refreshSessionList, session?.session_id])
 
+  const clearAllSessions = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      await factoryAgentApi.deleteSessions({ user_id: DEFAULT_USER_ID })
+      if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      clearClientProgress()
+      clearClientProgressTimers()
+      clearSnapshotState()
+      setOptimisticMessages([])
+      setSessionList([])
+      setInput('')
+      return true
+    } catch (err) {
+      setError(normalizeFactoryAgentError(err, 'Failed to clear chat history'))
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [clearClientProgress, clearClientProgressTimers, clearSnapshotState])
+
   const handleCancel = useCallback(async () => {
     if (!session?.session_id) return
     cancelRequestedSessionIdsRef.current.add(session.session_id)
@@ -933,6 +954,7 @@ export function useFactoryAgentChat() {
     switchSession,
     renameSession,
     deleteSession,
+    clearAllSessions,
     refreshSession: safelyRefreshSnapshot,
     retryFromCurrent,
   }
