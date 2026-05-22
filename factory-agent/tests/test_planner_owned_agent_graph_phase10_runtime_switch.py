@@ -134,17 +134,19 @@ def test_phase10_static_normal_runtime_adapter_uses_graph_not_direct_execution()
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
 
-    direct_adapter = _function_node(source, "_create_direct_v2_plan")
-    graph_adapter = _function_node(source, "_create_planner_owned_graph_v2_plan")
+    graph_adapter = _function_node(source, "_create_planner_owned_graph_plan")
     runtime_run = _function_node(runtime_source, "run_plan")
 
-    direct_calls = _called_names(direct_adapter)
     graph_calls = _called_names(graph_adapter)
     runtime_calls = _called_names(runtime_run)
+    defined_functions = {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
-    assert "_create_planner_owned_graph_v2_plan" in direct_calls
-    assert "_execute_direct_v2_steps" not in direct_calls
-    assert "_create_historical_direct_v2_plan" not in direct_calls
+    assert "_create_direct_v2_plan" not in defined_functions
+    assert "_create_planner_owned_graph_v2_plan" not in defined_functions
     assert "_execute_direct_v2_steps" not in graph_calls
     assert "_create_historical_direct_v2_plan" not in graph_calls
     assert "_planner_owned_graph_runtime" in graph_calls
@@ -194,7 +196,7 @@ async def test_phase10_behavior_normal_v2_plan_creation_enters_graph_path(monkey
 
     sess = SimpleNamespace(session_id="phase10-session", replan_context={}, llm_call_count=0)
     assert not hasattr(service, "_execute_direct_v2_steps")
-    response = await service._create_direct_v2_plan(
+    response = await service._create_planner_owned_graph_plan(
         db=SimpleNamespace(),
         sess=sess,
         tools_by_name={"get__machines_{id}": _tool()},
@@ -265,7 +267,7 @@ async def test_phase10_multi_id_graph_retrieval_completes_collection_reader_when
 def test_phase10_static_no_legacy_or_seed_runtime_branches_added():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     runtime_source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
-    runtime = ast.get_source_segment(source, _function_node(source, "_create_planner_owned_graph_v2_plan")) or ""
+    runtime = ast.get_source_segment(source, _function_node(source, "_create_planner_owned_graph_plan")) or ""
     runtime_adapter = ast.get_source_segment(runtime_source, _function_node(runtime_source, "run_plan")) or ""
 
     banned = [

@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 2.3 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
+Status: Phase 2.4 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
 
 Plan:
 
@@ -609,6 +609,7 @@ Verification:
 
 - `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `27 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
 - Post-tracker update smoke check: `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `15 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- Post-tracker update smoke check: `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `15 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
 - `python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q` -> PowerShell passed the glob literally, so pytest reported `ERROR: file or directory not found` and `no tests ran`; rerun with an expanded file list below.
 - `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
 - `python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py tests/test_planner_owned_loop_phase9_hard_query_release.py -q` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `9 warnings`.
@@ -701,13 +702,75 @@ Next recommended phase:
 
 - Do not start old graph scaffold deletion until the Phase 1 active `PlannerService`, `ExecutionService`, and approval fallback owners are resolved. The next narrow cleanup can either rename the `_create_direct_v2_plan()` graph-adapter entry name with full caller coverage or begin the old graph scaffold audit/migration lane.
 
+## Phase 2.4: Active Graph Runtime Entry Rename
+
+Status: complete.
+
+Phase result:
+
+- The misleading active runtime entry `PlanCreationService._create_direct_v2_plan()` was removed.
+- The active graph runtime implementation is now named `PlanCreationService._create_planner_owned_graph_plan()`.
+- The shallow `_create_direct_v2_plan()` -> `_create_planner_owned_graph_v2_plan()` pass-through was removed; callers now enter the graph-owned implementation directly.
+- Normal runtime still delegates to `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- Historical direct service execution remains absent: `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` are not defined on `PlanCreationService`.
+- No old graph scaffold, frontend fixture, release harness, Qwen/proposer policy, graph runtime behavior, or product behavior was changed.
+
+Files changed:
+
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Disposition | Replacement coverage / proof | Remaining blocker |
+| --- | --- | --- | --- |
+| `PlanCreationService._create_direct_v2_plan()` | Deleted | `create_plan()` now calls `_create_planner_owned_graph_plan()` directly; Phase 10 and Phase 15 static guards prove the old method is absent | None |
+| `PlanCreationService._create_planner_owned_graph_v2_plan()` | Renamed to `_create_planner_owned_graph_plan()` | Phase 10 behavior test calls the graph-owned entry and still observes `planner_owned_agent_graph` output | None |
+| Direct-v2 trace/context compatibility | Kept in `v2_trace_compatibility.py` | Existing trace compatibility tests and Phase 15 guards continue to cover it | Persisted trace compatibility still active |
+| Historical direct-v2 approval payload compatibility | Kept in `ApprovalResumeService` | Existing approval resume compatibility remains explicitly owned there | Later phase only if persisted payload compatibility is replaced |
+
+Static cleanup guards:
+
+- `test_phase10_static_normal_runtime_adapter_uses_graph_not_direct_execution()` now asserts `_create_direct_v2_plan()` and `_create_planner_owned_graph_v2_plan()` are absent and `_create_planner_owned_graph_plan()` enters graph runtime.
+- `test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution()` now asserts the graph-owned entry exists, calls `run_plan()`, and the old direct-v2 entry names remain absent.
+- The Phase 15 helper-retirement guard still proves no `_direct_v2_*`, `_execute_direct_v2_*`, or `_maybe_create_direct_v2_*` helpers exist on `PlanCreationService`.
+
+Verification:
+
+- `rg -n "_create_direct_v2_plan|_create_planner_owned_graph_plan|direct_v2_plan" factory-agent docs/qa "eMas Front/e2e"` -> passed. Active runtime references use `_create_planner_owned_graph_plan()`; remaining `_create_direct_v2_plan` hits are historical docs/tracker records and static guard strings. `direct_v2_plan` still appears in explicitly retained `ApprovalResumeService._resume_direct_v2_planner_approval()` compatibility.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `27 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q` -> PowerShell passed the glob literally, so pytest reported `ERROR: file or directory not found` and `no tests ran`; rerun with an expanded file list below.
+- `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `python -m pytest -q` -> `1029 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+- Frontend release safety commands were not run because this phase did not change active response, trace, release harness, graph runtime behavior, or frontend-visible runtime behavior.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
+
+Remaining blockers:
+
+- Direct-v2 normal runtime cleanup lane is closed except for explicitly retained trace/context and approval-payload compatibility.
+- `ApprovalResumeService` still owns historical direct-v2 approval payload resume compatibility.
+- Old graph scaffold remains active through the Phase 1 `PlannerService` / `ExecutionService` / approval fallback blockers and was not touched.
+- Frontend hard-query `generatedBy: 'v2_planner_loop'` fixtures remain intentionally unchanged.
+
+Next recommended phase:
+
+- Begin the old graph scaffold audit/migration lane only after resolving the active `PlannerService`, `ExecutionService`, and approval fallback owners. Do not delete old graph scaffold opportunistically from the direct-v2 cleanup lane.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 2.3 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 2.4 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 2.3 deleted `PlannerOwnedV2Loop`, `PlannerOwnedV2LoopRun`, and `planning/v2_planner_loop.py` after reference/export/docs audit found no real public owner. Direct-v2 trace/draft compatibility remains in `v2_trace_compatibility.py`; normal runtime remains `PlannerOwnedAgentGraph`.
+Continue cleanup without changing product behavior. Phase 2.4 renamed the active normal runtime service entry from `_create_direct_v2_plan()` to `_create_planner_owned_graph_plan()`. Direct-v2 trace/draft compatibility remains in `v2_trace_compatibility.py`; normal runtime remains `PlannerOwnedAgentGraph`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -725,7 +788,7 @@ Read first:
 
 Scope:
 - Keep `PlannerOwnedV2Loop`, `PlannerOwnedV2LoopRun`, and `planning/v2_planner_loop.py` deleted unless an explicit public compatibility requirement is newly proven.
-- Treat `_create_direct_v2_plan()` as active runtime until the entry name is migrated safely; it currently delegates to graph runtime.
+- Keep `_create_direct_v2_plan()` deleted; normal service runtime should enter `_create_planner_owned_graph_plan()` and delegate to graph runtime.
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
 - Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
 - `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.

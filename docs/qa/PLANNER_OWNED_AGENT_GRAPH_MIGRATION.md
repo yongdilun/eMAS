@@ -34,7 +34,7 @@ The current v2 runtime is useful but still too shallow as an agent module.
 Known starting points:
 
 - At graph-migration start, `factory-agent/factory_agent/planning/v2_planner_loop.py` defined `PlannerOwnedV2Loop` for direct-v2 requirement/capability contracts and draft response compatibility. Legacy cleanup Phase 2.3 retired that wrapper; current compatibility lives in `v2_trace_compatibility.py`.
-- `factory-agent/factory_agent/services/plan_creation_service.py` still performs direct v2 execution in service-level code through `_create_direct_v2_plan()` and `_execute_direct_v2_steps()`.
+- At graph-migration start, `factory-agent/factory_agent/services/plan_creation_service.py` still performed direct v2 execution in service-level code through `_create_direct_v2_plan()` and `_execute_direct_v2_steps()`. Legacy cleanup Phase 2.4 retired the misleading active entry name; current normal runtime enters `_create_planner_owned_graph_plan()`.
 - The old `factory-agent/factory_agent/graph/` package still contains historical LangGraph-style concepts such as `working_intents`, `intent_cursor`, and `intent_completed`. Those concepts must not become execution authority again.
 - Phase 15 cleanup removed normal runtime authority for `FACTORY_AGENT_ENGINE=legacy`, `v2_shadow`, `test_only_legacy_engine_enabled`, legacy RAG shortcut authority, and legacy/shadow trace attachment branches. Historical values may remain parse-only.
 - Baseline note from 2026-05-21: seeded-oracle and real-LangGraph E2E suites were reported green before this graph migration began. Later failures in those lanes should be treated as migration regressions unless the tracker proves an unrelated external cause.
@@ -663,7 +663,7 @@ Goal: normal runtime uses `PlannerOwnedAgentGraph` for v2 execution.
 Requirements:
 
 - `plan_creation_service.py` normal runtime calls the graph adapter.
-- `_create_direct_v2_plan()` becomes a thin graph adapter, a renamed historical helper, or is removed after tests are ported.
+- `_create_direct_v2_plan()` becomes a thin graph adapter, a renamed historical helper, or is removed after tests are ported. Legacy cleanup Phase 2.4 completed the rename to `_create_planner_owned_graph_plan()`.
 - `_execute_direct_v2_steps()` is not used for normal runtime.
 - Normal runtime passes a stable graph thread id, usually the session id, into the LangGraph checkpointer.
 - Runtime resume reconstructs from the native LangGraph checkpoint, not from a hand-built state in `session.replan_context`.

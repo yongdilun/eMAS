@@ -550,33 +550,7 @@ class PlanCreationService:
             )
             return context
 
-    async def _create_direct_v2_plan(
-        self,
-        *,
-        db: AsyncSession,
-        sess: SessionRow,
-        tools_by_name: dict[str, ToolInfo],
-        intent: str,
-        mode: str,
-        semantic_frame: Any | None = None,
-        assessment: Any | None = None,
-    ) -> PlanResponse:
-        """Compatibility name for the normal v2 graph runtime adapter.
-
-        Normal runtime enters the planner-owned graph through this adapter and
-        never calls service-level direct step execution.
-        """
-        return await self._create_planner_owned_graph_v2_plan(
-            db=db,
-            sess=sess,
-            tools_by_name=tools_by_name,
-            intent=intent,
-            mode=mode,
-            semantic_frame=semantic_frame,
-            assessment=assessment,
-        )
-
-    async def _create_planner_owned_graph_v2_plan(
+    async def _create_planner_owned_graph_plan(
         self,
         *,
         db: AsyncSession,
@@ -1141,7 +1115,7 @@ class PlanCreationService:
             tools_by_name = ensure_v2_rag_tool(tools_by_name)
             if not tools_by_name:
                 raise HTTPException(status_code=403, detail={"errors": ["No tools are allowed for this user role."]})
-            plan_resp = await self._create_direct_v2_plan(
+            plan_resp = await self._create_planner_owned_graph_plan(
                 db=db,
                 sess=sess,
                 tools_by_name=tools_by_name,

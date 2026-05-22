@@ -396,7 +396,7 @@ Files changed:
 Completion evidence:
 
 - Normal v2 runtime now calls `PlannerOwnedGraphRuntimeAdapter`, which builds `PlannerOwnedAgentGraph` with the configured `build_graph_checkpointer(settings)` seam and invokes graph runs/resumes with `thread_id = sess.session_id`.
-- `_create_direct_v2_plan()` is now a thin graph adapter for normal runtime. Static/behavioral Phase 10 tests prove it delegates to `_create_planner_owned_graph_v2_plan()` and does not call `_execute_direct_v2_steps()` or the historical direct-v2 path.
+- At Phase 10 completion, `_create_direct_v2_plan()` was a thin graph adapter for normal runtime. Legacy cleanup Phase 2.4 later renamed the active entry to `_create_planner_owned_graph_plan()`; static/behavioral tests prove it does not call `_execute_direct_v2_steps()` or the historical direct-v2 path.
 - Approval resume now routes graph-subject approvals through native LangGraph checkpoint resume before historical direct-v2 resume. Resume stores only pointer/UI metadata in `session.replan_context`; graph checkpoint state remains execution truth.
 - The runtime adapter persists graph results into existing plan/session/UI rows without rebuilding planner decisions, evidence, approval state, RAG, ToolSelector, or response-document rendering in `plan_creation_service.py`.
 - The graph trace/context now records graph planner decisions, node order, retrieval/tool evidence refs, approval/revision/checkpoint metadata, satisfaction/final validation status, and response-document context.
@@ -601,7 +601,7 @@ Completion evidence:
 - Added the `legacy_architecture_quarantine` pytest marker and marked historical direct-v2 compatibility modules/functions so they cannot be mistaken for normal runtime proof.
 - Rewrote migration-era test names and settings to prove graph-owned behavior explicitly, with offline proposer mode enabled only in tests/dev fixtures that intentionally use offline planner proposals.
 - Deleted the stale injected-planner approval test whose product guarantee is already covered by graph-owned approval, response-document, and seeded-oracle coverage.
-- Added AST/static guards proving `_create_direct_v2_plan()` delegates to `_create_planner_owned_graph_v2_plan()`, graph runtime cannot call `_execute_direct_v2_steps()`, and old graph `working_intents`/cursor authority is not used by normal planner-owned graph runtime sources.
+- Added AST/static guards proving the active planner-owned graph entry delegates to graph runtime, cannot call `_execute_direct_v2_steps()`, and old graph `working_intents`/cursor authority is not used by normal planner-owned graph runtime sources. Legacy cleanup Phase 2.4 later renamed this entry to `_create_planner_owned_graph_plan()`.
 - Preserved Phase 10/10.5/10.6 coverage and added guards that planner-authored graph decisions still require proposer diagnostics and offline proposer diagnostics cannot satisfy real LLM release proof.
 - Kept normal runtime on `PlannerOwnedAgentGraph`; no legacy/shadow runtime authority was restored.
 
@@ -642,7 +642,7 @@ Proof base commit:
 
 Completion evidence:
 
-- Normal runtime enters `PlannerOwnedAgentGraph` through `PlannerOwnedGraphRuntimeAdapter.run_plan()` with `thread_id = sess.session_id`; Phase 10/11 static guards still prove `_create_direct_v2_plan()` delegates to `_create_planner_owned_graph_v2_plan()` and normal runtime cannot call `_execute_direct_v2_steps()`.
+- Normal runtime enters `PlannerOwnedAgentGraph` through `PlannerOwnedGraphRuntimeAdapter.run_plan()` with `thread_id = sess.session_id`; Phase 10/11 static guards still prove the active graph entry cannot call `_execute_direct_v2_steps()`. Legacy cleanup Phase 2.4 renamed the service entry to `_create_planner_owned_graph_plan()`.
 - Planner-authored decisions are produced through the configured proposer seam. Phase 10.5/10.6/11 guards still prove graph-created `PlannerDecisionRecord` calls are not hand-authored as `author="planner"`, planner decisions require `planner_proposer` diagnostics, and offline proposer diagnostics cannot satisfy real LLM release proof.
 - Trace proof includes proposer adapter/model/base URL metadata and deterministic validation outcome. Local planner smoke used `openai_compatible_qwen_planner_decision_proposer`, model `Qwen2.5-7B-Instruct-Q4_K_M.gguf`, base URL type `local`, `offline_contract_mode=false`, `real_llm_mode=true`, `llm_invoked=true`, prompt sizes `3166` and `4273` chars, accepted planner decisions `retrieve_tools` and `choose_tool`, validation via `planner_owned_agent_graph_decision_gate`, `executor_call_count=1`, `final_validation_status=passed`, and `planner_proposer_diagnostics_satisfy_real_llm_release_proof(...) == true`.
 - Requirement/capability/tool/evidence/response-document separation is preserved by the graph-owned suite, response-document UI gates, and static cleanup guards.

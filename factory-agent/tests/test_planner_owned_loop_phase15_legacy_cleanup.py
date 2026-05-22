@@ -305,10 +305,8 @@ def test_phase11_historical_direct_v2_tests_are_marked_as_quarantined():
 
 def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
-    direct_adapter = _function_node(source, "_create_direct_v2_plan")
-    graph_adapter = _function_node(source, "_create_planner_owned_graph_v2_plan")
+    graph_adapter = _function_node(source, "_create_planner_owned_graph_plan")
 
-    direct_calls = _called_names(direct_adapter)
     graph_calls = _called_names(graph_adapter)
     defined_functions = {
         node.name
@@ -316,10 +314,8 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
-    assert "_create_planner_owned_graph_v2_plan" in direct_calls
-    assert "_execute_direct_v2_steps" not in direct_calls
-    assert "_create_historical_direct_v2_plan" not in direct_calls
-    assert "PlannerOwnedV2Loop" not in direct_calls
+    assert "_create_direct_v2_plan" not in defined_functions
+    assert "_create_planner_owned_graph_v2_plan" not in defined_functions
     assert "_planner_owned_graph_runtime" in graph_calls
     assert "run_plan" in graph_calls
     assert "_execute_direct_v2_steps" not in graph_calls
