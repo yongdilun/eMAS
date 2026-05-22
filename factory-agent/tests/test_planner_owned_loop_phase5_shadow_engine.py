@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any
@@ -7,7 +7,7 @@ import pytest
 
 from factory_agent.config import Settings, get_settings, normalize_factory_agent_engine
 from factory_agent.planning.tool_selector import ToolSelectionResult
-from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop
+from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
 from factory_agent.schemas import ToolInfo
 
 
@@ -134,7 +134,8 @@ async def test_phase5_v2_mode_does_not_create_executable_write_steps():
     selector = RecordingSelector(["patch__jobs_{id}"])
     tools = {"patch__jobs_{id}": _job_write_tool()}
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Change a job priority to low and ask approval first.",
         tools_by_name=tools,
         engine_mode="v2",
@@ -153,7 +154,8 @@ async def test_phase5_historical_v2_loop_contract_records_v2_generated_by_and_re
     selector = RecordingSelector(["get__machines_{id}"])
     tools = {"get__machines_{id}": _machine_status_tool()}
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=tools,
         engine_mode="v2",
@@ -172,7 +174,8 @@ async def test_phase5_v2_path_uses_v2_retriever_and_records_candidate_windows_an
     selector = RecordingSelector(["get__machines_{id}"])
     tools = {"get__machines_{id}": _machine_status_tool()}
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=tools,
         engine_mode="v2",
@@ -204,7 +207,8 @@ async def test_phase5_planner_trace_does_not_receive_full_catalog_before_capabil
         ),
     }
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=tools,
         engine_mode="v2",

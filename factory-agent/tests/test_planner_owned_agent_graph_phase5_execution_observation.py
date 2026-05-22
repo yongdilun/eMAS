@@ -413,15 +413,12 @@ async def test_phase5_repeated_retrieval_guard_trace_is_preserved():
 
 
 @pytest.mark.asyncio
-async def test_phase5_direct_v2_execution_helpers_are_not_used(monkeypatch):
+async def test_phase5_direct_v2_execution_helpers_are_not_used():
     from factory_agent.services.plan_creation_service import PlanCreationService
 
-    async def _boom(*args, **kwargs):  # pragma: no cover - only runs on regression
-        raise AssertionError("direct-v2 service execution helper was called")
-
     assert not hasattr(PlanCreationService, "_execute_direct_v2_steps")
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_api_step", _boom)
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_rag_step", _boom)
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_api_step")
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_rag_step")
 
     result = await _graph().run(
         "Show machine M-LTH-77 status.",

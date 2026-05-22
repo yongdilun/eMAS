@@ -353,15 +353,12 @@ def test_phase4_graph_uses_existing_v2_retriever_stack():
 
 
 @pytest.mark.asyncio
-async def test_phase4_graph_does_not_use_direct_v2_execution_helpers(monkeypatch):
+async def test_phase4_graph_does_not_use_direct_v2_execution_helpers():
     from factory_agent.services.plan_creation_service import PlanCreationService
 
-    async def _boom(*args, **kwargs):  # pragma: no cover - only runs on regression
-        raise AssertionError("Graph retrieval/execution path must not use direct-v2 service helpers")
-
     assert not hasattr(PlanCreationService, "_execute_direct_v2_steps")
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_api_step", _boom)
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_rag_step", _boom)
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_api_step")
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_rag_step")
 
     result = await _graph({}).run(
         "Explain the lockout tagout procedure.",

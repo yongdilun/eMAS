@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +15,7 @@ from factory_agent.planning.v2_interrupts import (
     approval_payload_matches_newest_ledger_revision,
     classify_user_interrupt,
 )
-from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop
+from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
 from factory_agent.schemas import ToolInfo
 from tests.test_api_endpoints import _make_app
 
@@ -236,7 +236,8 @@ async def test_phase7_executing_user_message_creates_replan_checkpoint_not_pendi
 @pytest.mark.asyncio
 async def test_phase7_append_interrupt_adds_requirement_ledger_revision():
     selector = RecordingSelector(["get__machines_{id}", "get__jobs_{id}"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -261,7 +262,8 @@ async def test_phase7_append_interrupt_adds_requirement_ledger_revision():
 @pytest.mark.asyncio
 async def test_phase7_modify_interrupt_supersedes_old_requirement_and_marks_stale_evidence():
     selector = RecordingSelector(["get__jobs"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="List next 2 low priority jobs sorted by deadline with only job id, status, priority, deadline.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -316,7 +318,8 @@ async def test_phase7_modify_interrupt_supersedes_old_requirement_and_marks_stal
 @pytest.mark.asyncio
 async def test_phase7_replace_interrupt_preserves_old_state_in_revision_history():
     selector = RecordingSelector(["get__machines_{id}"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -351,7 +354,8 @@ async def test_phase7_replace_interrupt_preserves_old_state_in_revision_history(
 @pytest.mark.asyncio
 async def test_phase7_cancel_interrupt_invalidates_active_v2_finalization():
     selector = RecordingSelector(["get__machines_{id}"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -370,7 +374,8 @@ async def test_phase7_cancel_interrupt_invalidates_active_v2_finalization():
 @pytest.mark.asyncio
 async def test_phase7_approval_payload_revision_gate_rejects_stale_and_allows_newest():
     selector = RecordingSelector(["patch__jobs_{id}"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Change job JOB-ALPHA-77 priority to low and ask approval.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -396,7 +401,8 @@ async def test_phase7_approval_payload_revision_gate_rejects_stale_and_allows_ne
 @pytest.mark.asyncio
 async def test_phase7_v2_interrupt_state_revision_preserves_current_draft():
     selector = RecordingSelector(["get__machines_{id}", "get__jobs_{id}"])
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",

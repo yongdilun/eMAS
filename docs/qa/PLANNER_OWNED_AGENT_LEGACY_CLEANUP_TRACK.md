@@ -410,13 +410,168 @@ Next phase recommendation:
 
 - Do not proceed directly into old graph scaffold deletion without first resolving the Phase 1 active owners. The safest next cleanup is to rewrite retained `PlannerOwnedV2Loop` contract tests toward `v2_trace_compatibility.py`, `v2_satisfaction.py`, and graph-owned state tests, then delete the remaining lower `_direct_v2_*` service helpers only after those tests no longer need them.
 
+## Phase 2 Follow-Up: Direct-Loop Test Dependency Retirement
+
+Status: complete.
+
+Phase result:
+
+- Retained direct-loop contract tests no longer import or instantiate `PlannerOwnedV2Loop`.
+- Direct-v2 trace/context and read-draft compatibility now live behind `planning/v2_trace_compatibility.py`.
+- `PlannerOwnedV2Loop` remains as a small compatibility wrapper only; visible tests and service runtime no longer depend on it.
+- Normal runtime still enters `_create_direct_v2_plan()` by name and still delegates to `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- Historical direct service execution remains absent: `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` are not defined on `PlanCreationService`.
+- No frontend hard-query fixtures, release harness behavior, Qwen/proposer policy, or old graph scaffold code was changed.
+
+Files changed:
+
+- `factory-agent/factory_agent/planning/v2_trace_compatibility.py`
+- `factory-agent/factory_agent/planning/v2_planner_loop.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_planner_owned_loop_phase5_shadow_engine.py`
+- `factory-agent/tests/test_planner_owned_loop_phase6_satisfaction.py`
+- `factory-agent/tests/test_planner_owned_loop_phase7_interrupt_replan.py`
+- `factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Assertion-level test disposition:
+
+| Test | Assertion owner after follow-up | Disposition |
+| --- | --- | --- |
+| `test_phase5_v2_mode_does_not_create_executable_write_steps` | `v2_trace_compatibility.py` compatibility run/draft | Rewritten from `PlannerOwnedV2Loop` to `build_direct_v2_compatibility_run()`; kept write-dry-run and hydrated-card assertions. |
+| `test_phase5_historical_v2_loop_contract_records_v2_generated_by_and_read_draft` | Trace/draft compatibility | Rewritten to compatibility run; retained persisted `generated_by="v2_planner_loop"` trace compatibility and read-draft projection. |
+| `test_phase5_v2_path_uses_v2_retriever_and_records_candidate_windows_and_detectors` | Trace/context compatibility | Rewritten to compatibility run; retained v2 retriever, detector, and repeated-retrieval guard assertions. |
+| `test_phase5_planner_trace_does_not_receive_full_catalog_before_capability_need` | Trace/context compatibility | Rewritten to compatibility run; retained full-catalog privacy assertion. |
+| `test_phase6_v2_contract_three_read_satisfies_typed_evidence_without_completion_calls` | `v2_satisfaction.py` plus compatibility state builder | Rewritten to compatibility run; deterministic satisfaction and final validation assertions preserved. |
+| `test_phase6_requested_fields_reject_unrelated_full_object_fields` | Satisfaction/final-validation contract | Rewritten to compatibility run; requested-field blocking preserved. |
+| `test_phase6_list_filter_sort_limit_and_fields_produce_proof_records` | Satisfaction contract | Rewritten to compatibility run; filter/sort/limit/requested-fields proof assertions preserved. |
+| `test_phase6_missing_evidence_leaves_requirement_open_and_final_validator_fails` | Final-validation contract | Rewritten to compatibility run; missing typed evidence failure preserved. |
+| `test_phase6_ambiguous_evidence_blocks_and_returns_to_planner_state` | Satisfaction contract | Rewritten to compatibility run; conflicting deterministic evidence behavior preserved. |
+| `test_phase6_write_and_approval_requirements_never_fast_path_to_final_answer` | Satisfaction/approval-state contract | Rewritten to compatibility run; mutation guard and final-validator failure preserved. |
+| `test_phase6_rag_satisfaction_requires_v2_typed_source_evidence` | RAG evidence contract | Rewritten to compatibility run; typed source/citation proof preserved. |
+| `test_phase6_legacy_rag_shortcut_does_not_satisfy_v2_document_answer` | Persisted compatibility/final-validation contract | Rewritten to compatibility run; legacy RAG shortcut remains parse-only and non-satisfying. |
+| `test_phase6_repeated_retrieval_guard_blocks_same_unchanged_capability_need` | Trace/context compatibility | Rewritten to compatibility run; repeated retrieval guard assertion preserved. |
+| `test_phase6_final_validator_blocks_dropped_locked_constraints_and_missing_typed_evidence` | Final-validation contract | Rewritten to compatibility run; mutation of state still exercises `validate_v2_final_state()`. |
+| `test_phase7_append_interrupt_adds_requirement_ledger_revision` | Interrupt/revision contract | Rewritten to compatibility run; ledger revision assertions preserved. |
+| `test_phase7_modify_interrupt_supersedes_old_requirement_and_marks_stale_evidence` | Interrupt/revision contract | Rewritten to compatibility run; stale-evidence marking preserved. |
+| `test_phase7_replace_interrupt_preserves_old_state_in_revision_history` | Interrupt/revision contract | Rewritten to compatibility run; prior-ledger snapshot assertion preserved. |
+| `test_phase7_cancel_interrupt_invalidates_active_v2_finalization` | Interrupt/final-validation contract | Rewritten to compatibility run; invalidation assertion preserved. |
+| `test_phase7_approval_payload_revision_gate_rejects_stale_and_allows_newest` | Approval payload compatibility | Rewritten to compatibility run; revision-gate compatibility preserved. |
+| `test_phase7_v2_interrupt_state_revision_preserves_current_draft` | Trace/draft compatibility plus interrupt contract | Rewritten to compatibility run; draft/tool-output compatibility and interrupt actor assertion preserved. |
+| `test_phase9_hard_read_query_proves_v2_retrieval_satisfaction_and_conditional_branch` | Trace/draft compatibility plus satisfaction contract | Rewritten to compatibility run; hard-query satisfaction and read-draft projection preserved. |
+| `test_phase13_mixed_read_query_keeps_typed_status_and_collection_evidence_without_legacy_completion` | Satisfaction contract plus draft compatibility | Rewritten to compatibility run; typed evidence and projection assertions preserved. |
+| `test_phase9_multi_id_status_read_satisfies_typed_rows_without_completion_loop` | Satisfaction contract plus draft compatibility | Rewritten to compatibility run; multi-id row proof and expanded draft args preserved. |
+| `test_phase9_historical_direct_v2_aggregates_item_read_evidence_for_multi_id_status` | `v2_evidence_aggregation.py` | Rewritten away from `PlanCreationService._direct_v2_prepare_evidence_for_satisfaction()` to `aggregate_multi_entity_status_evidence()`. |
+| `test_phase9_projected_collection_uses_structured_filter_evidence_without_exposing_filtered_field` | Satisfaction/final-validation contract | Rewritten to compatibility run; structured filter proof preserved. |
+| `test_phase9_mixed_api_rag_uses_rag_only_for_document_requirement_and_requires_typed_sources` | RAG evidence contract | Rewritten to compatibility run; typed RAG evidence assertions preserved. |
+| `test_phase9_write_approval_stages_preview_without_commit_and_interrupt_invalidates_stale_payload` | Draft compatibility plus interrupt/approval compatibility | Rewritten to compatibility run; dry-run write candidate, preview draft, and stale approval invalidation preserved. |
+| `test_phase9_tool_failure_fallback_is_typed_and_cannot_finalize_success` | Satisfaction/final-validation contract | Rewritten to compatibility run; typed failure state preserved. |
+
+Tests deleted:
+
+- None. Direct-loop runtime proof was narrowed by changing ownership, not by weakening coverage.
+
+Helper disposition:
+
+| Helper group | Disposition | Replacement coverage / proof |
+| --- | --- | --- |
+| Direct-v2 compatibility run/draft | Moved to `v2_trace_compatibility.py` | Phase 5/6/7/9 tests now import `build_direct_v2_compatibility_run()`; Phase 15 guard proves `v2_planner_loop.py` no longer owns `_direct_v2_draft`. |
+| `PlannerOwnedV2Loop` | Kept as compatibility wrapper | Phase 15 guard proves no visible tests import/instantiate it and `PlanCreationService` still does not import it. Hidden/public API compatibility is the remaining reason not to delete in this phase. |
+| Service direct API/RAG executors | Deleted | Graph phase 4/5 tests assert `_execute_direct_v2_api_step()` and `_execute_direct_v2_rag_step()` are absent; Phase 15 guard blocks their return. |
+| Service evidence aggregation wrapper | Deleted | Phase 9 test now calls `aggregate_multi_entity_status_evidence()` directly. |
+| Service approval payload builder cluster | Deleted | Historical approval payload resume remains owned by `approval_resume_service.py`; Phase 15 guard blocks this cluster from returning to `PlanCreationService`. |
+| Service direct RAG response helper | Deleted | No active reference remained; graph-owned RAG tests cover current runtime behavior. |
+| Remaining `PlanCreationService` lower helpers | Kept and tracker-blocked | Used only by retained Phase 9 historical helper tests for RAG source-hint query fallback and calendar-week staged row behavior. |
+
+Deleted `PlanCreationService` helpers:
+
+```text
+_append_direct_v2_api_evidence
+_direct_v2_aggregate_multi_entity_evidence
+_direct_v2_approval_payload
+_direct_v2_business_change_id
+_direct_v2_business_change_label
+_direct_v2_business_change_plan
+_direct_v2_canonical_output_key
+_direct_v2_change_summary
+_direct_v2_entity_from_tool
+_direct_v2_entity_from_tool_name
+_direct_v2_entity_noun
+_direct_v2_error_summary
+_direct_v2_evidence_has_error
+_direct_v2_final_validation_failed
+_direct_v2_first_mapping
+_direct_v2_has_failed_output
+_direct_v2_identity_fields
+_direct_v2_is_rag_tool
+_direct_v2_llm_call_count
+_direct_v2_mutation_requirements
+_direct_v2_no_op_mutation_for_requirement
+_direct_v2_prepare_evidence_for_satisfaction
+_direct_v2_project_api_body
+_direct_v2_project_api_row
+_direct_v2_requirement
+_direct_v2_rows_from_evidence
+_direct_v2_schema_entity
+_direct_v2_selector_summary
+_direct_v2_serialized_business_change
+_direct_v2_should_stage_approval
+_direct_v2_step_requirement_map
+_direct_v2_write_tool_name
+_execute_direct_v2_api_step
+_execute_direct_v2_rag_step
+_maybe_create_direct_v2_rag_response
+```
+
+Remaining tracker-blocked `PlanCreationService` direct-v2 helpers:
+
+```text
+_direct_v2_current_week_window
+_direct_v2_is_source_hint_query
+_direct_v2_parse_date
+_direct_v2_production_week_window
+_direct_v2_rag_execution_query
+_direct_v2_row_due_date
+_direct_v2_row_matches_date_constraint
+_direct_v2_source_priority_constraint
+_direct_v2_stage_rows
+```
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `26 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+- `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase9_hard_query_release.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `9 warnings`.
+- `python -m pytest -q` -> `1028 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+- Frontend release safety commands were not run because this phase did not change active response, trace, release harness, or frontend-visible runtime behavior.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
+
+Remaining blockers:
+
+- `PlannerOwnedV2Loop` cannot be deleted yet without an explicit public-compatibility decision; it is no longer a visible test or runtime dependency.
+- `PlanCreationService._direct_v2_rag_execution_query()` and `_direct_v2_stage_rows()` remain only for retained historical helper tests. They should move to explicit compatibility ownership or be deleted after replacement coverage is recorded.
+- `ApprovalResumeService` still owns historical direct-v2 approval payload resume compatibility.
+- Old graph scaffold remains active through the Phase 1 `PlannerService` / `ExecutionService` / approval fallback blockers and was not touched.
+- Frontend hard-query `generatedBy: 'v2_planner_loop'` fixtures remain intentionally unchanged.
+
+Next recommended phase:
+
+- Resolve the two remaining `PlanCreationService` helper islands: move RAG source-hint query fallback and staged-row calendar filtering into an explicitly named compatibility owner only if the behavior still matters, otherwise delete them with graph/approval-resume replacement proof. After that, make a deliberate public-compatibility call on deleting `PlannerOwnedV2Loop`.
+
 ## Current Handoff Prompt
 
 ```text
 You are implementing the next narrow follow-up after Phase 2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Reduce the remaining direct-loop test/helper dependency without changing product behavior. Phase 2 already separated active trace/context compatibility into `v2_trace_compatibility.py` and deleted `_create_historical_direct_v2_plan()` plus `_execute_direct_v2_steps()`. The remaining cleanup candidate is lower direct-v2 helper support that is still blocked by retained compatibility tests and historical approval-payload resume.
+Resolve the two remaining `PlanCreationService` direct-v2 helper islands without changing product behavior. Phase 2 separated active trace/context compatibility into `v2_trace_compatibility.py`; the Phase 2 follow-up moved retained direct-loop tests to that seam and deleted direct API/RAG executor, aggregation wrapper, approval payload builder, and direct RAG response helper support from `PlanCreationService`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -427,20 +582,19 @@ Read first:
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_planner_loop.py
+- factory-agent/factory_agent/planning/v2_evidence_aggregation.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py
-- factory-agent/tests/test_planner_owned_loop_phase6_satisfaction.py
-- factory-agent/tests/test_planner_owned_loop_phase7_interrupt_replan.py
-- factory-agent/tests/test_planner_owned_loop_phase5_shadow_engine.py
 - factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py
+- factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py
 
 Scope:
-- Implement only retained direct-v2 helper/test cleanup unless explicitly told to start old graph scaffold deletion.
+- Implement only the remaining `PlanCreationService._direct_v2_rag_execution_query()` and `_direct_v2_stage_rows()` helper cleanup unless explicitly told to start old graph scaffold deletion.
 - Treat `_create_direct_v2_plan()` as active runtime until the entry name is migrated safely; it currently delegates to graph runtime.
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
-- Treat `PlannerOwnedV2Loop` as retained test/contract compatibility, not active service runtime.
-- `_create_historical_direct_v2_plan()` and `_execute_direct_v2_steps()` should remain absent.
+- Treat `PlannerOwnedV2Loop` as public compatibility wrapper only; visible tests and runtime should not import or instantiate it.
+- `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` should remain absent.
 - Do not touch old graph scaffold deletion unless the active `PlannerService`, `ExecutionService`, and approval fallback blockers are explicitly resolved.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.

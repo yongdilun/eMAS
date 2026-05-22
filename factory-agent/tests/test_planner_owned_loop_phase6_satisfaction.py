@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -12,7 +12,7 @@ from factory_agent.planning.v2_contracts import (
     RequirementLedgerEntry,
     SatisfactionCheck,
 )
-from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop
+from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
 from factory_agent.planning.v2_satisfaction import validate_v2_final_state
 from factory_agent.schemas import ToolInfo
 
@@ -213,7 +213,8 @@ async def test_phase6_v2_contract_three_read_satisfies_typed_evidence_without_co
         "list next 2 low priority jobs sorted by deadline with only job id, status, priority, deadline."
     )
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent=prompt,
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -271,7 +272,8 @@ async def test_phase6_v2_contract_three_read_satisfies_typed_evidence_without_co
 async def test_phase6_requested_fields_reject_unrelated_full_object_fields():
     selector = RecordingSelector(["get__machines_{id}"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -299,7 +301,8 @@ async def test_phase6_requested_fields_reject_unrelated_full_object_fields():
 async def test_phase6_list_filter_sort_limit_and_fields_produce_proof_records():
     selector = RecordingSelector(["get__jobs"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="List next 2 low priority jobs sorted by deadline with only job id, status, priority, deadline.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -340,7 +343,8 @@ async def test_phase6_list_filter_sort_limit_and_fields_produce_proof_records():
 async def test_phase6_missing_evidence_leaves_requirement_open_and_final_validator_fails():
     selector = RecordingSelector(["get__machines_{id}"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -357,7 +361,8 @@ async def test_phase6_missing_evidence_leaves_requirement_open_and_final_validat
 async def test_phase6_ambiguous_evidence_blocks_and_returns_to_planner_state():
     selector = RecordingSelector(["get__machines_{id}"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -390,7 +395,8 @@ async def test_phase6_ambiguous_evidence_blocks_and_returns_to_planner_state():
 async def test_phase6_write_and_approval_requirements_never_fast_path_to_final_answer():
     selector = RecordingSelector(["patch__jobs_{id}"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Change job JOB-ALPHA-77 priority to low and ask approval before applying.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -409,7 +415,8 @@ async def test_phase6_write_and_approval_requirements_never_fast_path_to_final_a
 async def test_phase6_rag_satisfaction_requires_v2_typed_source_evidence():
     selector = RecordingSelector(["rag_search_documents"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Explain the lockout tagout procedure.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -447,7 +454,8 @@ async def test_phase6_rag_satisfaction_requires_v2_typed_source_evidence():
 async def test_phase6_legacy_rag_shortcut_does_not_satisfy_v2_document_answer():
     selector = RecordingSelector(["rag_search_documents"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Explain the lockout tagout procedure.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -479,7 +487,8 @@ async def test_phase6_legacy_rag_shortcut_does_not_satisfy_v2_document_answer():
 async def test_phase6_repeated_retrieval_guard_blocks_same_unchanged_capability_need():
     selector = RecordingSelector(["get__machines_{id}"])
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-LTH-77 status, then show machine M-LTH-77 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -517,7 +526,8 @@ def test_phase6_final_validator_blocks_dropped_locked_constraints_and_missing_ty
     selector = RecordingSelector(["get__machines_{id}"])
 
     async def _run_and_mutate():
-        run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+        run = await build_direct_v2_compatibility_run(
+            tool_selector=selector,
             intent="Show machine M-LTH-77 status.",
             tools_by_name=_base_tools(),
             engine_mode="v2",

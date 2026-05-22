@@ -34,6 +34,59 @@ PLAN_CREATION_SOURCE = RUNTIME_ROOT / "services" / "plan_creation_service.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
 V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
+V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
+CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
+
+TRACKER_BLOCKED_PLAN_CREATION_DIRECT_V2_HELPERS = {
+    "_direct_v2_current_week_window",
+    "_direct_v2_is_source_hint_query",
+    "_direct_v2_parse_date",
+    "_direct_v2_production_week_window",
+    "_direct_v2_rag_execution_query",
+    "_direct_v2_row_due_date",
+    "_direct_v2_row_matches_date_constraint",
+    "_direct_v2_source_priority_constraint",
+    "_direct_v2_stage_rows",
+}
+
+DELETED_PLAN_CREATION_DIRECT_V2_HELPERS = {
+    "_append_direct_v2_api_evidence",
+    "_direct_v2_aggregate_multi_entity_evidence",
+    "_direct_v2_approval_payload",
+    "_direct_v2_business_change_id",
+    "_direct_v2_business_change_label",
+    "_direct_v2_business_change_plan",
+    "_direct_v2_canonical_output_key",
+    "_direct_v2_change_summary",
+    "_direct_v2_entity_from_tool",
+    "_direct_v2_entity_from_tool_name",
+    "_direct_v2_entity_noun",
+    "_direct_v2_error_summary",
+    "_direct_v2_evidence_has_error",
+    "_direct_v2_final_validation_failed",
+    "_direct_v2_first_mapping",
+    "_direct_v2_has_failed_output",
+    "_direct_v2_identity_fields",
+    "_direct_v2_is_rag_tool",
+    "_direct_v2_llm_call_count",
+    "_direct_v2_mutation_requirements",
+    "_direct_v2_no_op_mutation_for_requirement",
+    "_direct_v2_prepare_evidence_for_satisfaction",
+    "_direct_v2_project_api_body",
+    "_direct_v2_project_api_row",
+    "_direct_v2_requirement",
+    "_direct_v2_rows_from_evidence",
+    "_direct_v2_schema_entity",
+    "_direct_v2_selector_summary",
+    "_direct_v2_serialized_business_change",
+    "_direct_v2_should_stage_approval",
+    "_direct_v2_step_requirement_map",
+    "_direct_v2_write_tool_name",
+    "_execute_direct_v2_api_step",
+    "_execute_direct_v2_rag_step",
+    "_execute_direct_v2_steps",
+    "_maybe_create_direct_v2_rag_response",
+}
 
 PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
     Path("planning/v2_contracts.py"),
@@ -152,6 +205,14 @@ def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
         if name:
             names.add(name)
     return names
+
+
+def _defined_function_names(source: str) -> set[str]:
+    return {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
 
 def test_phase15_runtime_engine_values_resolve_to_planner_owned_v2_only():
@@ -273,6 +334,7 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
 def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop():
     service_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
+    loop_source = V2_PLANNER_LOOP_SOURCE.read_text(encoding="utf-8")
 
     assert "build_direct_v2_compatibility_state" in service_source
     assert "build_failed_direct_v2_compatibility_state" in service_source
@@ -280,6 +342,44 @@ def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop
     assert "class PlannerOwnedV2Loop" not in compatibility_source
     assert "def attach_direct_v2_trace_to_intent_contract" in compatibility_source
     assert "def build_direct_v2_compatibility_state" in compatibility_source
+    assert "def build_direct_v2_compatibility_run" in compatibility_source
+    assert "def build_direct_v2_compatibility_draft" in compatibility_source
+    assert "build_direct_v2_compatibility_run" in loop_source
+    assert "def _direct_v2_draft" not in loop_source
+
+
+def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
+    forbidden_import = "from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop"
+    forbidden_constructor = "PlannerOwnedV2Loop("
+    hits: list[str] = []
+    for path in sorted(TESTS_ROOT.rglob("test_*.py")):
+        if path.name == "test_planner_owned_loop_phase15_legacy_cleanup.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if forbidden_import in text:
+            hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}: old loop import")
+        if forbidden_constructor in text:
+            hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}: old loop constructor")
+
+    assert hits == []
+
+
+def test_phase2_followup_remaining_plan_creation_direct_v2_helpers_are_tracker_blocked():
+    source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
+    defined_functions = _defined_function_names(source)
+    remaining_direct_helpers = {
+        name
+        for name in defined_functions
+        if name.startswith("_direct_v2_")
+        or name.startswith("_execute_direct_v2_")
+        or name.startswith("_maybe_create_direct_v2_")
+    }
+
+    assert remaining_direct_helpers == TRACKER_BLOCKED_PLAN_CREATION_DIRECT_V2_HELPERS
+    assert DELETED_PLAN_CREATION_DIRECT_V2_HELPERS.isdisjoint(defined_functions)
+    for helper in TRACKER_BLOCKED_PLAN_CREATION_DIRECT_V2_HELPERS:
+        assert helper in tracker
 
 
 def test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority():

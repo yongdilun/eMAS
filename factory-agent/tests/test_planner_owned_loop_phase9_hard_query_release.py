@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,11 +7,12 @@ import pytest
 
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_contracts import EvidenceCitation, EvidenceLedgerEntry, UserInterrupt
+from factory_agent.planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
 from factory_agent.planning.v2_interrupts import (
     apply_user_interrupt_to_v2_state,
     approval_payload_matches_newest_ledger_revision,
 )
-from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop
+from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
 from factory_agent.planning.v2_rag_tool import build_v2_rag_evidence
 from factory_agent.planning.v2_satisfaction import apply_deterministic_evidence_satisfaction, validate_v2_final_state
 from factory_agent.schemas import ToolInfo
@@ -234,7 +235,8 @@ async def test_phase9_hard_read_query_proves_v2_retrieval_satisfaction_and_condi
     )
     selector = NeedAwareSelector()
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent=prompt,
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -323,7 +325,8 @@ async def test_phase13_mixed_read_query_keeps_typed_status_and_collection_eviden
     )
     selector = NeedAwareSelector()
 
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent=prompt,
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -380,7 +383,8 @@ async def test_phase13_mixed_read_query_keeps_typed_status_and_collection_eviden
 @pytest.mark.asyncio
 async def test_phase9_multi_id_status_read_satisfies_typed_rows_without_completion_loop():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Find status for job with job id JOB-SEED-001 and JOB-SEED-002.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -417,7 +421,8 @@ async def test_phase9_multi_id_status_read_satisfies_typed_rows_without_completi
 @pytest.mark.asyncio
 async def test_phase9_historical_direct_v2_aggregates_item_read_evidence_for_multi_id_status():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Find status for job with job id JOB-ALPHA-001 and JOB-ALPHA-002.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -446,8 +451,11 @@ async def test_phase9_historical_direct_v2_aggregates_item_read_evidence_for_mul
         ]
     )
 
-    service = PlanCreationService.__new__(PlanCreationService)
-    service._direct_v2_prepare_evidence_for_satisfaction(run)
+    aggregate_multi_entity_status_evidence(
+        requirement_ledger=run.state.requirement_ledger,
+        evidence_ledger=run.state.evidence_ledger,
+        diagnostic_metadata={"direct_v2_execution": True},
+    )
     apply_deterministic_evidence_satisfaction(run.state)
     validate_v2_final_state(run.state)
 
@@ -465,7 +473,8 @@ async def test_phase9_historical_direct_v2_aggregates_item_read_evidence_for_mul
 @pytest.mark.asyncio
 async def test_phase9_projected_collection_uses_structured_filter_evidence_without_exposing_filtered_field():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 2.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -505,7 +514,8 @@ async def test_phase9_projected_collection_uses_structured_filter_evidence_witho
 @pytest.mark.asyncio
 async def test_phase9_mixed_api_rag_uses_rag_only_for_document_requirement_and_requires_typed_sources():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-CNC-01 status and OSHA lockout/tagout reenergizing notification guidance as separate sections.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
@@ -625,7 +635,8 @@ def test_phase9_historical_direct_v2_stage_rows_keeps_literal_calendar_week_when
 @pytest.mark.asyncio
 async def test_phase9_write_approval_stages_preview_without_commit_and_interrupt_invalidates_stale_payload():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent=(
             "Change all high-priority jobs due this week to medium, but do not update blocked jobs. "
             "Show what would change and ask approval before applying."
@@ -708,7 +719,8 @@ async def test_phase9_write_approval_stages_preview_without_commit_and_interrupt
 @pytest.mark.asyncio
 async def test_phase9_tool_failure_fallback_is_typed_and_cannot_finalize_success():
     selector = NeedAwareSelector()
-    run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
         intent="Show machine M-CNC-01 status.",
         tools_by_name=_base_tools(),
         engine_mode="v2",
