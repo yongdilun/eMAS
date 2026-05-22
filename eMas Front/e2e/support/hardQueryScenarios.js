@@ -250,12 +250,14 @@ export const hardQueryScenarios = Object.freeze([
       approvalCount: 0,
       minStepCount: 4,
       maxStepCount: 7,
-      engine: {
+      plannerOwnedGraph: {
         engineVersion: 'v2',
-        generatedBy: 'v2_planner_loop',
-        retriever: 'V2CapabilityToolRetriever',
-        wholeQueryScopeUsed: false,
-        legacyIntentCompletionLoopUsed: false,
+        traceId: 'planner_owned_agent_graph',
+        runtimeAdapter: 'planner_owned_graph_runtime',
+        graphExecutionAuthority: true,
+        nativeLangGraphCheckpointUsed: true,
+        requiredEvidenceSourceTypes: ['api_tool'],
+        allowedEvidenceSourceTypes: ['api_tool'],
       },
       capabilityNeeds: [
         { sourceOfTruth: 'operational_state', entity: 'machine', action: 'read_one' },
@@ -327,10 +329,14 @@ export const hardQueryScenarios = Object.freeze([
       sessionStatus: 'COMPLETED',
       responseState: 'completed',
       approvalCount: 0,
-      engine: {
+      plannerOwnedGraph: {
         engineVersion: 'v2',
-        generatedBy: 'v2_planner_loop',
-        legacyIntentCompletionLoopUsed: false,
+        traceId: 'planner_owned_agent_graph',
+        runtimeAdapter: 'planner_owned_graph_runtime',
+        graphExecutionAuthority: true,
+        nativeLangGraphCheckpointUsed: true,
+        requiredEvidenceSourceTypes: ['api_tool'],
+        allowedEvidenceSourceTypes: ['api_tool'],
       },
       responseDocument: {
         blockTypes: ['result_table'],
@@ -368,11 +374,14 @@ export const hardQueryScenarios = Object.freeze([
       sessionStatus: 'COMPLETED',
       responseState: 'completed',
       approvalCount: 0,
-      engine: {
+      plannerOwnedGraph: {
         engineVersion: 'v2',
-        generatedBy: 'v2_planner_loop',
-        retriever: 'V2CapabilityToolRetriever',
-        legacyRagShortcutUsed: false,
+        traceId: 'planner_owned_agent_graph',
+        runtimeAdapter: 'planner_owned_graph_runtime',
+        graphExecutionAuthority: true,
+        nativeLangGraphCheckpointUsed: true,
+        requiredEvidenceSourceTypes: ['api_tool', 'system_guard'],
+        allowedEvidenceSourceTypes: ['api_tool', 'system_guard'],
       },
       capabilityNeeds: [
         { sourceOfTruth: 'operational_state', entity: 'machine', action: 'read_one' },
@@ -433,10 +442,12 @@ export const hardQueryScenarios = Object.freeze([
       sessionStatus: 'WAITING_APPROVAL',
       responseState: 'waiting_approval',
       approvalCount: 1,
-      engine: {
+      plannerOwnedGraph: {
         engineVersion: 'v2',
-        generatedBy: 'v2_planner_loop',
-        retriever: 'V2CapabilityToolRetriever',
+        traceId: 'planner_owned_agent_graph',
+        runtimeAdapter: 'planner_owned_graph_runtime',
+        graphExecutionAuthority: true,
+        nativeLangGraphCheckpointUsed: true,
       },
       lockedConstraints: {
         priority: 'high',

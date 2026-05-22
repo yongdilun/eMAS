@@ -20,6 +20,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     expect(scenario.prompt, `${scenario.id} prompt`).toBeTruthy()
     expect(scenario.expected.sessionStatus, `${scenario.id} session status`).toBeTruthy()
     expect(scenario.expected.responseState, `${scenario.id} response state`).toBeTruthy()
+    expect(scenario.expected.engine, `${scenario.id} historical engine fixture`).toBeUndefined()
     expect(scenario.expected.visibleSemanticBlocks.length).toBeGreaterThan(0)
     expect(scenario.expected.responseDocument || scenario.expected.toolFailure || scenario.expected.interrupt).toBeTruthy()
   }
@@ -62,12 +63,14 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   for (const id of requiredIds) expect(byId[id], `${id} exists`).toBeTruthy()
 
   const hardRead = byId['HQ-9-READ']
-  expect(hardRead.expected.engine).toMatchObject({
+  expect(hardRead.expected.plannerOwnedGraph).toMatchObject({
     engineVersion: 'v2',
-    generatedBy: 'v2_planner_loop',
-    retriever: 'V2CapabilityToolRetriever',
-    wholeQueryScopeUsed: false,
-    legacyIntentCompletionLoopUsed: false,
+    traceId: 'planner_owned_agent_graph',
+    runtimeAdapter: 'planner_owned_graph_runtime',
+    graphExecutionAuthority: true,
+    nativeLangGraphCheckpointUsed: true,
+    requiredEvidenceSourceTypes: ['api_tool'],
+    allowedEvidenceSourceTypes: ['api_tool'],
   })
   expect(hardRead.expected.capabilityNeeds.map((need) => `${need.sourceOfTruth}:${need.entity}:${need.action}`)).toEqual([
     'operational_state:machine:read_one',
@@ -93,14 +96,22 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     readScope: 'status_only',
     entityCount: 2,
   })
-  expect(multiId.expected.engine.legacyIntentCompletionLoopUsed).toBe(false)
+  expect(multiId.expected.plannerOwnedGraph).toMatchObject({
+    traceId: 'planner_owned_agent_graph',
+    requiredEvidenceSourceTypes: ['api_tool'],
+    allowedEvidenceSourceTypes: ['api_tool'],
+  })
 
   const mixed = byId['HQ-9-MIXED-RAG']
   expect(mixed.expected.capabilityNeeds.map((need) => need.sourceOfTruth)).toEqual([
     'operational_state',
     'document_knowledge',
   ])
-  expect(mixed.expected.engine.legacyRagShortcutUsed).toBe(false)
+  expect(mixed.expected.plannerOwnedGraph).toMatchObject({
+    traceId: 'planner_owned_agent_graph',
+    requiredEvidenceSourceTypes: ['api_tool', 'system_guard'],
+    allowedEvidenceSourceTypes: ['api_tool', 'system_guard'],
+  })
   expect(mixed.expected.sourceEvidence.requiredSourceFields).toEqual([
     'source_id',
     'doc_id',
@@ -119,6 +130,11 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
 
   const approval = byId['HQ-9-APPROVAL']
   expect(approval.expected.sessionStatus).toBe('WAITING_APPROVAL')
+  expect(approval.expected.plannerOwnedGraph).toMatchObject({
+    traceId: 'planner_owned_agent_graph',
+    graphExecutionAuthority: true,
+    nativeLangGraphCheckpointUsed: true,
+  })
   expect(approval.expected.lockedConstraints).toMatchObject({
     priority: 'high',
     new_priority: 'medium',

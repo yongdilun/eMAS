@@ -83,6 +83,31 @@ function backendRunSteps(snapshot) {
   return Array.isArray(snapshot?.response_document?.run_steps) ? snapshot.response_document.run_steps : []
 }
 
+function plannerOwnedGraphPayload(snapshot) {
+  const context = snapshot?.session?.replan_context && typeof snapshot.session.replan_context === 'object'
+    ? snapshot.session.replan_context
+    : {}
+  const intentContract = context.intent_contract && typeof context.intent_contract === 'object'
+    ? context.intent_contract
+    : {}
+  const graphState = intentContract.planner_owned_agent_graph_state && typeof intentContract.planner_owned_agent_graph_state === 'object'
+    ? intentContract.planner_owned_agent_graph_state
+    : {}
+  const graphContext = context.planner_owned_agent_graph && typeof context.planner_owned_agent_graph === 'object'
+    ? context.planner_owned_agent_graph
+    : {}
+  const v2State = intentContract.v2_state && typeof intentContract.v2_state === 'object' ? intentContract.v2_state : {}
+  const executionTrace = intentContract.execution_trace && typeof intentContract.execution_trace === 'object'
+    ? intentContract.execution_trace
+    : graphState.execution_trace && typeof graphState.execution_trace === 'object'
+      ? graphState.execution_trace
+      : {}
+  const graphEvidence = graphState.evidence_ledger?.evidence
+  const v2Evidence = v2State.evidence_ledger?.evidence
+  const evidence = Array.isArray(graphEvidence) ? graphEvidence : Array.isArray(v2Evidence) ? v2Evidence : []
+  return { context: graphContext, intentContract, executionTrace, evidence }
+}
+
 function toolName(step) {
   return step?.tool_name || step?.toolName || ''
 }
@@ -175,6 +200,58 @@ function addResponseDocumentViolations(violations, snapshot, expected) {
   }
   if (expected.noMutation && blockTypes.some((type) => ['approval_required', 'mutation_result'].includes(type))) {
     violations.push(`read-only scenario response_document contained mutation/approval block: ${blockTypes.join(', ')}`)
+  }
+}
+
+function addPlannerOwnedGraphViolations(violations, snapshot, expected) {
+  const graphExpected = expected.plannerOwnedGraph || {}
+  if (!Object.keys(graphExpected).length) return
+
+  const payload = plannerOwnedGraphPayload(snapshot)
+  const trace = payload.executionTrace
+  const graphContext = payload.context
+  const evidenceSourceTypes = payload.evidence.map((entry) => entry?.source_type).filter(Boolean)
+
+  if (graphExpected.engineVersion && (trace.engine_version || payload.intentContract.engine_version) !== graphExpected.engineVersion) {
+    violations.push(
+      `planner-owned graph engine_version expected ${graphExpected.engineVersion} but saw ${trace.engine_version || payload.intentContract.engine_version || '<missing>'}`,
+    )
+  }
+  if (graphExpected.traceId && trace.generated_by !== graphExpected.traceId) {
+    violations.push(`planner-owned graph trace expected ${graphExpected.traceId} but saw ${trace.generated_by || '<missing>'}`)
+  }
+  if (graphExpected.runtimeAdapter && graphContext.runtime_adapter !== graphExpected.runtimeAdapter) {
+    violations.push(
+      `planner-owned graph runtime adapter expected ${graphExpected.runtimeAdapter} but saw ${graphContext.runtime_adapter || '<missing>'}`,
+    )
+  }
+  if (
+    Object.hasOwn(graphExpected, 'graphExecutionAuthority')
+    && Boolean(graphContext.graph_execution_authority) !== Boolean(graphExpected.graphExecutionAuthority)
+  ) {
+    violations.push(
+      `planner-owned graph execution authority expected ${graphExpected.graphExecutionAuthority} but saw ${graphContext.graph_execution_authority ?? '<missing>'}`,
+    )
+  }
+  if (
+    Object.hasOwn(graphExpected, 'nativeLangGraphCheckpointUsed')
+    && Boolean(graphContext.native_langgraph_checkpoint_used) !== Boolean(graphExpected.nativeLangGraphCheckpointUsed)
+  ) {
+    violations.push(
+      `planner-owned graph native checkpoint expected ${graphExpected.nativeLangGraphCheckpointUsed} but saw ${graphContext.native_langgraph_checkpoint_used ?? '<missing>'}`,
+    )
+  }
+  for (const sourceType of asArray(graphExpected.requiredEvidenceSourceTypes)) {
+    if (!evidenceSourceTypes.includes(sourceType)) {
+      violations.push(`planner-owned graph evidence missing source_type ${sourceType}`)
+    }
+  }
+  const allowedSourceTypes = new Set(asArray(graphExpected.allowedEvidenceSourceTypes))
+  if (allowedSourceTypes.size) {
+    const unexpected = Array.from(new Set(evidenceSourceTypes.filter((sourceType) => !allowedSourceTypes.has(sourceType))))
+    if (unexpected.length) {
+      violations.push(`planner-owned graph evidence had unexpected source_type ${unexpected.join(', ')}`)
+    }
   }
 }
 
@@ -278,6 +355,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
   const violations = []
   const sessionStatus = snapshot?.session?.status || null
   const responseState = snapshot?.response_document?.state || null
+  const graphPayload = plannerOwnedGraphPayload(snapshot)
 
   if (expected.sessionStatus && sessionStatus !== expected.sessionStatus) {
     violations.push(`backend session.status expected ${expected.sessionStatus} but saw ${sessionStatus || '<missing>'}`)
@@ -288,6 +366,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
 
   addStepViolations(violations, snapshot, expected)
   addResponseDocumentViolations(violations, snapshot, expected)
+  addPlannerOwnedGraphViolations(violations, snapshot, expected)
   addVisibleBlockViolations(violations, ui, expected)
   addApprovalViolations(violations, snapshot, pendingApprovals, expected)
   addForbiddenTextViolations(violations, snapshot, ui, expected)
@@ -334,6 +413,16 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
         tableRenderedRowCount: block.tableRenderedRowCount,
       })),
       visibleRunSteps: ui?.visibleRunSteps || [],
+      plannerOwnedGraph: {
+        runtimeAdapter: graphPayload.context.runtime_adapter || null,
+        graphExecutionAuthority: graphPayload.context.graph_execution_authority ?? null,
+        nativeLangGraphCheckpointUsed: graphPayload.context.native_langgraph_checkpoint_used ?? null,
+        engineVersion: graphPayload.executionTrace.engine_version || graphPayload.intentContract.engine_version || null,
+        traceId: graphPayload.executionTrace.generated_by || null,
+        evidenceSourceTypes: Array.from(
+          new Set(graphPayload.evidence.map((entry) => entry?.source_type).filter(Boolean)),
+        ),
+      },
       pendingApprovals,
       violations,
     },

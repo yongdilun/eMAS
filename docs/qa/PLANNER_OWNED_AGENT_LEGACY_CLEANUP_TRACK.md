@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 5 legacy RAG route compatibility isolation complete pending final commit. Backend historical `legacy_rag_route` generated-by/source-type compatibility is now owned by `historical_legacy_rag_route_compatibility.py`; contracts and final validation use named helper functions instead of direct equality checks. Persisted historical RAG route trace/evidence parsing is preserved, and old RAG route evidence remains rejected as current v2 satisfaction proof. Phase 4.2 backend direct-v2 compatibility remains owned by `historical_direct_v2_compatibility.py`. No schema/control values, frontend fixtures, release harness behavior, Qwen/proposer policy, planner-owned graph behavior, response-document behavior, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+Status: Phase 6 frontend legacy expectation cleanup complete pending final commit. Frontend hard-query fixtures no longer encode historical direct-v2 `generatedBy` values or legacy detector camelCase fields as current expectations. The hard-query oracle now checks planner-owned graph context from the live session snapshot: graph trace identity, runtime adapter, graph execution authority, native checkpoint use, and graph-owned evidence source types. Phase 5 backend historical `legacy_rag_route` generated-by/source-type compatibility remains owned by `historical_legacy_rag_route_compatibility.py`; Phase 4.2 backend direct-v2 compatibility remains owned by `historical_direct_v2_compatibility.py`. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
 
 Plan:
 
@@ -23,8 +23,8 @@ Baseline release-proof commit:
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Phase 3.8 complete; old scaffold deleted and active seams retained | pending final commit hash | Full backend, frontend release |
 | 4 | Engine and trace compatibility cleanup | Phase 4.2 complete; backend direct-v2 compatibility literals isolated behind named helper, schema/control values retained | pending final commit hash | Full backend, response-document, seeded, release |
-| 5 | Legacy RAG shortcut compatibility cleanup | Complete pending final commit |  | RAG suites, full backend, response-document, release |
-| 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
+| 5 | Legacy RAG shortcut compatibility cleanup | Complete | `bc39280a8e60fc345386f06c76a3e08e237974e4` | RAG suites, full backend, response-document, release |
+| 6 | Frontend legacy expectation cleanup | Complete pending final commit |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Not started |  | Full backend plus all frontend E2E release gates |
 | 8 | Static cleanup enforcement | Not started |  | Static guard and full backend |
 | 9 | Final cleanup release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
@@ -1599,13 +1599,88 @@ Commit:
 
 - pending.
 
+## Phase 6: Frontend Legacy Expectation Cleanup
+
+Status: complete pending final commit.
+
+Phase result:
+
+- Frontend hard-query fixtures no longer present historical direct-v2 generated-by values or legacy detector fields as current product behavior.
+- `hardQueryScenarios.js` replaces the old fixture-only `engine` objects with `plannerOwnedGraph` expectations for current graph-owned runtime evidence.
+- `hardQueryOracle.js` now checks the live session snapshot for planner-owned graph context: `planner_owned_agent_graph` trace identity, `planner_owned_graph_runtime` adapter, graph execution authority, native checkpoint use, and graph-owned evidence source types.
+- `response-document-hard-query-oracle.spec.js` now asserts the graph-owned fixture vocabulary and explicitly rejects reintroducing a fixture-level `engine` object.
+- Release validation and release resilience specs had no old engine/trace vocabulary hits and were left unchanged.
+- Backend historical direct-v2 and legacy RAG route compatibility helpers/schema values were intentionally left unchanged.
+- No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, exact-prompt branches, seeded-ID branches, source-ID branches, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+- `eMas Front/e2e/support/hardQueryScenarios.js`
+- `eMas Front/e2e/support/hardQueryOracle.js`
+- `eMas Front/e2e/specs/response-document-hard-query-oracle.spec.js`
+
+Candidate disposition:
+
+| Candidate | Phase 6 disposition | Owner | Evidence | Removal gate |
+| --- | --- | --- | --- | --- |
+| Frontend `generatedBy: "v2_planner_loop"` hard-query expectations | Rewritten/deleted from active frontend E2E fixtures | Frontend hard-query oracle | `plannerOwnedGraph.traceId` now expects `planner_owned_agent_graph`; response-document and seeded hard-query gates passed | Reintroduce only if a future compatibility fixture is explicitly historical and not counted as current product proof |
+| Frontend `legacyIntentCompletionLoopUsed` fixture fields | Deleted as redundant current-product assertion | Backend graph/static guard suite plus frontend response-document oracle | Backend Phase 15 and graph tests already prove old intent/cursor authority is not runtime authority; frontend now proves graph trace identity and response-document semantics | None for active frontend fixtures; historical backend compatibility tests remain separate |
+| Frontend `legacyRagShortcutUsed` fixture field | Deleted as redundant current-product assertion | Backend graph/RAG static guard suite plus frontend hard-query oracle | Backend graph RAG tests prove current RAG does not emit legacy RAG route evidence; frontend mixed RAG scenario now proves graph-owned `system_guard` evidence for insufficient context | None for active frontend fixtures; historical RAG parse compatibility remains in backend |
+| Release validation/resilience old engine vocabulary | No hits; no change | Release harness | `rg` found no frontend release spec references to old generated-by or detector fields | Not a cleanup candidate |
+| `capabilityNeeds`, `sourceEvidence`, `ragEvidence`, response-document blocks, visible semantic blocks, mutation policy, locked constraints | Retained as current release/semantic oracle vocabulary | Frontend hard-query response-document oracle | Response-document, seeded-oracle, real-LangGraph, and release gates passed | Keep; these remain product/release assertions |
+| Backend `v2_planner_loop` and `legacy_rag_route` compatibility values | Retained out of scope | Backend historical compatibility helpers and static guards | Phase 4.2 and Phase 5 helper ownership remains unchanged; backend full suite passed | Persisted-data migration or explicit compatibility retirement decision |
+
+Tracker update:
+
+- Phase 6 table row updated from `Not started` to `Complete pending final commit`.
+- Top-level status now records frontend fixture vocabulary cleanup and live planner-owned graph oracle coverage.
+- Phase 5 table row now records commit `bc39280a8e60fc345386f06c76a3e08e237974e4`.
+- Remaining cleanup candidates were narrowed to migration-era direct-v2 compatibility test consolidation and eventual persisted-data compatibility retirement decisions.
+
+Verification:
+
+- `rg -n "generatedBy|v2_planner_loop|legacyIntentCompletionLoopUsed|legacyRagShortcutUsed|legacy_rag_route|legacy_rag_shortcut|intent_completed|intent_cursor|working_intents" "eMas Front/e2e"` -> no matches.
+- `npm run test:e2e:response-document` -> first run before the mixed-RAG evidence calibration: `30 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:seeded-oracles` -> first run caught an over-strict new graph evidence expectation and one concurrent hard-query interruption miss: `33 passed`, `2 failed`.
+- `npx playwright test --project=chromium-seeded e2e/specs/full-stack-hard-query.spec.js` -> `10 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:seeded-oracles` -> final requested rerun passed: `35 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:release` -> `21 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:response-document` -> final requested rerun passed: `30 passed`, `0 failed`, `0 skipped`.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `22 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest -q` -> `935 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1331 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Guardrail outcome:
+
+- No backend runtime behavior changed.
+- No planner-owned graph runtime behavior changed.
+- No release harness behavior changed.
+- No response-document semantics were weakened; the hard-query oracle now checks additional live graph context.
+- No seeded-oracle, real-LangGraph, response-document, or release coverage was weakened.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- No legacy/direct-v2/old graph authority reintroduced.
+- No legacy RAG shortcut authority reintroduced.
+- No backend compatibility schema/helper code deleted.
+
+Remaining cleanup candidates:
+
+- Migration-era direct-v2 compatibility tests remain a Phase 7 consolidation candidate.
+- Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or explicit retirement.
+- The cleanup tracker still has historical audit text that mentions old frontend vocabulary as Phase 1/4/5 history; active frontend E2E files no longer contain it.
+
+Commit:
+
+- pending.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 5 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 6 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 4.2 isolated backend historical direct-v2 `v2_planner_loop` generated-by / created-by compatibility behind `planning/historical_direct_v2_compatibility.py`. Phase 5 isolated backend historical legacy RAG route `legacy_rag_route` generated-by/source-type compatibility behind `planning/historical_legacy_rag_route_compatibility.py`. Persisted old plan/session projection, historical direct-v2 approval payload resume behavior, and historical legacy RAG route trace/evidence parsing stayed compatible. Normal runtime remains `PlannerOwnedAgentGraph`; graph RAG remains `rag_search_documents` with `rag_tool` evidence or insufficient-context `system_guard` evidence.
+Continue cleanup without changing product behavior. Phase 4.2 isolated backend historical direct-v2 `v2_planner_loop` generated-by / created-by compatibility behind `planning/historical_direct_v2_compatibility.py`. Phase 5 isolated backend historical legacy RAG route `legacy_rag_route` generated-by/source-type compatibility behind `planning/historical_legacy_rag_route_compatibility.py`. Phase 6 removed active frontend hard-query generated-by / legacy-detector fixture vocabulary and replaced it with live planner-owned graph snapshot assertions. Persisted old plan/session projection, historical direct-v2 approval payload resume behavior, and historical legacy RAG route trace/evidence parsing stayed compatible. Normal runtime remains `PlannerOwnedAgentGraph`; graph RAG remains `rag_search_documents` with `rag_tool` evidence or insufficient-context `system_guard` evidence.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -1626,9 +1701,15 @@ Read first:
 - factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase1_state.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
+- eMas Front/e2e/support/hardQueryScenarios.js
+- eMas Front/e2e/support/hardQueryOracle.js
+- eMas Front/e2e/specs/response-document-hard-query-oracle.spec.js
 
 Scope:
-- Recommended next narrow move: Phase 6 frontend legacy expectation cleanup. Audit frontend hard-query `generatedBy`, `generated_by`, `legacyIntentCompletionLoopUsed`, `legacyRagShortcutUsed`, and related release-oracle vocabulary before deleting or rewriting anything.
+- Recommended next narrow move: Phase 7 migration test suite consolidation. Audit migration-era direct-v2 compatibility tests and quarantined historical tests before deleting or rewriting anything.
+- Classify each migration-era test as current graph/product proof, persisted historical parse compatibility, redundant static guard proof, release-harness requirement, deletion candidate, or rewrite candidate.
+- Consolidate duplicate historical direct-v2 tests only when backend/static guards and graph-owned tests already cover the guarantee.
+- Preserve frontend hard-query `plannerOwnedGraph` assertions added in Phase 6.
 - Preserve backend persisted compatibility owners for direct-v2 and legacy RAG route parsing unless a compatibility-parser replacement or explicit persisted-data migration is included.
 - Keep release-harness behavior unchanged unless the phase includes the required frontend E2E gates.
 - Keep `PlannerOwnedV2Loop`, `PlannerOwnedV2LoopRun`, and `planning/v2_planner_loop.py` deleted.
@@ -1649,6 +1730,7 @@ Verification:
 - git status --short --branch
 - cd factory-agent
 - python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- Run focused backend suites for any migration tests changed.
 - Run focused frontend/release or response-document gates if fixtures/oracles change.
 - python -m pytest -q
 - cd ..
@@ -1657,7 +1739,7 @@ Verification:
 Commit only if cleanup stays within the recorded post-scaffold scope and verification passes.
 
 Suggested commit:
-refactor: isolate legacy rag route compatibility
+test: consolidate migration legacy coverage
 
 Final response format:
 Phase Result
