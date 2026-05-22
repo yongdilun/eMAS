@@ -370,6 +370,28 @@ def test_phase3_6_old_graph_scaffold_classification_is_tracked():
     assert missing == []
 
 
+def test_phase4_historical_graph_vocabulary_cleanup_is_tracked():
+    tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
+
+    required_fragments = [
+        "Phase 4.0 historical documentation and guard vocabulary cleanup complete",
+        "Historical Documentation And Guard Vocabulary Cleanup",
+        "historical documentation, static guard vocabulary, compatibility schema values",
+        "`LangGraphPlanner` | Historical docs OK and static guard OK",
+        "`compile_planner_graph` | Historical docs OK and static guard OK",
+        "`planner_graph.py` | Historical docs OK and deletion candidate already completed",
+        "`working_intents` | Historical docs OK, static guard OK, compatibility schema OK",
+        "`intent_cursor` | Historical docs OK, static guard OK, compatibility schema OK",
+        "`intent_completed` | Historical docs OK, static guard OK, compatibility schema OK",
+        "`v2_planner_loop` | Compatibility schema OK, historical docs OK, frontend release-harness vocabulary",
+        "direct-v2 loop as current runtime | Misleading/current wording fixed",
+    ]
+
+    missing = [fragment for fragment in required_fragments if fragment not in tracker]
+
+    assert missing == []
+
+
 def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
 

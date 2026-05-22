@@ -258,6 +258,22 @@ git diff --check
 
 Goal: remove retired engine/shadow concepts from active runtime while preserving any required historical parse compatibility.
 
+### Phase 4.0: Historical Documentation And Guard Vocabulary Cleanup
+
+Goal: classify remaining old graph/direct-v2 terms after Phase 3.8 deleted the old scaffold, and make sure docs, tracker notes, and cleanup guard wording describe them only as historical migration context, static guard vocabulary, compatibility schema values, or frontend release-harness vocabulary.
+
+Tasks:
+
+- Audit references to `LangGraphPlanner`, `compile_planner_graph`, `planner_graph.py`, `planner_graph_helpers.py`, `working_intents`, `intent_cursor`, `intent_completed`, `v2_planner_loop`, legacy graph scaffold, and direct-v2 loop wording.
+- Update misleading current-runtime wording to say the old graph scaffold was deleted and normal runtime remains `PlannerOwnedAgentGraph`.
+- Keep compatibility schema values and static guard denylist strings when they prove old authority cannot return.
+- Leave frontend E2E fixtures and release-harness expectations unchanged unless a later frontend-facing phase rewrites them.
+
+Proof:
+
+- Remaining references are historical docs OK, static guard OK, compatibility schema OK, frontend release-harness vocabulary, or already-completed deletion candidates.
+- No runtime behavior, planner-owned graph behavior, proposer policy, frontend fixture, or release harness changes.
+
 Candidates:
 
 - `EngineVersion = Literal["legacy", "v2_shadow", "v2"]`

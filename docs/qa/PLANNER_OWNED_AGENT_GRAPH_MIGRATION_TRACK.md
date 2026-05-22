@@ -21,7 +21,7 @@ Confirmed starting facts:
 - Current v2 contracts, evidence satisfaction, approval safety, response documents, hardcode guardrails, and cleanup tests are valuable and must be preserved.
 - Historical `PlannerOwnedV2Loop` was retired in legacy cleanup Phase 2.3; direct-v2 trace/draft compatibility now lives in `v2_trace_compatibility.py`, and normal runtime remains graph-owned.
 - `plan_creation_service.py` still contains service-level direct v2 execution helpers that must be moved behind graph authority in this migration.
-- The old `factory_agent.graph` concepts such as `working_intents`, `intent_cursor`, and `intent_completed` must not become execution authority again.
+- At graph-migration start, the old `factory_agent.graph` scaffold still carried `working_intents`, `intent_cursor`, and `intent_completed` concepts. Legacy cleanup Phase 3.8 deleted that scaffold; remaining mentions are historical docs, static guards, compatibility schema values, or frontend release-harness vocabulary, and must not become execution authority again.
 - Baseline note from 2026-05-21: the user reports `npm run test:e2e:seeded-oracles` and `npm run test:e2e:real-langgraph` are passing before this migration begins. Treat later failures in those lanes as migration regressions unless the tracker proves an unrelated external cause.
 
 Previous tracker debt note:
@@ -594,7 +594,7 @@ Final classification:
 | `factory-agent/tests/test_planner_owned_loop_phase7_interrupt_replan.py` | Keep | Keep ledger revision, stale approval, and interrupt contract coverage; graph-owned Phase 9 tests remain runtime proof. |
 | `factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py` | Quarantine | Keep as historical hard-query/direct-v2 contract compatibility because graph Phase 6/7/8/9/10 tests now own runtime proof. |
 | `factory-agent/factory_agent/services/plan_creation_service.py` historical direct-v2 helpers | Quarantine | Keep helper code only for historical approval/parse compatibility; Phase 11 static guard must prove normal runtime does not call it. |
-| Old `factory-agent/factory_agent/graph/planner_graph.py` and `graph/nodes/planner_loop.py` state-machine concepts | Quarantine | Keep as historical/seeded LangGraph compatibility only; Phase 11 static guard must prove `working_intents`/cursor authority is not used by normal planner-owned graph runtime. |
+| Old `factory-agent/factory_agent/graph/planner_graph.py` and `graph/nodes/planner_loop.py` state-machine concepts | Deleted in legacy cleanup Phase 3.8 | Keep this row as historical graph-migration context only; current static guards prove `working_intents`/cursor authority is not used by normal planner-owned graph runtime. |
 
 Completion evidence:
 

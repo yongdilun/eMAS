@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 3.8 old graph scaffold deleted. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume, historical direct-v2 approval payload compatibility, and explicit seeded Playwright approval resume compatibility, and fails closed for unsupported old graph approval payloads. `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` are deleted; default API wiring no longer constructs or calls the old graph adapter, while seeded planner compatibility remains explicitly owned by `plan_creation_compatibility.py`. The old `factory_agent.graph` scaffold files and old graph-only tests are deleted; active coverage remains with `PlannerOwnedAgentGraph`, graph-native approval/session tests, central schemas, parser ownership, approval summary ownership, seeded compatibility coverage, and retained compatibility trace readers. Frontend fixture rewrites, release harness changes, Qwen/proposer policy changes, and broad migration-test consolidation remain out of scope; the only fixture adjustment in Phase 3.8 was backend seeded long-stream evidence shape for the existing release oracle.
+Status: Phase 4.0 historical documentation and guard vocabulary cleanup complete. Phase 3.8 deleted the old graph scaffold, and Phase 4.0 classified the remaining old graph/direct-v2 terms as historical documentation, static guard vocabulary, compatibility schema values, frontend release-harness vocabulary, or deletion candidates already completed. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume, historical direct-v2 approval payload compatibility, and explicit seeded Playwright approval resume compatibility, and fails closed for unsupported old graph approval payloads. `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` are deleted; default API wiring no longer constructs or calls the old graph adapter, while seeded planner compatibility remains explicitly owned by `plan_creation_compatibility.py`. The old `factory_agent.graph` scaffold files and old graph-only tests are deleted; active coverage remains with `PlannerOwnedAgentGraph`, graph-native approval/session tests, central schemas, parser ownership, approval summary ownership, seeded compatibility coverage, and retained compatibility trace readers. Frontend fixture rewrites, release harness changes, Qwen/proposer policy changes, and broad migration-test consolidation remain out of scope; the only fixture adjustment in Phase 3.8 was backend seeded long-stream evidence shape for the existing release oracle.
 
 Plan:
 
@@ -22,7 +22,7 @@ Baseline release-proof commit:
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Phase 3.8 complete; old scaffold deleted and active seams retained | pending final commit hash | Full backend, frontend release |
-| 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
+| 4 | Engine and trace compatibility cleanup | Phase 4.0 historical docs/guard vocabulary cleanup complete; engine/trace fixture rewrites not started | pending final commit hash | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Not started |  | Full backend plus all frontend E2E release gates |
@@ -75,24 +75,24 @@ Required cleanup families covered:
 - `legacy_architecture_quarantine` tests,
 - frontend hard-query `generatedBy` and legacy expectation fixtures.
 
-Phase 1 audited table below supersedes this starter list for cleanup ownership and deletion blockers.
+Phase 1 audited table below superseded this starter list for cleanup ownership and deletion blockers. Phase 4.0 retains this starter manifest as historical audit context only; rows that name deleted files are not current deletion blockers.
 
 | Candidate | Starting Evidence | Initial Disposition | Owner Needed |
 | --- | --- | --- | --- |
-| `factory-agent/factory_agent/planning/v2_planner_loop.py` | Historical `PlannerOwnedV2Loop` direct loop still referenced by quarantined tests and service historical helpers. | Audit before delete | Graph runtime owner |
+| `factory-agent/factory_agent/planning/v2_planner_loop.py` | Historical `PlannerOwnedV2Loop` direct loop; deleted in Phase 2.3. Remaining mentions are historical docs, static guards, or compatibility trace vocabulary. | Deleted; historical references OK | None |
 | `PlanCreationService._create_direct_v2_plan` | Phase 10 static guards prove it should not call historical direct execution as normal runtime. | Audit before delete | Runtime adapter owner |
 | `PlanCreationService._execute_direct_v2_steps` | Historical direct execution helper should not own normal runtime. | Audit before delete | Runtime adapter owner |
 | `attach_direct_v2_trace_to_intent_contract` | Historical trace adapter for direct-v2. | Audit before delete or move to compatibility | Persisted trace owner |
-| `factory-agent/factory_agent/graph/planner_graph.py` | Old graph scaffold with `working_intents` and `intent_cursor`. | Audit before delete | Legacy graph compatibility owner |
-| `factory-agent/factory_agent/graph/nodes/intent_split.py` | Old intent split node writes `working_intents`. | Audit before delete | Legacy graph compatibility owner |
-| `factory-agent/factory_agent/graph/nodes/planner_loop.py` | Old planner loop uses `intent_completed` and cursor authority. | Audit before delete | Legacy graph compatibility owner |
-| `factory-agent/factory_agent/graph/state.py` legacy fields | `working_intents` and `intent_cursor` may still exist as old graph state fields. | Audit before edit | Persisted state owner |
+| `factory-agent/factory_agent/graph/planner_graph.py` | Old graph scaffold with `working_intents` and `intent_cursor`; deleted in Phase 3.8. | Deleted; historical references OK | None |
+| `factory-agent/factory_agent/graph/nodes/intent_split.py` | Old intent split node that wrote `working_intents`; deleted in Phase 3.8. | Deleted; historical references OK | None |
+| `factory-agent/factory_agent/graph/nodes/planner_loop.py` | Old planner loop that used `intent_completed` and cursor authority; deleted in Phase 3.8. | Deleted; historical references OK | None |
+| `factory-agent/factory_agent/graph/state.py` legacy fields | Old `working_intents` and `intent_cursor` state fields; deleted with the old graph scaffold in Phase 3.8. | Deleted; historical references OK | None |
 | `EngineVersion` legacy/shadow values | `legacy`, `v2_shadow`, and old generated_by values may still be parse compatibility. | Audit before edit | Trace compatibility owner |
 | `legacy_rag_route` contracts | Still appears in contracts/tests as historical insufficient-evidence proof. | Audit before edit | RAG compatibility owner |
 | `v2_shadow_state` handling | Old v2 shadow state appears in interruption compatibility helpers. | Audit before edit | Persisted state owner |
 | `test_planner_owned_loop_phase*_*.py` | Migration-era tests may duplicate graph-owned coverage or assert old architecture. | Audit, rewrite, or delete | Test coverage owner |
 | `legacy_architecture_quarantine` marker uses | Quarantined tests should shrink over cleanup. | Audit and reduce | Test coverage owner |
-| Frontend hard-query `generatedBy` fixtures | Hard-query scenarios still contain old `generatedBy` / `generated_by` expectations such as `v2_planner_loop`. | Audit and replace | Frontend oracle owner |
+| Frontend hard-query `generatedBy` fixtures | Hard-query scenarios still contain historical `generatedBy` / `generated_by` values such as `v2_planner_loop`. | Frontend release-harness vocabulary; Phase 4.0 does not rewrite | Frontend oracle owner |
 | Frontend legacy expectation fixtures | Response-document hard-query oracle and fallback paths may still encode legacy presentation/source/safety expectations. | Audit before delete | Frontend compatibility owner |
 
 ## Unowned Cleanup Candidates
@@ -139,7 +139,7 @@ Files changed:
 
 Candidate disposition:
 
-- All manifest entries remain `Audit before delete`, `Audit before edit`, `Audit and replace`, `Audit, rewrite, or delete`, or `Audit and reduce`.
+- At Phase 0, all manifest entries remained `Audit before delete`, `Audit before edit`, `Audit and replace`, `Audit, rewrite, or delete`, or `Audit and reduce`; later phase sections supersede that starter disposition.
 - Unknown or unclear ownership must be recorded as `unknown owner` in Phase 1 instead of guessed.
 - No runtime code, tests, frontend fixtures, backend behavior, release harness behavior, PlannerOwnedAgentGraph runtime, or Qwen/proposer policy changed in Phase 0.
 
@@ -1292,13 +1292,71 @@ Remaining cleanup candidates:
 - Historical documentation still references old graph concepts as migration history; no active runtime/test import owner remains.
 - Frontend fixture/release-harness naming cleanup remains out of scope unless a later phase explicitly rewrites historical trace labels.
 
+## Phase 4.0: Historical Documentation And Guard Vocabulary Cleanup
+
+Status: complete.
+
+Goal:
+
+- Clean or quarantine historical old graph/direct-v2 documentation and test vocabulary after Phase 3.8 deleted the old graph scaffold.
+- Preserve compatibility schema values, static guard denylist strings, frontend release-harness vocabulary, and migration history without presenting old graph/direct-v2 terms as current runtime authority.
+
+Reference audit:
+
+```powershell
+rg -n "LangGraphPlanner|compile_planner_graph|planner_graph|planner_graph_helpers|working_intents|intent_cursor|intent_completed|v2_planner_loop|legacy graph scaffold|direct-v2 loop" docs factory-agent "eMas Front/e2e"
+```
+
+Disposition:
+
+| Candidate | Phase 4.0 classification | Evidence | Follow-up |
+| --- | --- | --- | --- |
+| `LangGraphPlanner` | Historical docs OK and static guard OK | Deleted with `graph/planner_graph.py` in Phase 3.8; remaining code hits are cleanup guard strings that prevent reintroduction. | None unless old graph terms reappear in runtime imports/calls. |
+| `compile_planner_graph` | Historical docs OK and static guard OK | Deleted with `graph/builder.py` in Phase 3.8; remaining code hits are cleanup guard strings. | None. |
+| `planner_graph.py` | Historical docs OK and deletion candidate already completed | Deleted in Phase 3.8; old QA/tracker docs keep migration chronology. | Leave historical docs intact unless a later archive pass moves old QA plans. |
+| `planner_graph_helpers.py` | Historical docs OK and deletion candidate already completed | Deleted in Phase 3.8 after parser and approval-summary ownership moved to active owners. | None. |
+| `working_intents` | Historical docs OK, static guard OK, compatibility schema OK | Old state field deleted with `graph/state.py`; retained in `v2_contracts.py` as historical trace schema vocabulary and in tests as denylist/compatibility vocabulary. | Do not remove schema value without persisted-trace compatibility proof. |
+| `intent_cursor` | Historical docs OK, static guard OK, compatibility schema OK | Old state field deleted with `graph/state.py`; retained in compatibility trace fields and static guards. | Do not remove schema field without persisted-trace compatibility proof. |
+| `intent_completed` | Historical docs OK, static guard OK, compatibility schema OK | Old loop action deleted with old graph nodes; `schemas.py` keeps compatibility/control vocabulary and guards keep it out of graph runtime authority. | Do not remove schema/control value without API compatibility proof. |
+| `v2_planner_loop` | Compatibility schema OK, historical docs OK, frontend release-harness vocabulary | `planning/v2_planner_loop.py` is deleted; `v2_trace_compatibility.py`, `v2_contracts.py`, approval payload compatibility, and selected frontend fixtures retain the value as historical trace vocabulary. | Engine/trace cleanup or frontend fixture rewrite phase must decide any removal. |
+| `legacy graph scaffold` | Historical docs OK | Tracker and migration docs now describe it as deleted Phase 3.8 history. | None. |
+| direct-v2 loop as current runtime | Misleading/current wording fixed | Updated cleanup plan/tracker and graph migration docs so direct-v2 names are historical/compatibility vocabulary, not current runtime proof. | Future Phase 4.x may rewrite active trace/fixture expectations. |
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
+
+Guardrail outcome:
+
+- No runtime behavior changed.
+- No planner-owned graph behavior changed.
+- No frontend fixtures or release harness changed.
+- No Qwen/proposer policy changed.
+- No compatibility schema values removed.
+- No exact-prompt, seeded-ID, or source-ID branches added.
+
+Verification:
+
+- `rg -n "LangGraphPlanner|compile_planner_graph|planner_graph|planner_graph_helpers|working_intents|intent_cursor|intent_completed|v2_planner_loop|legacy graph scaffold|direct-v2 loop" docs factory-agent "eMas Front/e2e"` -> passed; remaining hits are classified as historical docs, static guards, compatibility schema/control vocabulary, approval/session compatibility, or frontend release-harness vocabulary.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `20 passed, 2 warnings`.
+- `python -m pytest -q` -> `931 passed, 3 skipped, 1330 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Remaining cleanup candidates:
+
+- Frontend hard-query `generatedBy: 'v2_planner_loop'` fixtures remain intentionally unchanged as release-harness vocabulary until a frontend/release-harness phase owns the rewrite.
+- Compatibility schema values for old trace fields remain intentionally unchanged until persisted-session compatibility is explicitly migrated or removed.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 3.8 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 4.0 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 3.8 deleted the old `LangGraphPlanner` scaffold, old graph nodes/state/helpers/errors, and old graph-only tests. Normal runtime remains `PlannerOwnedAgentGraph`. Compatibility owners now include `approval_summary.py`, `schemas.py`, `llm/plan_parsing.py`, direct-v2 trace/context readers, and seeded planner compatibility in `plan_creation_compatibility.py`.
+Continue cleanup without changing product behavior. Phase 4.0 classified remaining old graph/direct-v2 vocabulary as historical docs, static guards, compatibility schema values, frontend release-harness vocabulary, or already-completed deletion candidates. Phase 3.8 deleted the old `LangGraphPlanner` scaffold, old graph nodes/state/helpers/errors, and old graph-only tests. Normal runtime remains `PlannerOwnedAgentGraph`. Compatibility owners now include `approval_summary.py`, `schemas.py`, `llm/plan_parsing.py`, direct-v2 trace/context readers, and seeded planner compatibility in `plan_creation_compatibility.py`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -1331,7 +1389,7 @@ Scope:
 - Keep old `factory_agent.graph` scaffold files/tests deleted.
 - Keep `_infer_bulk_job_priority_mutation()` owned by `graph/approval_summary.py`; do not move it back to `planner_graph_helpers.py`.
 - Keep `AgentPlanOutput` / `AgentPlanStep` owned by `schemas.py`; do not move them back to `graph/state.py`.
-- Prefer the next narrow move: prune or quarantine historical docs/references that still mention the deleted old scaffold, while preserving migration history that is intentionally documentary.
+- Prefer the next narrow move: continue Phase 4 engine/trace compatibility cleanup by proving which old generated-by/schema values remain persisted-data compatibility and which active release-harness expectations can be rewritten later.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 
@@ -1357,7 +1415,7 @@ Verification:
 Commit only if cleanup stays within the recorded post-scaffold scope and verification passes.
 
 Suggested commit:
-docs: prune deleted graph scaffold references
+docs: continue engine trace compatibility cleanup
 
 Final response format:
 Phase Result
