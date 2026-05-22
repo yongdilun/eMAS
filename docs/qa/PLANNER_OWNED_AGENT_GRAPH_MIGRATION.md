@@ -33,7 +33,7 @@ The current v2 runtime is useful but still too shallow as an agent module.
 
 Known starting points:
 
-- `factory-agent/factory_agent/planning/v2_planner_loop.py` defines `PlannerOwnedV2Loop`. It builds requirement and capability contracts, retrieves candidate tools, records trace data, applies deterministic satisfaction, and can build a draft response.
+- At graph-migration start, `factory-agent/factory_agent/planning/v2_planner_loop.py` defined `PlannerOwnedV2Loop` for direct-v2 requirement/capability contracts and draft response compatibility. Legacy cleanup Phase 2.3 retired that wrapper; current compatibility lives in `v2_trace_compatibility.py`.
 - `factory-agent/factory_agent/services/plan_creation_service.py` still performs direct v2 execution in service-level code through `_create_direct_v2_plan()` and `_execute_direct_v2_steps()`.
 - The old `factory-agent/factory_agent/graph/` package still contains historical LangGraph-style concepts such as `working_intents`, `intent_cursor`, and `intent_completed`. Those concepts must not become execution authority again.
 - Phase 15 cleanup removed normal runtime authority for `FACTORY_AGENT_ENGINE=legacy`, `v2_shadow`, `test_only_legacy_engine_enabled`, legacy RAG shortcut authority, and legacy/shadow trace attachment branches. Historical values may remain parse-only.

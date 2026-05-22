@@ -333,7 +333,6 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
 def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop():
     service_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
-    loop_source = V2_PLANNER_LOOP_SOURCE.read_text(encoding="utf-8")
 
     assert "build_direct_v2_compatibility_state" in service_source
     assert "build_failed_direct_v2_compatibility_state" in service_source
@@ -343,8 +342,7 @@ def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop
     assert "def build_direct_v2_compatibility_state" in compatibility_source
     assert "def build_direct_v2_compatibility_run" in compatibility_source
     assert "def build_direct_v2_compatibility_draft" in compatibility_source
-    assert "build_direct_v2_compatibility_run" in loop_source
-    assert "def _direct_v2_draft" not in loop_source
+    assert not V2_PLANNER_LOOP_SOURCE.exists()
 
 
 def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
@@ -383,19 +381,15 @@ def test_phase2_2_plan_creation_direct_v2_helpers_are_retired():
     assert "_direct_v2_stage_rows" not in source
 
 
-def test_phase2_2_planner_owned_v2_loop_is_public_compatibility_only():
-    loop_source = V2_PLANNER_LOOP_SOURCE.read_text(encoding="utf-8")
+def test_phase2_3_planner_owned_v2_loop_public_wrapper_is_retired():
     runtime_hits: list[str] = []
     for path in _runtime_files():
-        if path == V2_PLANNER_LOOP_SOURCE:
-            continue
         text = path.read_text(encoding="utf-8")
         if "PlannerOwnedV2Loop" in text:
             runtime_hits.append(_relative_runtime(path).as_posix())
 
     assert runtime_hits == []
-    assert "Public compatibility wrapper for historical PlannerOwnedV2Loop imports" in loop_source
-    assert "build_direct_v2_compatibility_run" in loop_source
+    assert not V2_PLANNER_LOOP_SOURCE.exists()
 
 
 def test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority():

@@ -19,7 +19,7 @@ Confirmed starting facts:
 - The previous planner-owned loop migration is complete through Phase 15.
 - Normal legacy and shadow runtime authority was removed in the previous migration.
 - Current v2 contracts, evidence satisfaction, approval safety, response documents, hardcode guardrails, and cleanup tests are valuable and must be preserved.
-- `PlannerOwnedV2Loop` remains a shallow planning/contract module, not the full graph-owned execution loop.
+- Historical `PlannerOwnedV2Loop` was retired in legacy cleanup Phase 2.3; direct-v2 trace/draft compatibility now lives in `v2_trace_compatibility.py`, and normal runtime remains graph-owned.
 - `plan_creation_service.py` still contains service-level direct v2 execution helpers that must be moved behind graph authority in this migration.
 - The old `factory_agent.graph` concepts such as `working_intents`, `intent_cursor`, and `intent_completed` must not become execution authority again.
 - Baseline note from 2026-05-21: the user reports `npm run test:e2e:seeded-oracles` and `npm run test:e2e:real-langgraph` are passing before this migration begins. Treat later failures in those lanes as migration regressions unless the tracker proves an unrelated external cause.
