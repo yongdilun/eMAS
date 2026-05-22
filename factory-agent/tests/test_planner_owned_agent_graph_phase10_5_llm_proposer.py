@@ -464,6 +464,111 @@ def test_phase10_5_qwen_prompt_is_compact_and_decision_specific_for_choose_tool(
 
 
 @pytest.mark.asyncio
+async def test_phase10_5_qwen_adapter_enforces_write_choice_for_approval_required_mutation():
+    capability_need = CapabilityNeed(
+        source_of_truth="operational_state",
+        entity="job",
+        action="update",
+        constraints={"priority": "medium", "new_priority": "high", "requires_approval": True},
+        requirement_id="req-001",
+    )
+    state = PlannerOwnedAgentGraphState(
+        original_query="Change medium priority jobs to high priority.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Change medium priority jobs to high priority.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="change medium priority jobs to high priority",
+                    requirement_type="mutation_request",
+                    entity="job",
+                    intent_operation="stage_mutation",
+                    source_of_truth="operational_state",
+                    constraints={"priority": "medium", "new_priority": "high", "requires_approval": True},
+                    locked_constraints=["priority", "new_priority", "requires_approval"],
+                )
+            ],
+        ),
+        candidate_tool_windows=[
+            CandidateToolWindow(
+                requirement_id="req-001",
+                capability_need=capability_need,
+                candidates=[
+                    CandidateTool(tool_name="get__jobs", rank=1, actions=["list", "read"], requires_approval=False),
+                    CandidateTool(tool_name="put__jobs_{id}", rank=2, actions=["update"], requires_approval=True),
+                ],
+            )
+        ],
+        hydrated_tool_cards=[
+            HydratedToolCards(
+                requirement_id="req-001",
+                cards=[
+                    HydratedToolCard(
+                        tool_name="get__jobs",
+                        actions=["list", "read"],
+                        is_read_only=True,
+                        requires_approval=False,
+                        query_params=["priority"],
+                        supports_filters=True,
+                    ),
+                    HydratedToolCard(
+                        tool_name="put__jobs_{id}",
+                        actions=["update"],
+                        is_read_only=False,
+                        requires_approval=True,
+                        required_args=["id"],
+                        path_params=["id"],
+                        metadata={"body_fields": ["priority"], "side_effect_level": "HIGH"},
+                    ),
+                ],
+            )
+        ],
+    )
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-choose-001",
+        requested_decision_kind="choose_tool",
+        allowed_decision_kinds=["choose_tool", "revise_requirements", "request_clarification", "fail"],
+        requirement_id="req-001",
+        capability_need=capability_need,
+        candidate_tool_calls=[
+            GraphToolCall(
+                call_id="call-read",
+                kind="api_tool",
+                tool_name="get__jobs",
+                args={"priority": "medium"},
+                requirement_id="req-001",
+                candidate_window_id="window-001",
+            ),
+            GraphToolCall(
+                call_id="call-write",
+                kind="api_tool",
+                tool_name="put__jobs_{id}",
+                args={"priority": "medium"},
+                requirement_id="req-001",
+                candidate_window_id="window-001",
+            ),
+        ],
+    )
+    model = StaticPlannerModel(
+        '{"decision":{"decision_kind":"choose_tool","selected_tool_name":"get__jobs",'
+        '"reason":"Use the read tool to preview affected rows."}}'
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+
+    decision = result.submission.decision
+    assert decision.selected_tool_call is not None
+    assert decision.selected_tool_call.tool_name == "put__jobs_{id}"
+    assert decision.diagnostics["tool_choice_policy_enforced"] == {
+        "reason": "approval_required_mutation_requires_write_tool",
+        "model_selected_tool_name": "get__jobs",
+        "selected_tool_name": "put__jobs_{id}",
+    }
+    assert validate_planner_decision(state, result.submission).accepted is True
+
+
+@pytest.mark.asyncio
 async def test_phase10_5_qwen_adapter_accepts_compact_selected_tool_name_submission():
     capability_need = CapabilityNeed(
         source_of_truth="operational_state",

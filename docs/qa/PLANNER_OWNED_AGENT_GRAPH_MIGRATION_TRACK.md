@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 12 release proof complete. Normal v2 runtime still enters `PlannerOwnedAgentGraph` through the service adapter, planner-authored decisions still pass through the configured proposer seam, and production proposer policy still fails closed unless offline proposer mode is explicitly allowed for tests/dev. Required backend, frontend unit, response-document, seeded-oracle, real-LangGraph, and local Qwen/OpenAI-compatible planner smoke gates passed. The optional legacy L4 `chromium-release` harness has an accepted Phase 12 waiver because it is outside the user-requested verification list and still needs release-harness alignment after the Phase 10.6 proposer policy; it is not counted as planner-owned graph release proof.
+Status: Phase 12.1 release harness waiver removal complete. Normal v2 runtime still enters `PlannerOwnedAgentGraph` through the service adapter, planner-authored decisions still pass through the configured proposer seam, and production proposer policy still fails closed unless offline proposer mode is explicitly allowed for tests/dev. The optional legacy L4 `chromium-release` waiver is removed: the full release harness passed under the real release configuration, the four previously failing waiver scenarios passed, and offline proposer mode was not enabled or counted as release proof.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -55,6 +55,7 @@ State/checkpoint decision:
 | 10.6 | Production planner proposer policy | Complete | `b733c58b` | Offline-policy tests plus seeded-oracle and real-LangGraph gates |
 | 11 | Test cleanup and legacy quarantine | Complete | `3d11935e` | `1023 passed, 3 skipped` backend; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; static cleanup guardrails |
 | 12 | Release proof | Complete |  | Full backend `1023 passed, 3 skipped`; frontend unit `133 passed`; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; local Qwen proposer smoke passed; optional `chromium-release` waiver recorded |
+| 12.1 | Release harness waiver removal | Complete |  | `chromium-release` waiver removed; release grep `4 passed`; full release `21 passed`; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; backend `1025 passed, 3 skipped`; offline proposer mode not counted |
 
 ## Phase Notes
 
@@ -673,11 +674,61 @@ Blockers/waivers:
 
 Final release verdict:
 
-- Planner-owned graph migration Phase 12 is releasable for the required proof set. Do not use the optional L4 `chromium-release` harness as a release signoff until the recorded waiver is removed.
+- Planner-owned graph migration Phase 12 is releasable for the required proof set. The historical optional L4 `chromium-release` waiver is removed by Phase 12.1 below.
 
 Commit:
 
 - Pending in this changeset; final response records the committed hash.
+
+### Phase 12.1: Release Harness Waiver Removal
+
+Status: complete.
+
+Files changed:
+
+- `eMas Front/e2e/support/startReleaseStackForPlaywright.js`
+- `eMas Front/e2e/specs/release-resilience.spec.js`
+- `eMas Front/e2e/specs/release-validation.spec.js`
+- `factory-agent/factory_agent/planning/v2_planner_decisions.py`
+- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase2_decisions.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py`
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
+
+Fix classification:
+
+- Frontend harness config: release stack now keeps a LangGraph memory checkpointer available, so approval resume can use the real graph resume contract instead of failing with a missing-checkpointer diagnostic.
+- Frontend release harness assertions and waits: scenario 60 now asserts the graph response-document diagnostic contract and no fake completion; release status checks use the existing final-answer latency budget instead of short default waits; approval rejection waits for pending approvals to drain before asserting visible rejection.
+- Backend graph/proposer policy: mutation requirements can no longer be satisfied by a read-only tool choice, and the Qwen/OpenAI-compatible proposer adapter normalizes approval-required mutation choices to a write or approval-gated candidate at the proposer seam.
+- Test coverage: added focused decision/proposer tests for read-only mutation rejection and adapter-level write-choice enforcement.
+
+Waiver removal evidence:
+
+- `cd "eMas Front"; npm run test:e2e:release -- --grep "scenario 60|scenario 66|scenario 67|SO-017"` -> `4 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd "eMas Front"; npm run test:e2e:release` -> `21 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd "eMas Front"; npm run test:e2e:response-document` -> `30 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`, `0 skipped`, `0 xfailed`.
+- `cd factory-agent; $phaseTests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; .\.venv\Scripts\python.exe -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `cd factory-agent; .\.venv\Scripts\python.exe -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q` -> `56 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `37 warnings`.
+- `cd factory-agent; .\.venv\Scripts\python.exe -m pytest -q` -> `1025 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed.
+
+Guardrail confirmation:
+
+- The optional L4 `chromium-release` waiver is removed because `npm run test:e2e:release` now passes.
+- Offline proposer mode was not enabled in the passing release proof commands and was not counted as real release proof.
+- No exact-prompt, seeded-ID, source-ID, or scenario-specific runtime branch was added.
+- No legacy RAG shortcut, old graph cursor/scaffold authority, or direct-v2 normal runtime authority was restored.
+- Response-document, seeded-oracle, real-LangGraph, approval, interruption, and proposer-policy guarantees remain covered by the passing gates above.
+
+Blockers/waivers:
+
+- None.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
 
 ## Update Rules
 

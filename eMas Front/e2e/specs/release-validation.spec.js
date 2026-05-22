@@ -22,8 +22,12 @@ test.describe('L4 production-like release validation @l4-release', () => {
     await openChat(page)
     await sendPrompt(page, 'Show status for machine M-CNC-01 through the Phase 10 release proxy')
 
-    await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible()
-    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
+    await expect(page.getByText('Run complete')).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
 
     const logs = await proxyLogText()
     expect(logs).toContain('"/agent/sessions')
@@ -59,8 +63,12 @@ test.describe('L4 production-like release validation @l4-release', () => {
 
     await expect(page.getByText(/EventSource cannot attach Authorization headers/i).first()).toBeVisible()
     await expect(page.getByText(/Snapshot polling remains enabled/i).first()).toBeVisible()
-    await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible()
-    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
+    await expect(page.getByText('Run complete')).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
     expect(eventSourceRequests).toHaveLength(0)
   })
 
@@ -136,7 +144,9 @@ test.describe('L4 production-like release validation @l4-release', () => {
     await expect(page.getByText(/Machine M-CNC-01/i).first()).toBeVisible({
       timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
     })
-    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByText('Run complete')).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
     expect(Date.now() - openedAt).toBeLessThan(releaseEnv.latencyBudgetsMs.finalAnswer)
   })
 

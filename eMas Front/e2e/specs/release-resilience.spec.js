@@ -39,9 +39,12 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await setReleaseFaults({ goApiUnavailable: true })
     await sendPrompt(page, 'Run Phase 10 Go API outage machine lookup')
 
-    await expect(page.getByText('Factory Agent needs attention').or(page.getByText(/503|goApiUnavailable|controlled release fault/i).first())).toBeVisible({
-      timeout: 20_000,
+    await expect(page.getByText('Run needs attention').first()).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
     })
+    await expect(page.getByText(/stopped before a safe final result was available/i).first()).toBeVisible()
+    await expect(page.getByText(/Current state: The run is in a diagnostic state/i).first()).toBeVisible()
+    await expect(page.getByText(/Next action: Check current status before retrying/i).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toHaveCount(0)
     await expect(page.getByText(/Machine M-CNC-01 .* seeded Go API data/i)).toHaveCount(0)
   })
@@ -110,8 +113,12 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await openChat(page)
     await sendPrompt(page, 'Release mobile approval: change low priority jobs to high priority')
 
-    await expect(page.getByText('Approval required').first()).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+    await expect(page.getByText('Approval required').first()).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
+    await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible({
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    })
     const dialogOverflows = await page.getByRole('dialog').evaluate((dialog) => dialog.scrollWidth > dialog.clientWidth + 1)
     expect(dialogOverflows).toBe(false)
 
@@ -172,8 +179,10 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await page.getByRole('button', { name: 'Reject' }).focus()
     await page.keyboard.press('Enter')
 
-    const pending = await pendingApprovalsForPage(page)
-    expect(pending).toHaveLength(0)
+    await expect.poll(async () => (await pendingApprovalsForPage(page)).length, {
+      timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
+    }).toBe(0)
+    await expect(page.getByText('Approval rejected').first()).toBeVisible()
     await page.getByRole('button', { name: 'Close' }).focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('dialog')).toHaveCount(0)

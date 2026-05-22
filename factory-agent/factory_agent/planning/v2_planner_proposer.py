@@ -828,6 +828,11 @@ def _normalize_submission_payload(
         else:
             decision["selected_tool_call"] = _normalized_selected_tool_call(decision, context)
             decision.pop("selected_tool_calls", None)
+            _enforce_write_choice_for_approval_required_mutation(
+                decision,
+                state=state,
+                context=context,
+            )
         decision.pop("selected_tool_name", None)
         decision.pop("tool_name", None)
         decision.pop("candidate_tool_name", None)
@@ -901,6 +906,84 @@ def _candidate_tool_call_for_name(
     if not tool_name:
         return None
     return next((call for call in context.candidate_tool_calls if call.tool_name == tool_name), None)
+
+
+def _enforce_write_choice_for_approval_required_mutation(
+    decision: dict[str, Any],
+    *,
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+) -> None:
+    if str(decision.get("decision_kind") or "") != "choose_tool":
+        return
+    if not _context_prefers_write_for_approval_required_mutation(state=state, context=context):
+        return
+
+    selected = decision.get("selected_tool_call")
+    if not isinstance(selected, Mapping):
+        return
+    try:
+        selected_call = GraphToolCall.model_validate(dict(selected))
+    except Exception:
+        return
+    selected_card = _tool_card_for_call(state, selected_call)
+    if selected_card is not None and (selected_card.requires_approval or not selected_card.is_read_only):
+        return
+
+    preferred = _offline_selected_tool_call(state=state, context=context)
+    preferred_card = _tool_card_for_call(state, preferred) if preferred is not None else None
+    if preferred is None or preferred_card is None:
+        return
+    if preferred_card.is_read_only and not preferred_card.requires_approval:
+        return
+
+    decision["selected_tool_call"] = preferred.model_dump(mode="json")
+    diagnostics = dict(decision.get("diagnostics") or {})
+    diagnostics["tool_choice_policy_enforced"] = {
+        "reason": "approval_required_mutation_requires_write_tool",
+        "model_selected_tool_name": selected_call.tool_name,
+        "selected_tool_name": preferred.tool_name,
+    }
+    decision["diagnostics"] = diagnostics
+
+
+def _context_prefers_write_for_approval_required_mutation(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+) -> bool:
+    requirement = _requirement_for_context(state=state, context=context)
+    if requirement is not None and requirement.requirement_type == "mutation_request":
+        return True
+    need = context.capability_need
+    if need is None:
+        return False
+    action = str(need.action or "").strip().lower()
+    constraints = dict(need.constraints or {})
+    return bool(constraints.get("requires_approval")) or action in {
+        "create",
+        "update",
+        "delete",
+        "cancel",
+        "stage_mutation",
+    }
+
+
+def _requirement_for_context(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+) -> RequirementLedgerEntry | None:
+    if context.requirement_id is None:
+        return None
+    return next(
+        (
+            requirement
+            for requirement in state.requirement_ledger.requirements
+            if requirement.id == context.requirement_id
+        ),
+        None,
+    )
 
 
 def _duration_ms(started: float) -> int:

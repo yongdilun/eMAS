@@ -31,12 +31,14 @@ def _tool(
     *,
     endpoint: str,
     tags: list[str],
+    method: str = "GET",
     required: list[str] | None = None,
     query_params: list[str] | None = None,
     input_properties: dict[str, dict[str, Any]] | None = None,
     output_properties: dict[str, dict[str, Any]] | None = None,
     entity: str | None = None,
     response_contract: str | None = None,
+    requires_approval: bool | None = None,
 ) -> ToolInfo:
     input_schema: dict[str, Any] = {"type": "object", "properties": dict(input_properties or {})}
     if required:
@@ -57,19 +59,20 @@ def _tool(
     for field in query_params or []:
         param_sources[field] = "query"
 
+    read_only = method.upper() == "GET"
     return ToolInfo(
         name=name,
         description=name.replace("_", " "),
         endpoint=endpoint,
-        method="GET",
+        method=method,  # type: ignore[arg-type]
         input_schema=input_schema,
         output_schema=output_schema,
         path_params=path_params,
         query_params=list(query_params or []),
         param_sources=param_sources,
-        is_read_only=True,
-        requires_approval=False,
-        side_effect_level="NONE",
+        is_read_only=read_only,
+        requires_approval=(not read_only if requires_approval is None else requires_approval),
+        side_effect_level="NONE" if read_only else "HIGH",
         capability_tags=tags,
     )
 
@@ -164,6 +167,107 @@ def _state_with_hydrated_machine_window():
     return state, requirement, need
 
 
+def _job_mutation_tools() -> dict[str, ToolInfo]:
+    priority_schema = {"type": "string", "enum": ["low", "medium", "high"]}
+    return {
+        "get__jobs": _tool(
+            "get__jobs",
+            endpoint="/jobs",
+            tags=["job", "list", "priority"],
+            query_params=["priority", "fields"],
+            input_properties={
+                "priority": priority_schema,
+                "fields": {"type": "string"},
+            },
+            output_properties={"job_id": {"type": "string"}, "priority": priority_schema},
+            entity="job",
+            response_contract="result_collection_v1",
+        ),
+        "put__jobs_{id}": _tool(
+            "put__jobs_{id}",
+            endpoint="/jobs/{id}",
+            tags=["job", "update", "priority", "approval"],
+            method="PUT",
+            required=["id"],
+            input_properties={
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "priority": priority_schema,
+            },
+            output_properties={"job_id": {"type": "string"}, "priority": priority_schema},
+            entity="job",
+            response_contract="business_change_v1",
+            requires_approval=True,
+        ),
+    }
+
+
+def _state_with_mutating_job_window():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change medium priority jobs to high priority.",
+        tools_by_name=_job_mutation_tools(),
+    )
+    requirement = state.requirement_ledger.requirements[0]
+    need = CapabilityNeed(
+        requirement_id=requirement.id,
+        source_of_truth="operational_state",
+        entity="job",
+        action="update",
+        constraints=dict(requirement.constraints),
+        requested_fields=list(requirement.requested_fields),
+        reason="phase2_mutation_test_need",
+    )
+    state.candidate_tool_windows.append(
+        CandidateToolWindow(
+            requirement_id=requirement.id,
+            capability_need=need,
+            candidates=[
+                CandidateTool(
+                    tool_name="get__jobs",
+                    rank=1,
+                    source_of_truth="operational_state",
+                    actions=["list", "read"],
+                ),
+                CandidateTool(
+                    tool_name="put__jobs_{id}",
+                    rank=2,
+                    source_of_truth="operational_state",
+                    actions=["update"],
+                    requires_approval=True,
+                ),
+            ],
+        )
+    )
+    state.hydrated_tool_cards.append(
+        HydratedToolCards(
+            requirement_id=requirement.id,
+            cards=[
+                HydratedToolCard(
+                    tool_name="get__jobs",
+                    source_of_truth="operational_state",
+                    actions=["list", "read"],
+                    query_params=["priority", "fields"],
+                    supports_filters=True,
+                    supports_fields=True,
+                    output_contract="result_collection_v1",
+                    is_read_only=True,
+                    requires_approval=False,
+                ),
+                HydratedToolCard(
+                    tool_name="put__jobs_{id}",
+                    source_of_truth="operational_state",
+                    actions=["update"],
+                    required_args=["id"],
+                    path_params=["id"],
+                    output_contract="business_change_v1",
+                    is_read_only=False,
+                    requires_approval=True,
+                ),
+            ],
+        )
+    )
+    return state, requirement, need
+
+
 def _machine_call(*, call_id: str = "call-machine-status") -> GraphToolCall:
     return GraphToolCall(
         call_id=call_id,
@@ -243,6 +347,33 @@ def test_phase2_rejects_choosing_tool_outside_hydrated_candidate_window():
     )
 
     with pytest.raises(PlannerDecisionValidationError, match="selected tool is not in the hydrated candidate window"):
+        validate_planner_decision(state, decision)
+
+
+def test_phase2_rejects_read_only_choice_for_mutation_requirement():
+    state, requirement, need = _state_with_mutating_job_window()
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-read-for-mutation",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=GraphToolCall(
+            call_id="call-read",
+            kind="api_tool",
+            tool_name="get__jobs",
+            args={"priority": "medium"},
+            requirement_id=requirement.id,
+            candidate_window_id="window-jobs",
+        ),
+        reason="Planner selected the preview read as if it could satisfy a mutation.",
+        diagnostics=_planner_diagnostics("dec-choose-read-for-mutation"),
+    )
+
+    with pytest.raises(
+        PlannerDecisionValidationError,
+        match="approval-required mutation choose_tool requires a write or approval-gated tool",
+    ):
         validate_planner_decision(state, decision)
 
 

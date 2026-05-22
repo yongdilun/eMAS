@@ -254,6 +254,18 @@ def _validate_kind_specific_transition(
         cards_by_call_id: dict[str, HydratedToolCard | None] = {}
         for call in calls:
             cards_by_call_id[call.call_id] = _validate_tool_call_from_hydrated_window(state, call, errors)
+        requirement = _requirement_by_id(state, calls[0].requirement_id)
+        if (
+            requirement is not None
+            and requirement.requirement_type == "mutation_request"
+            and not any(
+                card is not None and (not card.is_read_only or card.requires_approval)
+                for card in cards_by_call_id.values()
+            )
+        ):
+            errors.append(
+                "approval-required mutation choose_tool requires a write or approval-gated tool"
+            )
         if len(calls) > 1:
             for call in calls:
                 card = cards_by_call_id.get(call.call_id)
