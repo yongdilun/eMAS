@@ -54,6 +54,7 @@ from factory_agent.rag.source_metadata import normalize_source_locators, sanitiz
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanCreateRequest, PlanDraft, PlanResponse, ToolInfo
 from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
+from factory_agent.services.plan_creation_compatibility import generate_seeded_planner_compatibility_plan
 from factory_agent.services.planner_owned_graph_runtime import PlannerOwnedGraphRuntimeAdapter
 from factory_agent.services.session_revision import bump_session_revision as _bump_session_revision
 from factory_agent.session_state import is_user_cancelled_session
@@ -968,104 +969,6 @@ class PlanCreationService:
                     return value.strip()
         return None
 
-    async def _create_plan_approval(self,
-        *,
-        db: AsyncSession,
-        sess: SessionRow,
-        plan_row: PlanRow,
-        tools_by_name: dict[str, ToolInfo],
-    ) -> ApprovalRow:
-        side_effect_level = "HIGH"
-        for step in (
-            await db.execute(
-                select(PlanStepRow).where(PlanStepRow.plan_id == plan_row.plan_id).order_by(PlanStepRow.step_index.asc())
-            )
-        ).scalars().all():
-            tool = tools_by_name.get(step.tool_name)
-            if tool and tool.side_effect_level == "CRITICAL":
-                side_effect_level = "CRITICAL"
-                break
-        approval = ApprovalRow(
-            approval_id=self._generate_uuid(),
-            session_id=sess.session_id,
-            subject_type="plan",
-            plan_id=plan_row.plan_id,
-            step_id="",
-            tool_name="__plan__",
-            args={"plan_id": plan_row.plan_id, "plan_hash": plan_row.plan_hash},
-            risk_summary=plan_row.risk_summary or "Approve this plan before execution.",
-            side_effect_level=side_effect_level,
-            status="PENDING",
-            expires_at=datetime.utcnow() + timedelta(hours=24),
-        )
-        db.add(approval)
-        plan_row.status = "PENDING_APPROVAL"
-        sess.status = "WAITING_APPROVAL"
-        sess.error = None
-        _bump_session_revision(sess)
-        await db.commit()
-        return approval
-
-    async def _promote_discovery_to_execution(self,
-        *,
-        db: AsyncSession,
-        sess: SessionRow,
-        discovery_plan: PlanRow,
-        tools_by_name: dict[str, ToolInfo],
-    ) -> PlanRow | None:
-        intent = sess.current_intent or ""
-        selection = await self._tool_selector.select_tools(
-            intent=intent,
-            tools_by_name=tools_by_name,
-            mode="normal",
-            context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
-        )
-        scoped_tools = [tools_by_name[name] for name in selection.tool_names if name in tools_by_name]
-        planner_context = await self._memory_manager.build_planner_context(
-            db,
-            session_id=sess.session_id,
-            intent=intent,
-            base_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
-        )
-        try:
-            generated = await self._planner.generate_plan(
-                intent=intent,
-                scoped_tools=scoped_tools,
-                context=planner_context,
-            )
-        except (PlannerClarificationError, PlannerBackendError, PlannerPlanRejected):
-            return None
-
-        sess.llm_call_count += selection.llm_calls
-        sess.llm_call_count += generated.llm_calls
-        context_to_keep = None
-        intent_contract = getattr(generated, "intent_contract", None)
-        if intent_contract:
-            context_to_keep = dict(sess.replan_context or {})
-            context_to_keep["intent_contract"] = intent_contract
-        response = await self._persist_plan(
-            db=db,
-            sess=sess,
-            draft=generated.draft,
-            tools_by_name=tools_by_name,
-            backend_used=generated.backend_used,
-            kind="execution",
-            status="PENDING_APPROVAL",
-            intent=intent,
-            derived_from_plan_id=discovery_plan.plan_id,
-            context_to_keep=context_to_keep,
-            tool_outputs=getattr(generated, "tool_outputs", None),
-        )
-        plan_row = (await db.execute(select(PlanRow).where(PlanRow.plan_id == response.plan_id))).scalars().first()
-        if not plan_row:
-            return None
-        await self._create_plan_approval(db=db, sess=sess, plan_row=plan_row, tools_by_name=tools_by_name)
-        discovery_plan.status = "COMPLETED"
-        sess.completed_at = None
-        sess.error = None
-        await db.commit()
-        return plan_row
-
     async def create_plan(
         self,
         *,
@@ -1251,7 +1154,8 @@ class PlanCreationService:
                         intent=intent,
                         base_context=sess.replan_context if isinstance(sess.replan_context, dict) else None,
                     )
-                    generated = await self._planner.generate_plan(
+                    generated = await generate_seeded_planner_compatibility_plan(
+                        planner=self._planner,
                         intent=intent,
                         scoped_tools=scoped_tools,
                         context=planner_context,

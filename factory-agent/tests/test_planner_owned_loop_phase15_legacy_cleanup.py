@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = REPO_ROOT / "factory-agent" / "factory_agent"
 TESTS_ROOT = REPO_ROOT / "factory-agent" / "tests"
 PLAN_CREATION_SOURCE = RUNTIME_ROOT / "services" / "plan_creation_service.py"
+PLAN_CREATION_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "services" / "plan_creation_compatibility.py"
 PLANNER_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "planner_service.py"
 EXECUTION_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "execution_service.py"
 APPROVAL_RESUME_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "approval_resume_service.py"
@@ -274,6 +275,7 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     execution_service_source = EXECUTION_SERVICE_SOURCE.read_text(encoding="utf-8")
     approval_resume_source = APPROVAL_RESUME_SERVICE_SOURCE.read_text(encoding="utf-8")
     plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    plan_creation_compatibility_source = PLAN_CREATION_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     structured_output_source = STRUCTURED_OUTPUT_SOURCE.read_text(encoding="utf-8")
     old_graph_helpers_source = OLD_GRAPH_HELPERS_SOURCE.read_text(encoding="utf-8")
     plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
@@ -281,7 +283,9 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "from ..graph.planner_graph import LangGraphPlanner as planner_cls" in planner_service_source
     assert "await self._planner.generate_plan(" in execution_service_source
     assert "await self._planner.resume_after_approval(" in approval_resume_source
-    assert "await self._planner.generate_plan(" in plan_creation_source
+    assert "await self._planner.generate_plan(" not in plan_creation_source
+    assert "generate_seeded_planner_compatibility_plan(" in plan_creation_source
+    assert "await generate_plan(" in plan_creation_compatibility_source
     assert "factory_agent.graph.planner_graph_helpers" not in structured_output_source
     assert "from .plan_parsing import _normalize_plan_dict" in structured_output_source
     assert "def _normalize_plan_dict(" not in old_graph_helpers_source
@@ -292,11 +296,11 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
         "PlannerService.resume_after_approval()",
         "ExecutionService.run_langgraph_session()",
         "ApprovalResumeService graph approval fallback",
-        "PlanCreationService legacy planner fallback paths",
     ):
         assert owner in tracker
 
     assert "structured-output parsing owner resolved" in tracker
+    assert "PlanCreationService seeded planner compatibility adapter" in tracker
 
 
 def test_phase15_legacy_compatibility_tests_and_xfails_are_retired():
