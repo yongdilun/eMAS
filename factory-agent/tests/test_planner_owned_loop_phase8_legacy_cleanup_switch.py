@@ -114,7 +114,11 @@ async def test_phase8_normal_api_path_records_v2_engine_without_legacy_authority
         input_schema=_machine_status_schema(),
         capability_tags=json.dumps(["machine", "lookup", "status"]),
     )
-    app, _event_bus = await _make_app(sessionmaker_override, min_healthy_tool_count=0)
+    app, _event_bus = await _make_app(
+        sessionmaker_override,
+        min_healthy_tool_count=0,
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = await _create_prompt(client, "Show machine M-LTH-77 status.")
@@ -139,6 +143,7 @@ async def test_phase8_v2_rag_response_uses_rag_tool_evidence_not_legacy_route(se
         sessionmaker_override,
         min_healthy_tool_count=0,
         rag_pipeline_adapter=rag,
+        allow_offline_planner_proposer=True,
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -200,6 +205,7 @@ async def test_phase8_v2_api_retrieval_uses_capability_phrase_not_whole_query(
         sessionmaker_override,
         min_healthy_tool_count=0,
         tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
     )
     whole_query = "Show machine M-LTH-77 status, then list next 2 low priority jobs sorted by deadline."
 

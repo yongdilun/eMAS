@@ -1,5 +1,6 @@
 ﻿import sys
 from pathlib import Path
+import os
 
 import pytest
 import pytest_asyncio
@@ -16,6 +17,20 @@ if str(FACTORY_AGENT_DIR) not in sys.path:
 
 # Load `factory-agent/.env` for optional integration tests (e.g. REDIS_URL).
 load_dotenv(FACTORY_AGENT_DIR / ".env", override=False)
+
+PYTEST_TEMP_ROOT = FACTORY_AGENT_DIR / ".pytest-codex-tmp"
+PYTEST_TEMP_ROOT.mkdir(exist_ok=True)
+os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(PYTEST_TEMP_ROOT))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        (
+            "legacy_architecture_quarantine: historical direct-v2 or old graph "
+            "compatibility coverage that must not be treated as normal runtime proof"
+        ),
+    )
 
 
 @pytest.fixture(scope="session")

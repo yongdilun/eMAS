@@ -68,6 +68,7 @@ async def _make_app(
     tool_selector_openai_base_url=None,
     rag_pipeline_adapter=None,
     factory_agent_engine=None,
+    allow_offline_planner_proposer=False,
 ):
     worker_count = 1 if enqueue_session is not None else 0
     settings = Settings(
@@ -95,6 +96,7 @@ async def _make_app(
         force_llm_trace_all=force_llm_trace_all,
         tool_selector_openai_base_url=tool_selector_openai_base_url,
         factory_agent_engine=factory_agent_engine or "v2",
+        allow_offline_planner_proposer=allow_offline_planner_proposer,
     )
     tool_registry = ToolRegistry()
     event_bus = FakeEventBus()
@@ -397,65 +399,6 @@ async def test_create_plan_rolls_back_when_plan_message_persistence_fails(
 
 
 @pytest.mark.asyncio
-async def test_actionable_prompt_with_empty_generated_plan_blocks_instead_of_orphan_idle(
-    sessionmaker_override,
-    db_session,
-):
-    await _seed_tool(
-        db_session,
-        name="patch__jobs_{id}",
-        endpoint="/jobs/{id}",
-        method="PATCH",
-        input_schema={
-            "type": "object",
-            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
-            "required": ["id", "priority"],
-        },
-        capability_tags='["job","priority","update"]',
-        is_read_only=False,
-        requires_approval=True,
-    )
-
-    class EmptyActionPlanner:
-        async def generate_plan(self, *, intent, scoped_tools, context=None):
-            del intent, scoped_tools, context
-            return type(
-                "X",
-                (),
-                {
-                    "draft": PlanDraft(
-                        plan_explanation="No safe execution step could be produced.",
-                        risk_summary="No approved action can be started.",
-                        steps=[],
-                    ),
-                    "backend_used": "langchain",
-                    "llm_calls": 1,
-                },
-            )()
-
-    app, _ = await _make_app(sessionmaker_override, planner_adapter=EmptyActionPlanner())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
-        await client.post(
-            f"/sessions/{session_id}/messages",
-            json={
-                "role": "user",
-                "content": "change all medium priority job to high then change all high priority job to low",
-                "mode": "normal",
-            },
-        )
-
-        created = await client.post(f"/sessions/{session_id}/plans", json={})
-        assert created.status_code == 200
-        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
-
-    assert snapshot["session"]["status"] == "WAITING_APPROVAL"
-    assert snapshot["pending_approval"] is not None
-    assert snapshot["plan"]["created_by"] == "planner_owned_agent_graph"
-    assert "non_terminal_snapshot" not in json.dumps(snapshot["response_document"])
-
-
-@pytest.mark.asyncio
 async def test_phase14_active_pending_approval_uses_actionable_write_set_and_rejects_noop_stale_approval(
     sessionmaker_override,
     db_session,
@@ -564,7 +507,8 @@ async def test_phase14_active_pending_approval_uses_actionable_write_set_and_rej
 
 
 @pytest.mark.asyncio
-async def test_phase14_direct_v2_resume_queues_second_actionable_approval(
+@pytest.mark.legacy_architecture_quarantine
+async def test_phase14_historical_approval_payload_resume_queues_second_actionable_approval(
     sessionmaker_override,
     db_session,
     monkeypatch,
@@ -802,7 +746,11 @@ async def test_create_plan_answers_osha_loto_knowledge_question_without_tool_pla
             )()
 
     rag = FakeRAGPipeline()
-    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=rag)
+    app, _ = await _make_app(
+        sessionmaker_override,
+        rag_pipeline_adapter=rag,
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -882,7 +830,11 @@ async def test_create_plan_does_not_recover_uncited_osha_loto_answer_from_source
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        rag_pipeline_adapter=FakeRAGPipeline(),
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -929,7 +881,11 @@ async def test_create_plan_uses_insufficient_context_when_osha_loto_rag_is_empty
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        rag_pipeline_adapter=FakeRAGPipeline(),
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -979,7 +935,11 @@ async def test_create_plan_uses_insufficient_context_when_osha_loto_sources_do_n
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        rag_pipeline_adapter=FakeRAGPipeline(),
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1021,7 +981,11 @@ async def test_create_plan_unknown_non_loto_procedure_does_not_borrow_osha_polic
                 },
             )()
 
-    app, _ = await _make_app(sessionmaker_override, rag_pipeline_adapter=FakeRAGPipeline())
+    app, _ = await _make_app(
+        sessionmaker_override,
+        rag_pipeline_adapter=FakeRAGPipeline(),
+        allow_offline_planner_proposer=True,
+    )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1320,7 +1284,7 @@ async def test_tool_registry_load_normalizes_legacy_string_tags(sessionmaker_ove
 
 
 @pytest.mark.asyncio
-async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
+async def test_graph_plan_records_forced_reranker_in_session_trace(
     sessionmaker_override,
     db_session,
     monkeypatch,
@@ -1393,7 +1357,7 @@ async def test_create_direct_v2_plan_records_forced_reranker_in_session_trace(
         sessionmaker_override,
         force_llm_trace_all=True,
         tool_selector_openai_base_url="http://fake-selector",
-        openai_api_key="test-key",
+        allow_offline_planner_proposer=True,
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1502,6 +1466,7 @@ async def test_graph_runtime_low_medium_high_resume_queues_second_approval_witho
         enforce_tool_registry_health=False,
         min_healthy_tool_count=0,
         tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1621,6 +1586,7 @@ async def test_graph_runtime_no_low_records_still_stages_medium_priority_approva
         enforce_tool_registry_health=False,
         min_healthy_tool_count=0,
         tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]
@@ -1738,6 +1704,7 @@ async def test_graph_runtime_no_record_branch_is_not_counted_as_business_change_
         enforce_tool_registry_health=False,
         min_healthy_tool_count=0,
         tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
     )
     final_snapshot = None
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -1876,6 +1843,7 @@ async def test_graph_runtime_low_medium_high_background_resume_queues_second_app
         enforce_tool_registry_health=False,
         min_healthy_tool_count=0,
         tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
     )
     second_snapshot = None
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -2057,6 +2025,7 @@ async def test_create_plan_falls_back_when_tool_selector_reranker_errors(session
         sessionmaker_override,
         tool_selector_backend="langchain",
         openai_base_url="http://fake-llm",
+        allow_offline_planner_proposer=True,
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         session_id = (await client.post("/sessions", json={"user_id": "u1"})).json()["session_id"]

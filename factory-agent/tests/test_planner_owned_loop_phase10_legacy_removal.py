@@ -42,6 +42,7 @@ def _settings(*, factory_agent_engine: str = "v2") -> Settings:
         auto_repair_tool_registry=False,
         min_healthy_tool_count=0,
         factory_agent_engine=factory_agent_engine,  # type: ignore[arg-type]
+        allow_offline_planner_proposer=True,
     )
 
 

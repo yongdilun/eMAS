@@ -11,6 +11,9 @@ from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop
 from factory_agent.schemas import ToolInfo
 
 
+pytestmark = pytest.mark.legacy_architecture_quarantine
+
+
 def _settings(**overrides: Any) -> Settings:
     values = replace(
         get_settings(),
@@ -146,7 +149,7 @@ async def test_phase5_v2_mode_does_not_create_executable_write_steps():
 
 
 @pytest.mark.asyncio
-async def test_phase5_direct_v2_test_path_records_v2_generated_by_and_read_draft():
+async def test_phase5_historical_v2_loop_contract_records_v2_generated_by_and_read_draft():
     selector = RecordingSelector(["get__machines_{id}"])
     tools = {"get__machines_{id}": _machine_status_tool()}
 

@@ -206,7 +206,7 @@ def _api_evidence(
 
 
 @pytest.mark.asyncio
-async def test_phase6_three_read_direct_v2_satisfies_typed_evidence_without_completion_calls():
+async def test_phase6_v2_contract_three_read_satisfies_typed_evidence_without_completion_calls():
     selector = RecordingSelector(["get__machines_{id}", "get__jobs_{id}", "get__jobs"])
     prompt = (
         "Show machine M-LTH-77 status, then show job JOB-ALPHA-77 status, then "

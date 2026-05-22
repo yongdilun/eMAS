@@ -80,6 +80,7 @@ async def _make_phase19_app(sessionmaker_override, *, rag_pipeline_adapter):
         enforce_tool_registry_health=False,
         auto_repair_tool_registry=False,
         min_healthy_tool_count=0,
+        allow_offline_planner_proposer=True,
     )
     app = FastAPI()
     event_bus = FakeEventBus()

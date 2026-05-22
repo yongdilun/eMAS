@@ -19,6 +19,9 @@ from factory_agent.services.plan_creation_service import PlanCreationService
 from factory_agent.testing.tool_faults import clear_tool_faults, configure_tool_faults, maybe_inject_tool_fault
 
 
+pytestmark = pytest.mark.legacy_architecture_quarantine
+
+
 def _tool(
     name: str,
     *,
@@ -412,7 +415,7 @@ async def test_phase9_multi_id_status_read_satisfies_typed_rows_without_completi
 
 
 @pytest.mark.asyncio
-async def test_phase9_direct_v2_aggregates_item_read_evidence_for_multi_id_status():
+async def test_phase9_historical_direct_v2_aggregates_item_read_evidence_for_multi_id_status():
     selector = NeedAwareSelector()
     run = await PlannerOwnedV2Loop(selector).run(  # type: ignore[arg-type]
         intent="Find status for job with job id JOB-ALPHA-001 and JOB-ALPHA-002.",
@@ -558,7 +561,7 @@ async def test_phase9_mixed_api_rag_uses_rag_only_for_document_requirement_and_r
     assert sources == []
 
 
-def test_phase9_direct_v2_rag_execution_query_uses_requirement_goal_for_source_hint():
+def test_phase9_historical_direct_v2_rag_execution_query_uses_requirement_goal_for_source_hint():
     service = PlanCreationService.__new__(PlanCreationService)
     requirement = type(
         "Requirement",
@@ -580,7 +583,7 @@ def test_phase9_direct_v2_rag_execution_query_uses_requirement_goal_for_source_h
     ) == "Use the documented restart procedure."
 
 
-def test_phase9_direct_v2_stage_rows_uses_next_production_week_when_calendar_week_has_no_rows():
+def test_phase9_historical_direct_v2_stage_rows_uses_next_production_week_when_calendar_week_has_no_rows():
     service = PlanCreationService.__new__(PlanCreationService)
     today = datetime.now(timezone.utc).date()
     rows = [
@@ -601,7 +604,7 @@ def test_phase9_direct_v2_stage_rows_uses_next_production_week_when_calendar_wee
     assert excluded[1]["exclusion_reason"] == "date_constraint"
 
 
-def test_phase9_direct_v2_stage_rows_keeps_literal_calendar_week_when_matching_rows_exist():
+def test_phase9_historical_direct_v2_stage_rows_keeps_literal_calendar_week_when_matching_rows_exist():
     service = PlanCreationService.__new__(PlanCreationService)
     today = datetime.now(timezone.utc).date()
     rows = [
