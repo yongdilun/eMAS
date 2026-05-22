@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 7 migration test suite consolidation complete. Planner-owned graph and v2 helper suites now use stable long-term filenames instead of phase-era filenames; historical direct-v2 coverage remains explicitly quarantined under `test_historical_direct_v2_*.py`; the central no-legacy static guard is now `test_planner_owned_graph_no_legacy_authority.py`. The duplicate Phase 8 import-only alias test was deleted because `test_planner_owned_graph_api_contract.py` owns the replacement coverage. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+Status: Phase 8 static cleanup enforcement complete pending final commit. The central no-legacy guard now has owned historical runtime/test reference allowlists with owner, reason, deletion blocker, and removal gate; active runtime historical-term scanning uses AST-visible imports, identifiers, and string literals instead of broad docs/code text scans; and PlannerOwnedV2Loop test dependency checks use AST import/call analysis. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
 
 Plan:
 
@@ -26,7 +26,7 @@ Baseline release-proof commit:
 | 5 | Legacy RAG shortcut compatibility cleanup | Complete | `bc39280a8e60fc345386f06c76a3e08e237974e4` | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Complete pending final commit |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Complete |  | Full backend plus all frontend E2E release gates |
-| 8 | Static cleanup enforcement | Not started |  | Static guard and full backend |
+| 8 | Static cleanup enforcement | Complete pending final commit |  | Static guard and full backend |
 | 9 | Final cleanup release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
@@ -1756,6 +1756,93 @@ Remaining cleanup candidates:
 - Phase 8 should turn the stable no-legacy guards into compact static cleanup enforcement with explicit allowlist ownership.
 - Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or explicit retirement.
 - Historical phase-number test function names remain inside several renamed files; file-level ownership is now stable, and function-name cleanup can be mechanical follow-up only if needed.
+
+Commit:
+
+- pending.
+
+## Phase 8: Static Cleanup Enforcement
+
+Status: complete pending final commit.
+
+Phase result:
+
+- Hardened `test_planner_owned_graph_no_legacy_authority.py` so historical runtime references are owned by explicit compatibility allowlist entries instead of anonymous parse-only path sets.
+- Switched the historical-term runtime guard to AST-visible imports, identifiers, attributes, function/class names, arguments, and string literals, keeping docs/archive/comment references out of active-code failures.
+- Added stable test-reference ownership for historical terms that remain in compatibility tests or negative static guard tests.
+- Strengthened retired `PlannerOwnedV2Loop` test dependency coverage from exact string checks to AST import/call/string-import checks.
+- Kept existing guards for old graph scaffold imports/calls, retired direct-v2 runtime authority, legacy/shadow mode restoration, graph RAG evidence authority, and offline proposer release proof.
+
+Files changed:
+
+- `factory-agent/tests/test_planner_owned_graph_no_legacy_authority.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Phase 8 disposition | Owner | Removal gate |
+| --- | --- | --- | --- |
+| Runtime historical trace/evidence schema values | Kept as explicitly owned compatibility vocabulary | Persisted v2 trace/evidence compatibility | Explicit persisted-data migration or compatibility retirement decision. |
+| Runtime historical legacy RAG satisfaction checks | Kept as fail-closed validation compatibility | Historical legacy RAG satisfaction guard | Persisted legacy RAG evidence retirement and replacement proof. |
+| Runtime historical shadow-state container reads | Kept as persisted interrupt/session compatibility | Persisted interrupt-state compatibility | Persisted session migration removing shadow-state containers. |
+| Runtime historical direct-v2 literal helpers | Kept as named compatibility helpers only | Historical direct-v2 literal owner; Historical direct-v2 trace compatibility | Direct-v2 persisted trace compatibility retirement. |
+| Runtime historical legacy RAG literal helpers | Kept as named compatibility helpers only | Historical legacy RAG literal owner | Legacy RAG persisted trace/evidence compatibility retirement. |
+| Runtime schema/control action value `intent_completed` | Kept as API control-action compatibility, not graph authority | API control-action compatibility | Control-action compatibility retirement with API migration proof. |
+| Stable tests with historical terms | Kept only as compatibility proof or negative no-legacy guard vocabulary | Stable test owners named below | File-specific replacement, persisted-data migration, or compatibility retirement gate named below |
+
+Runtime historical reference allowlist:
+
+| Path | Terms | Owner | Reason | Deletion blocker | Removal gate |
+| --- | --- | --- | --- | --- | --- |
+| `planning/v2_contracts.py` | `legacy_graph_loop`, `legacy_rag_route`, `legacy_working_intents`, `v2_shadow`, `v2_planner_loop`, `working_intents`, `intent_cursor`, `intent_completed` | Persisted v2 trace/evidence compatibility | Pydantic contracts parse old execution traces and evidence ledgers without granting authority. | Existing persisted plan/session payloads may contain retired engine, generated_by, or evidence values. | Explicit persisted-data migration or compatibility retirement decision. |
+| `planning/v2_satisfaction.py` | `legacy_rag_route` | Historical legacy RAG satisfaction guard | Final validation rejects historical legacy RAG evidence as satisfying current v2 requirements. | Old traces can still contain legacy RAG evidence that must fail closed when replayed. | Persisted legacy RAG evidence retirement and replacement proof. |
+| `planning/v2_interrupts.py` | `v2_shadow` | Persisted interrupt-state compatibility | Interrupt helpers read historical shadow-state containers from old session payloads. | Persisted sessions may include `v2_shadow_state` fields. | Persisted session migration removing shadow-state containers. |
+| `planning/v2_trace_compatibility.py` | `v2_planner_loop` | Historical direct-v2 trace compatibility | Compatibility builders attach historical direct-v2 trace identity via named helper APIs. | Historical direct-v2 plan/session payloads must remain readable. | Direct-v2 persisted trace compatibility retirement. |
+| `planning/historical_direct_v2_compatibility.py` | `v2_planner_loop` | Historical direct-v2 literal owner | This helper is the only owner of historical direct-v2 created_by/generated_by literal values. | Old direct-v2 sessions still use `v2_planner_loop` as historical trace vocabulary. | Direct-v2 persisted trace compatibility retirement. |
+| `planning/historical_legacy_rag_route_compatibility.py` | `legacy_rag_route` | Historical legacy RAG literal owner | This helper is the only owner of historical legacy RAG generated_by/source_type literal values. | Old traces and evidence entries still use `legacy_rag_route` as historical vocabulary. | Legacy RAG persisted trace/evidence compatibility retirement. |
+| `schemas.py` | `intent_completed` | API control-action compatibility | Schema/control values parse historical intent-completion action names without restoring old graph authority. | API clients and persisted control-action payloads may still contain `mark_intent_completed`. | Control-action compatibility retirement with API migration proof. |
+
+Test historical reference allowlist:
+
+| Path | Terms | Owner | Reason | Deletion blocker | Removal gate |
+| --- | --- | --- | --- | --- | --- |
+| `tests/test_historical_direct_v2_trace_compatibility.py` | `v2_planner_loop` | Historical direct-v2 compatibility tests | Quarantined tests preserve old direct-v2 trace parsing behavior. | Historical direct-v2 persisted trace compatibility remains supported. | Direct-v2 persisted trace compatibility retirement. |
+| `tests/test_historical_direct_v2_hard_query_compatibility.py` | `v2_planner_loop` | Historical direct-v2 hard-query compatibility tests | Quarantined tests preserve old direct-v2 hard-query compatibility payloads. | Historical direct-v2 persisted hard-query traces remain supported. | Direct-v2 persisted trace compatibility retirement. |
+| `tests/test_graph_session_detection.py` | `v2_planner_loop` | Session detection compatibility tests | Session detection recognizes historical direct-v2 created_by values without treating them as graph proof. | Persisted plan rows may still carry `v2_planner_loop`. | Persisted plan created_by migration or compatibility retirement. |
+| `tests/test_planner_owned_graph_state_contract.py` | `v2_planner_loop` | Graph state compatibility tests | Graph state tests prove historical direct-v2 trace values parse but do not prove graph ownership. | `ExecutionTrace` still accepts historical generated_by values for old payloads. | ExecutionTrace historical generated_by compatibility retirement. |
+| `tests/test_planner_owned_graph_shell_contract.py` | `working_intents`, `intent_cursor`, `intent_completed` | Old graph-state rejection tests | Shell tests prove old graph cursor fields are ignored by graph-owned runtime. | The guard must keep proving old state fields cannot regain execution authority. | Old graph state-field compatibility and negative-proof retirement. |
+| `tests/test_planner_owned_graph_runtime_adapter.py` | `legacy_rag_route`, `working_intents`, `intent_cursor`, `intent_completed` | Runtime adapter negative static guard tests | Runtime adapter tests assert graph entry points do not reference old graph or legacy RAG authority. | Static negative proof remains part of runtime-switch coverage. | Equivalent central no-legacy guard coverage replaces this local assertion. |
+| `tests/test_planner_owned_graph_approval_resume.py` | `legacy_rag_route` | Approval resume negative static guard tests | Approval graph tests assert runtime sources do not branch on legacy RAG or seeded fixtures. | Static negative proof remains part of approval/resume graph coverage. | Equivalent central no-legacy guard coverage replaces this local assertion. |
+| `tests/test_planner_owned_graph_rag_evidence.py` | `legacy_rag_route` | Graph RAG evidence negative tests | RAG tests prove graph evidence uses `rag_tool`/`system_guard` instead of legacy RAG route authority. | Current RAG release proof depends on explicit no-legacy evidence assertions. | Equivalent central no-legacy RAG evidence guard replaces this local assertion. |
+| `tests/test_planner_owned_graph_retrieval_contract.py` | `legacy_rag_route` | Graph retrieval RAG evidence negative tests | Retrieval tests prove graph evidence selection does not emit legacy RAG evidence. | Current RAG retrieval proof depends on explicit no-legacy evidence assertions. | Equivalent central no-legacy RAG evidence guard replaces this local assertion. |
+| `tests/test_planner_owned_satisfaction.py` | `legacy_rag_route` | Historical RAG satisfaction compatibility tests | Satisfaction tests prove old legacy RAG evidence remains readable but cannot satisfy current requirements. | Old evidence ledgers may still contain `legacy_rag_route` entries. | Legacy RAG persisted evidence compatibility retirement. |
+| `tests/test_planner_owned_v2_contract_compatibility.py` | `legacy_graph_loop`, `legacy_rag_route` | V2 contract historical compatibility tests | Contract tests preserve old graph/RAG trace and evidence parsing without counting it as active proof. | Old traces and evidence ledgers may still contain `legacy_graph_loop` or `legacy_rag_route` entries. | Legacy RAG persisted trace/evidence compatibility retirement. |
+
+Tracker update:
+
+- Phase 8 row updated to `Complete pending final commit`.
+- Top-level status now records the owned historical reference allowlists and AST-based static cleanup scan.
+- Runtime and test allowlist entries above now carry owner, reason, deletion blocker, and removal gate.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Guardrail outcome:
+
+- No runtime behavior changed.
+- No frontend fixtures or release harness files changed.
+- No backend compatibility schema/helper code removed.
+- No old graph/direct-v2/legacy RAG authority restored.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- Offline proposer mode still cannot satisfy release proof.
+
+Remaining cleanup candidates:
+
+- Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or explicit retirement.
+- Several stable tests keep local negative static guard literals; each now has a named owner and removal gate if a future central guard replaces the local assertion.
 
 Commit:
 

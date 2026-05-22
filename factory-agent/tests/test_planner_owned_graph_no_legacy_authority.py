@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from factory_agent.config import (
@@ -56,6 +56,33 @@ HISTORICAL_LEGACY_RAG_ROUTE_COMPATIBILITY_SOURCE = (
 V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
 CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
 
+
+@dataclass(frozen=True)
+class HistoricalReferenceAllowance:
+    owner: str
+    reason: str
+    deletion_blocker: str
+    removal_gate: str
+    terms: frozenset[str]
+
+
+def _historical_allowance(
+    *,
+    owner: str,
+    reason: str,
+    deletion_blocker: str,
+    removal_gate: str,
+    terms: set[str],
+) -> HistoricalReferenceAllowance:
+    return HistoricalReferenceAllowance(
+        owner=owner,
+        reason=reason,
+        deletion_blocker=deletion_blocker,
+        removal_gate=removal_gate,
+        terms=frozenset(terms),
+    )
+
+
 TRACKER_BLOCKED_PLAN_CREATION_DIRECT_V2_HELPERS: set[str] = set()
 
 DELETED_PLAN_CREATION_DIRECT_V2_HELPERS = {
@@ -106,14 +133,76 @@ DELETED_PLAN_CREATION_DIRECT_V2_HELPERS = {
     "_maybe_create_direct_v2_rag_response",
 }
 
-PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
-    Path("planning/v2_contracts.py"),
-    Path("planning/v2_satisfaction.py"),
-    Path("planning/v2_interrupts.py"),
-    Path("planning/v2_trace_compatibility.py"),
-    Path("planning/historical_direct_v2_compatibility.py"),
-    Path("planning/historical_legacy_rag_route_compatibility.py"),
-    Path("schemas.py"),
+HISTORICAL_RUNTIME_TERMS = (
+    "legacy_graph_loop",
+    "legacy_rag_route",
+    "legacy_working_intents",
+    "v2_shadow",
+    "v2_planner_loop",
+    "working_intents",
+    "intent_cursor",
+    "intent_completed",
+)
+
+OWNED_HISTORICAL_RUNTIME_REFERENCES = {
+    Path("planning/v2_contracts.py"): _historical_allowance(
+        owner="Persisted v2 trace/evidence compatibility",
+        reason="Pydantic contracts must parse old execution traces and evidence ledgers without granting authority.",
+        deletion_blocker="Existing persisted plan/session payloads may contain retired engine, generated_by, or evidence values.",
+        removal_gate="Explicit persisted-data migration or compatibility retirement decision.",
+        terms={
+            "legacy_graph_loop",
+            "legacy_rag_route",
+            "legacy_working_intents",
+            "v2_shadow",
+            "v2_planner_loop",
+            "working_intents",
+            "intent_cursor",
+            "intent_completed",
+        },
+    ),
+    Path("planning/v2_satisfaction.py"): _historical_allowance(
+        owner="Historical legacy RAG satisfaction guard",
+        reason="Final validation must reject historical legacy RAG evidence as satisfying current v2 requirements.",
+        deletion_blocker="Old traces can still contain legacy RAG evidence that must fail closed when replayed.",
+        removal_gate="Persisted legacy RAG evidence retirement and replacement proof.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("planning/v2_interrupts.py"): _historical_allowance(
+        owner="Persisted interrupt-state compatibility",
+        reason="Interrupt helpers still read historical shadow-state containers from old session payloads.",
+        deletion_blocker="Persisted sessions may include v2_shadow_state fields.",
+        removal_gate="Persisted session migration removing shadow-state containers.",
+        terms={"v2_shadow"},
+    ),
+    Path("planning/v2_trace_compatibility.py"): _historical_allowance(
+        owner="Historical direct-v2 trace compatibility",
+        reason="Compatibility builders attach historical direct-v2 trace identity via named helper APIs.",
+        deletion_blocker="Historical direct-v2 plan/session payloads must remain readable.",
+        removal_gate="Direct-v2 persisted trace compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("planning/historical_direct_v2_compatibility.py"): _historical_allowance(
+        owner="Historical direct-v2 literal owner",
+        reason="This helper is the only owner of historical direct-v2 created_by/generated_by literal values.",
+        deletion_blocker="Old direct-v2 sessions still use v2_planner_loop as historical trace vocabulary.",
+        removal_gate="Direct-v2 persisted trace compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("planning/historical_legacy_rag_route_compatibility.py"): _historical_allowance(
+        owner="Historical legacy RAG literal owner",
+        reason="This helper is the only owner of historical legacy RAG generated_by/source_type literal values.",
+        deletion_blocker="Old traces and evidence entries still use legacy_rag_route as historical vocabulary.",
+        removal_gate="Legacy RAG persisted trace/evidence compatibility retirement.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("schemas.py"): _historical_allowance(
+        owner="API control-action compatibility",
+        reason="Schema/control values must parse historical intent-completion action names without restoring old graph authority.",
+        deletion_blocker="API clients and persisted control-action payloads may still contain mark_intent_completed.",
+        removal_gate="Control-action compatibility retirement with API migration proof.",
+        terms={"intent_completed"},
+    ),
 }
 
 HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS: set[Path] = set()
@@ -166,15 +255,85 @@ DISALLOWED_RUNTIME_AUTHORITY_FRAGMENTS = (
     "engine == 'legacy'",
 )
 
-HISTORICAL_TERMS = (
-    "legacy_graph_loop",
-    "legacy_rag_route",
-    "legacy_working_intents",
-    "v2_shadow",
-    "working_intents",
-    "intent_cursor",
-    "intent_completed",
-)
+OWNED_HISTORICAL_TEST_REFERENCES = {
+    Path("test_historical_direct_v2_trace_compatibility.py"): _historical_allowance(
+        owner="Historical direct-v2 compatibility tests",
+        reason="Quarantined tests preserve old direct-v2 trace parsing behavior.",
+        deletion_blocker="Historical direct-v2 persisted trace compatibility remains supported.",
+        removal_gate="Direct-v2 persisted trace compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("test_historical_direct_v2_hard_query_compatibility.py"): _historical_allowance(
+        owner="Historical direct-v2 hard-query compatibility tests",
+        reason="Quarantined tests preserve old direct-v2 hard-query compatibility payloads.",
+        deletion_blocker="Historical direct-v2 persisted hard-query traces remain supported.",
+        removal_gate="Direct-v2 persisted trace compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("test_graph_session_detection.py"): _historical_allowance(
+        owner="Session detection compatibility tests",
+        reason="Session detection must recognize historical direct-v2 created_by values without treating them as graph proof.",
+        deletion_blocker="Persisted plan rows may still carry v2_planner_loop.",
+        removal_gate="Persisted plan created_by migration or compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("test_planner_owned_graph_state_contract.py"): _historical_allowance(
+        owner="Graph state compatibility tests",
+        reason="Graph state tests prove historical direct-v2 trace values parse but do not prove graph ownership.",
+        deletion_blocker="ExecutionTrace still accepts historical generated_by values for old payloads.",
+        removal_gate="ExecutionTrace historical generated_by compatibility retirement.",
+        terms={"v2_planner_loop"},
+    ),
+    Path("test_planner_owned_graph_shell_contract.py"): _historical_allowance(
+        owner="Old graph-state rejection tests",
+        reason="Shell tests prove old graph cursor fields are ignored by graph-owned runtime.",
+        deletion_blocker="The guard must keep proving old state fields cannot regain execution authority.",
+        removal_gate="Old graph state-field compatibility and negative-proof retirement.",
+        terms={"working_intents", "intent_cursor", "intent_completed"},
+    ),
+    Path("test_planner_owned_graph_runtime_adapter.py"): _historical_allowance(
+        owner="Runtime adapter negative static guard tests",
+        reason="Runtime adapter tests assert graph entry points do not reference old graph or legacy RAG authority.",
+        deletion_blocker="Static negative proof remains part of runtime-switch coverage.",
+        removal_gate="Equivalent central no-legacy guard coverage replaces this local assertion.",
+        terms={"legacy_rag_route", "working_intents", "intent_cursor", "intent_completed"},
+    ),
+    Path("test_planner_owned_graph_approval_resume.py"): _historical_allowance(
+        owner="Approval resume negative static guard tests",
+        reason="Approval graph tests assert runtime sources do not branch on legacy RAG or seeded fixtures.",
+        deletion_blocker="Static negative proof remains part of approval/resume graph coverage.",
+        removal_gate="Equivalent central no-legacy guard coverage replaces this local assertion.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("test_planner_owned_graph_rag_evidence.py"): _historical_allowance(
+        owner="Graph RAG evidence negative tests",
+        reason="RAG tests prove graph evidence uses rag_tool/system_guard instead of legacy RAG route authority.",
+        deletion_blocker="Current RAG release proof depends on explicit no-legacy evidence assertions.",
+        removal_gate="Equivalent central no-legacy RAG evidence guard replaces this local assertion.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("test_planner_owned_graph_retrieval_contract.py"): _historical_allowance(
+        owner="Graph retrieval RAG evidence negative tests",
+        reason="Retrieval tests prove graph evidence selection does not emit legacy RAG evidence.",
+        deletion_blocker="Current RAG retrieval proof depends on explicit no-legacy evidence assertions.",
+        removal_gate="Equivalent central no-legacy RAG evidence guard replaces this local assertion.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("test_planner_owned_satisfaction.py"): _historical_allowance(
+        owner="Historical RAG satisfaction compatibility tests",
+        reason="Satisfaction tests prove old legacy RAG evidence remains readable but cannot satisfy current requirements.",
+        deletion_blocker="Old evidence ledgers may still contain legacy_rag_route entries.",
+        removal_gate="Legacy RAG persisted evidence compatibility retirement.",
+        terms={"legacy_rag_route"},
+    ),
+    Path("test_planner_owned_v2_contract_compatibility.py"): _historical_allowance(
+        owner="V2 contract historical compatibility tests",
+        reason="Contract tests preserve old graph/RAG trace and evidence parsing without counting it as active proof.",
+        deletion_blocker="Old traces and evidence ledgers may still contain legacy_graph_loop or legacy_rag_route entries.",
+        removal_gate="Legacy RAG persisted trace/evidence compatibility retirement.",
+        terms={"legacy_graph_loop", "legacy_rag_route"},
+    ),
+}
 
 DISALLOWED_TEST_FRAGMENTS = (
     "pytest.mark." + "xfail",
@@ -223,7 +382,68 @@ def _absolute_import_module(path: Path, module: str, level: int) -> str:
 
 def _is_parse_only_or_quarantined(path: Path) -> bool:
     relative = _relative_runtime(path)
-    return relative in PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS | HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS
+    return relative in OWNED_HISTORICAL_RUNTIME_REFERENCES or relative in HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS
+
+
+def _historical_terms_in(segment: str) -> tuple[str, ...]:
+    return tuple(term for term in HISTORICAL_RUNTIME_TERMS if term in segment)
+
+
+def _historical_reference_hits(source: str) -> list[tuple[int, str, str]]:
+    module = ast.parse(source)
+    hits: set[tuple[int, str, str]] = set()
+
+    def record(lineno: int, segment: str) -> None:
+        if not segment:
+            return
+        for term in _historical_terms_in(segment):
+            hits.add((lineno, term, segment))
+
+    for node in ast.walk(module):
+        lineno = getattr(node, "lineno", 1)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            record(lineno, node.value)
+        elif isinstance(node, ast.Name):
+            record(lineno, node.id)
+        elif isinstance(node, ast.Attribute):
+            record(lineno, node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            record(lineno, node.name)
+        elif isinstance(node, ast.arg):
+            record(lineno, node.arg)
+        elif isinstance(node, ast.ImportFrom):
+            record(lineno, node.module or "")
+            for alias in node.names:
+                record(lineno, alias.name)
+                record(lineno, alias.asname or "")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                record(lineno, alias.name)
+                record(lineno, alias.asname or "")
+
+    return sorted(hits)
+
+
+def _validate_allowance(
+    relative: Path,
+    allowance: HistoricalReferenceAllowance,
+    *,
+    tracker: str | None = None,
+) -> list[str]:
+    problems: list[str] = []
+    for field_name in ("owner", "reason", "deletion_blocker", "removal_gate"):
+        if not getattr(allowance, field_name).strip():
+            problems.append(f"{relative.as_posix()}: missing {field_name}")
+    if not allowance.terms:
+        problems.append(f"{relative.as_posix()}: missing terms")
+    unknown_terms = sorted(set(allowance.terms) - set(HISTORICAL_RUNTIME_TERMS))
+    if unknown_terms:
+        problems.append(f"{relative.as_posix()}: unknown terms {unknown_terms}")
+    if tracker is not None:
+        for fragment in (relative.as_posix(), allowance.owner, allowance.removal_gate):
+            if fragment not in tracker:
+                problems.append(f"{relative.as_posix()}: tracker missing {fragment!r}")
+    return problems
 
 
 def _function_node(source: str, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
@@ -286,6 +506,26 @@ def test_runtime_engine_values_resolve_to_planner_owned_v2_only():
     assert resolve_factory_agent_engine_for_runtime(settings) == "v2"
 
 
+def test_static_cleanup_historical_reference_allowlists_are_owned_and_tracked():
+    tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
+    problems: list[str] = []
+
+    for relative, allowance in sorted(OWNED_HISTORICAL_RUNTIME_REFERENCES.items()):
+        problems.extend(_validate_allowance(relative, allowance, tracker=tracker))
+        if not (RUNTIME_ROOT / relative).exists():
+            problems.append(f"{relative.as_posix()}: runtime allowlist path is missing")
+
+    for relative, allowance in sorted(OWNED_HISTORICAL_TEST_REFERENCES.items()):
+        problems.extend(_validate_allowance(Path("tests") / relative, allowance, tracker=tracker))
+        if not (TESTS_ROOT / relative).exists():
+            problems.append(f"{relative.as_posix()}: test allowlist path is missing")
+
+    assert problems == [], (
+        "Historical cleanup allowlists must stay explicit: owner, reason, deletion blocker, "
+        "removal gate, path, and tracker record are required.\n" + "\n".join(problems)
+    )
+
+
 def test_product_code_has_no_legacy_engine_or_shadow_activation_authority():
     hits: list[str] = []
     for path in _runtime_files():
@@ -296,20 +536,51 @@ def test_product_code_has_no_legacy_engine_or_shadow_activation_authority():
             if fragment in text:
                 hits.append(f"{_relative_runtime(path).as_posix()}: {fragment}")
 
-    assert hits == []
+    assert hits == [], (
+        "Retired legacy/shadow runtime activation markers are not allowed in active runtime code. "
+        "Compatibility parsing must live in an owned historical allowlist entry instead:\n"
+        + "\n".join(hits)
+    )
 
 
-def test_historical_terms_are_parse_only_or_quarantined():
+def test_historical_terms_are_confined_to_owned_runtime_allowlist():
     hits: list[str] = []
     for path in _runtime_files():
-        if _is_parse_only_or_quarantined(path):
-            continue
-        text = path.read_text(encoding="utf-8")
-        for term in HISTORICAL_TERMS:
-            if term in text:
-                hits.append(f"{_relative_runtime(path).as_posix()}: {term}")
+        relative = _relative_runtime(path)
+        allowance = OWNED_HISTORICAL_RUNTIME_REFERENCES.get(relative)
+        allowed_terms = allowance.terms if allowance else frozenset()
+        source = path.read_text(encoding="utf-8-sig")
+        for lineno, term, segment in _historical_reference_hits(source):
+            if term in allowed_terms:
+                continue
+            hits.append(f"{relative.as_posix()}:{lineno}: {term} in {segment!r}")
 
-    assert hits == []
+    assert hits == [], (
+        "Historical graph/direct-v2/RAG terms are allowed only in owned compatibility runtime files. "
+        "Active runtime references must be removed or recorded with owner, deletion blocker, and removal gate:\n"
+        + "\n".join(hits)
+    )
+
+
+def test_historical_test_references_are_owned_by_stable_guard_files():
+    hits: list[str] = []
+    for path in sorted(TESTS_ROOT.rglob("test_*.py")):
+        if path.name == "test_planner_owned_graph_no_legacy_authority.py":
+            continue
+        relative = path.relative_to(TESTS_ROOT)
+        allowance = OWNED_HISTORICAL_TEST_REFERENCES.get(relative)
+        allowed_terms = allowance.terms if allowance else frozenset()
+        source = path.read_text(encoding="utf-8-sig")
+        for lineno, term, segment in _historical_reference_hits(source):
+            if term in allowed_terms:
+                continue
+            hits.append(f"{relative.as_posix()}:{lineno}: {term} in {segment!r}")
+
+    assert hits == [], (
+        "Tests may mention retired graph/direct-v2/RAG terms only as owned compatibility proof "
+        "or negative static guard vocabulary. Add a tracker-owned allowlist entry instead of "
+        "letting historical terms drift into new tests:\n" + "\n".join(hits)
+    )
 
 
 def test_historical_graph_authority_modules_are_deleted():
@@ -614,20 +885,39 @@ def test_historical_legacy_rag_route_literals_are_owned_by_compatibility_helper(
     assert "historical_legacy_rag_route_compatibility.py" in tracker
 
 
-def test_direct_v2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
-    forbidden_import = "from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop"
-    forbidden_constructor = "PlannerOwnedV2Loop("
+def test_tests_do_not_import_or_instantiate_retired_planner_owned_v2_loop():
     hits: list[str] = []
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
         if path.name == "test_planner_owned_graph_no_legacy_authority.py":
             continue
-        text = path.read_text(encoding="utf-8")
-        if forbidden_import in text:
-            hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}: old loop import")
-        if forbidden_constructor in text:
-            hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}: old loop constructor")
+        source = path.read_text(encoding="utf-8-sig")
+        module = ast.parse(source)
+        relative = path.relative_to(TESTS_ROOT).as_posix()
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom):
+                if node.module == "factory_agent.planning.v2_planner_loop":
+                    hits.append(f"{relative}:{node.lineno}: import from retired v2_planner_loop")
+                for alias in node.names:
+                    if alias.name == "PlannerOwnedV2Loop":
+                        hits.append(f"{relative}:{node.lineno}: imports PlannerOwnedV2Loop")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "factory_agent.planning.v2_planner_loop":
+                        hits.append(f"{relative}:{node.lineno}: imports retired v2_planner_loop")
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "PlannerOwnedV2Loop":
+                    hits.append(f"{relative}:{node.lineno}: constructs PlannerOwnedV2Loop")
+                elif isinstance(func, ast.Attribute) and func.attr == "PlannerOwnedV2Loop":
+                    hits.append(f"{relative}:{node.lineno}: constructs PlannerOwnedV2Loop")
+            elif isinstance(node, ast.Constant) and node.value == "factory_agent.planning.v2_planner_loop":
+                hits.append(f"{relative}:{node.lineno}: string import of retired v2_planner_loop")
 
-    assert hits == []
+    assert hits == [], (
+        "PlannerOwnedV2Loop and planning.v2_planner_loop are retired. Tests must use "
+        "historical_direct_v2_compatibility or v2_trace_compatibility instead:\n"
+        + "\n".join(hits)
+    )
 
 
 def test_plan_creation_direct_v2_helpers_are_retired():
