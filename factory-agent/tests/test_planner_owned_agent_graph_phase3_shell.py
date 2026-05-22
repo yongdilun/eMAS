@@ -265,13 +265,10 @@ def test_phase3_postgres_checkpointer_config_falls_back_when_adapter_unavailable
 
 
 @pytest.mark.asyncio
-async def test_phase3_direct_service_execution_is_not_called(monkeypatch):
+async def test_phase3_direct_service_execution_is_not_called():
     from factory_agent.services.plan_creation_service import PlanCreationService
 
-    async def _boom(*args, **kwargs):  # pragma: no cover - only runs on regression
-        raise AssertionError("direct service execution must not be called by the graph shell")
-
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_steps", _boom)
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_steps")
     graph = _graph()
 
     result = await graph.run(

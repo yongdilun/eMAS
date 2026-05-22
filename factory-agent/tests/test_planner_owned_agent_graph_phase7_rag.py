@@ -256,4 +256,4 @@ def test_phase7_normal_runtime_switches_to_graph_after_phase10():
     assert "PlannerOwnedGraphRuntimeAdapter" in source
     assert "PlannerOwnedAgentGraph" in runtime_source
     assert '"thread_id": sess.session_id' in runtime_source
-    assert "_create_historical_direct_v2_plan" in source
+    assert "_create_historical_direct_v2_plan" not in source

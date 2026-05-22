@@ -33,11 +33,13 @@ TESTS_ROOT = REPO_ROOT / "factory-agent" / "tests"
 PLAN_CREATION_SOURCE = RUNTIME_ROOT / "services" / "plan_creation_service.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
+V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
 
 PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
     Path("planning/v2_contracts.py"),
     Path("planning/v2_satisfaction.py"),
     Path("planning/v2_interrupts.py"),
+    Path("planning/v2_trace_compatibility.py"),
     Path("schemas.py"),
 }
 
@@ -245,11 +247,14 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     direct_adapter = _function_node(source, "_create_direct_v2_plan")
     graph_adapter = _function_node(source, "_create_planner_owned_graph_v2_plan")
-    historical_direct = _function_node(source, "_create_historical_direct_v2_plan")
 
     direct_calls = _called_names(direct_adapter)
     graph_calls = _called_names(graph_adapter)
-    historical_calls = _called_names(historical_direct)
+    defined_functions = {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
     assert "_create_planner_owned_graph_v2_plan" in direct_calls
     assert "_execute_direct_v2_steps" not in direct_calls
@@ -260,7 +265,21 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
     assert "_execute_direct_v2_steps" not in graph_calls
     assert "_create_historical_direct_v2_plan" not in graph_calls
     assert "PlannerOwnedV2Loop" not in graph_calls
-    assert "_execute_direct_v2_steps" in historical_calls
+    assert "_create_historical_direct_v2_plan" not in defined_functions
+    assert "_execute_direct_v2_steps" not in defined_functions
+    assert "factory_agent.planning.v2_planner_loop" not in source
+
+
+def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop():
+    service_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
+
+    assert "build_direct_v2_compatibility_state" in service_source
+    assert "build_failed_direct_v2_compatibility_state" in service_source
+    assert "PlannerOwnedV2Loop" not in service_source
+    assert "class PlannerOwnedV2Loop" not in compatibility_source
+    assert "def attach_direct_v2_trace_to_intent_contract" in compatibility_source
+    assert "def build_direct_v2_compatibility_state" in compatibility_source
 
 
 def test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority():

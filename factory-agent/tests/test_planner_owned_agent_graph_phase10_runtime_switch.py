@@ -190,13 +190,10 @@ async def test_phase10_behavior_normal_v2_plan_creation_enters_graph_path(monkey
                 created_by="planner_owned_agent_graph",
             )
 
-    async def fail_direct_execution(*args, **kwargs):  # pragma: no cover - should never run
-        raise AssertionError("_execute_direct_v2_steps must not own normal runtime")
-
     monkeypatch.setattr(service, "_planner_owned_graph_runtime", lambda: FakeRuntime())
-    monkeypatch.setattr(service, "_execute_direct_v2_steps", fail_direct_execution)
 
     sess = SimpleNamespace(session_id="phase10-session", replan_context={}, llm_call_count=0)
+    assert not hasattr(service, "_execute_direct_v2_steps")
     response = await service._create_direct_v2_plan(
         db=SimpleNamespace(),
         sess=sess,

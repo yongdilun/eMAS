@@ -419,7 +419,7 @@ async def test_phase5_direct_v2_execution_helpers_are_not_used(monkeypatch):
     async def _boom(*args, **kwargs):  # pragma: no cover - only runs on regression
         raise AssertionError("direct-v2 service execution helper was called")
 
-    monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_steps", _boom)
+    assert not hasattr(PlanCreationService, "_execute_direct_v2_steps")
     monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_api_step", _boom)
     monkeypatch.setattr(PlanCreationService, "_execute_direct_v2_rag_step", _boom)
 
@@ -438,4 +438,4 @@ def test_phase5_normal_runtime_switches_to_graph_after_phase10():
     assert "PlannerOwnedGraphRuntimeAdapter" in source
     assert "PlannerOwnedAgentGraph" in runtime_source
     assert '"thread_id": sess.session_id' in runtime_source
-    assert "_create_historical_direct_v2_plan" in source
+    assert "_create_historical_direct_v2_plan" not in source

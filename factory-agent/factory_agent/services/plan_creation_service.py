@@ -54,11 +54,7 @@ from factory_agent.planning.plan_validator import validate_plan
 from factory_agent.planning.tool_output_alignment import align_tool_outputs_to_steps
 from factory_agent.planning.tool_selector import ToolSelector
 from factory_agent.planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
-from factory_agent.planning.v2_planner_loop import (
-    PlannerOwnedV2Loop,
-    attach_direct_v2_trace_to_intent_contract,
-)
-from factory_agent.planning.v2_contracts import EvidenceLedgerEntry, ExecutionTrace, PlannerOwnedLoopV2State
+from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
 from factory_agent.planning.v2_rag_tool import (
     build_v2_rag_evidence,
     ensure_v2_rag_tool,
@@ -67,6 +63,11 @@ from factory_agent.planning.v2_rag_tool import (
 from factory_agent.planning.v2_satisfaction import (
     apply_deterministic_evidence_satisfaction,
     validate_v2_final_state,
+)
+from factory_agent.planning.v2_trace_compatibility import (
+    attach_direct_v2_trace_to_intent_contract,
+    build_direct_v2_compatibility_state,
+    build_failed_direct_v2_compatibility_state,
 )
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
 from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
@@ -541,7 +542,8 @@ class PlanCreationService:
         context = dict(base_context or {})
         try:
             tools_with_rag = ensure_v2_rag_tool(tools_by_name)
-            v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
+            v2_state = await build_direct_v2_compatibility_state(
+                tool_selector=self._tool_selector,
                 intent=intent,
                 tools_by_name=tools_with_rag,
                 engine_mode="v2",
@@ -550,7 +552,7 @@ class PlanCreationService:
             context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
                 base_intent_contract,
                 intent=intent,
-                v2_state=v2_run.state,
+                v2_state=v2_state,
             )
             return context
         except Exception as exc:
@@ -560,12 +562,7 @@ class PlanCreationService:
                 intent=intent,
                 error=str(exc),
             )
-            v2_engine = "v" + "2"
-            fallback_state = PlannerOwnedLoopV2State(
-                engine_version=v2_engine,
-                execution_trace=ExecutionTrace(engine_version=v2_engine, generated_by=f"{v2_engine}_planner_loop"),
-            )
-            fallback_state.execution_trace.diagnostics["trace_generation_failed"] = str(exc)
+            fallback_state = build_failed_direct_v2_compatibility_state(str(exc))
             context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
                 base_intent_contract,
                 intent=intent,
@@ -666,147 +663,6 @@ class PlanCreationService:
             mode=mode,
         )
 
-    async def _create_historical_direct_v2_plan(
-        self,
-        *,
-        db: AsyncSession,
-        sess: SessionRow,
-        tools_by_name: dict[str, ToolInfo],
-        intent: str,
-        mode: str,
-        semantic_frame: Any | None = None,
-        assessment: Any | None = None,
-    ) -> PlanResponse:
-        tools_by_name = ensure_v2_rag_tool(tools_by_name)
-        v2_run = await PlannerOwnedV2Loop(self._tool_selector).run(
-            intent=intent,
-            tools_by_name=tools_by_name,
-            engine_mode="v2",
-            mode=mode,
-        )
-        sess.llm_call_count = (sess.llm_call_count or 0) + self._direct_v2_llm_call_count(v2_run)
-
-        if (
-            semantic_frame is not None
-            and str(getattr(semantic_frame, "route", "") or "").startswith("clarification.")
-            and getattr(semantic_frame, "missing_required_entities", None)
-            and not self._seeded_planner_handles_intent(intent)
-        ):
-            context = dict(sess.replan_context or {})
-            if hasattr(semantic_frame, "to_payload"):
-                context["semantic_frame"] = semantic_frame.to_payload()
-            context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
-                None,
-                intent=intent,
-                v2_state=v2_run.state,
-            )
-            return await self._persist_conversation_reply_as_empty_plan(
-                db=db,
-                sess=sess,
-                reply=self._semantic_clarification_reply(semantic_frame),
-                mode=mode,
-                tools_by_name=tools_by_name,
-                intent=intent,
-                context_to_keep=context,
-                backend_used="v2_planner_loop",
-            )
-
-        if assessment is not None and getattr(assessment, "kind", None) != "operations":
-            reply = getattr(assessment, "reply", None)
-            if reply:
-                context = dict(sess.replan_context or {})
-                context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
-                    None,
-                    intent=intent,
-                    v2_state=v2_run.state,
-                )
-                return await self._persist_conversation_reply_as_empty_plan(
-                    db=db,
-                    sess=sess,
-                    reply=reply,
-                    mode=mode,
-                    tools_by_name=tools_by_name,
-                    intent=intent,
-                    context_to_keep=context,
-                    backend_used="v2_planner_loop",
-                )
-
-        rag_response = await self._maybe_create_direct_v2_rag_response(
-            db=db,
-            sess=sess,
-            tools_by_name=tools_by_name,
-            intent=intent,
-            mode=mode,
-            v2_run=v2_run,
-            semantic_frame=semantic_frame,
-        )
-        if rag_response is not None:
-            return rag_response
-
-        tool_outputs, sources, safety_content = await self._execute_direct_v2_steps(
-            sess=sess,
-            intent=intent,
-            tools_by_name=tools_by_name,
-            v2_run=v2_run,
-        )
-        self._direct_v2_prepare_evidence_for_satisfaction(v2_run)
-        if v2_run.draft is not None:
-            if sources:
-                v2_run.draft.sources = sources
-            if safety_content:
-                v2_run.draft.safety_content = safety_content
-        apply_deterministic_evidence_satisfaction(v2_run.state)
-        validate_v2_final_state(v2_run.state)
-
-        if self._direct_v2_should_stage_approval(v2_run=v2_run, tool_outputs=tool_outputs):
-            approval_payload = self._direct_v2_approval_payload(
-                sess=sess,
-                intent=intent,
-                v2_run=v2_run,
-                tool_outputs=tool_outputs,
-            )
-            no_op_mutations = approval_payload.get("no_op_mutations")
-            if isinstance(no_op_mutations, list) and no_op_mutations:
-                context = dict(sess.replan_context or {})
-                context["no_op_mutations"] = no_op_mutations
-                intent_contract = dict(context.get("intent_contract") or {})
-                intent_contract["no_op_mutations"] = no_op_mutations
-                context["intent_contract"] = intent_contract
-                sess.replan_context = context
-            if int(approval_payload.get("count") or 0) > 0:
-                sess = await self._persist_graph_interrupt_approval(
-                    db=db,
-                    sess=sess,
-                    approval_payload=approval_payload,
-                    mode=mode,
-                    tools_by_name=tools_by_name,
-                    intent=intent,
-                )
-                current = await self._load_current_plan(db=db, session_id=sess.session_id)
-                if current:
-                    return plan_to_response(current)
-                raise HTTPException(status_code=409, detail="v2 approval was created without a compatibility plan")
-
-        context = dict(sess.replan_context or {})
-        context["intent_contract"] = attach_direct_v2_trace_to_intent_contract(
-            None,
-            intent=intent,
-            v2_state=v2_run.state,
-        )
-        failed_direct_v2 = self._direct_v2_has_failed_output(tool_outputs) or self._direct_v2_final_validation_failed(v2_run)
-        return await self._persist_plan(
-            db=db,
-            sess=sess,
-            draft=v2_run.draft,
-            tools_by_name=tools_by_name,
-            backend_used="v2_planner_loop",
-            kind="discovery" if mode == "plan" else "execution",
-            status="FAILED" if failed_direct_v2 and mode != "plan" else "COMPLETED" if mode != "plan" else "DRAFT",
-            intent=intent,
-            context_to_keep=context,
-            tool_outputs=tool_outputs or v2_run.tool_outputs,
-        )
-
     def _planner_owned_graph_runtime(self) -> PlannerOwnedGraphRuntimeAdapter:
         return PlannerOwnedGraphRuntimeAdapter(
             settings=self._settings,
@@ -869,57 +725,6 @@ class PlanCreationService:
             return max(0, int(getattr(reranker, "call_count", 0) or 0))
         except Exception:
             return 0
-
-    async def _execute_direct_v2_steps(
-        self,
-        *,
-        sess: SessionRow,
-        intent: str,
-        tools_by_name: dict[str, ToolInfo],
-        v2_run: Any,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
-        draft = getattr(v2_run, "draft", None)
-        steps = list(getattr(draft, "steps", []) or [])
-        if not steps:
-            return [], [], None
-
-        step_requirements = self._direct_v2_step_requirement_map(v2_run)
-        outputs: list[dict[str, Any]] = []
-        all_sources: list[dict[str, Any]] = []
-        safety_content: str | None = None
-        for step in steps:
-            tool = tools_by_name.get(step.tool_name)
-            if tool is None:
-                continue
-            req_info = step_requirements.get(int(step.step_index), {})
-            requirement_id = str(req_info.get("requirement_id") or "")
-            requirement = self._direct_v2_requirement(v2_run, requirement_id)
-            args = dict(step.args or {})
-            if self._direct_v2_is_rag_tool(tool):
-                output, sources, safety = await self._execute_direct_v2_rag_step(
-                    sess=sess,
-                    intent=intent,
-                    args=args,
-                    tool=tool,
-                    requirement=requirement,
-                    requirement_id=requirement_id,
-                    v2_run=v2_run,
-                )
-                outputs.append(output)
-                all_sources.extend(sources)
-                safety_content = safety_content or safety
-            else:
-                output = await self._execute_direct_v2_api_step(
-                    sess=sess,
-                    args=args,
-                    tool=tool,
-                    step_index=int(step.step_index),
-                    requirement_id=requirement_id,
-                    requirement=requirement,
-                    v2_run=v2_run,
-                )
-                outputs.append(output)
-        return outputs, all_sources, safety_content
 
     def _direct_v2_step_requirement_map(self, v2_run: Any) -> dict[int, dict[str, Any]]:
         state = getattr(v2_run, "state", None)

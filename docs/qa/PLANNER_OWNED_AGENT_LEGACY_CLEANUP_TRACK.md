@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 1 complete. Full legacy/direct-v2/v2 usage and ownership audit is recorded. No runtime, test, frontend, backend, or release-harness behavior changed, and no cleanup candidate is deletion-approved by Phase 1.
+Status: Phase 2 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, the historical direct executor entrypoints are deleted, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
 
 Plan:
 
@@ -20,7 +20,7 @@ Baseline release-proof commit:
 | --- | --- | --- | --- | --- |
 | 0 | Baseline and cleanup manifest | Complete | `511755adcdd8def8ff4585276b65e9823f3c9a4d` | Docs diff check and recorded baseline |
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
-| 2 | Direct-v2 runtime deletion | Not started |  | Full backend, response-document, seeded, real-LangGraph, release |
+| 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Not started |  | Full backend, real-LangGraph, release |
 | 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
@@ -336,20 +336,96 @@ Next phase recommendation:
 
 - Proceed to Phase 2 only as a narrow direct-v2 separation phase: first isolate/replace active trace-context compatibility, then remove or rewrite tests that assert historical direct executor presence, then delete direct executor code only after static guards and persisted compatibility proof pass. Do not start old graph scaffold deletion until its active `PlannerService`/execution/approval fallback owners are migrated.
 
+## Phase 2: Direct-V2 Runtime Deletion
+
+Status: complete.
+
+Phase 2 verdict:
+
+- Complete as a narrow direct-v2 separation cleanup.
+- Active trace/context compatibility no longer requires `PlanCreationService` to import `PlannerOwnedV2Loop`.
+- Normal create-plan runtime still enters `_create_direct_v2_plan()` by name, and that method still delegates to `_create_planner_owned_graph_v2_plan()` and `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- `_create_historical_direct_v2_plan()` and `_execute_direct_v2_steps()` were deleted after reference and test proof showed normal runtime, graph runtime, approval/session repair, and persisted trace parsing do not call them.
+- Persisted historical trace compatibility remains: `attach_direct_v2_trace_to_intent_contract()` moved to explicit compatibility code and old trace values still parse through `v2_contracts.py`.
+- `PlannerOwnedV2Loop` remains for retained direct-loop contract/quarantined tests, but it now delegates trace-state construction to the compatibility helper instead of owning the active service trace seam.
+- Old graph scaffold deletion was not touched.
+- Frontend hard-query fixtures were not edited.
+- Qwen/proposer policy and release harness behavior were not changed.
+
+Files changed:
+
+- `factory-agent/factory_agent/planning/v2_trace_compatibility.py`
+- `factory-agent/factory_agent/planning/v2_planner_loop.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_runtime_switch.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase3_shell.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase4_retrieval.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase5_execution_observation.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py`
+- `factory-agent/tests/test_planner_owned_agent_graph_phase9_interrupts.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Phase 2 disposition | Replacement coverage / proof | Remaining blocker |
+| --- | --- | --- | --- |
+| `_create_direct_v2_plan()` | Kept as active normal-runtime compatibility entry name | Phase 10 runtime switch test and Phase 15 cleanup guard prove it delegates to graph runtime and does not call historical execution | Later behavior-preserving API/name migration only |
+| Active trace/context compatibility | Separated into `planning/v2_trace_compatibility.py` | Phase 15 guard proves `plan_creation_service.py` imports the compatibility helper and not `PlannerOwnedV2Loop`; full backend and frontend gates passed | Persisted old trace compatibility still required |
+| `attach_direct_v2_trace_to_intent_contract()` | Moved to explicit compatibility module and re-exported from `v2_planner_loop.py` for compatibility | Historical trace parse tests still pass; full backend passed | Later phase may move more historical parse surface out of active contracts |
+| `PlannerOwnedV2Loop` | Kept, with smaller implementation delegating compatibility state construction | Retained Phase 5/6/7/9 direct-loop contract tests pass | Non-quarantined contract tests still instantiate it; rewrite later toward helper/graph-owned coverage |
+| `_create_historical_direct_v2_plan()` | Deleted | AST guards prove absence from service definitions; graph phase 5/7/8/9 tests now assert absence instead of existence; approval resume uses graph-native resume first and separate direct-v2 approval payload compatibility only | Lower `_direct_v2_*` helper support remains because retained compatibility tests still exercise helper behavior |
+| `_execute_direct_v2_steps()` | Deleted | Phase 10 and Phase 15 guards prove normal graph adapter cannot call it; graph phase 3/4/5 tests assert the service method is absent | Lower API/RAG helper methods remain blocked by retained compatibility tests |
+| Approval/session repair | Kept separate from deleted executor | `approval_resume_service.py` direct-v2 approval payload compatibility does not call `_create_historical_direct_v2_plan()` or `_execute_direct_v2_steps()`; full backend and release gates passed | Historical approval payload compatibility still active |
+| Old graph scaffold | Not touched | Phase 15 guard still excludes graph runtime sources from old scaffold authority; old graph active-owner blocker remains from Phase 1 | Migrate `PlannerService` / `ExecutionService` / approval fallback owners in a later phase |
+| Frontend hard-query fixtures | Not touched | Response-document, seeded-oracle, real-LangGraph, and release E2E passed without fixture changes | Rewrite in frontend cleanup phase, not Phase 2 |
+
+Verification:
+
+- `python -m compileall -q factory-agent/factory_agent/planning/v2_trace_compatibility.py factory-agent/factory_agent/planning/v2_planner_loop.py factory-agent/factory_agent/services/plan_creation_service.py` -> passed, no output.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+- `cd factory-agent; $phaseTests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase9_hard_query_release.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `9 warnings`.
+- `cd factory-agent; python -m pytest -q` -> `1026 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `cd "eMas Front"; npm run test:e2e:response-document` -> `30 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:release` -> `21 passed`, `0 failed`.
+- `git diff --check` -> passed with existing LF/CRLF conversion warnings only; no whitespace errors.
+
+Blockers:
+
+- `PlannerOwnedV2Loop` is still used by retained direct-loop contract/quarantined tests.
+- Lower `PlanCreationService._direct_v2_*` helper support remains for retained historical helper tests and compatibility proof.
+- Historical direct-v2 approval payload resume remains active in `ApprovalResumeService`.
+- Old graph scaffold remains active through Phase 1 owners and is not deletion-approved by Phase 2.
+- Frontend hard-query `generatedBy: 'v2_planner_loop'` fixture cleanup remains a later frontend/release-harness phase.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
+
+Next phase recommendation:
+
+- Do not proceed directly into old graph scaffold deletion without first resolving the Phase 1 active owners. The safest next cleanup is to rewrite retained `PlannerOwnedV2Loop` contract tests toward `v2_trace_compatibility.py`, `v2_satisfaction.py`, and graph-owned state tests, then delete the remaining lower `_direct_v2_*` service helpers only after those tests no longer need them.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow follow-up after Phase 2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Start direct-v2 runtime cleanup only where Phase 1 proved there is no active runtime owner. Do not delete active trace/context compatibility, old graph scaffold runtime, frontend release-harness fixtures, or non-quarantined contract tests until each blocker recorded in the Phase 1 audit is resolved with replacement coverage.
+Reduce the remaining direct-loop test/helper dependency without changing product behavior. Phase 2 already separated active trace/context compatibility into `v2_trace_compatibility.py` and deleted `_create_historical_direct_v2_plan()` plus `_execute_direct_v2_steps()`. The remaining cleanup candidate is lower direct-v2 helper support that is still blocked by retained compatibility tests and historical approval-payload resume.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
 - factory-agent/factory_agent/services/plan_creation_service.py
+- factory-agent/factory_agent/services/approval_resume_service.py
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
+- factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_planner_loop.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
@@ -360,12 +436,13 @@ Read first:
 - factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py
 
 Scope:
-- Implement only Phase 2 direct-v2 cleanup.
+- Implement only retained direct-v2 helper/test cleanup unless explicitly told to start old graph scaffold deletion.
 - Treat `_create_direct_v2_plan()` as active runtime until the entry name is migrated safely; it currently delegates to graph runtime.
-- Treat `_context_with_engine_trace()`, `PlannerOwnedV2Loop`, and `attach_direct_v2_trace_to_intent_contract()` as active trace/context compatibility until replaced.
-- Treat `_create_historical_direct_v2_plan()` and `_execute_direct_v2_steps()` as Phase 2 investigation candidates, not pre-approved deletions.
-- Do not touch old graph scaffold deletion in Phase 2; Phase 1 found it active through `PlannerService`, `ExecutionService`, and approval fallback paths.
-- Do not rewrite frontend hard-query release fixtures in Phase 2 unless the phase scope is explicitly expanded.
+- Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
+- Treat `PlannerOwnedV2Loop` as retained test/contract compatibility, not active service runtime.
+- `_create_historical_direct_v2_plan()` and `_execute_direct_v2_steps()` should remain absent.
+- Do not touch old graph scaffold deletion unless the active `PlannerService`, `ExecutionService`, and approval fallback blockers are explicitly resolved.
+- Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 
 Guardrails:
@@ -381,13 +458,14 @@ Verification:
 - git status --short --branch
 - cd factory-agent
 - python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q
+- python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase9_hard_query_release.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q
 - cd ..
 - git diff --check
 
-Commit only if direct-v2 cleanup stays within Phase 2 scope and verification passes.
+Commit only if cleanup stays within the recorded blocker scope and verification passes.
 
 Suggested commit:
-test: remove historical direct-v2 executor
+refactor: shrink retained direct-v2 compatibility
 
 Final response format:
 Phase Result
