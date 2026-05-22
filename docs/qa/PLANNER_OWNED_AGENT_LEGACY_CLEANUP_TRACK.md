@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 8 static cleanup enforcement complete pending final commit. The central no-legacy guard now has owned historical runtime/test reference allowlists with owner, reason, deletion blocker, and removal gate; active runtime historical-term scanning uses AST-visible imports, identifiers, and string literals instead of broad docs/code text scans; and PlannerOwnedV2Loop test dependency checks use AST import/call analysis. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+Status: Phase 9 final cleanup release proof complete pending final commit. Backend, frontend unit/support, response-document E2E, seeded-oracle E2E, real-LangGraph critical E2E, and release E2E gates passed. The central no-legacy guard confirms owned historical runtime/test reference allowlists with owner, reason, deletion blocker, and removal gate; no unowned cleanup candidates remain. Normal runtime remains `PlannerOwnedAgentGraph`; no backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
 
 Plan:
 
@@ -27,7 +27,7 @@ Baseline release-proof commit:
 | 6 | Frontend legacy expectation cleanup | Complete pending final commit |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Complete |  | Full backend plus all frontend E2E release gates |
 | 8 | Static cleanup enforcement | Complete pending final commit |  | Static guard and full backend |
-| 9 | Final cleanup release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
+| 9 | Final cleanup release proof | Complete pending final commit |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
 
@@ -1843,6 +1843,74 @@ Remaining cleanup candidates:
 
 - Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or explicit retirement.
 - Several stable tests keep local negative static guard literals; each now has a named owner and removal gate if a future central guard replaces the local assertion.
+
+Commit:
+
+- pending.
+
+## Phase 9: Final Cleanup Release Proof
+
+Status: complete pending final commit.
+
+Phase result:
+
+- Ran the final legacy cleanup release proof without making runtime, frontend fixture, release harness, compatibility-helper, or Qwen/proposer-policy changes.
+- Confirmed the central no-legacy guard still owns every remaining historical runtime/test reference with owner, reason, deletion blocker, and removal gate.
+- Confirmed no unowned cleanup candidates remain. Remaining historical references are intentionally retained compatibility/docs/static-guard vocabulary.
+- Confirmed normal runtime remains `PlannerOwnedAgentGraph`.
+- Confirmed old graph scaffold authority, retired direct-v2 runtime authority, and legacy RAG shortcut authority were not restored.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Phase 9 disposition | Owner | Removal gate |
+| --- | --- | --- | --- |
+| Runtime historical direct-v2 trace literals | Retained as persisted-data compatibility only | Historical direct-v2 compatibility helpers | Direct-v2 persisted trace compatibility retirement. |
+| Runtime historical legacy RAG route literals | Retained as persisted-data compatibility and fail-closed validation only | Historical legacy RAG compatibility helpers and satisfaction guard | Legacy RAG persisted trace/evidence compatibility retirement. |
+| Runtime historical shadow/control/action values | Retained as parse/API compatibility only | Persisted interrupt-state compatibility and API control-action compatibility | Persisted session/API migration or compatibility retirement. |
+| Old graph scaffold and direct-v2 runtime files | Remain deleted | Static no-legacy guard | No removal gate; guard must continue proving authority is absent. |
+| Stable tests with old vocabulary | Retained only as compatibility proof or negative static guard vocabulary | File-specific owners from Phase 8 allowlists | Equivalent central guard, persisted-data migration, or compatibility retirement as listed in Phase 8. |
+| Frontend old generated-by/legacy detector vocabulary | Remains absent from active E2E release harness expectations | Frontend hard-query/release harness | No active cleanup candidate remains. |
+
+Tracker update:
+
+- Top-level status now records Phase 9 final release proof as complete pending final commit.
+- Phase 9 progress row updated to `Complete pending final commit`.
+- Final verdict recorded: legacy cleanup lane is complete and safe; no new cleanup is required.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `npm test` -> `133 passed`, `0 failed`, `0 skipped`, `0 todo`.
+- `npm run test:e2e:response-document` -> `30 passed`, `0 failed`, `0 skipped`.
+- Initial `npm run test:e2e:seeded-oracles` -> `34 passed`, `1 failed`; `HQ-9-READ` stayed in `PLANNING` while the local/OpenAI-compatible planner was still producing accepted decisions. Focused rerun `npx playwright test --project=chromium-seeded e2e/specs/full-stack-hard-query.spec.js --grep "HQ-9-READ"` -> `1 passed`. Final required rerun `npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:release` -> `21 passed`, `0 failed`, `0 skipped`.
+- Optional planner-owned graph smoke metadata from the release stack log: `openai_compatible_qwen_planner_decision_proposer`, model `gemini-3.1-flash-lite`, base URL type `remote_openai_compatible`, accepted `retrieve_tools`, `choose_tool`, and `request_approval` decisions; offline proposer diagnostics were not counted as release proof.
+- `git diff --check` -> passed with LF/CRLF conversion warning only; no whitespace errors.
+
+Guardrail outcome:
+
+- No runtime behavior changed.
+- No frontend fixtures or release harness files changed.
+- No backend compatibility schema/helper code removed.
+- No old graph/direct-v2/legacy RAG authority restored.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- Offline proposer mode was not counted as release proof.
+
+Remaining cleanup candidates:
+
+- No unowned cleanup candidates remain.
+- Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain only until persisted-data migration or explicit retirement.
+- Stable negative static guard literals remain only with named owners and removal gates.
+
+Open issues:
+
+- No release blockers. The first seeded-oracles run exposed a transient local/OpenAI-compatible planner timing miss for `HQ-9-READ`; the focused rerun and full required rerun both passed without code or harness changes.
 
 Commit:
 
