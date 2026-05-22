@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Status: Phase 11 complete. Normal v2 runtime still enters `PlannerOwnedAgentGraph` through the service adapter, planner-authored decisions still pass through the proposer seam, and production proposer policy still fails closed unless offline proposer mode is explicitly allowed for tests/dev. Legacy/direct-v2 and old graph tests/helpers are now classified, rewritten, quarantined, or deleted; static cleanup guards prove normal runtime cannot call historical direct-v2 execution or old graph authority.
+Status: Phase 12 release proof complete. Normal v2 runtime still enters `PlannerOwnedAgentGraph` through the service adapter, planner-authored decisions still pass through the configured proposer seam, and production proposer policy still fails closed unless offline proposer mode is explicitly allowed for tests/dev. Required backend, frontend unit, response-document, seeded-oracle, real-LangGraph, and local Qwen/OpenAI-compatible planner smoke gates passed. The optional legacy L4 `chromium-release` harness has an accepted Phase 12 waiver because it is outside the user-requested verification list and still needs release-harness alignment after the Phase 10.6 proposer policy; it is not counted as planner-owned graph release proof.
 
 This tracker belongs to `PLANNER_OWNED_AGENT_GRAPH_MIGRATION.md`. It starts after `PLANNER_OWNED_AGENT_LOOP_MIGRATION.md` Phase 15.
 
@@ -53,8 +53,8 @@ State/checkpoint decision:
 | 10 | Runtime switch to graph | Complete | `49e3a5ba` | Full backend plus frontend response-document, seeded-oracle, and real-LangGraph gates |
 | 10.5 | LLM planner decision proposer | Complete | `d2af19c2` | Proposer seam tests plus seeded-oracle and real-LangGraph gates |
 | 10.6 | Production planner proposer policy | Complete | `b733c58b` | Offline-policy tests plus seeded-oracle and real-LangGraph gates |
-| 11 | Test cleanup and legacy quarantine | Complete |  | `1023 passed, 3 skipped` backend; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; static cleanup guardrails |
-| 12 | Release proof | Not started |  | Full backend, frontend, seeded-oracle, real-LangGraph/release, trace proof |
+| 11 | Test cleanup and legacy quarantine | Complete | `3d11935e` | `1023 passed, 3 skipped` backend; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; static cleanup guardrails |
+| 12 | Release proof | Complete |  | Full backend `1023 passed, 3 skipped`; frontend unit `133 passed`; response-document `30 passed`; seeded-oracle `35 passed`; real-LangGraph `3 passed`; local Qwen proposer smoke passed; optional `chromium-release` waiver recorded |
 
 ## Phase Notes
 
@@ -621,7 +621,7 @@ Blockers/waivers:
 
 Commit:
 
-- Pending in this changeset; final response records the committed hash.
+- `3d11935e` (`test: quarantine legacy direct-v2 graph coverage`).
 
 Next phase recommendation:
 
@@ -629,18 +629,55 @@ Next phase recommendation:
 
 ### Phase 12: Release Proof
 
-Status: not started.
+Status: complete.
 
-Completion evidence to record:
+Files changed:
 
-- focused graph-owned suite count,
-- full backend count,
-- frontend unit count,
-- response-document Playwright count,
-- seeded-oracle Playwright count,
-- real-LangGraph or release Playwright count,
-- trace proof summary,
-- final commit hash.
+- `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md`
+
+Proof base commit:
+
+- `f2655358ae0339ee81826cdd09632145168447bb` (`docs: tighten planner-owned graph release plan`)
+
+Completion evidence:
+
+- Normal runtime enters `PlannerOwnedAgentGraph` through `PlannerOwnedGraphRuntimeAdapter.run_plan()` with `thread_id = sess.session_id`; Phase 10/11 static guards still prove `_create_direct_v2_plan()` delegates to `_create_planner_owned_graph_v2_plan()` and normal runtime cannot call `_execute_direct_v2_steps()`.
+- Planner-authored decisions are produced through the configured proposer seam. Phase 10.5/10.6/11 guards still prove graph-created `PlannerDecisionRecord` calls are not hand-authored as `author="planner"`, planner decisions require `planner_proposer` diagnostics, and offline proposer diagnostics cannot satisfy real LLM release proof.
+- Trace proof includes proposer adapter/model/base URL metadata and deterministic validation outcome. Local planner smoke used `openai_compatible_qwen_planner_decision_proposer`, model `Qwen2.5-7B-Instruct-Q4_K_M.gguf`, base URL type `local`, `offline_contract_mode=false`, `real_llm_mode=true`, `llm_invoked=true`, prompt sizes `3166` and `4273` chars, accepted planner decisions `retrieve_tools` and `choose_tool`, validation via `planner_owned_agent_graph_decision_gate`, `executor_call_count=1`, `final_validation_status=passed`, and `planner_proposer_diagnostics_satisfy_real_llm_release_proof(...) == true`.
+- Requirement/capability/tool/evidence/response-document separation is preserved by the graph-owned suite, response-document UI gates, and static cleanup guards.
+- Approval, stale approval, interruption, RAG citation/insufficient-context, seeded oracle, and real-LangGraph flows passed through the required gates below.
+- No legacy RAG shortcut, old graph cursor/scaffold authority, direct-v2 normal runtime authority, exact-prompt branch, seeded-ID branch, source-ID branch, or offline-as-real-release-proof path was restored.
+
+Tests run:
+
+- `cd factory-agent; $phaseTests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; python -m pytest $phaseTests -q` -> `86 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `19 warnings`.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q` -> `56 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `37 warnings`.
+- `cd factory-agent; python -m pytest -q` -> `1023 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1414 warnings`.
+- `cd "eMas Front"; npm test` -> `133 passed`, `0 failed`, `0 skipped`.
+- `cd "eMas Front"; npm run test:e2e:response-document` -> `30 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`.
+- `cd factory-agent;` opt-in local Qwen/OpenAI-compatible planner smoke with offline proposer disabled -> `accepted_count=2`, `rejected_count=0`, planner decisions `retrieve_tools` and `choose_tool`, final validation `passed`, release-proof helper `true`.
+- `cd "eMas Front"; npm run test:e2e:release` -> `17 passed`, `4 failed`. Failing scenarios: scenario 60 Go API outage expected exact release-fault/attention copy but UI rendered a generic safe `Run needs attention` diagnostic with no fake completion; scenario 66 mobile approval and scenario 67 keyboard approval did not surface an approval card under the release harness; SO-017 static bearer polling fallback saw machine evidence but missed visible `Run complete`.
+- `cd "eMas Front"; $env:FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER='1'; npm run test:e2e:release -- --grep "scenario 66|scenario 67|scenario 60|SO-017"` -> `1 passed`, `3 failed`; SO-017 passed under explicit offline proposer, while the three release-resilience checks still failed.
+
+Seeded-oracle and real-LangGraph:
+
+- Seeded-oracle passed: yes, `35 passed`.
+- Real-LangGraph passed: yes, `3 passed`.
+
+Blockers/waivers:
+
+- Required Phase 12 gates from the implementation prompt: none.
+- Optional `chromium-release` waiver: accepted for this planner-owned graph release proof because the user-requested Phase 12 verification list did not include `npm run test:e2e:release`, the migration-specific backend/response-document/seeded/real-LangGraph gates passed, and the local real planner proposer smoke proved the non-offline proposer adapter. Owner: frontend release harness / planner prompt-routing release validation. Removal gate: make `npm run test:e2e:release` pass by aligning release-resilience prompts/failure assertions with graph response-document behavior and Phase 10.6 proposer policy, without counting offline proposer mode as real planner proof.
+
+Final release verdict:
+
+- Planner-owned graph migration Phase 12 is releasable for the required proof set. Do not use the optional L4 `chromium-release` harness as a release signoff until the recorded waiver is removed.
+
+Commit:
+
+- Pending in this changeset; final response records the committed hash.
 
 ## Update Rules
 
