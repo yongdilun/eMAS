@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 2 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, the historical direct executor entrypoints are deleted, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
+Status: Phase 2.2 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
 
 Plan:
 
@@ -565,13 +565,79 @@ Next recommended phase:
 
 - Resolve the two remaining `PlanCreationService` helper islands: move RAG source-hint query fallback and staged-row calendar filtering into an explicitly named compatibility owner only if the behavior still matters, otherwise delete them with graph/approval-resume replacement proof. After that, make a deliberate public-compatibility call on deleting `PlannerOwnedV2Loop`.
 
+## Phase 2.2: Remaining Direct-V2 Helper Island Retirement
+
+Status: complete.
+
+Phase result:
+
+- `PlanCreationService._direct_v2_rag_execution_query()` and `_direct_v2_stage_rows()` were removed from service runtime code.
+- Historical direct-v2 source-hint query fallback now lives in `planning/v2_trace_compatibility.py` as `resolve_direct_v2_rag_compatibility_query()`.
+- Historical approval preview row staging now lives in `approval_resume_service.py` as `stage_direct_v2_approval_compatibility_rows()`, beside the active direct-v2 approval payload compatibility owner.
+- `PlannerOwnedV2Loop` is intentionally retained as a documented public compatibility wrapper. Reference inspection found no in-repo service runtime or visible test imports/constructors; hidden/out-of-tree import compatibility is the removal blocker.
+- Normal runtime still enters `_create_direct_v2_plan()` by name and delegates to `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- Historical direct service execution remains absent: `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` are not defined on `PlanCreationService`.
+- No old graph scaffold, frontend fixture, release harness, Qwen/proposer policy, or product behavior was changed.
+
+Files changed:
+
+- `factory-agent/factory_agent/planning/v2_trace_compatibility.py`
+- `factory-agent/factory_agent/planning/v2_planner_loop.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Disposition | Replacement coverage / proof | Remaining blocker |
+| --- | --- | --- | --- |
+| `PlanCreationService._direct_v2_rag_execution_query()` | Deleted from `PlanCreationService`; moved behavior to `resolve_direct_v2_rag_compatibility_query()` | Phase 9 historical RAG compatibility test now imports the compatibility helper directly; graph phase 7 owns active RAG runtime behavior | Persisted/source-hint compatibility remains, but not in service runtime |
+| `PlanCreationService._direct_v2_is_source_hint_query()` | Deleted from `PlanCreationService`; moved behavior to `is_direct_v2_source_hint_query()` | Phase 9 source-hint fallback test covers the public compatibility resolver | None for service runtime |
+| `PlanCreationService._direct_v2_stage_rows()` | Deleted from `PlanCreationService`; moved behavior to `stage_direct_v2_approval_compatibility_rows()` | Phase 9 historical approval preview tests now import the approval compatibility helper directly; graph phase 8 owns active approval resume runtime behavior | Historical direct-v2 approval payload compatibility remains in `ApprovalResumeService` |
+| `PlanCreationService._direct_v2_current_week_window()` / `_direct_v2_production_week_window()` / `_direct_v2_row_due_date()` / `_direct_v2_parse_date()` / `_direct_v2_row_matches_date_constraint()` / `_direct_v2_source_priority_constraint()` | Deleted from `PlanCreationService`; useful approval staging behavior moved under approval compatibility helper names | Phase 15 guard proves no `_direct_v2_*` helpers remain on `PlanCreationService` | None for service runtime |
+| `PlannerOwnedV2Loop` | Kept intentionally as public compatibility wrapper | Phase 15 guard proves no in-repo runtime imports it and visible tests do not import/instantiate it; wrapper delegates to `build_direct_v2_compatibility_run()` | Hidden/out-of-tree public import compatibility; remove only after explicit public API removal decision |
+
+Static cleanup guards:
+
+- `test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution()` keeps `_create_direct_v2_plan()` and graph adapter calls from importing or calling `PlannerOwnedV2Loop`, `_create_historical_direct_v2_plan()`, or `_execute_direct_v2_steps()`.
+- `test_phase2_2_plan_creation_direct_v2_helpers_are_retired()` proves there are no remaining `_direct_v2_*`, `_execute_direct_v2_*`, or `_maybe_create_direct_v2_*` helpers on `PlanCreationService`.
+- `test_phase2_2_planner_owned_v2_loop_is_public_compatibility_only()` proves no runtime module outside `v2_planner_loop.py` references `PlannerOwnedV2Loop` and that the wrapper documents its public-compatibility purpose.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `27 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+- Post-tracker update smoke check: `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `15 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q` -> PowerShell passed the glob literally, so pytest reported `ERROR: file or directory not found` and `no tests ran`; rerun with an expanded file list below.
+- `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py tests/test_planner_owned_loop_phase9_hard_query_release.py -q` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `9 warnings`.
+- `python -m pytest -q` -> `1029 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+- Frontend release safety commands were not run because this phase did not change active response, trace, release harness, or frontend-visible runtime behavior.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
+
+Remaining blockers:
+
+- `PlannerOwnedV2Loop` remains only for public compatibility risk. Owner: planning compatibility (`v2_trace_compatibility.py` and `v2_planner_loop.py`). Removal gate: explicit public API removal decision plus static proof that no in-repo runtime, tests, or documented external compatibility lane requires the import.
+- `ApprovalResumeService` still owns historical direct-v2 approval payload resume compatibility.
+- Old graph scaffold remains active through the Phase 1 `PlannerService` / `ExecutionService` / approval fallback blockers and was not touched.
+- Frontend hard-query `generatedBy: 'v2_planner_loop'` fixtures remain intentionally unchanged.
+
+Next recommended phase:
+
+- Keep direct-v2 cleanup focused on the public compatibility decision for `PlannerOwnedV2Loop` and any remaining persisted trace naming policy. Do not start old graph scaffold deletion until the Phase 1 active `PlannerService`, `ExecutionService`, and approval fallback owners are resolved.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow follow-up after Phase 2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 2.2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Resolve the two remaining `PlanCreationService` direct-v2 helper islands without changing product behavior. Phase 2 separated active trace/context compatibility into `v2_trace_compatibility.py`; the Phase 2 follow-up moved retained direct-loop tests to that seam and deleted direct API/RAG executor, aggregation wrapper, approval payload builder, and direct RAG response helper support from `PlanCreationService`.
+Make the next explicit direct-v2 public-compatibility decision without changing product behavior. Phase 2.2 removed all remaining `PlanCreationService` direct-v2 helper islands, moved RAG source-hint fallback to `v2_trace_compatibility.py`, moved historical approval preview row staging to `approval_resume_service.py`, and kept `PlannerOwnedV2Loop` as an intentional public compatibility wrapper.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -582,7 +648,6 @@ Read first:
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_planner_loop.py
-- factory-agent/factory_agent/planning/v2_evidence_aggregation.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py
@@ -590,11 +655,11 @@ Read first:
 - factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py
 
 Scope:
-- Implement only the remaining `PlanCreationService._direct_v2_rag_execution_query()` and `_direct_v2_stage_rows()` helper cleanup unless explicitly told to start old graph scaffold deletion.
+- Decide whether `PlannerOwnedV2Loop` remains as a public compatibility wrapper or can be deleted with explicit compatibility proof.
 - Treat `_create_direct_v2_plan()` as active runtime until the entry name is migrated safely; it currently delegates to graph runtime.
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
-- Treat `PlannerOwnedV2Loop` as public compatibility wrapper only; visible tests and runtime should not import or instantiate it.
-- `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` should remain absent.
+- Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
+- `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.
 - Do not touch old graph scaffold deletion unless the active `PlannerService`, `ExecutionService`, and approval fallback blockers are explicitly resolved.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.

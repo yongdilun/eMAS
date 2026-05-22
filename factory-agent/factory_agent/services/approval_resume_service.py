@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -24,6 +24,140 @@ from factory_agent.services.plan_creation_service import PlanCreationService
 def _bump_session_revision(sess: Any) -> None:
     sess.version = (getattr(sess, "version", None) or 0) + 1
     sess.event_seq = (getattr(sess, "event_seq", None) or 0) + 1
+
+
+def stage_direct_v2_approval_compatibility_rows(
+    *,
+    tool_outputs: list[dict[str, Any]],
+    constraints: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    for output in tool_outputs:
+        body = output.get("result") if isinstance(output.get("result"), dict) else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, list):
+            rows.extend(row for row in data if isinstance(row, dict))
+    safety = " ".join(str(item) for item in constraints.get("safety_constraints", []) or []).lower()
+    kept: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    priority = direct_v2_approval_compatibility_source_priority_constraint(constraints)
+    date_constraint = str(constraints.get("date") or "").strip().lower()
+    date_scope_rows = [
+        row
+        for row in rows
+        if not priority or str(row.get("priority") or "").strip().lower() == priority
+    ]
+    production_week_window = _direct_v2_approval_compatibility_production_week_window(
+        date_scope_rows,
+        date_constraint,
+    )
+    for row in rows:
+        if priority and str(row.get("priority") or "").strip().lower() != priority:
+            excluded.append({**row, "exclusion_reason": "priority_constraint"})
+            continue
+        if date_constraint and not _direct_v2_approval_compatibility_row_matches_date_constraint(
+            row,
+            date_constraint,
+            production_week_window=production_week_window,
+        ):
+            excluded.append({**row, "exclusion_reason": "date_constraint"})
+            continue
+        kept.append(row)
+    rows = kept
+    if "blocked" in safety:
+        kept = []
+        for row in rows:
+            if str(row.get("status") or "").lower() == "blocked":
+                excluded.append({**row, "exclusion_reason": "blocked_safety_constraint"})
+            else:
+                kept.append(row)
+        rows = kept
+    return rows, excluded
+
+
+def direct_v2_approval_compatibility_source_priority_constraint(constraints: dict[str, Any]) -> str:
+    raw = constraints.get("priority")
+    if isinstance(raw, (list, tuple, set)):
+        values = [str(item).strip().lower() for item in raw if str(item).strip()]
+    else:
+        values = [str(raw).strip().lower()] if raw not in (None, "") else []
+    target = str(
+        constraints.get("new_priority")
+        or constraints.get("priority_to")
+        or constraints.get("target_priority")
+        or ""
+    ).strip().lower()
+    candidates = [value for value in values if value and value != target]
+    return candidates[0] if candidates else (values[0] if values else "")
+
+
+def _direct_v2_approval_compatibility_row_matches_date_constraint(
+    row: dict[str, Any],
+    date_constraint: str,
+    *,
+    production_week_window: tuple[date, date] | None = None,
+) -> bool:
+    if date_constraint != "this week":
+        return True
+    due_date = _direct_v2_approval_compatibility_row_due_date(row)
+    if due_date is None:
+        return False
+    if production_week_window is None:
+        production_week_window = _direct_v2_approval_compatibility_current_week_window()
+    week_start, week_end = production_week_window
+    return week_start <= due_date < week_end
+
+
+def _direct_v2_approval_compatibility_production_week_window(
+    rows: list[dict[str, Any]],
+    date_constraint: str,
+) -> tuple[date, date] | None:
+    if date_constraint != "this week":
+        return None
+    current_window = _direct_v2_approval_compatibility_current_week_window()
+    due_dates = [
+        due_date
+        for row in rows
+        if (due_date := _direct_v2_approval_compatibility_row_due_date(row)) is not None
+    ]
+    if not due_dates:
+        return current_window
+    current_start, current_end = current_window
+    if any(current_start <= due_date < current_end for due_date in due_dates):
+        return current_window
+    today = datetime.now(timezone.utc).date()
+    future_due_dates = sorted(due_date for due_date in due_dates if due_date >= today)
+    if not future_due_dates:
+        return current_window
+    production_start = future_due_dates[0]
+    return production_start, production_start + timedelta(days=7)
+
+
+def _direct_v2_approval_compatibility_current_week_window() -> tuple[date, date]:
+    today = datetime.now(timezone.utc).date()
+    week_start = today - timedelta(days=today.weekday())
+    return week_start, week_start + timedelta(days=7)
+
+
+def _direct_v2_approval_compatibility_row_due_date(row: dict[str, Any]) -> date | None:
+    raw = row.get("deadline") or row.get("due_date") or row.get("due")
+    return _direct_v2_approval_compatibility_parse_date(raw)
+
+
+def _direct_v2_approval_compatibility_parse_date(raw: Any) -> date | None:
+    if raw in (None, ""):
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except Exception:
+        pass
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
 
 
 class ApprovalResumeService:
@@ -554,19 +688,7 @@ class ApprovalResumeService:
         return rows
 
     def _direct_v2_source_priority_constraint(self, constraints: dict[str, Any]) -> str:
-        raw = constraints.get("priority")
-        if isinstance(raw, (list, tuple, set)):
-            values = [str(item).strip().lower() for item in raw if str(item).strip()]
-        else:
-            values = [str(raw).strip().lower()] if raw not in (None, "") else []
-        target = str(
-            constraints.get("new_priority")
-            or constraints.get("priority_to")
-            or constraints.get("target_priority")
-            or ""
-        ).strip().lower()
-        candidates = [value for value in values if value and value != target]
-        return candidates[0] if candidates else (values[0] if values else "")
+        return direct_v2_approval_compatibility_source_priority_constraint(constraints)
 
     def _next_direct_v2_approval_payload(
         self,

@@ -28,6 +28,8 @@ from .v2_satisfaction import (
 )
 from .v2_tool_retriever import V2CapabilityToolRetriever
 
+DIRECT_V2_SOURCE_HINT_PREFIX = "deterministic_source_hint:"
+
 
 def attach_direct_v2_trace_to_intent_contract(
     intent_contract: Mapping[str, Any] | None,
@@ -41,6 +43,23 @@ def attach_direct_v2_trace_to_intent_contract(
     contract["execution_trace"] = v2_state.execution_trace.model_dump(mode="json")
     contract["v2_state"] = v2_state.model_dump(mode="json")
     return contract
+
+
+def resolve_direct_v2_rag_compatibility_query(
+    *,
+    args: Mapping[str, Any],
+    requirement: Any | None,
+    intent: str,
+) -> str:
+    candidate = str(args.get("query") or "").strip()
+    if candidate and not is_direct_v2_source_hint_query(candidate):
+        return candidate
+    return str(getattr(requirement, "goal", None) or intent)
+
+
+def is_direct_v2_source_hint_query(query: Any) -> bool:
+    text = str(query or "").strip().lower()
+    return text.startswith(DIRECT_V2_SOURCE_HINT_PREFIX)
 
 
 @dataclass(frozen=True)

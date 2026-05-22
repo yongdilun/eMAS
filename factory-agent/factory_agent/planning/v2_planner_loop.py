@@ -24,12 +24,13 @@ class PlannerOwnedV2LoopRun:
 
 
 class PlannerOwnedV2Loop:
-    """Phase 5 planner-owned loop scaffold behind explicit engine modes.
+    """Public compatibility wrapper for historical PlannerOwnedV2Loop imports.
 
-    The loop declares capability needs from the v2 ledger, retrieves small tool
-    windows through ``V2CapabilityToolRetriever``, and records trace state. It
-    does not commit writes. Direct v2 mode may produce a read-only draft for
-    tests; shadow mode is trace-only.
+    Normal runtime enters the planner-owned graph through PlanCreationService.
+    This wrapper is retained only for out-of-tree callers that still import the
+    old loop class to build direct-v2 compatibility traces and read-only drafts.
+    Removal requires an explicit public-compatibility decision and a guard that
+    no in-repo runtime imports or constructs this class.
     """
 
     def __init__(self, tool_selector: ToolSelector) -> None:

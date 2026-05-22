@@ -12,11 +12,14 @@ from factory_agent.planning.v2_interrupts import (
     apply_user_interrupt_to_v2_state,
     approval_payload_matches_newest_ledger_revision,
 )
-from factory_agent.planning.v2_trace_compatibility import build_direct_v2_compatibility_run
+from factory_agent.planning.v2_trace_compatibility import (
+    build_direct_v2_compatibility_run,
+    resolve_direct_v2_rag_compatibility_query,
+)
 from factory_agent.planning.v2_rag_tool import build_v2_rag_evidence
 from factory_agent.planning.v2_satisfaction import apply_deterministic_evidence_satisfaction, validate_v2_final_state
 from factory_agent.schemas import ToolInfo
-from factory_agent.services.plan_creation_service import PlanCreationService
+from factory_agent.services.approval_resume_service import stage_direct_v2_approval_compatibility_rows
 from factory_agent.testing.tool_faults import clear_tool_faults, configure_tool_faults, maybe_inject_tool_fault
 
 
@@ -571,30 +574,28 @@ async def test_phase9_mixed_api_rag_uses_rag_only_for_document_requirement_and_r
     assert sources == []
 
 
-def test_phase9_historical_direct_v2_rag_execution_query_uses_requirement_goal_for_source_hint():
-    service = PlanCreationService.__new__(PlanCreationService)
+def test_phase9_historical_direct_v2_rag_compatibility_query_uses_requirement_goal_for_source_hint():
     requirement = type(
         "Requirement",
         (),
         {"goal": "Find the approved reenergizing notification guidance."},
     )()
 
-    query = service._direct_v2_rag_execution_query(
+    query = resolve_direct_v2_rag_compatibility_query(
         args={"query": "deterministic_source_hint:document_knowledge"},
         requirement=requirement,
         intent="Show the relevant guidance.",
     )
 
     assert query == "Find the approved reenergizing notification guidance."
-    assert service._direct_v2_rag_execution_query(
+    assert resolve_direct_v2_rag_compatibility_query(
         args={"query": "Use the documented restart procedure."},
         requirement=requirement,
         intent="Show the relevant guidance.",
     ) == "Use the documented restart procedure."
 
 
-def test_phase9_historical_direct_v2_stage_rows_uses_next_production_week_when_calendar_week_has_no_rows():
-    service = PlanCreationService.__new__(PlanCreationService)
+def test_phase9_historical_approval_compatibility_rows_use_next_production_week_when_calendar_week_has_no_rows():
     today = datetime.now(timezone.utc).date()
     rows = [
         {"job_id": "job-low-current", "priority": "low", "deadline": today.isoformat()},
@@ -603,7 +604,7 @@ def test_phase9_historical_direct_v2_stage_rows_uses_next_production_week_when_c
         {"job_id": "job-gamma", "priority": "high", "deadline": (today + timedelta(days=17)).isoformat()},
     ]
 
-    kept, excluded = service._direct_v2_stage_rows(
+    kept, excluded = stage_direct_v2_approval_compatibility_rows(
         tool_outputs=[{"result": {"data": rows}}],
         constraints={"priority": "high", "date": "this week"},
     )
@@ -614,15 +615,14 @@ def test_phase9_historical_direct_v2_stage_rows_uses_next_production_week_when_c
     assert excluded[1]["exclusion_reason"] == "date_constraint"
 
 
-def test_phase9_historical_direct_v2_stage_rows_keeps_literal_calendar_week_when_matching_rows_exist():
-    service = PlanCreationService.__new__(PlanCreationService)
+def test_phase9_historical_approval_compatibility_rows_keep_literal_calendar_week_when_matching_rows_exist():
     today = datetime.now(timezone.utc).date()
     rows = [
         {"job_id": "job-current", "priority": "high", "deadline": today.isoformat()},
         {"job_id": "job-future", "priority": "high", "deadline": (today + timedelta(days=9)).isoformat()},
     ]
 
-    kept, excluded = service._direct_v2_stage_rows(
+    kept, excluded = stage_direct_v2_approval_compatibility_rows(
         tool_outputs=[{"result": {"data": rows}}],
         constraints={"priority": "high", "date": "this week"},
     )
