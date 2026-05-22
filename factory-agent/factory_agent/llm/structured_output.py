@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.planner_graph_helpers import _normalize_plan_dict
 from ..graph.state import AgentPlanOutput
+from .plan_parsing import _normalize_plan_dict
 
 
 def parse_agent_plan_output(parsed: dict[str, Any]) -> AgentPlanOutput:

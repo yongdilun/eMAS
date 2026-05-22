@@ -790,7 +790,7 @@ Candidate disposition:
 | `graph/builder.py` / `compile_planner_graph()` | Still blocked | Phase 15 guard keeps `compile_planner_graph()` out of graph-owned runtime sources | Still called by `LangGraphPlanner.generate()` and `LangGraphPlanner.resume_after_approval()` |
 | `graph/state.py` plus `working_intents` / `intent_cursor` / `intent_completed` | Still blocked | Phase 15 guard proves these do not appear in `PlannerOwnedGraphRuntimeAdapter` or `PlannerOwnedAgentGraph` | Old `LangGraphPlanner` state-machine tests and service owners still use the state scaffold |
 | `graph/nodes/intent_split.py`, `graph/nodes/planner_loop.py`, `graph/nodes/validate.py` | Still blocked | Existing quarantine guard keeps them explicitly historical | Reachable through `compile_planner_graph()` while `LangGraphPlanner` remains reachable |
-| `graph/planner_graph_helpers.py` | Split-needed before deletion | Active helper import found outside the old graph scaffold | `llm/structured_output.py parse helper dependency` on `_normalize_plan_dict()` must be moved to a better parsing/locality owner before helper deletion |
+| `graph/planner_graph_helpers.py` | Still blocked, parser split complete | Active helper imports remain inside the old graph scaffold only | structured-output parsing owner resolved; remaining helper users are graph scaffold/runtime quarantine paths |
 | `PlanCreationService legacy planner fallback paths` | Still blocked | Normal v2 create-plan runtime uses `_create_planner_owned_graph_plan()` first | Seeded/draft/discovery fallback branches still call `self._planner.generate_plan()` |
 | `ExecutionService.run_langgraph_session()` | Still blocked | Normal create-plan runtime is graph-owned, but this execution path remains present | Calls `self._planner.generate_plan()` and persists `backend_used="langgraph"` results |
 | `ApprovalResumeService graph approval fallback` | Still blocked | Planner-owned graph approval resume is attempted first | Fallback still calls `self._planner.resume_after_approval()` after direct-v2 compatibility resume declines |
@@ -822,11 +822,64 @@ Remaining blockers:
 - `ExecutionService.run_langgraph_session()` still calls the injected planner adapter and persists langgraph execution results.
 - `ApprovalResumeService graph approval fallback` still calls `resume_after_approval()` after planner-owned graph and direct-v2 compatibility resume paths decline.
 - `PlanCreationService legacy planner fallback paths` still call `self._planner.generate_plan()` in seeded/draft/discovery fallback flows.
-- `llm/structured_output.py parse helper dependency` still imports `_normalize_plan_dict()` from `graph/planner_graph_helpers.py`.
+- `llm/structured_output.py parse helper dependency` is resolved: `_normalize_plan_dict()` now lives in `llm/plan_parsing.py`, and `llm/structured_output.py` no longer imports `graph/planner_graph_helpers.py`.
 
 Next recommended phase:
 
-- Split active structured-output parsing helpers out of `graph/planner_graph_helpers.py`, then migrate or retire `PlannerService` / `ExecutionService` / approval fallback owners before attempting old graph scaffold deletion.
+- Migrate or retire `PlannerService` / `ExecutionService` / approval fallback owners before attempting old graph scaffold deletion.
+
+## Phase 3.1 Structured Output Plan Parsing Isolation
+
+Status: Complete in this changeset. Structured-output plan parsing now has a concrete LLM-adjacent owner in `factory-agent/factory_agent/llm/plan_parsing.py`.
+
+Files changed:
+
+- `factory-agent/factory_agent/llm/plan_parsing.py`
+- `factory-agent/factory_agent/llm/structured_output.py`
+- `factory-agent/factory_agent/graph/nodes/reason.py`
+- `factory-agent/factory_agent/graph/planner_graph_helpers.py`
+- `factory-agent/tests/test_planner.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition changes:
+
+| Candidate | Current disposition | Evidence | Next owner/blocker |
+| --- | --- | --- | --- |
+| `llm/structured_output.py parse helper dependency` | Resolved | `structured_output.py` imports `_normalize_plan_dict()` from `llm/plan_parsing.py`; the old graph helper no longer defines it | None |
+| `graph/planner_graph_helpers.py` | Still blocked, parser split complete | Remaining imports are old graph scaffold/helper users such as graph nodes and approval summary | Retire or migrate remaining old graph scaffold owners before deletion |
+| `PlannerService.generate_plan()` / `resume_after_approval()` | Still blocked | Lazy old graph adapter remains in service boundary | Planner service owner |
+| `ExecutionService.run_langgraph_session()` | Still blocked | Execution service still calls injected planner adapter | Execution service owner |
+| `ApprovalResumeService graph approval fallback` | Still blocked | Fallback still calls `resume_after_approval()` after planner-owned graph/direct compatibility paths decline | Approval resume owner |
+| `PlanCreationService legacy planner fallback paths` | Still blocked | Seeded/draft/discovery fallback branches still call `self._planner.generate_plan()` | Plan creation owner |
+
+Behavior notes:
+
+- `_normalize_plan_dict()` was moved without logic changes.
+- `factory_agent.llm.structured_output` no longer imports from `factory_agent.graph.planner_graph_helpers`.
+- The graph reason node now imports the same parsing owner directly for schema-failure logging and salvage.
+- No old graph scaffold was deleted.
+- No PlannerService, ExecutionService, approval fallback, frontend fixture, release harness, Qwen/proposer policy, graph runtime, seeded-ID, source-ID, or exact-prompt behavior was changed.
+
+Verification:
+
+- `rg -n "_normalize_plan_dict|planner_graph_helpers" factory-agent/factory_agent factory-agent/tests docs/qa` -> passed; live `_normalize_plan_dict()` owner is `factory_agent/llm/plan_parsing.py`, `structured_output.py` imports that owner, and remaining `planner_graph_helpers` hits are old graph helper users or historical docs.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `16 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_planner.py -k normalize_plan_dict -q` -> `5 passed`, `0 failed`, `37 deselected`, `0 skipped`, `0 xfailed`, `1 warning`.
+- `python -m pytest -q` -> `1030 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+- Frontend E2E was not run because this phase changed only structured-output parsing locality and did not change response, trace, release-visible, graph runtime, or frontend behavior.
+
+Remaining blockers:
+
+- `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` still own the lazy old graph adapter.
+- `ExecutionService.run_langgraph_session()` still calls the injected planner adapter and persists langgraph execution results.
+- `ApprovalResumeService graph approval fallback` still calls `resume_after_approval()` after planner-owned graph and direct-v2 compatibility resume paths decline.
+- `PlanCreationService legacy planner fallback paths` still call `self._planner.generate_plan()` in seeded/draft/discovery fallback flows.
+
+Next recommended phase:
+
+- Pick one active old graph owner at a time, starting with the narrowest service fallback that can be retired or rehomed with preserved trace/session compatibility.
 
 ## Current Handoff Prompt
 
@@ -861,7 +914,7 @@ Scope:
 - Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
 - `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.
 - Do not delete old graph scaffold unless the active `PlannerService`, `ExecutionService`, `ApprovalResumeService`, `PlanCreationService`, and `llm/structured_output.py` blockers are explicitly resolved.
-- Prefer the next narrow move: split `_normalize_plan_dict()` out of `graph/planner_graph_helpers.py` into a structured-output parsing owner, with no behavior change.
+- Prefer the next narrow move: retire or rehome one remaining old graph service owner with no behavior change, now that structured-output parsing has its own owner.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 

@@ -38,6 +38,7 @@ GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
 OLD_GRAPH_HELPERS_SOURCE = RUNTIME_ROOT / "graph" / "planner_graph_helpers.py"
 STRUCTURED_OUTPUT_SOURCE = RUNTIME_ROOT / "llm" / "structured_output.py"
+PLAN_PARSING_SOURCE = RUNTIME_ROOT / "llm" / "plan_parsing.py"
 V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
 V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
 CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
@@ -275,13 +276,16 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     structured_output_source = STRUCTURED_OUTPUT_SOURCE.read_text(encoding="utf-8")
     old_graph_helpers_source = OLD_GRAPH_HELPERS_SOURCE.read_text(encoding="utf-8")
+    plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
 
     assert "from ..graph.planner_graph import LangGraphPlanner as planner_cls" in planner_service_source
     assert "await self._planner.generate_plan(" in execution_service_source
     assert "await self._planner.resume_after_approval(" in approval_resume_source
     assert "await self._planner.generate_plan(" in plan_creation_source
-    assert "from ..graph.planner_graph_helpers import _normalize_plan_dict" in structured_output_source
-    assert "def _normalize_plan_dict(" in old_graph_helpers_source
+    assert "factory_agent.graph.planner_graph_helpers" not in structured_output_source
+    assert "from .plan_parsing import _normalize_plan_dict" in structured_output_source
+    assert "def _normalize_plan_dict(" not in old_graph_helpers_source
+    assert "def _normalize_plan_dict(" in plan_parsing_source
 
     for owner in (
         "PlannerService.generate_plan()",
@@ -289,9 +293,10 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
         "ExecutionService.run_langgraph_session()",
         "ApprovalResumeService graph approval fallback",
         "PlanCreationService legacy planner fallback paths",
-        "llm/structured_output.py parse helper dependency",
     ):
         assert owner in tracker
+
+    assert "structured-output parsing owner resolved" in tracker
 
 
 def test_phase15_legacy_compatibility_tests_and_xfails_are_retired():

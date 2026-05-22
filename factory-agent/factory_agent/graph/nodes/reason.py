@@ -4,6 +4,7 @@ from typing import Any
 
 from ...config import Settings
 from ...llm.models import build_planner_chat_model
+from ...llm.plan_parsing import _normalize_plan_dict
 from ...llm.structured_output import parse_agent_plan_output
 from ...observability.telemetry import log_event, log_llm_prompt
 from ..errors import LangGraphPlannerError
@@ -12,7 +13,6 @@ from ..planner_graph_helpers import (
     _deterministic_plan_repair,
     _extract_json_obj,
     _message_content_text,
-    _normalize_plan_dict,
 )
 from ..state import AgentPlanOutput, AgentPlanStep, AgentState, user_query_text
 

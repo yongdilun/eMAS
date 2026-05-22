@@ -12,8 +12,8 @@ from factory_agent.graph.nodes.validate import _dedupe_identical_readonly_steps,
 from factory_agent.graph.planner_graph import _approval_payload_from_state, _not_found_clarification_from_state
 from factory_agent.graph.planner_graph_helpers import (
     _deterministic_plan_repair,
-    _normalize_plan_dict,
 )
+from factory_agent.llm.plan_parsing import _normalize_plan_dict
 from factory_agent.graph.state import AgentPlanOutput, AgentPlanStep
 from factory_agent.graph.errors import LangGraphPlannerError
 from factory_agent.planner import (
