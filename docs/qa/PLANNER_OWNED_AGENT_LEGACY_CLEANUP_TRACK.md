@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 4.2 backend direct-v2 compatibility isolation complete. Backend `v2_planner_loop` generated-by / created-by compatibility is now owned by `historical_direct_v2_compatibility.py`; service and graph call sites use named helper functions instead of service-local literals. Persisted old plan/session projection and historical direct-v2 approval payload resume behavior are preserved. Phase 4.1 classified remaining legacy/shadow/direct-v2 trace values as active compatibility schema, persisted historical parse compatibility, frontend fixture/release vocabulary, static guard vocabulary, historical docs only, or later deletion/rewrite candidates with owners. No schema/control values, frontend fixtures, release harness behavior, Qwen/proposer policy, planner-owned graph behavior, old graph authority, or direct-v2 execution authority changed.
+Status: Phase 5 legacy RAG route compatibility isolation complete pending final commit. Backend historical `legacy_rag_route` generated-by/source-type compatibility is now owned by `historical_legacy_rag_route_compatibility.py`; contracts and final validation use named helper functions instead of direct equality checks. Persisted historical RAG route trace/evidence parsing is preserved, and old RAG route evidence remains rejected as current v2 satisfaction proof. Phase 4.2 backend direct-v2 compatibility remains owned by `historical_direct_v2_compatibility.py`. No schema/control values, frontend fixtures, release harness behavior, Qwen/proposer policy, planner-owned graph behavior, response-document behavior, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
 
 Plan:
 
@@ -23,7 +23,7 @@ Baseline release-proof commit:
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Phase 3.8 complete; old scaffold deleted and active seams retained | pending final commit hash | Full backend, frontend release |
 | 4 | Engine and trace compatibility cleanup | Phase 4.2 complete; backend direct-v2 compatibility literals isolated behind named helper, schema/control values retained | pending final commit hash | Full backend, response-document, seeded, release |
-| 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
+| 5 | Legacy RAG shortcut compatibility cleanup | Complete pending final commit |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Not started |  | Full backend plus all frontend E2E release gates |
 | 8 | Static cleanup enforcement | Not started |  | Static guard and full backend |
@@ -1531,18 +1531,87 @@ Commit:
 
 - pending.
 
+## Phase 5: Legacy RAG Route Compatibility Cleanup
+
+Status: complete pending final commit.
+
+Phase result:
+
+- Historical legacy RAG route generated-by and evidence-source compatibility now has one explicit owner: `factory-agent/factory_agent/planning/historical_legacy_rag_route_compatibility.py`.
+- `v2_contracts.py` still accepts persisted historical `generated_by="legacy_rag_route"` traces and `source_type="legacy_rag_route"` evidence, but direct equality checks moved behind named helper functions.
+- `v2_satisfaction.py` still rejects old legacy RAG route evidence as current v2 satisfaction proof through the named helper.
+- Graph-owned RAG behavior remains `rag_search_documents` with `source_type="rag_tool"` evidence or `system_guard` insufficient-context evidence.
+- Response-document RAG behavior was not changed.
+- No frontend fixtures, release harness behavior, Qwen/proposer policy, exact-prompt branches, seeded-ID branches, source-ID branches, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+- `factory-agent/factory_agent/planning/historical_legacy_rag_route_compatibility.py`
+- `factory-agent/factory_agent/planning/v2_contracts.py`
+- `factory-agent/factory_agent/planning/v2_satisfaction.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+
+Candidate disposition:
+
+| Candidate | Phase 5 disposition | Owner | Evidence | Removal gate |
+| --- | --- | --- | --- | --- |
+| `generated_by == "legacy_rag_route"` trace parsing | Isolated behind `is_historical_legacy_rag_route_generated_by()` | `planning/historical_legacy_rag_route_compatibility.py` plus `planning/v2_contracts.py` | Phase 15 helper-ownership guard and historical trace parse test | Persisted historical RAG route trace migration or explicit unsupported-data decision |
+| `legacy_rag_shortcut` detector requirement | Isolated behind `historical_legacy_rag_shortcut_detector_used()` for historical trace validation | `planning/historical_legacy_rag_route_compatibility.py` plus `planning/v2_contracts.py` | Contract validation still requires old legacy RAG traces to mark the detector used | Persisted historical trace migration or schema retirement decision |
+| `source_type == "legacy_rag_route"` evidence parsing | Isolated behind `is_historical_legacy_rag_route_source_type()` | `planning/historical_legacy_rag_route_compatibility.py` plus `planning/v2_contracts.py` | Contract validation still rejects legacy RAG evidence represented as a v2 tool call and requires route metadata | Persisted evidence migration or compatibility-parser extraction |
+| `legacy_rag_route_cannot_satisfy_v2` final-validation issue | Routed through `historical_legacy_rag_route_cannot_satisfy_issue()` and `is_historical_legacy_rag_route_evidence()` | `planning/historical_legacy_rag_route_compatibility.py` plus `planning/v2_satisfaction.py` | Historical parse test still proves old RAG route evidence cannot satisfy current v2 requirements | Remove only after old evidence type is migrated/retired and equivalent graph RAG rejection coverage remains |
+| Graph/RAG runtime evidence | No change; remains graph-owned `rag_tool` or insufficient-context `system_guard` evidence | `planning/v2_graph_adapters.py`, `graph/v2_agent_graph.py`, `planning/v2_rag_tool.py` | Phase 7 graph RAG tests prove current RAG does not emit `legacy_rag_route` | Not a deletion candidate |
+
+Tracker update:
+
+- Phase 5 table row updated from `Not started` to `Complete pending final commit`.
+- Top-level status now records `historical_legacy_rag_route_compatibility.py` ownership.
+- Remaining `legacy_rag_route` references are classified as persisted historical parse compatibility, static guard vocabulary, historical docs only, or frontend/release vocabulary.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `22 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase7_rag.py -q` -> `5 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_rag_*.py -q` -> command did not run tests on PowerShell because the glob was passed literally: `ERROR: file or directory not found: tests/test_rag_*.py`.
+- `python -m pytest (Get-ChildItem -Path tests -Filter 'test_rag_*.py').FullName -q` -> `58 passed`, `0 failed`, `1 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase2_contracts.py tests/test_planner_owned_loop_phase6_satisfaction.py -q` -> `17 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest -q` -> `935 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1331 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Guardrail outcome:
+
+- No persisted historical RAG route trace/evidence parsing removed.
+- No `legacy_rag_route` or `legacy_rag_shortcut` schema/control values removed.
+- No active graph RAG behavior changed.
+- No response-document behavior changed.
+- No frontend fixtures or release harness behavior changed.
+- No Qwen/proposer policy changed.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- No legacy RAG shortcut authority reintroduced.
+
+Remaining cleanup candidates:
+
+- Frontend hard-query generated-by and legacy-detector vocabulary remains a Phase 6 release-harness rewrite candidate.
+- Migration-era direct-v2 compatibility tests remain a Phase 7 consolidation candidate.
+- The retained historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or an explicit retirement decision.
+
+Commit:
+
+- pending.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 4.2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 5 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 4.2 isolated backend historical direct-v2 `v2_planner_loop` generated-by / created-by compatibility behind `planning/historical_direct_v2_compatibility.py`. Persisted old plan/session projection and historical direct-v2 approval payload resume behavior stayed compatible. Normal runtime remains `PlannerOwnedAgentGraph`.
+Continue cleanup without changing product behavior. Phase 4.2 isolated backend historical direct-v2 `v2_planner_loop` generated-by / created-by compatibility behind `planning/historical_direct_v2_compatibility.py`. Phase 5 isolated backend historical legacy RAG route `legacy_rag_route` generated-by/source-type compatibility behind `planning/historical_legacy_rag_route_compatibility.py`. Persisted old plan/session projection, historical direct-v2 approval payload resume behavior, and historical legacy RAG route trace/evidence parsing stayed compatible. Normal runtime remains `PlannerOwnedAgentGraph`; graph RAG remains `rag_search_documents` with `rag_tool` evidence or insufficient-context `system_guard` evidence.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
 - factory-agent/factory_agent/planning/historical_direct_v2_compatibility.py
+- factory-agent/factory_agent/planning/historical_legacy_rag_route_compatibility.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
@@ -1559,9 +1628,9 @@ Read first:
 - factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
 
 Scope:
-- Recommended next narrow move: Phase 5 legacy RAG shortcut compatibility cleanup. Audit `legacy_rag_route`, `legacy_rag_shortcut`, and related evidence/source schema before deleting or moving anything.
-- Preserve persisted historical RAG route trace/evidence parsing unless a compatibility-parser replacement or explicit persisted-data migration is included.
-- Keep frontend hard-query release fixtures unchanged unless the phase is explicitly expanded with frontend E2E gates.
+- Recommended next narrow move: Phase 6 frontend legacy expectation cleanup. Audit frontend hard-query `generatedBy`, `generated_by`, `legacyIntentCompletionLoopUsed`, `legacyRagShortcutUsed`, and related release-oracle vocabulary before deleting or rewriting anything.
+- Preserve backend persisted compatibility owners for direct-v2 and legacy RAG route parsing unless a compatibility-parser replacement or explicit persisted-data migration is included.
+- Keep release-harness behavior unchanged unless the phase includes the required frontend E2E gates.
 - Keep `PlannerOwnedV2Loop`, `PlannerOwnedV2LoopRun`, and `planning/v2_planner_loop.py` deleted.
 - Keep `_create_direct_v2_plan()`, `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` absent.
 - Preserve persisted-data compatibility for old traces/sessions.
@@ -1569,6 +1638,7 @@ Scope:
 Guardrails:
 - Normal runtime must remain PlannerOwnedAgentGraph.
 - No legacy/direct-v2/old graph authority may be restored.
+- No legacy RAG shortcut authority may be restored.
 - No exact-prompt, seeded-ID, source-ID, or scenario-specific runtime branches.
 - No new ToolSelector, retriever, RAG, approval, interrupt, response-document, checkpoint, or planner-runtime stack.
 - Offline proposer mode must not count as release proof.
@@ -1579,7 +1649,7 @@ Verification:
 - git status --short --branch
 - cd factory-agent
 - python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
-- Run focused legacy RAG shortcut / satisfaction / source rendering tests if touched.
+- Run focused frontend/release or response-document gates if fixtures/oracles change.
 - python -m pytest -q
 - cd ..
 - git diff --check

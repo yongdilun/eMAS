@@ -9,6 +9,11 @@ from factory_agent.config import (
     normalize_factory_agent_engine,
     resolve_factory_agent_engine_for_runtime,
 )
+from factory_agent.planning.historical_legacy_rag_route_compatibility import (
+    historical_legacy_rag_route_cannot_satisfy_issue,
+    historical_legacy_rag_route_generated_by,
+    historical_legacy_rag_route_source_type,
+)
 from factory_agent.planning.v2_contracts import (
     EvidenceLedgerEntry,
     ExecutionTrace,
@@ -45,6 +50,9 @@ PLAN_PARSING_SOURCE = RUNTIME_ROOT / "llm" / "plan_parsing.py"
 SCHEMAS_SOURCE = RUNTIME_ROOT / "schemas.py"
 V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
 HISTORICAL_DIRECT_V2_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "historical_direct_v2_compatibility.py"
+HISTORICAL_LEGACY_RAG_ROUTE_COMPATIBILITY_SOURCE = (
+    RUNTIME_ROOT / "planning" / "historical_legacy_rag_route_compatibility.py"
+)
 V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
 CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
 
@@ -104,6 +112,7 @@ PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
     Path("planning/v2_interrupts.py"),
     Path("planning/v2_trace_compatibility.py"),
     Path("planning/historical_direct_v2_compatibility.py"),
+    Path("planning/historical_legacy_rag_route_compatibility.py"),
     Path("schemas.py"),
 }
 
@@ -580,6 +589,31 @@ def test_phase4_2_historical_direct_v2_literals_are_owned_by_compatibility_helpe
     assert "is_historical_direct_v2_created_by" in session_detection_source
 
 
+def test_phase5_historical_legacy_rag_route_literals_are_owned_by_compatibility_helper():
+    compatibility_source = HISTORICAL_LEGACY_RAG_ROUTE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
+    contracts_source = (RUNTIME_ROOT / "planning" / "v2_contracts.py").read_text(encoding="utf-8")
+    satisfaction_source = (RUNTIME_ROOT / "planning" / "v2_satisfaction.py").read_text(encoding="utf-8")
+    tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
+
+    assert (
+        'HISTORICAL_LEGACY_RAG_ROUTE_GENERATED_BY: HistoricalLegacyRagRouteGeneratedBy = "legacy_rag_route"'
+        in compatibility_source
+    )
+    assert (
+        'HISTORICAL_LEGACY_RAG_ROUTE_SOURCE_TYPE: HistoricalLegacyRagRouteSourceType = "legacy_rag_route"'
+        in compatibility_source
+    )
+    assert "def is_historical_legacy_rag_route_generated_by" in compatibility_source
+    assert "def is_historical_legacy_rag_route_source_type" in compatibility_source
+    assert "def is_historical_legacy_rag_route_evidence" in compatibility_source
+    assert "is_historical_legacy_rag_route_generated_by" in contracts_source
+    assert "is_historical_legacy_rag_route_source_type" in contracts_source
+    assert "is_historical_legacy_rag_route_evidence" in satisfaction_source
+    assert '"legacy_rag_route"' not in satisfaction_source
+    assert "Phase 5: Legacy RAG Route Compatibility Cleanup" in tracker
+    assert "historical_legacy_rag_route_compatibility.py" in tracker
+
+
 def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
     forbidden_import = "from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop"
     forbidden_constructor = "PlannerOwnedV2Loop("
@@ -702,7 +736,7 @@ def test_phase11_offline_proposer_diagnostics_do_not_satisfy_release_proof():
 def test_phase15_historical_trace_values_parse_but_cannot_satisfy_v2_requirements():
     trace = ExecutionTrace(
         engine_version="legacy",
-        generated_by="legacy_rag_route",
+        generated_by=historical_legacy_rag_route_generated_by(),
         detectors={
             "legacy_rag_shortcut": LegacyRagShortcutTrace(
                 used=True,
@@ -735,7 +769,7 @@ def test_phase15_historical_trace_values_parse_but_cannot_satisfy_v2_requirement
         EvidenceLedgerEntry(
             id="ev-historical-rag",
             requirement_id="req-document",
-            source_type="legacy_rag_route",
+            source_type=historical_legacy_rag_route_source_type(),
             source_of_truth="document_knowledge",
             legacy_rag_route=LegacyRagRouteMetadata(route="rag.procedure"),
         )
@@ -744,4 +778,4 @@ def test_phase15_historical_trace_values_parse_but_cannot_satisfy_v2_requirement
     result = validate_v2_final_state(state)
 
     assert result.status == "failed"
-    assert any(issue.issue == "legacy_rag_route_cannot_satisfy_v2" for issue in result.issues)
+    assert any(issue.issue == historical_legacy_rag_route_cannot_satisfy_issue() for issue in result.issues)

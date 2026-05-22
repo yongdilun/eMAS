@@ -4,6 +4,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .historical_legacy_rag_route_compatibility import (
+    historical_legacy_rag_shortcut_detector_used,
+    is_historical_legacy_rag_route_generated_by,
+    is_historical_legacy_rag_route_source_type,
+)
+
 
 EngineVersion = Literal["legacy", "v2_shadow", "v2"]
 ExecutionTraceGeneratedBy = Literal[
@@ -173,7 +179,9 @@ class ExecutionTrace(V2ContractModel):
 
     @model_validator(mode="after")
     def _legacy_rag_trace_must_name_shortcut(self) -> "ExecutionTrace":
-        if self.generated_by == "legacy_rag_route" and not self.detectors.legacy_rag_shortcut.used:
+        if is_historical_legacy_rag_route_generated_by(
+            self.generated_by
+        ) and not historical_legacy_rag_shortcut_detector_used(self.detectors):
             raise ValueError("legacy RAG route traces must set legacy_rag_shortcut.used")
         return self
 
@@ -459,9 +467,9 @@ class EvidenceLedgerEntry(V2ContractModel):
             raise ValueError("tool evidence must include tool_name")
         if self.source_type == "rag_tool" and not self.citations:
             raise ValueError("RAG tool evidence must include typed citations")
-        if self.source_type == "legacy_rag_route" and self.tool_name:
+        if is_historical_legacy_rag_route_source_type(self.source_type) and self.tool_name:
             raise ValueError("legacy RAG route evidence must not be represented as a v2 tool call")
-        if self.source_type == "legacy_rag_route" and self.legacy_rag_route is None:
+        if is_historical_legacy_rag_route_source_type(self.source_type) and self.legacy_rag_route is None:
             raise ValueError("legacy RAG route evidence must include legacy route metadata")
         return self
 

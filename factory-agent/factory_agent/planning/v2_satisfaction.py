@@ -7,6 +7,10 @@ from typing import Any
 
 from factory_agent.rag.source_metadata import is_insufficient_context_answer
 
+from .historical_legacy_rag_route_compatibility import (
+    historical_legacy_rag_route_cannot_satisfy_issue,
+    is_historical_legacy_rag_route_evidence,
+)
 from .v2_contracts import (
     CapabilityNeed,
     EvidenceLedgerEntry,
@@ -1308,10 +1312,10 @@ def _validate_typed_evidence(
                 actual=evidence.confidence,
             )
         )
-    if requirement.status == "satisfied" and evidence.source_type == "legacy_rag_route":
+    if requirement.status == "satisfied" and is_historical_legacy_rag_route_evidence(evidence):
         issues.append(
             FinalValidationIssue(
-                issue="legacy_rag_route_cannot_satisfy_v2",
+                issue=historical_legacy_rag_route_cannot_satisfy_issue(),
                 requirement_id=requirement.id,
                 evidence_ref=evidence.id,
             )
