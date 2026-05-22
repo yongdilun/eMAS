@@ -38,8 +38,6 @@ APPROVAL_RESUME_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "approval_resume_se
 APPROVALS_ROUTER_SOURCE = RUNTIME_ROOT / "api" / "routers" / "approvals.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
-OLD_GRAPH_HELPERS_SOURCE = RUNTIME_ROOT / "graph" / "planner_graph_helpers.py"
-GRAPH_STATE_SOURCE = RUNTIME_ROOT / "graph" / "state.py"
 APPROVAL_SUMMARY_SOURCE = RUNTIME_ROOT / "graph" / "approval_summary.py"
 STRUCTURED_OUTPUT_SOURCE = RUNTIME_ROOT / "llm" / "structured_output.py"
 PLAN_PARSING_SOURCE = RUNTIME_ROOT / "llm" / "plan_parsing.py"
@@ -106,25 +104,28 @@ PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
     Path("schemas.py"),
 }
 
-HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS = {
+HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS: set[Path] = set()
+
+DELETED_OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS = {
+    Path("graph/builder.py"),
+    Path("graph/errors.py"),
     Path("graph/planner_graph.py"),
+    Path("graph/planner_graph_helpers.py"),
     Path("graph/state.py"),
+    Path("graph/nodes/__init__.py"),
     Path("graph/nodes/intent_split.py"),
     Path("graph/nodes/planner_loop.py"),
-    Path("graph/nodes/validate.py"),
-}
-
-OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS = HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS | {
-    Path("graph/builder.py"),
-    Path("graph/planner_graph_helpers.py"),
-    Path("graph/nodes/__init__.py"),
     Path("graph/nodes/prepare.py"),
     Path("graph/nodes/reason.py"),
     Path("graph/nodes/tool_pipeline.py"),
+    Path("graph/nodes/validate.py"),
 }
+
+OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS = DELETED_OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS
 
 OLD_GRAPH_SCAFFOLD_IMPORT_MODULES = {
     "factory_agent.graph.builder",
+    "factory_agent.graph.errors",
     "factory_agent.graph.planner_graph",
     "factory_agent.graph.planner_graph_helpers",
     "factory_agent.graph.state",
@@ -299,14 +300,14 @@ def test_phase15_historical_terms_are_parse_only_or_quarantined():
     assert hits == []
 
 
-def test_phase11_historical_graph_authority_modules_are_explicitly_quarantined():
-    missing = [
+def test_phase11_historical_graph_authority_modules_are_deleted():
+    remaining = [
         relative.as_posix()
-        for relative in sorted(HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS)
-        if not (RUNTIME_ROOT / relative).exists()
+        for relative in sorted(DELETED_OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS)
+        if (RUNTIME_ROOT / relative).exists()
     ]
 
-    assert missing == []
+    assert remaining == []
 
 
 def test_phase3_6_active_runtime_does_not_import_old_graph_scaffold_authority():
@@ -351,6 +352,7 @@ def test_phase3_6_old_graph_scaffold_classification_is_tracked():
 
     required_fragments = [
         "Phase 3.6 old graph scaffold classification complete",
+        "Phase 3.8 old graph scaffold deleted",
         "Old Graph Scaffold Classification",
         "Active runtime import proof",
         "`factory-agent/factory_agent/graph/planner_graph.py`",
@@ -378,8 +380,6 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     plan_creation_compatibility_source = PLAN_CREATION_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     structured_output_source = STRUCTURED_OUTPUT_SOURCE.read_text(encoding="utf-8")
-    old_graph_helpers_source = OLD_GRAPH_HELPERS_SOURCE.read_text(encoding="utf-8")
-    graph_state_source = GRAPH_STATE_SOURCE.read_text(encoding="utf-8")
     approval_summary_source = APPROVAL_SUMMARY_SOURCE.read_text(encoding="utf-8")
     plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
     schemas_source = SCHEMAS_SOURCE.read_text(encoding="utf-8")
@@ -399,31 +399,57 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "old graph fallback is retired" in approval_resume_source
     assert "resume_planner_owned_graph_approval(" in approval_resume_source
     assert "_resume_direct_v2_planner_approval(" in approval_resume_source
+    assert "_resume_seeded_planner_compatibility_approval(" in approval_resume_source
     assert "await self._planner.generate_plan(" not in plan_creation_source
     assert "generate_seeded_planner_compatibility_plan(" in plan_creation_source
+    assert "resume_seeded_planner_compatibility_approval(" in plan_creation_source
     assert "await generate_plan(" in plan_creation_compatibility_source
+    assert "await resume_after_approval(" in plan_creation_compatibility_source
+    assert "seed_resume_context(" in plan_creation_compatibility_source
     assert "factory_agent.graph.planner_graph_helpers" not in structured_output_source
     assert "from ..graph.state import AgentPlanOutput" not in structured_output_source
     assert "from ..schemas import AgentPlanOutput" in structured_output_source
-    assert "def _infer_bulk_job_priority_mutation(" not in old_graph_helpers_source
     assert "def _infer_bulk_job_priority_mutation(" in approval_summary_source
     assert "from .planner_graph_helpers import _infer_bulk_job_priority_mutation" not in approval_summary_source
-    assert "class AgentPlanOutput" not in graph_state_source
-    assert "class AgentPlanStep" not in graph_state_source
     assert "class AgentPlanOutput" in schemas_source
     assert "class AgentPlanStep" in schemas_source
     assert "from .plan_parsing import _normalize_plan_dict" in structured_output_source
-    assert "def _normalize_plan_dict(" not in old_graph_helpers_source
     assert "def _normalize_plan_dict(" in plan_parsing_source
+    assert all(not (RUNTIME_ROOT / relative).exists() for relative in DELETED_OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS)
 
     assert "PlannerService old graph adapter boundary retired" in tracker
     assert "Phase 3.7 compatibility seams split" in tracker
+    assert "Phase 3.8 old graph scaffold deleted" in tracker
 
     assert "ApprovalResumeService graph approval fallback retired" in tracker
     assert "ExecutionService execution trigger" in tracker
     assert "ExecutionService.run_langgraph_session() retired" in tracker
     assert "structured-output parsing owner resolved" in tracker
     assert "PlanCreationService seeded planner compatibility adapter" in tracker
+
+
+def test_phase3_8_tests_do_not_import_deleted_old_graph_scaffold():
+    hits: list[str] = []
+    for path in sorted(TESTS_ROOT.rglob("test_*.py")):
+        if path.name == "test_planner_owned_loop_phase15_legacy_cleanup.py":
+            continue
+        source = path.read_text(encoding="utf-8-sig")
+        module = ast.parse(source)
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom):
+                imported_module = node.module or ""
+                if imported_module in OLD_GRAPH_SCAFFOLD_IMPORT_MODULES or imported_module.startswith(
+                    "factory_agent.graph.nodes."
+                ):
+                    hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}:{node.lineno}: from {imported_module}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in OLD_GRAPH_SCAFFOLD_IMPORT_MODULES or alias.name.startswith(
+                        "factory_agent.graph.nodes."
+                    ):
+                        hits.append(f"{path.relative_to(TESTS_ROOT).as_posix()}:{node.lineno}: import {alias.name}")
+
+    assert hits == []
 
 
 def test_phase15_legacy_compatibility_tests_and_xfails_are_retired():

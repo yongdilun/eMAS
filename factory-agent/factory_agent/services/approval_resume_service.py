@@ -243,6 +243,8 @@ class ApprovalResumeService:
                 return
             if await self._resume_direct_v2_planner_approval(db=db, row=row, sess=sess, intent=intent):
                 return
+            if await self._resume_seeded_planner_compatibility_approval(db=db, row=row, sess=sess, intent=intent):
+                return
             log_event(
                 "graph_approval_resume_unsupported_payload",
                 level="ERROR",
@@ -613,6 +615,75 @@ class ApprovalResumeService:
             {"approval_id": row.approval_id, "status": "COMPLETED", "subject_type": "graph"},
         )
         return True
+
+    async def _resume_seeded_planner_compatibility_approval(
+        self,
+        *,
+        db: AsyncSession,
+        row: ApprovalRow,
+        sess: Any,
+        intent: str,
+    ) -> bool:
+        payload = row.args if isinstance(row.args, dict) else {}
+        if not self._plan_service.seeded_planner_compatibility_matches_approval(
+            intent=intent,
+            approval_payload=payload,
+        ):
+            return False
+
+        tools_by_name = await self._plan_service._ensure_registry_health(db=db)
+        approval_payload = dict(payload)
+        approval_payload.setdefault("approval_id", row.approval_id)
+        approval_payload["_approval_id"] = row.approval_id
+        result = await self._plan_service.resume_seeded_planner_compatibility_approval(
+            session_id=sess.session_id,
+            intent=intent,
+            approval_payload=approval_payload,
+            approved=row.status == "APPROVED",
+        )
+        tool_outputs = getattr(result, "tool_outputs", None)
+        context = dict(sess.replan_context or {})
+        context.pop("langgraph_pending_approval", None)
+        context.pop("langgraph_approval_resume", None)
+        context["skip_completed_narrative_adapter"] = True
+        status = self._seeded_planner_compatibility_status(tool_outputs)
+        await self._plan_service._persist_plan(
+            db=db,
+            sess=sess,
+            draft=result.draft,
+            tools_by_name=tools_by_name,
+            backend_used=getattr(result, "backend_used", "seeded-fake"),
+            kind="execution",
+            status=status,
+            intent=intent,
+            context_to_keep=context,
+            tool_outputs=tool_outputs,
+        )
+        await self.publish_agent_event(
+            "session_resume",
+            sess.session_id,
+            {
+                "approval_id": row.approval_id,
+                "status": status,
+                "subject_type": "graph",
+                "runtime": "seeded_planner_compatibility",
+            },
+        )
+        return True
+
+    def _seeded_planner_compatibility_status(self, tool_outputs: Any) -> str:
+        if not isinstance(tool_outputs, list):
+            return "COMPLETED"
+        for output in tool_outputs:
+            if not isinstance(output, dict):
+                continue
+            status = str(output.get("status") or "").strip().upper()
+            if status in {"FAILED", "ERROR", "AMBIGUOUS"}:
+                return "FAILED"
+            http_status = output.get("http_status")
+            if isinstance(http_status, int) and http_status >= 400:
+                return "FAILED"
+        return "COMPLETED"
 
     def _direct_v2_rows_from_preview(
         self,

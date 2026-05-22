@@ -54,7 +54,11 @@ from factory_agent.rag.source_metadata import normalize_source_locators, sanitiz
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanCreateRequest, PlanDraft, PlanResponse, ToolInfo
 from factory_agent.security.permissions import filter_tools_for_role, role_from_claims
-from factory_agent.services.plan_creation_compatibility import generate_seeded_planner_compatibility_plan
+from factory_agent.services.plan_creation_compatibility import (
+    generate_seeded_planner_compatibility_plan,
+    resume_seeded_planner_compatibility_approval,
+    seeded_planner_compatibility_matches_approval,
+)
 from factory_agent.services.planner_owned_graph_runtime import PlannerOwnedGraphRuntimeAdapter
 from factory_agent.services.session_revision import bump_session_revision as _bump_session_revision
 from factory_agent.session_state import is_user_cancelled_session
@@ -316,6 +320,34 @@ class PlanCreationService:
     def _seeded_planner_handles_intent(self, intent: str) -> bool:
         handles = getattr(self._planner, "handles_seeded_intent", None)
         return bool(handles(intent)) if callable(handles) else False
+
+    def seeded_planner_compatibility_matches_approval(
+        self,
+        *,
+        intent: str,
+        approval_payload: dict[str, Any],
+    ) -> bool:
+        return seeded_planner_compatibility_matches_approval(
+            planner=self._planner,
+            intent=intent,
+            approval_payload=approval_payload,
+        )
+
+    async def resume_seeded_planner_compatibility_approval(
+        self,
+        *,
+        session_id: str,
+        intent: str,
+        approval_payload: dict[str, Any],
+        approved: bool,
+    ) -> Any:
+        return await resume_seeded_planner_compatibility_approval(
+            planner=self._planner,
+            session_id=session_id,
+            intent=intent,
+            approval_payload=approval_payload,
+            approved=approved,
+        )
 
     async def _answer_knowledge_question_as_plan(self,
         *,

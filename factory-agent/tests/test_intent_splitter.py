@@ -7,10 +7,7 @@ from pathlib import Path
 import re
 
 import pytest
-from langgraph.graph import END, StateGraph
 
-from factory_agent.graph.nodes.intent_split import intent_splitter_node
-from factory_agent.graph.state import AgentState
 from factory_agent.planning.intent import semantic_frame_for_text, split_user_intents
 
 
@@ -525,39 +522,6 @@ def test_production_semantic_routing_code_has_no_phase_prompt_branches():
 
     leaked_terms = sorted(term for term in forbidden_terms if term and term in lowered_intent_text)
     assert leaked_terms == []
-
-
-def test_intent_splitter_node_uses_split_output_as_graph_state_input():
-    q = "Find available CNC machines and then schedule job J-101 on 2026-05-15"
-    out = intent_splitter_node({"original_query": q, "intent": q})
-
-    assert out["status"] == "planning"
-    assert len(out["intents"]) >= 2
-    assert out["working_intents"] == out["intents"]
-    assert out["current_intent"] == out["intents"][0]
-    schedule_intent = next(i for i in out["working_intents"] if i["category"] in ("scheduling", "job"))
-    assert schedule_intent["depends_on"] == [out["intents"][0]["intent_id"]]
-    assert any(c["field"] == "date" for c in schedule_intent["explicit_constraints"])
-
-
-def test_graph_entry_carries_split_output_into_execution_state():
-    graph = StateGraph(AgentState)
-    graph.add_node("intent_splitter", intent_splitter_node)
-    graph.set_entry_point("intent_splitter")
-    graph.add_edge("intent_splitter", END)
-    app = graph.compile()
-
-    q = "Find available CNC machines and then schedule job J-101 with operator Alice"
-    out = app.invoke({"original_query": q, "intent": q, "messages": []})
-
-    assert out["intents"]
-    assert out["working_intents"] == out["intents"]
-    assert out["current_intent"] == out["intents"][0]
-    assert any(
-        c["field"] == "operator"
-        for intent in out["working_intents"]
-        for c in intent["explicit_constraints"]
-    )
 
 
 def test_graph_native_code_does_not_import_query_router_or_route_scores():

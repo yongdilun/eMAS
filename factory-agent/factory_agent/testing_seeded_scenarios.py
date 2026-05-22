@@ -323,9 +323,8 @@ MIGRATED_SEEDED_SCENARIOS: tuple[SeededScenario, ...] = (
                     "args": {"id": "M-CNC-01"},
                     "result": {
                         "data": {
-                            "machine_id": "M-CNC-01",
-                            "status": "RUNNING",
                             "long_stream_terminal": True,
+                            "release_terminal_state": "terminal state within release limits",
                         }
                     },
                     "summary": "Phase 10 long-running stream reached a terminal state within release limits.",

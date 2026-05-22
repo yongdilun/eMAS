@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 3.7 old graph compatibility seams split complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume and historical direct-v2 approval payload compatibility, and fails closed for unsupported old graph approval payloads. `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` are deleted; default API wiring no longer constructs or calls the old graph adapter, while seeded planner compatibility remains explicitly owned by `plan_creation_compatibility.py`. The remaining `factory_agent.graph` scaffold is now classified before deletion: old planner graph/runtime nodes are historical quarantine, `_infer_bulk_job_priority_mutation()` is owned by graph-native approval summary, `AgentPlanOutput` / `AgentPlanStep` are owned by the central schemas module, and old graph tests are split between migration targets, compatibility owners, historical quarantine, and later deletion candidates. Frontend fixture rewrites, planner-owned graph runtime changes, release harness changes, and broad migration-test consolidation remain out of scope.
+Status: Phase 3.8 old graph scaffold deleted. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume, historical direct-v2 approval payload compatibility, and explicit seeded Playwright approval resume compatibility, and fails closed for unsupported old graph approval payloads. `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` are deleted; default API wiring no longer constructs or calls the old graph adapter, while seeded planner compatibility remains explicitly owned by `plan_creation_compatibility.py`. The old `factory_agent.graph` scaffold files and old graph-only tests are deleted; active coverage remains with `PlannerOwnedAgentGraph`, graph-native approval/session tests, central schemas, parser ownership, approval summary ownership, seeded compatibility coverage, and retained compatibility trace readers. Frontend fixture rewrites, release harness changes, Qwen/proposer policy changes, and broad migration-test consolidation remain out of scope; the only fixture adjustment in Phase 3.8 was backend seeded long-stream evidence shape for the existing release oracle.
 
 Plan:
 
@@ -21,7 +21,7 @@ Baseline release-proof commit:
 | 0 | Baseline and cleanup manifest | Complete | `511755adcdd8def8ff4585276b65e9823f3c9a4d` | Docs diff check and recorded baseline |
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
-| 3 | Old graph scaffold deletion | Blocked; compatibility seams split and scaffold classified before deletion | pending final commit hash | Full backend, real-LangGraph, release |
+| 3 | Old graph scaffold deletion | Phase 3.8 complete; old scaffold deleted and active seams retained | pending final commit hash | Full backend, frontend release |
 | 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
@@ -1228,13 +1228,77 @@ Next recommended phase:
 
 - Delete or migrate the classified old graph scaffold/tests now that the active approval-summary and planner-output schema blockers are split out.
 
+## Phase 3.8: Delete Old Graph Scaffold
+
+Phase result:
+
+- `Phase 3.8 old graph scaffold deleted`.
+- Deleted the old `LangGraphPlanner` state-machine scaffold, old graph nodes, old graph helper module, old graph state, old graph errors, and old graph-only tests/fixtures.
+- Normal runtime remains `PlannerOwnedAgentGraph`; graph-owned runtime, checkpointing, approval summary, HTTP tool client, no-op compatibility, session detection, direct-v2 trace/context compatibility, frontend fixtures, release harness behavior, and Qwen/proposer policy were not changed.
+- The frontend seeded-oracles gate exposed one missed active compatibility owner: seeded Playwright graph approval resume payloads with seeded `bundle_ui.kind` values and no top-level graph/direct-v2 `kind`. That owner is now explicit in `plan_creation_compatibility.py`; it does not revive the retired old graph fallback.
+
+Files changed:
+
+- Deleted old scaffold runtime: `factory-agent/factory_agent/graph/builder.py`, `factory-agent/factory_agent/graph/errors.py`, `factory-agent/factory_agent/graph/planner_graph.py`, `factory-agent/factory_agent/graph/planner_graph_helpers.py`, `factory-agent/factory_agent/graph/state.py`, and `factory-agent/factory_agent/graph/nodes/*`.
+- Retained active graph-owned modules: `v2_agent_graph.py`, `checkpointing.py`, `approval_summary.py`, `http_tool_client.py`, `noop_mutations.py`, and `session_detection.py`.
+- Deleted old graph-only tests/fixtures: `factory-agent/tests/test_planner_phase3.py`, `factory-agent/tests/test_phase5_final_validator.py`, `factory-agent/tests/test_langgraph_state_machine_oracles.py`, and `factory-agent/tests/graph_state_fixtures.py`.
+- Retained and migrated mixed tests: `test_route_to_execution_contract.py` now exercises `PlannerOwnedAgentGraph`; `test_planner.py` keeps central parser/planner helper coverage; `test_agent_state.py` keeps graph-neutral reducer and graph-native approval subject smoke coverage; `test_tool_pipeline.py` keeps HTTP tool client idempotency coverage; `test_intent_splitter.py` keeps active intent parser/semantic routing coverage; `test_planner_service_phase6.py` keeps graph-native snapshot/reject coverage.
+- Rehomed seeded Playwright approval resume compatibility through `services/plan_creation_compatibility.py`, with `PlanCreationService` as the owner and `ApprovalResumeService` delegating through that owner after graph-native and direct-v2 handlers decline the payload.
+- Added `test_seeded_graph_approval_resumes_without_old_graph_fallback()` to prove seeded graph approval payloads resume through the explicit seeded compatibility seam while unsupported old graph payloads still fail closed.
+- Adjusted only the backend seeded long-stream fixture evidence shape so release scenario 70 renders the terminal release summary instead of being projected as a generic machine-status result.
+- Updated `test_planner_owned_loop_phase15_legacy_cleanup.py` so static guards assert old scaffold files are absent and no retained tests import deleted old graph modules.
+
+Candidate disposition:
+
+| Candidate | Disposition | Evidence | Owner after Phase 3.8 |
+| --- | --- | --- | --- |
+| `graph/planner_graph.py` / `LangGraphPlanner` | Deleted | Active service owners no longer import or construct it; old instantiation tests were deleted | None |
+| `graph/builder.py` / `compile_planner_graph()` | Deleted | Only old scaffold/tests compiled it | None |
+| `graph/planner_graph_helpers.py` | Deleted | `_infer_bulk_job_priority_mutation()` is owned by `graph/approval_summary.py`; `_normalize_plan_dict()` is owned by `llm/plan_parsing.py`; remaining users were old graph modules/tests | None |
+| `graph/state.py` / `AgentState` / `working_intents` / `intent_cursor` | Deleted | `AgentPlanOutput` / `AgentPlanStep` are owned by `schemas.py`; active graph state is `planning/v2_agent_state.py` | None |
+| `graph/nodes/*` old state-machine nodes | Deleted | No active runtime/test import remains; planner-owned graph tests cover active runtime behavior | None |
+| `graph/errors.py` old `LangGraphPlanner*` exceptions | Deleted | Only old graph modules/tests imported them | None |
+| `test_route_to_execution_contract.py` | Migrated | Retained route-to-execution proof now runs active `PlannerOwnedAgentGraph` and `ToolSelector` | Active graph/runtime contract |
+| `test_planner_service_phase6.py` | Split | Deleted old `LangGraphPlanner` durable-checkpoint test; kept graph-native snapshot/reject tests | Graph-native session compatibility |
+| `test_tool_pipeline.py` | Split | Deleted old node pipeline tests; kept shared HTTP tool client idempotency helper test | `graph/http_tool_client.py` |
+| `test_planner.py` | Split | Deleted old node/helper tests; kept central parser and planner helper tests | `llm/plan_parsing.py`, `planner_service.py` helpers |
+| `test_agent_state.py` / `test_intent_splitter.py` | Split | Deleted old `AgentState`/node projection assertions; kept active parser/schema smoke coverage | Active parser/schema owners |
+| Seeded Playwright graph approval resume | Rehomed compatibility owner | Seeded-oracles initially failed with `graph_approval_resume_unsupported_payload` for seeded `bundle_ui.kind` payloads; new compatibility seam is adapter-marked and tested | `services/plan_creation_compatibility.py` |
+| Release long-stream seeded evidence | Fixture evidence corrected | Release scenario 70 initially completed but rendered status-only copy; fixture result no longer masquerades as a machine status row | `testing_seeded_scenarios.py` seeded test fixture |
+
+Tracker update:
+
+- Static guards now require `Phase 3.8 old graph scaffold deleted` to remain recorded.
+- `test_phase11_historical_graph_authority_modules_are_deleted()` asserts the deleted scaffold files are absent.
+- `test_phase3_8_tests_do_not_import_deleted_old_graph_scaffold()` scans retained tests for deleted old graph imports.
+- `test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned()` now verifies old compatibility seams are owned by `approval_summary.py`, `schemas.py`, `llm/plan_parsing.py`, and the explicit seeded planner compatibility owner, and that old scaffold paths no longer exist.
+
+Verification:
+
+- `rg -n "LangGraphPlanner|compile_planner_graph|planner_graph_helpers|factory_agent.graph.nodes|working_intents|intent_cursor|intent_completed|from factory_agent.graph.planner_graph|from factory_agent.graph.state" factory-agent/factory_agent factory-agent/tests docs/qa` -> passed; remaining hits are historical docs/tracker text and static guard strings, not active runtime imports.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `19 passed, 2 warnings`.
+- `python -m pytest tests/test_planner.py tests/test_agent_state.py tests/test_intent_splitter.py tests/test_tool_pipeline.py tests/test_planner_service_phase6.py -q --disable-warnings` -> `59 passed, 23 warnings`.
+- `python -m pytest tests/test_route_to_execution_contract.py tests/test_api_endpoints.py -q --disable-warnings` -> `59 passed, 825 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q` with PowerShell-expanded file list -> `88 passed, 22 warnings`.
+- `python -m pytest -q` -> `930 passed, 3 skipped, 1331 warnings`.
+- `npm run test:e2e:response-document` -> `30 passed`.
+- `npm run test:e2e:seeded-oracles` -> first run exposed the seeded approval resume owner (`20 passed, 15 failed`); after the explicit seeded compatibility seam, rerun passed with `35 passed`.
+- `npm run test:e2e:real-langgraph` -> `3 passed`.
+- `npm run test:e2e:release` -> first run exposed the seeded long-stream evidence-shape issue (`20 passed, 1 failed`); after the seeded fixture evidence correction, rerun passed with `21 passed`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Remaining cleanup candidates:
+
+- Historical documentation still references old graph concepts as migration history; no active runtime/test import owner remains.
+- Frontend fixture/release-harness naming cleanup remains out of scope unless a later phase explicitly rewrites historical trace labels.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 3.7 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 3.8 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 3.2 resolved the PlanCreationService old graph fallback blocker, Phase 3.3 retired the ExecutionService old graph session owner, Phase 3.4 retired the ApprovalResumeService old graph approval fallback while preserving planner-owned graph resume and historical direct-v2 approval payload compatibility, Phase 3.5 retired the PlannerService old graph adapter boundary, Phase 3.6 classified all remaining old graph scaffold files/tests before deletion, and Phase 3.7 moved the two active compatibility seams to non-old-graph owners. Normal runtime remains `PlannerOwnedAgentGraph`.
+Continue cleanup without changing product behavior. Phase 3.8 deleted the old `LangGraphPlanner` scaffold, old graph nodes/state/helpers/errors, and old graph-only tests. Normal runtime remains `PlannerOwnedAgentGraph`. Compatibility owners now include `approval_summary.py`, `schemas.py`, `llm/plan_parsing.py`, direct-v2 trace/context readers, and seeded planner compatibility in `plan_creation_compatibility.py`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
@@ -1242,25 +1306,20 @@ Read first:
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
 - factory-agent/factory_agent/llm/structured_output.py
 - factory-agent/factory_agent/graph/approval_summary.py
-- factory-agent/factory_agent/graph/planner_graph_helpers.py
-- factory-agent/factory_agent/graph/planner_graph.py
-- factory-agent/factory_agent/graph/nodes/planner_loop.py
-- factory-agent/factory_agent/graph/nodes/validate.py
-- factory-agent/factory_agent/graph/state.py
+- factory-agent/factory_agent/graph/v2_agent_graph.py
 - factory-agent/factory_agent/services/plan_creation_service.py
 - factory-agent/factory_agent/services/approval_resume_service.py
 - factory-agent/factory_agent/services/execution_service.py
 - factory-agent/factory_agent/services/planner_service.py
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/services/plan_creation_compatibility.py
+- factory-agent/factory_agent/testing_seeded_scenarios.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py
 - factory-agent/tests/test_route_to_execution_contract.py
 - factory-agent/tests/test_planner.py
-- factory-agent/tests/test_phase5_final_validator.py
-- factory-agent/tests/test_langgraph_state_machine_oracles.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase8_approval_resume.py
 
 Scope:
@@ -1269,10 +1328,10 @@ Scope:
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
 - Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
 - `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.
-- Treat old `factory_agent.graph` scaffold files/tests according to the Phase 3.6 classification.
+- Keep old `factory_agent.graph` scaffold files/tests deleted.
 - Keep `_infer_bulk_job_priority_mutation()` owned by `graph/approval_summary.py`; do not move it back to `planner_graph_helpers.py`.
 - Keep `AgentPlanOutput` / `AgentPlanStep` owned by `schemas.py`; do not move them back to `graph/state.py`.
-- Prefer the next narrow move: delete or migrate classified old graph scaffold/tests now that the active compatibility seams are split out.
+- Prefer the next narrow move: prune or quarantine historical docs/references that still mention the deleted old scaffold, while preserving migration history that is intentionally documentary.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 
@@ -1291,13 +1350,14 @@ Verification:
 - python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
 - python -m pytest tests/test_route_to_execution_contract.py tests/test_api_endpoints.py -q
 - $phaseTests = Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }; python -m pytest $phaseTests -q
+- python -m pytest -q
 - cd ..
 - git diff --check
 
-Commit only if cleanup stays within the recorded scaffold-classification scope and verification passes.
+Commit only if cleanup stays within the recorded post-scaffold scope and verification passes.
 
 Suggested commit:
-refactor: split old graph compatibility seams
+docs: prune deleted graph scaffold references
 
 Final response format:
 Phase Result

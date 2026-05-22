@@ -1,1 +1,1 @@
-"""LangGraph runtime components for the factory agent."""
+"""Planner-owned graph runtime components for the factory agent."""

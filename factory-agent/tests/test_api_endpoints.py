@@ -2253,6 +2253,167 @@ async def test_session_snapshot_returns_plan_steps_pending_approval_and_timeline
 
 
 @pytest.mark.asyncio
+async def test_seeded_graph_approval_resumes_without_old_graph_fallback(sessionmaker_override, db_session):
+    from factory_agent.persistence.models import Approval, Message, Plan, Session
+    from factory_agent.planner import PlannerApprovalRequired
+
+    class SeededResumePlanner:
+        is_seeded_playwright_adapter = True
+
+        def __init__(self):
+            self.seeded_contexts = []
+            self.resume_calls = []
+
+        def handles_seeded_intent(self, intent: str) -> bool:
+            return "phase 14" in intent.lower()
+
+        def seed_resume_context(self, *, session_id: str, intent: str, approval_payload: dict):
+            self.seeded_contexts.append(
+                {
+                    "session_id": session_id,
+                    "intent": intent,
+                    "approval_payload": dict(approval_payload),
+                }
+            )
+
+        async def resume_after_approval(self, *, session_id: str, approved: bool):
+            self.resume_calls.append({"session_id": session_id, "approved": approved})
+            raise PlannerApprovalRequired(
+                "Seeded second approval required.",
+                approval={
+                    "summary": "Seeded compatibility second approval.",
+                    "count": 1,
+                    "preview": [
+                        {"tool_name": "put__jobs_{id}", "args": {"id": "JOB-SEED-002", "priority": "medium"}}
+                    ],
+                    "bundle_ui": {
+                        "kind": "phase14_cascade_priority",
+                        "write_set": "original_low_to_medium",
+                        "headline": "Approval 2 required.",
+                        "rows": [{"job_id": "JOB-SEED-002", "original_priority": "low", "new_priority": "medium"}],
+                        "previous_approval_id": "seeded-first-approval",
+                    },
+                },
+            )
+
+    created_at = datetime.utcnow() - timedelta(minutes=5)
+    session_id = "seeded-approval-compatibility"
+    initial_plan_id = "seeded-approval-compatibility-plan"
+    approval_id = "seeded-first-approval"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_APPROVAL",
+            current_intent="Run Phase 14 cascading priority update",
+            plan_id=initial_plan_id,
+            plan_version=1,
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={
+                "langgraph_pending_approval": {
+                    "approval_id": approval_id,
+                    "thread_id": session_id,
+                }
+            },
+        )
+    )
+    db_session.add(
+        Plan(
+            plan_id=initial_plan_id,
+            session_id=session_id,
+            version=1,
+            kind="execution",
+            status="PENDING_APPROVAL",
+            dependency_graph={},
+            parallel_groups=[],
+            plan_hash="hash-seeded-approval-compatibility",
+            plan_explanation="Seeded first approval.",
+            risk_summary="Seeded first approval.",
+            created_by="seeded-fake",
+            created_at=created_at + timedelta(milliseconds=500),
+        )
+    )
+    db_session.add(
+        Message(
+            message_id="seeded-approval-compatibility-user-message",
+            session_id=session_id,
+            role="user",
+            content="Run Phase 14 cascading priority update",
+            mode="normal",
+            created_at=created_at,
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="__langgraph_commit__",
+            args={
+                "summary": "Seeded first approval.",
+                "bundle_ui": {
+                    "kind": "phase14_cascade_priority",
+                    "write_set": "original_high_to_low",
+                    "headline": "Approval 1 required.",
+                    "rows": [{"job_id": "JOB-SEED-001", "original_priority": "high", "new_priority": "low"}],
+                },
+            },
+            risk_summary="Seeded first approval.",
+            side_effect_level="HIGH",
+            status="PENDING",
+            expires_at=created_at + timedelta(hours=1),
+            created_at=created_at + timedelta(seconds=1),
+        )
+    )
+    await db_session.commit()
+    await _seed_tool(
+        db_session,
+        name="put__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "priority": {"type": "string"}},
+            "required": ["id", "priority"],
+        },
+        capability_tags='["job"]',
+        is_read_only=False,
+        requires_approval=True,
+    )
+
+    planner = SeededResumePlanner()
+    app, _ = await _make_app(
+        sessionmaker_override,
+        planner_adapter=planner,
+        enforce_tool_registry_health=False,
+        min_healthy_tool_count=0,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        approved = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "APPROVED"
+
+        snapshot_body = None
+        for _ in range(80):
+            await asyncio.sleep(0.025)
+            snapshot_body = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+            if snapshot_body["session"]["status"] == "WAITING_APPROVAL":
+                break
+
+        pending = (await client.get(f"/approvals/pending?session_id={session_id}")).json()
+
+    assert snapshot_body is not None
+    assert snapshot_body["session"]["status"] == "WAITING_APPROVAL"
+    assert planner.resume_calls == [{"session_id": session_id, "approved": True}]
+    assert planner.seeded_contexts[0]["approval_payload"]["approval_id"] == approval_id
+    assert planner.seeded_contexts[0]["approval_payload"]["_approval_id"] == approval_id
+    assert len(pending) == 1
+    assert pending[0]["args"]["bundle_ui"]["write_set"] == "original_low_to_medium"
+
+
+@pytest.mark.asyncio
 async def test_graph_approval_old_graph_fallback_is_retired_and_fails_closed(sessionmaker_override, db_session):
     from factory_agent.persistence.models import Approval, Message, Plan, Session
 

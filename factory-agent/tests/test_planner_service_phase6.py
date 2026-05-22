@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-import json
-import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import httpx
 import pytest
 from fastapi import FastAPI
-from langchain_core.messages import AIMessage
 
 from factory_agent.config import get_settings
-from factory_agent.graph.checkpointing import clear_graph_checkpointer_cache
-from factory_agent.graph.errors import LangGraphPlannerApprovalRequired
-from factory_agent.graph.planner_graph import LangGraphPlanner
 from factory_agent.persistence.models import (
     Approval,
     Message,
@@ -25,109 +18,8 @@ from factory_agent.persistence.models import (
     generate_uuid,
 )
 from factory_agent.registry.tool_registry import ToolRegistry
-from factory_agent.schemas import ToolInfo
 from factory_agent.api import build_router
 from factory_agent.persistence import database
-
-
-@pytest.mark.asyncio
-async def test_durable_checkpoint_resumes_approval_after_process_restart(monkeypatch):
-    session_id = f"phase6-{uuid.uuid4()}"
-    db_dir = Path(".pytest-phase6")
-    db_dir.mkdir(exist_ok=True)
-    db_path = db_dir / f"graph-checkpoints-{uuid.uuid4()}.db"
-    settings = replace(
-        get_settings(),
-        database_url=f"sqlite+aiosqlite:///{db_path.as_posix()}",
-        openai_api_key="test-key",
-        planner_openai_base_url=None,
-        graph_checkpoint_backend="db",
-        go_api_base_url="http://testserver",
-        max_plan_steps=8,
-    )
-    write_tool = ToolInfo(
-        name="post__jobs",
-        description="create job",
-        endpoint="/jobs",
-        method="POST",
-        input_schema={"type": "object"},
-        is_read_only=False,
-        requires_approval=True,
-    )
-    planner_prompts: list[str] = []
-    events: list[str] = []
-
-    class FakeModel:
-        async def ainvoke(self, prompt: str):
-            planner_prompts.append(prompt)
-            marker = "Current intent JSON: "
-            start = prompt.index(marker) + len(marker)
-            end = prompt.index("\nUser query:", start)
-            intent_id = json.loads(prompt[start:end])["intent_id"]
-            if len(planner_prompts) == 1:
-                payload = {
-                    "intent_id": intent_id,
-                    "kind": "domain_tool",
-                    "tool_calls": [
-                        {
-                            "tool_name": "post__jobs",
-                            "args": {"product_id": "P-001", "quantity_total": 10},
-                            "output_ref": "$ref:job",
-                        }
-                    ],
-                    "decision_summary": "Stage the requested job.",
-                    "risk_level": "write_dry_run",
-                }
-            else:
-                payload = {
-                    "intent_id": intent_id,
-                    "kind": "intent_completed",
-                    "tool_calls": [],
-                    "decision_summary": "The staged job satisfies the request.",
-                    "risk_level": "write_commit",
-                }
-            return AIMessage(content=json.dumps(payload))
-
-    async def fake_dry_run(state, *, settings):
-        events.append("bundle_dry_run")
-        return {
-            "bundle_dry_run_result": {"ok": True, "http_status": 200, "body": {"validated": True}},
-            "completed_actions": [{"phase": "bundle_dry_run", "status": "ok"}],
-        }
-
-    async def fake_commit(state, *, settings):
-        events.append("commit")
-        assert state["approval_requests"][0]["status"] == "approved"
-        return {
-            "last_commit_result": {"ok": True, "http_status": 200, "body": {"committed": True}},
-            "completed_actions": [{"phase": "commit", "status": "ok"}],
-        }
-
-    clear_graph_checkpointer_cache()
-    monkeypatch.setattr(
-        "factory_agent.graph.nodes.planner_loop.build_planner_chat_model",
-        lambda settings, json_mode=True: FakeModel(),
-    )
-    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.bundle_dry_run_node", fake_dry_run)
-    monkeypatch.setattr("factory_agent.graph.nodes.tool_pipeline.commit_node_impl", fake_commit)
-
-    with pytest.raises(LangGraphPlannerApprovalRequired):
-        await LangGraphPlanner(settings).generate(
-            intent="Create a job for product P-001 quantity 10",
-            scoped_tools=[write_tool],
-            context={"session_id": session_id},
-        )
-
-    assert events == ["bundle_dry_run"]
-    prompt_count_before_resume = len(planner_prompts)
-
-    clear_graph_checkpointer_cache()
-    draft, contract, _outputs = await LangGraphPlanner(settings).resume_after_approval(session_id=session_id, approved=True)
-
-    assert events == ["bundle_dry_run", "commit"]
-    assert len(planner_prompts) == prompt_count_before_resume
-    assert draft.steps[0].tool_name == "post__jobs"
-    assert contract["backend"] == "langgraph"
 
 
 class _FakeEventBus:
