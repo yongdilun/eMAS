@@ -18,7 +18,7 @@ from factory_agent.config import (
 )
 from factory_agent.registry.tool_registry import ToolRegistry
 from tests.test_api_endpoints import FakeEventBus
-from tests.test_planner_owned_loop_phase8_legacy_cleanup_switch import FakeRAGPipeline, _create_prompt
+from tests.test_planner_owned_graph_api_contract import FakeRAGPipeline, _create_prompt
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

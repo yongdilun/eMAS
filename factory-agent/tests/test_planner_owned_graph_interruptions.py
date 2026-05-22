@@ -7,7 +7,7 @@ import pytest
 from factory_agent.graph.v2_agent_graph import _PENDING_EXECUTION_DIAGNOSTIC_KEY
 from factory_agent.planning.v2_agent_state import GraphToolCall
 from factory_agent.planning.v2_graph_adapters import GraphToolExecutionResult
-from tests.test_planner_owned_agent_graph_phase8_approval_resume import (
+from tests.test_planner_owned_graph_approval_resume import (
     PLAN_CREATION_SOURCE,
     RUNTIME_ADAPTER_SOURCE,
     _approval_decision,

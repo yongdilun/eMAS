@@ -187,8 +187,8 @@ DISALLOWED_TEST_FRAGMENTS = (
 
 QUARANTINED_MODULE_MARKER = "pytestmark = pytest.mark.legacy_architecture_quarantine"
 QUARANTINED_MODULE_TESTS = {
-    Path("test_planner_owned_loop_phase5_shadow_engine.py"),
-    Path("test_planner_owned_loop_phase9_hard_query_release.py"),
+    Path("test_historical_direct_v2_trace_compatibility.py"),
+    Path("test_historical_direct_v2_hard_query_compatibility.py"),
 }
 QUARANTINED_TEST_FUNCTIONS = {
     Path("test_api_endpoints.py"): {
@@ -275,7 +275,7 @@ def _defined_function_names(source: str) -> set[str]:
     }
 
 
-def test_phase15_runtime_engine_values_resolve_to_planner_owned_v2_only():
+def test_runtime_engine_values_resolve_to_planner_owned_v2_only():
     assert normalize_factory_agent_engine(None) == "v2"
     assert normalize_factory_agent_engine("legacy") == "v2"
     assert normalize_factory_agent_engine("v2_shadow") == "v2"
@@ -286,7 +286,7 @@ def test_phase15_runtime_engine_values_resolve_to_planner_owned_v2_only():
     assert resolve_factory_agent_engine_for_runtime(settings) == "v2"
 
 
-def test_phase15_product_code_has_no_legacy_engine_or_shadow_activation_authority():
+def test_product_code_has_no_legacy_engine_or_shadow_activation_authority():
     hits: list[str] = []
     for path in _runtime_files():
         if _is_parse_only_or_quarantined(path):
@@ -299,7 +299,7 @@ def test_phase15_product_code_has_no_legacy_engine_or_shadow_activation_authorit
     assert hits == []
 
 
-def test_phase15_historical_terms_are_parse_only_or_quarantined():
+def test_historical_terms_are_parse_only_or_quarantined():
     hits: list[str] = []
     for path in _runtime_files():
         if _is_parse_only_or_quarantined(path):
@@ -312,7 +312,7 @@ def test_phase15_historical_terms_are_parse_only_or_quarantined():
     assert hits == []
 
 
-def test_phase11_historical_graph_authority_modules_are_deleted():
+def test_historical_graph_authority_modules_are_deleted():
     remaining = [
         relative.as_posix()
         for relative in sorted(DELETED_OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS)
@@ -322,7 +322,7 @@ def test_phase11_historical_graph_authority_modules_are_deleted():
     assert remaining == []
 
 
-def test_phase3_6_active_runtime_does_not_import_old_graph_scaffold_authority():
+def test_active_runtime_does_not_import_old_graph_scaffold_authority():
     hits: list[str] = []
     for path in _runtime_files():
         relative = _relative_runtime(path)
@@ -359,7 +359,7 @@ def test_phase3_6_active_runtime_does_not_import_old_graph_scaffold_authority():
     assert hits == []
 
 
-def test_phase3_6_old_graph_scaffold_classification_is_tracked():
+def test_old_graph_scaffold_classification_is_tracked():
     tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
 
     required_fragments = [
@@ -382,7 +382,7 @@ def test_phase3_6_old_graph_scaffold_classification_is_tracked():
     assert missing == []
 
 
-def test_phase4_historical_graph_vocabulary_cleanup_is_tracked():
+def test_historical_graph_vocabulary_cleanup_is_tracked():
     tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
 
     required_fragments = [
@@ -404,7 +404,7 @@ def test_phase4_historical_graph_vocabulary_cleanup_is_tracked():
     assert missing == []
 
 
-def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
+def test_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
 
     planner_service_source = PLANNER_SERVICE_SOURCE.read_text(encoding="utf-8")
@@ -462,10 +462,10 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     assert "PlanCreationService seeded planner compatibility adapter" in tracker
 
 
-def test_phase3_8_tests_do_not_import_deleted_old_graph_scaffold():
+def test_tests_do_not_import_deleted_old_graph_scaffold():
     hits: list[str] = []
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
-        if path.name == "test_planner_owned_loop_phase15_legacy_cleanup.py":
+        if path.name == "test_planner_owned_graph_no_legacy_authority.py":
             continue
         source = path.read_text(encoding="utf-8-sig")
         module = ast.parse(source)
@@ -486,10 +486,10 @@ def test_phase3_8_tests_do_not_import_deleted_old_graph_scaffold():
     assert hits == []
 
 
-def test_phase15_legacy_compatibility_tests_and_xfails_are_retired():
+def test_legacy_compatibility_tests_and_xfails_are_retired():
     hits: list[str] = []
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
-        if path.name == "test_planner_owned_loop_phase15_legacy_cleanup.py":
+        if path.name == "test_planner_owned_graph_no_legacy_authority.py":
             continue
         text = path.read_text(encoding="utf-8")
         for fragment in DISALLOWED_TEST_FRAGMENTS:
@@ -501,7 +501,7 @@ def test_phase15_legacy_compatibility_tests_and_xfails_are_retired():
     assert not (TESTS_ROOT / "test_reliability_e2e.py").exists()
 
 
-def test_phase11_historical_direct_v2_tests_are_marked_as_quarantined():
+def test_historical_direct_v2_tests_are_marked_as_quarantined():
     missing_module_markers = [
         relative.as_posix()
         for relative in sorted(QUARANTINED_MODULE_TESTS)
@@ -528,7 +528,7 @@ def test_phase11_historical_direct_v2_tests_are_marked_as_quarantined():
     assert missing_function_markers == []
 
 
-def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
+def test_normal_runtime_cannot_call_historical_direct_v2_execution():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     graph_adapter = _function_node(source, "_create_planner_owned_graph_plan")
 
@@ -551,7 +551,7 @@ def test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution():
     assert "factory_agent.planning.v2_planner_loop" not in source
 
 
-def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop():
+def test_active_trace_context_compatibility_is_separated_from_direct_loop():
     service_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
 
@@ -566,7 +566,7 @@ def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop
     assert not V2_PLANNER_LOOP_SOURCE.exists()
 
 
-def test_phase4_2_historical_direct_v2_literals_are_owned_by_compatibility_helper():
+def test_historical_direct_v2_literals_are_owned_by_compatibility_helper():
     compatibility_source = HISTORICAL_DIRECT_V2_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     trace_compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
@@ -589,7 +589,7 @@ def test_phase4_2_historical_direct_v2_literals_are_owned_by_compatibility_helpe
     assert "is_historical_direct_v2_created_by" in session_detection_source
 
 
-def test_phase5_historical_legacy_rag_route_literals_are_owned_by_compatibility_helper():
+def test_historical_legacy_rag_route_literals_are_owned_by_compatibility_helper():
     compatibility_source = HISTORICAL_LEGACY_RAG_ROUTE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
     contracts_source = (RUNTIME_ROOT / "planning" / "v2_contracts.py").read_text(encoding="utf-8")
     satisfaction_source = (RUNTIME_ROOT / "planning" / "v2_satisfaction.py").read_text(encoding="utf-8")
@@ -614,12 +614,12 @@ def test_phase5_historical_legacy_rag_route_literals_are_owned_by_compatibility_
     assert "historical_legacy_rag_route_compatibility.py" in tracker
 
 
-def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
+def test_direct_v2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():
     forbidden_import = "from factory_agent.planning.v2_planner_loop import PlannerOwnedV2Loop"
     forbidden_constructor = "PlannerOwnedV2Loop("
     hits: list[str] = []
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
-        if path.name == "test_planner_owned_loop_phase15_legacy_cleanup.py":
+        if path.name == "test_planner_owned_graph_no_legacy_authority.py":
             continue
         text = path.read_text(encoding="utf-8")
         if forbidden_import in text:
@@ -630,7 +630,7 @@ def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_lo
     assert hits == []
 
 
-def test_phase2_2_plan_creation_direct_v2_helpers_are_retired():
+def test_plan_creation_direct_v2_helpers_are_retired():
     source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
     tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
     defined_functions = _defined_function_names(source)
@@ -650,7 +650,7 @@ def test_phase2_2_plan_creation_direct_v2_helpers_are_retired():
     assert "_direct_v2_stage_rows" not in source
 
 
-def test_phase2_3_planner_owned_v2_loop_public_wrapper_is_retired():
+def test_planner_owned_v2_loop_public_wrapper_is_retired():
     runtime_hits: list[str] = []
     for path in _runtime_files():
         text = path.read_text(encoding="utf-8")
@@ -661,7 +661,7 @@ def test_phase2_3_planner_owned_v2_loop_public_wrapper_is_retired():
     assert not V2_PLANNER_LOOP_SOURCE.exists()
 
 
-def test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority():
+def test_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority():
     sources = {
         "planner_owned_graph_runtime.py": GRAPH_RUNTIME_SOURCE.read_text(encoding="utf-8"),
         "v2_agent_graph.py": V2_AGENT_GRAPH_SOURCE.read_text(encoding="utf-8"),
@@ -688,7 +688,7 @@ def test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_author
     assert hits == []
 
 
-def test_phase11_planner_authored_graph_decisions_still_require_proposer_diagnostics():
+def test_planner_authored_graph_decisions_still_require_proposer_diagnostics():
     source = V2_AGENT_GRAPH_SOURCE.read_text(encoding="utf-8")
     module = ast.parse(source)
     graph_record_calls = [
@@ -710,7 +710,7 @@ def test_phase11_planner_authored_graph_decisions_still_require_proposer_diagnos
     assert "planner_proposer" in source
 
 
-def test_phase11_offline_proposer_diagnostics_do_not_satisfy_release_proof():
+def test_offline_proposer_diagnostics_do_not_satisfy_release_proof():
     offline_diagnostics = {
         "adapter": OfflineStructuredPlannerDecisionProposer.adapter_name,
         "llm_invoked": False,
@@ -733,7 +733,7 @@ def test_phase11_offline_proposer_diagnostics_do_not_satisfy_release_proof():
     assert planner_proposer_diagnostics_satisfy_real_llm_release_proof(qwen_diagnostics) is True
 
 
-def test_phase15_historical_trace_values_parse_but_cannot_satisfy_v2_requirements():
+def test_historical_trace_values_parse_but_cannot_satisfy_v2_requirements():
     trace = ExecutionTrace(
         engine_version="legacy",
         generated_by=historical_legacy_rag_route_generated_by(),

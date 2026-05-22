@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 6 frontend legacy expectation cleanup complete pending final commit. Frontend hard-query fixtures no longer encode historical direct-v2 `generatedBy` values or legacy detector camelCase fields as current expectations. The hard-query oracle now checks planner-owned graph context from the live session snapshot: graph trace identity, runtime adapter, graph execution authority, native checkpoint use, and graph-owned evidence source types. Phase 5 backend historical `legacy_rag_route` generated-by/source-type compatibility remains owned by `historical_legacy_rag_route_compatibility.py`; Phase 4.2 backend direct-v2 compatibility remains owned by `historical_direct_v2_compatibility.py`. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
+Status: Phase 7 migration test suite consolidation complete. Planner-owned graph and v2 helper suites now use stable long-term filenames instead of phase-era filenames; historical direct-v2 coverage remains explicitly quarantined under `test_historical_direct_v2_*.py`; the central no-legacy static guard is now `test_planner_owned_graph_no_legacy_authority.py`. The duplicate Phase 8 import-only alias test was deleted because `test_planner_owned_graph_api_contract.py` owns the replacement coverage. No backend runtime behavior, planner-owned graph runtime behavior, release harness behavior, response-document semantics, Qwen/proposer policy, compatibility schema/control values, old graph authority, direct-v2 execution authority, or legacy RAG shortcut authority changed.
 
 Plan:
 
@@ -25,7 +25,7 @@ Baseline release-proof commit:
 | 4 | Engine and trace compatibility cleanup | Phase 4.2 complete; backend direct-v2 compatibility literals isolated behind named helper, schema/control values retained | pending final commit hash | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Complete | `bc39280a8e60fc345386f06c76a3e08e237974e4` | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Complete pending final commit |  | Frontend unit, response-document, seeded, real-LangGraph, release |
-| 7 | Migration test suite consolidation | Not started |  | Full backend plus all frontend E2E release gates |
+| 7 | Migration test suite consolidation | Complete |  | Full backend plus all frontend E2E release gates |
 | 8 | Static cleanup enforcement | Not started |  | Static guard and full backend |
 | 9 | Final cleanup release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
@@ -90,7 +90,7 @@ Phase 1 audited table below superseded this starter list for cleanup ownership a
 | `EngineVersion` legacy/shadow values | `legacy`, `v2_shadow`, and old generated_by values may still be parse compatibility. | Audit before edit | Trace compatibility owner |
 | `legacy_rag_route` contracts | Still appears in contracts/tests as historical insufficient-evidence proof. | Audit before edit | RAG compatibility owner |
 | `v2_shadow_state` handling | Old v2 shadow state appears in interruption compatibility helpers. | Audit before edit | Persisted state owner |
-| `test_planner_owned_loop_phase*_*.py` | Migration-era tests may duplicate graph-owned coverage or assert old architecture. | Audit, rewrite, or delete | Test coverage owner |
+| Planner-owned migration-era test files | Former `test_planner_owned_loop_phase*_*.py` and `test_planner_owned_agent_graph_phase*_*.py` suites are now stable graph/product/compatibility guard files. | Consolidated into stable filenames; duplicate alias deleted | Test coverage owner |
 | `legacy_architecture_quarantine` marker uses | Quarantined tests should shrink over cleanup. | Audit and reduce | Test coverage owner |
 | Frontend hard-query `generatedBy` fixtures | Hard-query scenarios still contain historical `generatedBy` / `generated_by` values such as `v2_planner_loop`. | Frontend release-harness vocabulary; Phase 4.0 does not rewrite | Frontend oracle owner |
 | Frontend legacy expectation fixtures | Response-document hard-query oracle and fallback paths may still encode legacy presentation/source/safety expectations. | Audit before delete | Frontend compatibility owner |
@@ -1533,7 +1533,7 @@ Commit:
 
 ## Phase 5: Legacy RAG Route Compatibility Cleanup
 
-Status: complete pending final commit.
+Status: complete.
 
 Phase result:
 
@@ -1674,7 +1674,94 @@ Commit:
 
 - pending.
 
-## Current Handoff Prompt
+## Phase 7: Migration Test Suite Consolidation
+
+Status: complete pending final commit.
+
+Phase result:
+
+- Replaced planner-owned phase-era test filenames with stable long-term guard names across graph runtime, proposer policy, approval/resume, interruption, RAG evidence, v2 helper, and historical compatibility areas.
+- Deleted `factory-agent/tests/test_planner_owned_loop_phase8_legacy_cleanup.py`, which only re-exported `test_planner_owned_loop_phase8_legacy_cleanup_switch.py`; replacement coverage now lives directly in `test_planner_owned_graph_api_contract.py`.
+- Kept static guards that prevent old graph, direct-v2, and legacy RAG authority from returning.
+- Kept historical direct-v2 compatibility tests quarantined instead of treating them as current product proof.
+- Did not change runtime code, frontend fixtures, release harness behavior, response-document semantics, compatibility schemas/helpers, planner-owned graph runtime behavior, or Qwen/proposer policy.
+
+Files changed:
+
+- `factory-agent/tests/test_planner_owned_graph_state_contract.py`
+- `factory-agent/tests/test_planner_owned_graph_decision_contract.py`
+- `factory-agent/tests/test_planner_owned_graph_shell_contract.py`
+- `factory-agent/tests/test_planner_owned_graph_retrieval_contract.py`
+- `factory-agent/tests/test_planner_owned_graph_execution_observation.py`
+- `factory-agent/tests/test_planner_owned_graph_read_flows.py`
+- `factory-agent/tests/test_planner_owned_graph_rag_evidence.py`
+- `factory-agent/tests/test_planner_owned_graph_approval_resume.py`
+- `factory-agent/tests/test_planner_owned_graph_interruptions.py`
+- `factory-agent/tests/test_planner_owned_graph_runtime_adapter.py`
+- `factory-agent/tests/test_planner_owned_graph_llm_proposer.py`
+- `factory-agent/tests/test_planner_owned_graph_proposer_policy.py`
+- `factory-agent/tests/test_planner_owned_graph_api_contract.py`
+- `factory-agent/tests/test_planner_owned_graph_no_legacy_authority.py`
+- `factory-agent/tests/test_planner_owned_v2_contract_compatibility.py`
+- `factory-agent/tests/test_planner_owned_capability_map.py`
+- `factory-agent/tests/test_planner_owned_tool_retriever.py`
+- `factory-agent/tests/test_planner_owned_satisfaction.py`
+- `factory-agent/tests/test_planner_owned_interrupt_replan.py`
+- `factory-agent/tests/test_planner_owned_legacy_engine_removal.py`
+- `factory-agent/tests/test_historical_direct_v2_trace_compatibility.py`
+- `factory-agent/tests/test_historical_direct_v2_hard_query_compatibility.py`
+- Deleted `factory-agent/tests/test_planner_owned_loop_phase8_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Phase 7 disposition | Owner | Replacement/retained coverage |
+| --- | --- | --- | --- |
+| Planner-owned graph phase files | Renamed to stable graph guard suites | Planner-owned graph tests | `test_planner_owned_graph_state_contract.py`, decision/shell/retrieval/execution/read/RAG/approval/interruption/runtime/proposer files |
+| Planner-owned loop helper phase files | Renamed to stable v2 helper/product guard suites | Planner-owned v2 helper tests | `test_planner_owned_v2_contract_compatibility.py`, `test_planner_owned_capability_map.py`, `test_planner_owned_tool_retriever.py`, `test_planner_owned_satisfaction.py`, `test_planner_owned_interrupt_replan.py`, `test_planner_owned_legacy_engine_removal.py` |
+| Historical direct-v2 compatibility tests | Renamed and kept quarantined | Historical direct-v2 compatibility | `test_historical_direct_v2_trace_compatibility.py` and `test_historical_direct_v2_hard_query_compatibility.py` retain `legacy_architecture_quarantine` markers |
+| Central no-legacy cleanup guard | Renamed and kept as stable architecture guard | Static guard suite | `test_planner_owned_graph_no_legacy_authority.py` now owns old graph/direct-v2/legacy RAG no-authority guards |
+| `test_planner_owned_loop_phase8_legacy_cleanup.py` | Deleted as duplicate import-only alias | Planner-owned graph API contract | Same assertions run from `test_planner_owned_graph_api_contract.py`; no unique assertions were removed |
+| Historical docs-only phase references | Retained as chronology | Cleanup tracker and migration docs | Historical tracker text remains documentation, not active test ownership |
+
+Tracker update:
+
+- Phase 7 row updated to `Complete`.
+- Top-level status now records stable planner-owned test filenames and the duplicate alias deletion.
+- Candidate manifest now records migration-era tests as consolidated into stable filenames.
+- Current handoff has moved to Phase 8 static cleanup enforcement.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `22 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- PowerShell-expanded focused renamed planner-owned suite (`test_planner_owned_graph_*.py`, `test_planner_owned_*.py`, `test_historical_direct_v2_*.py`) -> `183 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `84 warnings`.
+- `python -m pytest -q` -> `930 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `npm run test:e2e:response-document` -> `30 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:seeded-oracles` -> `35 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:real-langgraph` -> `3 passed`, `0 failed`, `0 skipped`.
+- `npm run test:e2e:release` -> `21 passed`, `0 failed`, `0 skipped`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Guardrail outcome:
+
+- No runtime behavior changed.
+- No frontend fixtures or release harness files changed.
+- No backend compatibility schema/helper tests were deleted.
+- No old graph/direct-v2/legacy RAG authority restored.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- Offline proposer mode still cannot satisfy release proof.
+
+Remaining cleanup candidates:
+
+- Phase 8 should turn the stable no-legacy guards into compact static cleanup enforcement with explicit allowlist ownership.
+- Retained backend historical direct-v2 and historical legacy RAG compatibility markers remain until persisted-data migration or explicit retirement.
+- Historical phase-number test function names remain inside several renamed files; file-level ownership is now stable, and function-name cleanup can be mechanical follow-up only if needed.
+
+Commit:
+
+- pending.
+
+## Previous Handoff Prompt
 
 ```text
 You are implementing the next narrow cleanup phase after Phase 6 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
@@ -1740,6 +1827,67 @@ Commit only if cleanup stays within the recorded post-scaffold scope and verific
 
 Suggested commit:
 test: consolidate migration legacy coverage
+
+Final response format:
+Phase Result
+Files Changed
+Candidate Disposition
+Tracker Update
+Verification
+Guardrail Checklist
+Open Issues
+Next Step
+```
+
+## Current Handoff Prompt
+
+```text
+You are implementing the next narrow cleanup phase after Phase 7 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+
+Goal:
+Continue cleanup without changing product behavior. Phase 7 moved planner-owned migration test files to stable graph/product/compatibility guard names, kept historical direct-v2 compatibility tests quarantined, and deleted one duplicate import-only alias test. Normal runtime remains PlannerOwnedAgentGraph. Backend historical direct-v2 and historical legacy RAG route compatibility helpers remain the persisted-data compatibility owners.
+
+Read first:
+- docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
+- docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
+- factory-agent/tests/test_planner_owned_graph_no_legacy_authority.py
+- factory-agent/tests/test_planner_owned_graph_runtime_adapter.py
+- factory-agent/tests/test_planner_owned_graph_proposer_policy.py
+- factory-agent/tests/test_planner_owned_graph_rag_evidence.py
+- factory-agent/tests/test_historical_direct_v2_trace_compatibility.py
+- factory-agent/tests/test_historical_direct_v2_hard_query_compatibility.py
+- factory-agent/factory_agent/planning/historical_direct_v2_compatibility.py
+- factory-agent/factory_agent/planning/historical_legacy_rag_route_compatibility.py
+
+Scope:
+- Recommended next narrow move: Phase 8 static cleanup enforcement.
+- Make the stable no-legacy guard compact and readable.
+- Add/update any explicit allowlist ownership needed for old graph/direct-v2/legacy RAG historical compatibility references.
+- Prefer AST/import analysis where possible over broad string scans.
+- Keep docs/archive references out of active-code denylist failures.
+- Do not change runtime behavior, frontend fixtures, release harness behavior, compatibility schemas/helpers, Qwen/proposer policy, or response-document semantics.
+
+Guardrails:
+- Normal runtime must remain PlannerOwnedAgentGraph.
+- No legacy/direct-v2/old graph authority may be restored.
+- No legacy RAG shortcut authority may be restored.
+- No exact-prompt, seeded-ID, source-ID, or scenario-specific runtime branches.
+- Offline proposer mode must not count as release proof.
+- Keep parse/read compatibility separate from runtime authority.
+
+Verification:
+- git status --short --branch
+- cd factory-agent
+- python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q
+- Run focused backend suites for any static guard files changed.
+- python -m pytest -q
+- cd ..
+- git diff --check
+
+Commit only if cleanup stays behavior-preserving and verification passes.
+
+Suggested commit:
+test: enforce planner-owned static cleanup guards
 
 Final response format:
 Phase Result
