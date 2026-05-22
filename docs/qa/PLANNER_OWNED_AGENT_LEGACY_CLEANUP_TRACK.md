@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 2.4 complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion, frontend fixture rewrites, and broad migration-test consolidation remain out of scope.
+Status: Phase 3.0 owner audit complete. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. Old graph scaffold deletion is blocked by active owners now recorded in Phase 3.0; frontend fixture rewrites and broad migration-test consolidation remain out of scope.
 
 Plan:
 
@@ -21,7 +21,7 @@ Baseline release-proof commit:
 | 0 | Baseline and cleanup manifest | Complete | `511755adcdd8def8ff4585276b65e9823f3c9a4d` | Docs diff check and recorded baseline |
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
-| 3 | Old graph scaffold deletion | Not started |  | Full backend, real-LangGraph, release |
+| 3 | Old graph scaffold deletion | Blocked; owner audit complete | pending final commit hash | Full backend, real-LangGraph, release |
 | 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
@@ -764,20 +764,88 @@ Next recommended phase:
 
 - Begin the old graph scaffold audit/migration lane only after resolving the active `PlannerService`, `ExecutionService`, and approval fallback owners. Do not delete old graph scaffold opportunistically from the direct-v2 cleanup lane.
 
+## Phase 3.0: Old Graph Scaffold Owner Audit
+
+Status: complete; deletion blocked.
+
+Phase result:
+
+- The old graph scaffold was audited after direct-v2 cleanup closed.
+- No old graph scaffold runtime code was deleted.
+- Normal plan creation still enters `_create_planner_owned_graph_plan()` for non-seeded v2 runtime and delegates to `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- The old graph scaffold remains active through named owner paths and is not deletion-ready.
+- A previously under-recorded helper blocker was captured: `llm/structured_output.py` imports `_normalize_plan_dict()` from `graph/planner_graph_helpers.py`, so that helper module cannot be removed with the state-machine scaffold until structured-output parsing has its own owner.
+- No frontend fixtures, release harness behavior, Qwen/proposer policy, or product behavior changed.
+
+Files changed:
+
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate disposition:
+
+| Candidate | Disposition | Replacement coverage / proof | Remaining blocker |
+| --- | --- | --- | --- |
+| `graph/planner_graph.py` / `LangGraphPlanner` | Still blocked | Graph-owned runtime suites cover `PlannerOwnedAgentGraph`, but old service paths still import and adapt `LangGraphPlanner` | `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` still lazily import `LangGraphPlanner` |
+| `graph/builder.py` / `compile_planner_graph()` | Still blocked | Phase 15 guard keeps `compile_planner_graph()` out of graph-owned runtime sources | Still called by `LangGraphPlanner.generate()` and `LangGraphPlanner.resume_after_approval()` |
+| `graph/state.py` plus `working_intents` / `intent_cursor` / `intent_completed` | Still blocked | Phase 15 guard proves these do not appear in `PlannerOwnedGraphRuntimeAdapter` or `PlannerOwnedAgentGraph` | Old `LangGraphPlanner` state-machine tests and service owners still use the state scaffold |
+| `graph/nodes/intent_split.py`, `graph/nodes/planner_loop.py`, `graph/nodes/validate.py` | Still blocked | Existing quarantine guard keeps them explicitly historical | Reachable through `compile_planner_graph()` while `LangGraphPlanner` remains reachable |
+| `graph/planner_graph_helpers.py` | Split-needed before deletion | Active helper import found outside the old graph scaffold | `llm/structured_output.py parse helper dependency` on `_normalize_plan_dict()` must be moved to a better parsing/locality owner before helper deletion |
+| `PlanCreationService legacy planner fallback paths` | Still blocked | Normal v2 create-plan runtime uses `_create_planner_owned_graph_plan()` first | Seeded/draft/discovery fallback branches still call `self._planner.generate_plan()` |
+| `ExecutionService.run_langgraph_session()` | Still blocked | Normal create-plan runtime is graph-owned, but this execution path remains present | Calls `self._planner.generate_plan()` and persists `backend_used="langgraph"` results |
+| `ApprovalResumeService graph approval fallback` | Still blocked | Planner-owned graph approval resume is attempted first | Fallback still calls `self._planner.resume_after_approval()` after direct-v2 compatibility resume declines |
+
+Static cleanup guards:
+
+- `test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned()` records the active blocker owners in both source and tracker so old scaffold deletion cannot proceed by omission.
+- `test_phase11_graph_runtime_sources_do_not_use_old_graph_or_legacy_rag_authority()` continues to prove `PlannerOwnedGraphRuntimeAdapter` and `PlannerOwnedAgentGraph` do not import or use `working_intents`, `intent_cursor`, `intent_completed`, `legacy_rag_route`, `compile_planner_graph()`, or `LangGraphPlanner`.
+- `test_phase11_normal_runtime_cannot_call_historical_direct_v2_execution()` continues to prove direct-v2 execution remains absent from the graph-owned service entry.
+
+Verification:
+
+- `rg -n "PlannerService\.generate_plan\(\)|PlannerService\.resume_after_approval\(\)|ExecutionService\.run_langgraph_session\(\)|ApprovalResumeService graph approval fallback|PlanCreationService legacy planner fallback paths|llm/structured_output.py parse helper dependency|_normalize_plan_dict|LangGraphPlanner|compile_planner_graph" factory-agent/factory_agent factory-agent/tests docs/qa` -> passed and confirmed the old graph owner/blocker inventory.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `16 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `28 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase5_shadow_engine.py tests/test_planner_owned_loop_phase9_hard_query_release.py tests/test_planner_owned_loop_phase6_satisfaction.py tests/test_planner_owned_loop_phase7_interrupt_replan.py -q` -> `35 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `9 warnings`.
+- `Get-ChildItem -Path tests -Filter 'test_planner_owned_agent_graph_phase*_*.py' | ForEach-Object { $_.FullName }` then `python -m pytest $phaseTests -q` -> `88 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `22 warnings`.
+- `python -m pytest -q` -> `1030 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1417 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+- Frontend release safety commands were not run because this phase did not change active response, trace, release harness, graph runtime behavior, or frontend-visible runtime behavior.
+
+Commit:
+
+- Pending in this changeset; final response records whether a commit was created.
+
+Remaining blockers:
+
+- `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` still own the lazy old graph adapter.
+- `ExecutionService.run_langgraph_session()` still calls the injected planner adapter and persists langgraph execution results.
+- `ApprovalResumeService graph approval fallback` still calls `resume_after_approval()` after planner-owned graph and direct-v2 compatibility resume paths decline.
+- `PlanCreationService legacy planner fallback paths` still call `self._planner.generate_plan()` in seeded/draft/discovery fallback flows.
+- `llm/structured_output.py parse helper dependency` still imports `_normalize_plan_dict()` from `graph/planner_graph_helpers.py`.
+
+Next recommended phase:
+
+- Split active structured-output parsing helpers out of `graph/planner_graph_helpers.py`, then migrate or retire `PlannerService` / `ExecutionService` / approval fallback owners before attempting old graph scaffold deletion.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 2.4 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 3.0 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 2.4 renamed the active normal runtime service entry from `_create_direct_v2_plan()` to `_create_planner_owned_graph_plan()`. Direct-v2 trace/draft compatibility remains in `v2_trace_compatibility.py`; normal runtime remains `PlannerOwnedAgentGraph`.
+Continue cleanup without changing product behavior. Phase 3.0 proved old graph scaffold deletion is still blocked by active owners and by a structured-output parsing helper dependency. Normal runtime remains `PlannerOwnedAgentGraph`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
+- factory-agent/factory_agent/llm/structured_output.py
+- factory-agent/factory_agent/graph/planner_graph_helpers.py
 - factory-agent/factory_agent/services/plan_creation_service.py
 - factory-agent/factory_agent/services/approval_resume_service.py
+- factory-agent/factory_agent/services/execution_service.py
+- factory-agent/factory_agent/services/planner_service.py
 - factory-agent/factory_agent/services/planner_owned_graph_runtime.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_contracts.py
@@ -792,7 +860,8 @@ Scope:
 - Treat `_context_with_engine_trace()` and `v2_trace_compatibility.py` as active trace/context compatibility.
 - Keep `PlanCreationService` free of `_direct_v2_*`, `_execute_direct_v2_*`, and `_maybe_create_direct_v2_*` helper islands.
 - `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` must remain absent.
-- Do not touch old graph scaffold deletion unless the active `PlannerService`, `ExecutionService`, and approval fallback blockers are explicitly resolved.
+- Do not delete old graph scaffold unless the active `PlannerService`, `ExecutionService`, `ApprovalResumeService`, `PlanCreationService`, and `llm/structured_output.py` blockers are explicitly resolved.
+- Prefer the next narrow move: split `_normalize_plan_dict()` out of `graph/planner_graph_helpers.py` into a structured-output parsing owner, with no behavior change.
 - Do not rewrite frontend hard-query release fixtures unless the phase scope is explicitly expanded.
 - Preserve persisted-data compatibility for old traces/sessions.
 
@@ -816,7 +885,7 @@ Verification:
 Commit only if cleanup stays within the recorded blocker scope and verification passes.
 
 Suggested commit:
-refactor: shrink retained direct-v2 compatibility
+refactor: isolate planner structured output parsing
 
 Final response format:
 Phase Result
