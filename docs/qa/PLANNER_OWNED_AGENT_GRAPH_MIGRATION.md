@@ -47,6 +47,12 @@ Post-Phase-10 gap:
 - The decision gate is valuable, but `author = "planner"` must not become a fake-v2 label for decisions that were never proposed by a planner adapter.
 - Before legacy cleanup, the graph needs a small, deep planner proposer seam: local Qwen/OpenAI-compatible LLM proposes a `PlannerDecisionSubmission`; deterministic validation decides whether that proposal may authorize graph progress.
 
+Post-Phase-10.5 policy gap:
+
+- The proposer seam exists, but offline structured proposer fallback must not silently stand in for the real planner LLM in production or release proof.
+- Offline proposer mode is useful for unit tests, CI contract tests, and explicit local development, but it must be opt-in and visibly traced.
+- Release proof must show the local/OpenAI-compatible Qwen planner proposer adapter, not offline contract mode.
+
 ## Target Loop
 
 ```text
@@ -264,6 +270,7 @@ The seeded-oracle and real-LangGraph suites were reported green before this migr
 | 9 | Run seeded | Run real-LangGraph | Interruption, stale work, and stateful graph behavior become in scope. |
 | 10 | Mandatory | Mandatory | Normal runtime switches to graph. Both suites are release blockers. |
 | 10.5 | Mandatory | Mandatory | LLM planner proposer becomes the source of planner-authored decisions. Both suites are release blockers. |
+| 10.6 | Mandatory | Mandatory | Offline proposer fallback policy becomes release-safe. Both suites are release blockers. |
 | 11 | Mandatory | Mandatory | Test cleanup can hide wrong behavior. Both suites are release blockers. |
 | 12 | Mandatory | Mandatory | Final release proof. Both suites must be green unless a failure is proven external/environmental with owner and removal gate. |
 
@@ -745,16 +752,78 @@ git diff --check
 
 If a live local Qwen endpoint is configured, also run one opt-in smoke test or manual trace against the smallest hard query that requires more than one planner decision. Record the model name, base URL type, and accepted/rejected proposal diagnostics in the tracker. Do not make the phase depend on a cloud model.
 
+## Phase 10.6: Production Planner Proposer Policy
+
+Goal: prevent offline structured proposer fallback from pretending to be the real planner LLM.
+
+Phase 10.5 made the proposer seam real. Phase 10.6 makes the runtime policy honest. The offline proposer may remain as a test/dev adapter, but normal production/release runtime must not silently fall back to offline decisions when local Qwen/OpenAI-compatible planner configuration is missing or broken.
+
+Requirements:
+
+- Add explicit configuration for offline proposer mode, for example `FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER=1`.
+- Default release/production behavior must not silently use `OfflineStructuredPlannerDecisionProposer`.
+- If no planner LLM endpoint/API key is configured and offline mode is not explicitly allowed, graph planning must fail closed with a clear diagnostic and no tool execution.
+- Existing unit tests may inject a proposer directly or enable explicit offline mode; they must not depend on silent runtime fallback.
+- Runtime trace must record the proposer adapter and whether it is real LLM mode or offline contract mode.
+- Release proof must require `OpenAICompatibleQwenPlannerDecisionProposer` or equivalent local/OpenAI-compatible LLM adapter. Offline mode cannot satisfy the release proof for "real LLM planner decisions."
+- The policy belongs at the proposer factory/config seam. Do not scatter environment checks across graph nodes or services.
+- Keep no-cloud-dependency tests by using fake local base URLs or injected fake models.
+
+Suggested files:
+
+- `factory-agent/factory_agent/config.py`
+- `factory-agent/factory_agent/planning/v2_planner_proposer.py`
+- `factory-agent/factory_agent/graph/v2_agent_graph.py` only if trace/fail-closed diagnostics need a small projection change
+- `factory-agent/tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py`
+- existing Phase 10.5 proposer tests
+
+Proof tests:
+
+- Missing planner LLM config with offline mode disabled fails closed before tool execution.
+- Explicit offline flag enables `OfflineStructuredPlannerDecisionProposer` and traces `offline_contract_mode = true`.
+- Configured local/OpenAI-compatible planner base URL selects `OpenAICompatibleQwenPlannerDecisionProposer` and traces local/model metadata.
+- Release-policy test rejects offline proposer diagnostics as satisfying real LLM planner proof.
+- Existing Phase 10.5 proposer tests still pass without weakening the proposer seam.
+
+Verification:
+
+```powershell
+cd factory-agent
+python -m pytest tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py tests/test_planner_owned_agent_graph_phase10_5_llm_proposer.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py -q
+python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py -q
+python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_route_to_execution_contract.py tests/test_tool_selector.py -q
+cd "..\eMas Front"
+npm run test:e2e:response-document
+npm run test:e2e:seeded-oracles
+npm run test:e2e:real-langgraph
+cd ..
+git diff --check
+```
+
+If a local Qwen endpoint is configured, run one opt-in smoke trace and record the adapter, model name, base URL type, prompt size, proposal validation result, and whether offline mode was disabled.
+
 ## Phase 11: Test Cleanup And Legacy Quarantine
 
-Goal: remove or rewrite tests that reward the wrong architecture after graph runtime and planner proposer are proven.
+Goal: remove or rewrite tests that reward the wrong architecture after graph runtime, planner proposer, and production proposer policy are proven.
+
+This phase is not a product refactor and not a broad deletion pass. It is a cleanup and quarantine pass over tests/helpers that still make the old direct-v2 or legacy graph path look like valid runtime authority.
 
 Rules:
 
+- Start by classifying tests/helpers into keep, rewrite, quarantine, or delete. Record the classification in the tracker.
 - Delete only tests whose product guarantee is already covered by graph-owned tests.
+- Rewrite migration-era tests when they prove a useful product guarantee but assert the wrong architecture.
 - Keep v2 contracts, evidence, response document, approval safety, stale approval, RAG citation, hardcode, and no-legacy guardrails.
 - Quarantine historical tests explicitly if they are still useful for parse compatibility.
 - Do not loosen tests just to reduce counts.
+- Do not remove old helper code merely because it is ugly. Remove or quarantine only when normal runtime and replacement tests prove the graph-owned behavior.
+
+Non-goals:
+
+- no product behavior changes,
+- no new planner, retriever, RAG, approval, response-document, or checkpoint stack,
+- no Phase 12 release proof work beyond preserving the release gates,
+- no exact-prompt, seeded-ID, source-ID, or query-specific cleanup shortcuts.
 
 Likely cleanup targets:
 
@@ -763,6 +832,7 @@ Likely cleanup targets:
 - tests that accept `execution_trace.generated_by = "v2_planner_loop"` as enough proof,
 - tests that require old graph `working_intents` behavior in normal runtime.
 - tests that accept hand-built graph decisions as planner-authored decisions without proposer diagnostics.
+- tests that count offline proposer mode as real LLM planner proof.
 
 Proof tests:
 
@@ -770,6 +840,7 @@ Proof tests:
 - Static guard: old graph package is historical or test-only.
 - Static guard: no legacy RAG/scaffold/cursor authority.
 - Static guard: no exact prompt or seeded-ID runtime branches.
+- Static guard: offline proposer diagnostics cannot count as real LLM planner proof.
 - Full backend has no unexpected xfail/skips added for this migration.
 
 Verification:
@@ -778,6 +849,11 @@ Verification:
 cd factory-agent
 python -m pytest tests/test_planner_owned_agent_graph_phase*_*.py tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
 python -m pytest -q
+cd "..\eMas Front"
+npm run test:e2e:response-document
+npm run test:e2e:seeded-oracles
+npm run test:e2e:real-langgraph
+cd ..
 git diff --check
 ```
 
@@ -795,6 +871,7 @@ Required proof:
 - Real-LangGraph/semantic oracle suite passes. Because it was green at migration start, any failure is blocking unless the tracker proves an unrelated external/environment issue with owner and removal gate.
 - LangSmith or fake-tracer proof shows parent graph run plus child LLM/tool/RAG calls.
 - Planner-authored decisions in trace include proposer diagnostics and deterministic validation outcome.
+- Release trace uses the local/OpenAI-compatible planner proposer adapter, not offline contract mode.
 
 Recommended commands:
 
@@ -866,6 +943,7 @@ Scope:
 - Update the graph migration tracker with exact files changed, tests run, counts, and blockers.
 - Do not switch runtime unless this is Phase 10.
 - Do not add or replace the planner proposer seam unless this is Phase 10.5.
+- Do not change offline/production proposer policy unless this is Phase 10.6.
 - Do not delete legacy/direct tests unless this is Phase 11 and the product behavior is already covered by graph-owned tests.
 
 Maintainability and hardcode rules:
