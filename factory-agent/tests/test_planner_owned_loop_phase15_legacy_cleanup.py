@@ -111,6 +111,42 @@ HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS = {
     Path("graph/nodes/validate.py"),
 }
 
+OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS = HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS | {
+    Path("graph/builder.py"),
+    Path("graph/planner_graph_helpers.py"),
+    Path("graph/nodes/__init__.py"),
+    Path("graph/nodes/prepare.py"),
+    Path("graph/nodes/reason.py"),
+    Path("graph/nodes/tool_pipeline.py"),
+}
+
+OLD_GRAPH_SCAFFOLD_IMPORT_MODULES = {
+    "factory_agent.graph.builder",
+    "factory_agent.graph.planner_graph",
+    "factory_agent.graph.planner_graph_helpers",
+    "factory_agent.graph.state",
+    "factory_agent.graph.nodes",
+    "factory_agent.graph.nodes.intent_split",
+    "factory_agent.graph.nodes.planner_loop",
+    "factory_agent.graph.nodes.prepare",
+    "factory_agent.graph.nodes.reason",
+    "factory_agent.graph.nodes.tool_pipeline",
+    "factory_agent.graph.nodes.validate",
+}
+
+ACTIVE_RUNTIME_OLD_GRAPH_COMPATIBILITY_IMPORTS = {
+    (
+        "graph/approval_summary.py",
+        "factory_agent.graph.planner_graph_helpers",
+        ("_infer_bulk_job_priority_mutation",),
+    ),
+    (
+        "llm/structured_output.py",
+        "factory_agent.graph.state",
+        ("AgentPlanOutput",),
+    ),
+}
+
 DISALLOWED_RUNTIME_AUTHORITY_FRAGMENTS = (
     "test_only_legacy_engine_enabled",
     "attach_legacy_trace_to_intent_contract",
@@ -166,6 +202,18 @@ def _runtime_files() -> list[Path]:
 
 def _relative_runtime(path: Path) -> Path:
     return path.relative_to(RUNTIME_ROOT)
+
+
+def _absolute_import_module(path: Path, module: str, level: int) -> str:
+    if level == 0:
+        return module
+    relative = _relative_runtime(path)
+    package_parts = ["factory_agent", *relative.parent.parts]
+    if level > 1:
+        package_parts = package_parts[: -(level - 1)]
+    if module:
+        package_parts.extend(module.split("."))
+    return ".".join(package_parts)
 
 
 def _is_parse_only_or_quarantined(path: Path) -> bool:
@@ -265,6 +313,65 @@ def test_phase11_historical_graph_authority_modules_are_explicitly_quarantined()
         for relative in sorted(HISTORICAL_GRAPH_QUARANTINE_RUNTIME_PATHS)
         if not (RUNTIME_ROOT / relative).exists()
     ]
+
+    assert missing == []
+
+
+def test_phase3_6_active_runtime_does_not_import_old_graph_scaffold_authority():
+    hits: list[str] = []
+    for path in _runtime_files():
+        relative = _relative_runtime(path)
+        if relative in OLD_GRAPH_SCAFFOLD_RUNTIME_PATHS:
+            continue
+        source = path.read_text(encoding="utf-8-sig")
+        module = ast.parse(source)
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom):
+                imported_module = _absolute_import_module(path, node.module or "", node.level)
+                names = tuple(alias.name for alias in node.names)
+                if not (
+                    imported_module in OLD_GRAPH_SCAFFOLD_IMPORT_MODULES
+                    or imported_module.startswith("factory_agent.graph.nodes.")
+                ):
+                    continue
+                allowlist_key = (relative.as_posix(), imported_module, names)
+                if allowlist_key in ACTIVE_RUNTIME_OLD_GRAPH_COMPATIBILITY_IMPORTS:
+                    continue
+                hits.append(f"{relative.as_posix()}:{node.lineno}: from {imported_module} import {', '.join(names)}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in OLD_GRAPH_SCAFFOLD_IMPORT_MODULES or alias.name.startswith(
+                        "factory_agent.graph.nodes."
+                    ):
+                        hits.append(f"{relative.as_posix()}:{node.lineno}: import {alias.name}")
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in {"LangGraphPlanner", "compile_planner_graph"}:
+                    hits.append(f"{relative.as_posix()}:{node.lineno}: call {func.id}")
+                elif isinstance(func, ast.Attribute) and func.attr in {"LangGraphPlanner", "compile_planner_graph"}:
+                    hits.append(f"{relative.as_posix()}:{node.lineno}: call {func.attr}")
+
+    assert hits == []
+
+
+def test_phase3_6_old_graph_scaffold_classification_is_tracked():
+    tracker = CLEANUP_TRACK_SOURCE.read_text(encoding="utf-8")
+
+    required_fragments = [
+        "Phase 3.6 old graph scaffold classification complete",
+        "Old Graph Scaffold Classification",
+        "Active runtime import proof",
+        "`factory-agent/factory_agent/graph/planner_graph.py`",
+        "`factory-agent/factory_agent/graph/planner_graph_helpers.py`",
+        "`factory-agent/factory_agent/graph/nodes/intent_split.py`",
+        "`factory-agent/factory_agent/graph/nodes/planner_loop.py`",
+        "`factory-agent/factory_agent/graph/nodes/validate.py`",
+        "`factory-agent/factory_agent/graph/state.py`",
+        "`factory-agent/tests/test_route_to_execution_contract.py`",
+        "`factory-agent/tests/test_planner_service_phase6.py`",
+    ]
+
+    missing = [fragment for fragment in required_fragments if fragment not in tracker]
 
     assert missing == []
 
