@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 0 complete. Cleanup lane baseline and starter candidate manifest are recorded after planner-owned graph Phase 12.1 release proof passed.
+Status: Phase 1 complete. Full legacy/direct-v2/v2 usage and ownership audit is recorded. No runtime, test, frontend, backend, or release-harness behavior changed, and no cleanup candidate is deletion-approved by Phase 1.
 
 Plan:
 
@@ -18,8 +18,8 @@ Baseline release-proof commit:
 
 | Phase | Name | Status | Commit | Required Gate |
 | --- | --- | --- | --- | --- |
-| 0 | Baseline and cleanup manifest | Complete | pending final commit hash | Docs diff check and recorded baseline |
-| 1 | Full legacy and v2 usage audit | Not started |  | Audit table complete, no runtime change |
+| 0 | Baseline and cleanup manifest | Complete | `511755adcdd8def8ff4585276b65e9823f3c9a4d` | Docs diff check and recorded baseline |
+| 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Not started |  | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Not started |  | Full backend, real-LangGraph, release |
 | 4 | Engine and trace compatibility cleanup | Not started |  | Full backend, response-document, seeded, release |
@@ -75,7 +75,7 @@ Required cleanup families covered:
 - `legacy_architecture_quarantine` tests,
 - frontend hard-query `generatedBy` and legacy expectation fixtures.
 
-Phase 1 must replace this starter list with an audited table containing file, symbol/term, current references, owner, disposition, replacement coverage, and blocker.
+Phase 1 audited table below supersedes this starter list for cleanup ownership and deletion blockers.
 
 | Candidate | Starting Evidence | Initial Disposition | Owner Needed |
 | --- | --- | --- | --- |
@@ -97,10 +97,10 @@ Phase 1 must replace this starter list with an audited table containing file, sy
 
 ## Unowned Cleanup Candidates
 
-Not audited yet. Phase 1 must populate this with any candidate whose owner is unclear.
+Phase 1 found no candidate that must be classified as `unknown owner`.
 
 ```text
-not audited
+none
 ```
 
 ## Allowlist Policy
@@ -163,36 +163,210 @@ Blockers:
 
 Commit:
 
-- pending final commit hash
+- `511755adcdd8def8ff4585276b65e9823f3c9a4d` (`docs: add planner-owned legacy cleanup lane`)
+
+## Phase 1: Full Legacy And V2 Usage Audit
+
+Status: complete.
+
+Phase 1 verdict:
+
+- Complete as an audit/tracker-only phase.
+- Current git `HEAD` at Phase 1 start: `511755adcdd8def8ff4585276b65e9823f3c9a4d`.
+- Starting working tree status: `## main...origin/main [ahead 24]`.
+- No code, tests, frontend fixtures, runtime behavior, release harness behavior, PlannerOwnedAgentGraph runtime, Qwen/proposer policy, or product behavior changed.
+- Normal create-plan runtime still enters `_create_direct_v2_plan()` by name, but that method is an active graph adapter that delegates to `_create_planner_owned_graph_v2_plan()` and then `PlannerOwnedGraphRuntimeAdapter.run_plan()`.
+- `PlannerOwnedV2Loop` and `attach_direct_v2_trace_to_intent_contract()` are still referenced by active service code through `_context_with_engine_trace()` and historical direct-v2 compatibility code. They are not deletion-approved.
+- The old `factory_agent.graph` scaffold is still reachable through active `PlannerService`, `ExecutionService.run_langgraph_session()`, and approval fallback paths. It is not deletion-approved.
+- Historical trace/evidence values such as `legacy_rag_route`, `v2_shadow`, `working_intents`, `intent_cursor`, and `intent_completed` still have compatibility/test owners and must remain isolated from graph runtime authority.
+- Frontend hard-query fixtures still expect `generatedBy: 'v2_planner_loop'` and legacy detector flags. They are frontend release-harness rewrite candidates, not Phase 1 deletion candidates.
+- Phase 1 did not find an `unknown owner` candidate; active owners and blockers are named below.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Exact audit commands used:
+
+```powershell
+git status --short --branch
+git rev-parse HEAD
+rg -n "PlannerOwnedV2Loop|_create_direct_v2_plan|_execute_direct_v2_steps|attach_direct_v2_trace_to_intent_contract|v2_planner_loop|working_intents|intent_cursor|intent_completed|legacy_rag_route|v2_shadow|test_only_legacy_engine_enabled|legacy_architecture_quarantine|FACTORY_AGENT_ENGINE|legacyIntentCompletionLoopUsed|legacyRagShortcutUsed" factory-agent docs/qa "eMas Front/e2e"
+rg -n "generatedBy: 'v2_planner_loop'|generated_by=.*v2_planner_loop|generated_by=.*legacy_rag_route" factory-agent "eMas Front/e2e"
+rg -n "pytestmark = pytest.mark.legacy_architecture_quarantine|@pytest.mark.legacy_architecture_quarantine" factory-agent/tests
+rg -n -C 4 "PlannerOwnedV2Loop|attach_direct_v2_trace_to_intent_contract|def _create_direct_v2_plan|def _execute_direct_v2_steps|_create_planner_owned_graph_v2_plan|backend_used=\"v2_planner_loop\"" factory-agent/factory_agent/services/plan_creation_service.py factory-agent/factory_agent/planning/v2_planner_loop.py
+rg -n -C 3 "PlannerOwnedGraphRuntimeAdapter|PlannerOwnedAgentGraph|PlannerOwnedV2Loop|_execute_direct_v2_steps|working_intents|intent_cursor|intent_completed|legacy_rag_route|generated_by" factory-agent/factory_agent/services/planner_owned_graph_runtime.py factory-agent/factory_agent/graph/v2_agent_graph.py
+rg -n -C 3 "working_intents|intent_cursor|intent_completed|legacy_rag_route|PlannerOwnedV2Loop|_execute_direct_v2_steps|legacy_architecture_quarantine|generated_by" factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py factory-agent/tests/conftest.py
+rg -n -C 3 "working_intents|intent_cursor|intent_completed" factory-agent/factory_agent/graph/planner_graph.py factory-agent/factory_agent/graph/nodes/intent_split.py factory-agent/factory_agent/graph/nodes/planner_loop.py factory-agent/factory_agent/graph/state.py
+rg -n -C 3 "resolve_factory_agent_engine_for_runtime|FACTORY_AGENT_ENGINE|test_only_legacy_engine_enabled|v2_shadow|legacy" factory-agent/factory_agent factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py factory-agent/tests/test_planner_owned_loop_phase10_legacy_removal.py
+rg -n -C 4 "ExecutionGeneratedBy|ExecutionTrace|legacy_rag_route|v2_shadow|v2_planner_loop|working_intents_count|intent_cursor_start|intent_completed_count|LegacyRagRouteMetadata" factory-agent/factory_agent/planning/v2_contracts.py factory-agent/factory_agent/planning/v2_interrupts.py factory-agent/factory_agent/planning/v2_satisfaction.py
+rg -n -C 4 "generatedBy: 'v2_planner_loop'|legacyIntentCompletionLoopUsed|legacyRagShortcutUsed|generatedBy|legacy" "eMas Front/e2e/support/hardQueryScenarios.js" "eMas Front/e2e/specs/response-document-hard-query-oracle.spec.js"
+rg -n -C 3 "pytestmark = pytest.mark.legacy_architecture_quarantine|@pytest.mark.legacy_architecture_quarantine|PlannerOwnedV2Loop|v2_planner_loop|legacy_rag_route|working_intents|intent_cursor|intent_completed" factory-agent/tests/test_planner_owned_loop_phase5_shadow_engine.py factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py factory-agent/tests/test_api_endpoints.py factory-agent/tests/test_planner_owned_loop_phase6_satisfaction.py factory-agent/tests/test_planner_owned_loop_phase7_interrupt_replan.py factory-agent/tests/test_planner_owned_loop_phase2_contracts.py
+rg -n "PlannerService|from factory_agent.services.planner_service|services.planner_service|LangGraphPlanner" factory-agent/factory_agent factory-agent/tests docs/qa
+rg -n -C 3 "compile_planner_graph|LangGraphPlanner|planner_service|graph.planner_graph|graph.builder" factory-agent/factory_agent/api factory-agent/factory_agent/main.py factory-agent/factory_agent/app.py factory-agent/factory_agent/dependencies.py factory-agent/factory_agent/services factory-agent/tests
+rg -n -C 3 "self\._planner|generate_plan|resume_after_approval" factory-agent/factory_agent/services/plan_creation_service.py factory-agent/factory_agent/services/execution_service.py factory-agent/factory_agent/services/approval_resume_service.py
+rg -n "_create_historical_direct_v2_plan|_execute_direct_v2_steps\(" factory-agent/factory_agent factory-agent/tests docs/qa
+rg -n "_context_with_engine_trace\(" factory-agent/factory_agent factory-agent/tests docs/qa
+rg -n "PlannerOwnedV2Loop" factory-agent/factory_agent factory-agent/tests docs/qa "eMas Front/e2e"
+rg -n "v2_shadow_state|v2_shadow|test_only_legacy_engine_enabled|FACTORY_AGENT_ENGINE" factory-agent/factory_agent factory-agent/tests docs/qa "eMas Front/e2e"
+```
+
+AST/import inspection command used:
+
+```powershell
+@'
+from __future__ import annotations
+import ast
+from pathlib import Path
+
+root = Path('factory-agent')
+exclude_parts = {'.venv', '__pycache__'}
+symbols = {
+    'PlannerOwnedV2Loop',
+    'attach_direct_v2_trace_to_intent_contract',
+    '_create_direct_v2_plan',
+    '_create_historical_direct_v2_plan',
+    '_execute_direct_v2_steps',
+    '_create_planner_owned_graph_v2_plan',
+    'compile_planner_graph',
+    'LangGraphPlanner',
+}
+import_hits = []
+def_hits = []
+call_hits = []
+attr_hits = []
+parse_errors = []
+
+for path in sorted(root.rglob('*.py')):
+    if any(part in exclude_parts for part in path.parts):
+        continue
+    text = path.read_text(encoding='utf-8-sig')
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        parse_errors.append((str(path), exc.lineno, exc.msg))
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names = [alias.name for alias in node.names]
+            matched = [name for name in names if name in symbols or (node.module or '').endswith(('v2_planner_loop','planner_graph'))]
+            if matched:
+                import_hits.append((str(path), node.lineno, node.module, ','.join(names)))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in symbols:
+            def_hits.append((str(path), node.lineno, type(node).__name__, node.name))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in symbols:
+                call_hits.append((str(path), node.lineno, func.id))
+            elif isinstance(func, ast.Attribute) and func.attr in symbols:
+                attr_hits.append((str(path), node.lineno, func.attr))
+
+print('AST_IMPORT_HITS')
+for row in import_hits:
+    print(':'.join(map(str, row)))
+print('AST_DEFINITION_HITS')
+for row in def_hits:
+    print(':'.join(map(str, row)))
+print('AST_CALL_HITS')
+for row in call_hits:
+    print(':'.join(map(str, row)))
+print('AST_ATTRIBUTE_CALL_HITS')
+for row in attr_hits:
+    print(':'.join(map(str, row)))
+print('AST_PARSE_ERRORS')
+for row in parse_errors:
+    print(':'.join(map(str, row)))
+'@ | python -
+```
+
+Audit table:
+
+| Candidate family | Files/symbols found | Classification | Owner | Replacement graph-owned coverage, if known | Recommended disposition | Blocker before deletion |
+| --- | --- | --- | --- | --- | --- | --- |
+| Normal v2 create-plan entry name | `factory-agent/factory_agent/services/plan_creation_service.py:576` `_create_direct_v2_plan`; `:594` delegates to `_create_planner_owned_graph_v2_plan`; `:661` calls `PlannerOwnedGraphRuntimeAdapter.run_plan`; `:2289` active `create_plan()` call site | active runtime | `PlanCreationService` plus `PlannerOwnedGraphRuntimeAdapter` | `tests/test_planner_owned_agent_graph_phase10_runtime_switch.py`; `tests/test_planner_owned_loop_phase15_legacy_cleanup.py` AST guards | Keep as the compatibility entry name for normal graph runtime in Phase 1. Rename only in a later behavior-preserving phase. | All service/API call sites and tests must be migrated to an explicitly graph-owned name without reintroducing direct-v2 execution. |
+| Direct-v2 trace/context adapter | `factory-agent/factory_agent/planning/v2_planner_loop.py:39` `attach_direct_v2_trace_to_intent_contract`; `:53` `PlannerOwnedV2Loop`; `plan_creation_service.py:532` `_context_with_engine_trace`; `:544` `PlannerOwnedV2Loop`; `:550`, `:569` trace attach; active callers include `execution_service.py:110` and `plan_creation_service.py:2306`, `:2333`, `:2354`, `:2373`, `:2434`, `:2454` | active runtime | `PlanCreationService` trace/context compatibility | Graph trace identity in `PlannerOwnedAgentGraphState`; Phase 1 graph-state test rejects `v2_planner_loop` as graph proof; Phase 15 cleanup guard keeps old trace values parse-only | Keep. Later isolate as an explicit compatibility/trace module or replace active call sites with graph trace generation. | Active service call sites must stop requiring `PlannerOwnedV2Loop` for context trace generation, and persisted old traces must remain readable. |
+| Historical direct-v2 executor body | `plan_creation_service.py:669` `_create_historical_direct_v2_plan`; `:746` calls `_execute_direct_v2_steps`; `:873` `_execute_direct_v2_steps`; AST found no external call to `_create_historical_direct_v2_plan`; graph tests assert the historical symbol still exists | deletion candidate | `PlanCreationService` historical direct-v2 compatibility | Graph execution/evidence/RAG/approval/interrupt coverage in graph phases 5, 7, 8, 9, 10; Phase 15 AST guard proves normal runtime cannot call it | Phase 2 can investigate removal or quarantine tightening. Do not delete in Phase 1. | Remove or rewrite tests that assert only symbol presence; prove direct-v2 approval/session repair does not require this executor; preserve any needed persisted compatibility. |
+| Old graph scaffold runtime | `factory-agent/factory_agent/graph/planner_graph.py:168` `LangGraphPlanner`; `:251`, `:298` `compile_planner_graph`; `factory-agent/factory_agent/graph/state.py:99` `working_intents`; `:100` `intent_cursor`; `graph/nodes/intent_split.py:26` writes `working_intents`; `graph/nodes/planner_loop.py` uses `working_intents`, `intent_cursor`, and `intent_completed`; `planner_service.py:317`, `:451` imports `LangGraphPlanner`; `api/routes.py:61` builds `PlannerService`; `execution_service.py:76` calls `generate_plan`; `approval_resume_service.py:124` fallback calls `resume_after_approval` | active runtime | `PlannerService`, `ExecutionService`, `ApprovalResumeService`, and old `factory_agent.graph` | `PlannerOwnedAgentGraph` graph phases 3 through 12.1 cover graph-owned runtime, but these active service paths are not fully migrated away from the old scaffold | Must not delete yet. Treat old scaffold as active until all live `PlannerService`/execution/approval fallback paths are retired or moved to `PlannerOwnedGraphRuntimeAdapter`. | Migrate `PlannerService.generate_plan()`, `PlannerService.resume_after_approval()`, `ExecutionService.run_langgraph_session()`, and fallback approval resume off `LangGraphPlanner`; prove old graph tests are no longer active product coverage. |
+| Old graph scaffold tests and guards | `tests/test_planner_phase3.py`; `tests/test_route_to_execution_contract.py`; `tests/test_planner_service_phase6.py`; `tests/test_langgraph_state_machine_oracles.py`; `tests/test_phase5_final_validator.py`; `tests/test_planner_owned_loop_phase15_legacy_cleanup.py:266` runtime-source denylist | test-only graph guard | Old graph test suite plus Phase 15 static guard | Replacement coverage exists across `test_planner_owned_agent_graph_phase3_shell.py`, phase5 execution observation, phase8 approval resume, phase9 interrupts, phase10 runtime switch | Keep while old scaffold is active. Later rewrite/merge into graph-owned stable guards. | Old graph runtime owner above must be removed first; then each old graph assertion needs a graph-owned equivalent or deletion proof. |
+| Legacy/shadow engine normalization | `factory-agent/factory_agent/config.py:399` reads `FACTORY_AGENT_ENGINE` and normalizes; `tests/test_planner_owned_loop_phase10_legacy_removal.py:73`; `tests/test_planner_owned_loop_phase15_legacy_cleanup.py:155` proves `legacy`, `v2_shadow`, and unknown normalize to `v2`; `test_only_legacy_engine_enabled` appears only in guard/doc references | active runtime | Runtime config normalization and Phase 15 guard | Phase 10/15 tests prove legacy/shadow values cannot restore legacy runtime authority | Keep normalization and guards. Later docs/config cleanup may remove old env vocabulary only with release proof. | No legacy/shadow env value may become runtime authority; any removal must preserve clear handling for existing deployments. |
+| `v2_contracts` historical trace/evidence values | `factory-agent/factory_agent/planning/v2_contracts.py:8` `EngineVersion = Literal["legacy", "v2_shadow", "v2"]`; `:9-15` historical `ExecutionTraceGeneratedBy`; `:67` `legacy_rag_route`; `:131-159` legacy detector models; `:432` `LegacyRagRouteMetadata`; `:454-465` legacy RAG evidence validation | persisted-data compatibility | V2 trace/evidence contract owner | Phase 1 graph-state tests and Phase 15 cleanup tests prove old traces parse but cannot satisfy graph/v2 proof | Keep as explicit compatibility for historical sessions/traces. Later move to a compatibility parser only if that reduces runtime contract surface safely. | Need persisted-data migration or compatibility adapter; old values must stay rejected as runtime authority and satisfaction proof. |
+| `v2_interrupts` shadow-state handling | `factory-agent/factory_agent/planning/v2_interrupts.py:150`, `:203`, `:564` handle `v2_shadow_state` alongside `v2_state` | persisted-data compatibility | V2 interrupt/revision compatibility | Graph approval/resume and interruption coverage in phases 8 and 9 | Keep until old persisted `v2_shadow_state` sessions are migrated or declared unsupported with proof. | Must prove no persisted sessions still need `v2_shadow_state` read/update compatibility. |
+| `legacy_rag_route` final-validation guard | `factory-agent/factory_agent/planning/v2_satisfaction.py:1311` rejects satisfied requirements backed by `legacy_rag_route`; `tests/test_planner_owned_loop_phase15_legacy_cleanup.py:338`; `tests/test_planner_owned_loop_phase6_satisfaction.py:447`; `tests/test_planner_owned_loop_phase2_contracts.py:91`, `:443` | persisted-data compatibility | V2 final validator and contract tests | Graph RAG coverage in `tests/test_planner_owned_agent_graph_phase7_rag.py` and phase10 runtime switch | Keep. It prevents old persisted RAG shortcut evidence from becoming current satisfaction proof. | Only remove after old trace/evidence migration and replacement graph RAG evidence checks prove the same rejection. |
+| Quarantined direct-v2/historical tests | `tests/test_planner_owned_loop_phase5_shadow_engine.py:14`; `tests/test_planner_owned_loop_phase9_hard_query_release.py:22`; `tests/test_api_endpoints.py:510`; quarantine marker registered in `tests/conftest.py:30`; marker guard in `tests/test_planner_owned_loop_phase15_legacy_cleanup.py:85`, `:202-238` | quarantined historical test | Compatibility quarantine owner | Graph phases 5, 6, 7, 8, 9, 10, 10.5, 10.6 plus release-harness proof | Keep quarantined in Phase 1. Phase 2/7 may rewrite or delete only after assertion-level mapping. | Every retained product guarantee needs graph-owned coverage; old direct-loop existence assertions must be removed or replaced. |
+| Non-quarantined direct-loop contract tests | `tests/test_planner_owned_loop_phase6_satisfaction.py` imports/calls `PlannerOwnedV2Loop`; `tests/test_planner_owned_loop_phase7_interrupt_replan.py` imports/calls `PlannerOwnedV2Loop` | rewrite candidate | V2 satisfaction and interrupt contract test owner | Graph phases 6, 8, 9 cover many runtime behaviors; v2 contract/helper unit coverage may still be useful below the graph interface | Rewrite later toward contract helpers or graph-owned state tests. Do not delete yet. | Identify which assertions are pure contract/helper proof versus old direct-loop runtime proof; preserve final-validator and interrupt compatibility coverage. |
+| Frontend hard-query old generated-by expectations | `eMas Front/e2e/support/hardQueryScenarios.js:255`, `:332`, `:373`, `:438`; `eMas Front/e2e/specs/response-document-hard-query-oracle.spec.js:67`; legacy detector flags at support `:258`, `:333`, `:375` and spec `:70`, `:96`, `:103` | frontend release harness | Frontend hard-query oracle/release harness owner | Planner-owned graph release proof in graph tracker Phase 12.1; backend graph trace identity is `planner_owned_agent_graph` | Rewrite in frontend cleanup phase to graph-owned trace/response-document assertions. Do not delete fixture coverage. | Response-document, seeded-oracle, real-LangGraph, and release E2E must pass after rewriting expected generatedBy/legacy flags. |
+| Fixture-only frontend/backend historical strings | Frontend expected objects contain old `generatedBy`; test fixtures and direct assertions contain `legacyRagShortcutUsed`, `legacyIntentCompletionLoopUsed`, and historical generated_by values | fixture-only | Fixture/test-data owners | Replacement depends on graph-owned runtime and frontend oracle rewrites | Keep until rewritten. Do not count fixture strings as runtime authority. | Fixture updates need release-harness proof and must not weaken semantic oracle checks. |
+| Docs and archive references | `docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION*.md`, `docs/qa/PLANNER_OWNED_AGENT_LOOP_MIGRATION*.md`, cleanup plan/tracker references | docs/archive only | QA/migration documentation | Not applicable | Keep as historical record. Later docs cleanup can move stale claims to archive wording. | Avoid deleting docs evidence needed to explain compatibility decisions until cleanup is complete. |
+
+Unknown-owner candidates:
+
+```text
+none
+```
+
+Safe Phase 2 candidates:
+
+- No Phase 1 candidate is deletion-approved.
+- Safe Phase 2 investigation/rewrite candidates are `_create_historical_direct_v2_plan`, `_execute_direct_v2_steps`, and quarantined direct-v2 tests, but only after proving direct-v2 approval/session repair and persisted trace compatibility do not depend on them.
+- Safe Phase 2 tracker work should first split active trace compatibility from historical direct execution so active service call sites no longer depend on `PlannerOwnedV2Loop`.
+
+Candidates that must not be deleted yet:
+
+- `_create_direct_v2_plan()` while it remains the active graph-runtime entry name.
+- `_context_with_engine_trace()`, `PlannerOwnedV2Loop`, and `attach_direct_v2_trace_to_intent_contract()` while active services call them for trace/context compatibility.
+- `factory_agent.graph.planner_graph`, `graph/builder.py`, `graph/state.py`, `graph/nodes/intent_split.py`, and `graph/nodes/planner_loop.py` while `PlannerService`, `ExecutionService`, or approval fallback paths can reach `LangGraphPlanner`.
+- `v2_contracts.py` historical enum/evidence/detector values and `v2_interrupts.py` `v2_shadow_state` compatibility handling.
+- `legacy_rag_route` rejection logic in `v2_satisfaction.py`.
+- Frontend hard-query fixtures until the frontend release harness is rewritten and proven green.
+- Non-quarantined direct-loop contract tests until their contract/helper coverage is rewritten or mapped to graph-owned coverage.
+
+Verification:
+
+- `git diff --check -- docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md` -> passed; Git printed the existing LF/CRLF conversion warning for this file, with no whitespace errors.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q` -> `23 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `10 warnings`.
+
+Blockers:
+
+- Old graph scaffold is active runtime through `PlannerService`/`ExecutionService`/approval fallback paths.
+- Direct-v2 trace/context generation remains active through `_context_with_engine_trace()`.
+- Frontend release-harness fixtures still encode `generatedBy: 'v2_planner_loop'`.
+- Non-quarantined direct-loop contract tests still instantiate `PlannerOwnedV2Loop`.
+
+Next phase recommendation:
+
+- Proceed to Phase 2 only as a narrow direct-v2 separation phase: first isolate/replace active trace-context compatibility, then remove or rewrite tests that assert historical direct executor presence, then delete direct executor code only after static guards and persisted compatibility proof pass. Do not start old graph scaffold deletion until its active `PlannerService`/execution/approval fallback owners are migrated.
 
 ## Current Handoff Prompt
 
 ```text
-You are implementing Phase 1 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing Phase 2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Run the first full legacy and v2 usage audit before any deletion or rewrite. Phase 1 proves what is actually used, who owns each compatibility path, and what graph-owned coverage replaces any future cleanup candidate. Do not delete code, tests, frontend fixtures, runtime behavior, or release-harness behavior in Phase 1.
+Start direct-v2 runtime cleanup only where Phase 1 proved there is no active runtime owner. Do not delete active trace/context compatibility, old graph scaffold runtime, frontend release-harness fixtures, or non-quarantined contract tests until each blocker recorded in the Phase 1 audit is resolved with replacement coverage.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
 - docs/qa/PLANNER_OWNED_AGENT_GRAPH_MIGRATION_TRACK.md
+- factory-agent/factory_agent/services/plan_creation_service.py
+- factory-agent/factory_agent/services/planner_owned_graph_runtime.py
+- factory-agent/factory_agent/planning/v2_planner_loop.py
+- factory-agent/factory_agent/planning/v2_contracts.py
+- factory-agent/factory_agent/planning/v2_interrupts.py
 - factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py
-- factory-agent/tests/conftest.py
+- factory-agent/tests/test_planner_owned_loop_phase6_satisfaction.py
+- factory-agent/tests/test_planner_owned_loop_phase7_interrupt_replan.py
+- factory-agent/tests/test_planner_owned_loop_phase5_shadow_engine.py
+- factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py
 
 Scope:
-- Implement only Phase 1: Full Legacy And V2 Usage Audit.
-- Build a reference inventory with rg and AST/import inspection for direct-v2 loop/runtime helpers, old graph scaffold, working_intents, intent_cursor, intent_completed, legacy_rag_route, v2_shadow, legacy engine trace compatibility, migration-era tests, legacy_architecture_quarantine tests, and frontend hard-query generatedBy/legacy expectation fixtures.
-- Classify every hit as active runtime, graph-owned test coverage, persisted-data compatibility, frontend release harness, docs/archive only, deletion candidate, or unknown owner.
-- Map each quarantined or migration-era test to replacement graph-owned coverage before proposing any future deletion.
-- Record unknown owners instead of guessing.
-- Do not delete runtime code.
-- Do not delete or rewrite tests.
-- Do not change frontend code.
-- Do not change backend runtime behavior.
-- Do not touch PlannerOwnedAgentGraph runtime.
-- Do not modify Qwen/proposer policy.
-- Do not alter release harness behavior.
+- Implement only Phase 2 direct-v2 cleanup.
+- Treat `_create_direct_v2_plan()` as active runtime until the entry name is migrated safely; it currently delegates to graph runtime.
+- Treat `_context_with_engine_trace()`, `PlannerOwnedV2Loop`, and `attach_direct_v2_trace_to_intent_contract()` as active trace/context compatibility until replaced.
+- Treat `_create_historical_direct_v2_plan()` and `_execute_direct_v2_steps()` as Phase 2 investigation candidates, not pre-approved deletions.
+- Do not touch old graph scaffold deletion in Phase 2; Phase 1 found it active through `PlannerService`, `ExecutionService`, and approval fallback paths.
+- Do not rewrite frontend hard-query release fixtures in Phase 2 unless the phase scope is explicitly expanded.
+- Preserve persisted-data compatibility for old traces/sessions.
 
 Guardrails:
 - Normal runtime must remain PlannerOwnedAgentGraph.
@@ -205,13 +379,15 @@ Guardrails:
 
 Verification:
 - git status --short --branch
-- rg -n "PlannerOwnedV2Loop|_create_direct_v2_plan|_execute_direct_v2_steps|attach_direct_v2_trace_to_intent_contract|v2_planner_loop|working_intents|intent_cursor|intent_completed|legacy_rag_route|v2_shadow|test_only_legacy_engine_enabled|legacy_architecture_quarantine" factory-agent docs "eMas Front"
+- cd factory-agent
+- python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py tests/test_planner_owned_agent_graph_phase10_runtime_switch.py tests/test_planner_owned_agent_graph_phase10_6_proposer_policy.py -q
+- cd ..
 - git diff --check
 
-Commit only if the audit tracker is coherent and diff check passes.
+Commit only if direct-v2 cleanup stays within Phase 2 scope and verification passes.
 
 Suggested commit:
-docs: audit planner-owned legacy cleanup candidates
+test: remove historical direct-v2 executor
 
 Final response format:
 Phase Result
