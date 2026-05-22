@@ -90,9 +90,6 @@ def build_router(
     )
     execution_service = ExecutionService(
         session_mgr=session_mgr,
-        memory_manager=memory_manager,
-        planner=planner,
-        tool_selector=tool_selector,
         plan_service=plan_creation_service,
         start_graph_approval_resume_task=approval_resume_service.start_graph_approval_resume_task,
     )

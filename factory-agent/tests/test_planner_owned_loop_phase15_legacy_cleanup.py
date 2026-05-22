@@ -281,7 +281,9 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     plan_parsing_source = PLAN_PARSING_SOURCE.read_text(encoding="utf-8")
 
     assert "from ..graph.planner_graph import LangGraphPlanner as planner_cls" in planner_service_source
-    assert "await self._planner.generate_plan(" in execution_service_source
+    assert "run_langgraph_session" not in execution_service_source
+    assert "await self._planner.generate_plan(" not in execution_service_source
+    assert "await self._plan_service.create_plan(" in execution_service_source
     assert "await self._planner.resume_after_approval(" in approval_resume_source
     assert "await self._planner.generate_plan(" not in plan_creation_source
     assert "generate_seeded_planner_compatibility_plan(" in plan_creation_source
@@ -294,11 +296,12 @@ def test_phase3_old_graph_scaffold_deletion_blockers_are_explicitly_owned():
     for owner in (
         "PlannerService.generate_plan()",
         "PlannerService.resume_after_approval()",
-        "ExecutionService.run_langgraph_session()",
         "ApprovalResumeService graph approval fallback",
     ):
         assert owner in tracker
 
+    assert "ExecutionService execution trigger" in tracker
+    assert "ExecutionService.run_langgraph_session() retired" in tracker
     assert "structured-output parsing owner resolved" in tracker
     assert "PlanCreationService seeded planner compatibility adapter" in tracker
 
