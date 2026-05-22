@@ -6,6 +6,7 @@ from typing import Any
 
 from ..config import normalize_factory_agent_engine
 from ..schemas import PlanDraft, PlanStepDraft, ToolInfo
+from .historical_direct_v2_compatibility import historical_direct_v2_generated_by
 from .tool_selector import ToolSelector
 from .v2_capability_map import (
     build_capability_needs_for_text,
@@ -104,7 +105,7 @@ async def build_direct_v2_compatibility_state(
 ) -> PlannerOwnedLoopV2State:
     resolved_mode = _resolve_compatibility_mode(engine_mode)
 
-    trace = ExecutionTrace(engine_version=resolved_mode, generated_by="v2_planner_loop")
+    trace = ExecutionTrace(engine_version=resolved_mode, generated_by=historical_direct_v2_generated_by())
     trace.diagnostics["visible_authority"] = "v2"
     trace.diagnostics["shadow_only"] = False
     trace.diagnostics["write_policy"] = "read_tools_only_writes_remain_dry_run"
@@ -242,10 +243,9 @@ def build_direct_v2_compatibility_draft(
 
 
 def build_failed_direct_v2_compatibility_state(error: str) -> PlannerOwnedLoopV2State:
-    v2_engine = "v" + "2"
     fallback_state = PlannerOwnedLoopV2State(
-        engine_version=v2_engine,
-        execution_trace=ExecutionTrace(engine_version=v2_engine, generated_by=f"{v2_engine}_planner_loop"),
+        engine_version="v2",
+        execution_trace=ExecutionTrace(engine_version="v2", generated_by=historical_direct_v2_generated_by()),
     )
     fallback_state.execution_trace.diagnostics["trace_generation_failed"] = error
     return fallback_state

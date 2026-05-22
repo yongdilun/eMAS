@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from factory_agent.graph.session_detection import has_langgraph_native_checkpoint, is_langgraph_plan
+from factory_agent.graph.session_detection import (
+    allows_persisted_step_projection,
+    has_langgraph_native_checkpoint,
+    is_langgraph_plan,
+    is_planner_owned_v2_plan,
+)
 
 
 class _Plan:
@@ -43,6 +48,18 @@ def _statement_text(statement) -> str:
 
 def test_planner_owned_graph_plan_is_graph_native_without_checkpoint_probe():
     assert is_langgraph_plan(_Plan("planner_owned_agent_graph"))
+
+
+def test_historical_direct_v2_plan_still_allows_step_projection():
+    plan = _Plan("v2_planner_loop")
+
+    assert is_planner_owned_v2_plan(plan)
+    assert allows_persisted_step_projection(plan)
+    assert not is_langgraph_plan(plan)
+
+
+def test_historical_direct_v2_created_by_normalizes_persisted_values():
+    assert is_planner_owned_v2_plan(_Plan(" V2_Planner_Loop "))
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ PLANNER_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "planner_service.py"
 EXECUTION_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "execution_service.py"
 APPROVAL_RESUME_SERVICE_SOURCE = RUNTIME_ROOT / "services" / "approval_resume_service.py"
 APPROVALS_ROUTER_SOURCE = RUNTIME_ROOT / "api" / "routers" / "approvals.py"
+SESSION_DETECTION_SOURCE = RUNTIME_ROOT / "graph" / "session_detection.py"
 GRAPH_RUNTIME_SOURCE = RUNTIME_ROOT / "services" / "planner_owned_graph_runtime.py"
 V2_AGENT_GRAPH_SOURCE = RUNTIME_ROOT / "graph" / "v2_agent_graph.py"
 APPROVAL_SUMMARY_SOURCE = RUNTIME_ROOT / "graph" / "approval_summary.py"
@@ -43,6 +44,7 @@ STRUCTURED_OUTPUT_SOURCE = RUNTIME_ROOT / "llm" / "structured_output.py"
 PLAN_PARSING_SOURCE = RUNTIME_ROOT / "llm" / "plan_parsing.py"
 SCHEMAS_SOURCE = RUNTIME_ROOT / "schemas.py"
 V2_TRACE_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "v2_trace_compatibility.py"
+HISTORICAL_DIRECT_V2_COMPATIBILITY_SOURCE = RUNTIME_ROOT / "planning" / "historical_direct_v2_compatibility.py"
 V2_PLANNER_LOOP_SOURCE = RUNTIME_ROOT / "planning" / "v2_planner_loop.py"
 CLEANUP_TRACK_SOURCE = REPO_ROOT / "docs" / "qa" / "PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md"
 
@@ -101,6 +103,7 @@ PARSE_ONLY_OR_QUARANTINED_RUNTIME_PATHS = {
     Path("planning/v2_satisfaction.py"),
     Path("planning/v2_interrupts.py"),
     Path("planning/v2_trace_compatibility.py"),
+    Path("planning/historical_direct_v2_compatibility.py"),
     Path("schemas.py"),
 }
 
@@ -552,6 +555,29 @@ def test_phase2_active_trace_context_compatibility_is_separated_from_direct_loop
     assert "def build_direct_v2_compatibility_run" in compatibility_source
     assert "def build_direct_v2_compatibility_draft" in compatibility_source
     assert not V2_PLANNER_LOOP_SOURCE.exists()
+
+
+def test_phase4_2_historical_direct_v2_literals_are_owned_by_compatibility_helper():
+    compatibility_source = HISTORICAL_DIRECT_V2_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
+    trace_compatibility_source = V2_TRACE_COMPATIBILITY_SOURCE.read_text(encoding="utf-8")
+    plan_creation_source = PLAN_CREATION_SOURCE.read_text(encoding="utf-8")
+    approval_resume_source = APPROVAL_RESUME_SERVICE_SOURCE.read_text(encoding="utf-8")
+    session_detection_source = SESSION_DETECTION_SOURCE.read_text(encoding="utf-8")
+
+    assert 'HISTORICAL_DIRECT_V2_CREATED_BY: HistoricalDirectV2CreatedBy = "v2_planner_loop"' in compatibility_source
+    assert 'HISTORICAL_DIRECT_V2_GENERATED_BY: HistoricalDirectV2GeneratedBy = "v2_planner_loop"' in compatibility_source
+    assert "def is_historical_direct_v2_created_by" in compatibility_source
+    assert "def is_historical_direct_v2_generated_by" in compatibility_source
+    assert "def is_historical_direct_v2_approval_payload" in compatibility_source
+    assert "historical_direct_v2_generated_by()" in trace_compatibility_source
+    assert '"v2_planner_loop"' not in trace_compatibility_source
+    assert '"v2_planner_loop"' not in plan_creation_source
+    assert '"v2_planner_loop"' not in approval_resume_source
+    assert '"v2_planner_loop"' not in session_detection_source
+    assert "is_historical_direct_v2_created_by" in plan_creation_source
+    assert "is_historical_direct_v2_approval_payload" in approval_resume_source
+    assert "historical_direct_v2_created_by()" in approval_resume_source
+    assert "is_historical_direct_v2_created_by" in session_detection_source
 
 
 def test_phase2_followup_tests_use_trace_compatibility_seam_not_planner_owned_loop():

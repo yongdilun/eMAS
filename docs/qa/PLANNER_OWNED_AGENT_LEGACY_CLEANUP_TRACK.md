@@ -1,6 +1,6 @@
 # Planner-Owned Agent Legacy Cleanup Tracker
 
-Status: Phase 4.1 engine and trace compatibility audit complete. Phase 3.8 deleted the old graph scaffold, Phase 4.0 classified old graph/direct-v2 vocabulary, and Phase 4.1 classified every remaining legacy/shadow/direct-v2 trace value in the requested audit scope as active compatibility schema, persisted historical parse compatibility, frontend fixture/release vocabulary, static guard vocabulary, historical docs only, or later deletion/rewrite candidate with an owner. No schema/control values, runtime behavior, frontend fixtures, release harness behavior, Qwen/proposer policy, or planner-owned graph behavior changed. Active direct-v2 trace/context compatibility is separated from the historical direct loop, historical direct executor entrypoints are deleted, remaining `PlanCreationService` direct-v2 helper islands are retired or moved to explicit compatibility owners, `PlannerOwnedV2Loop` / `PlannerOwnedV2LoopRun` are deleted, the active graph runtime entry is renamed to `_create_planner_owned_graph_plan()`, and normal runtime still enters `PlannerOwnedAgentGraph`. `ExecutionService.run_langgraph_session()` is retired; `/sessions/{session_id}/execute` delegates to `PlanCreationService.create_plan()` for planner-owned graph execution. `ApprovalResumeService` no longer calls `PlannerService.resume_after_approval()`; it preserves planner-owned graph approval resume, historical direct-v2 approval payload compatibility, and explicit seeded Playwright approval resume compatibility, and fails closed for unsupported old graph approval payloads. `PlannerService.generate_plan()` and `PlannerService.resume_after_approval()` are deleted; default API wiring no longer constructs or calls the old graph adapter, while seeded planner compatibility remains explicitly owned by `plan_creation_compatibility.py`. The old `factory_agent.graph` scaffold files and old graph-only tests are deleted; active coverage remains with `PlannerOwnedAgentGraph`, graph-native approval/session tests, central schemas, parser ownership, approval summary ownership, seeded compatibility coverage, and retained compatibility trace readers. Frontend fixture rewrites, release harness changes, Qwen/proposer policy changes, and broad migration-test consolidation remain out of scope; the only fixture adjustment in Phase 3.8 was backend seeded long-stream evidence shape for the existing release oracle.
+Status: Phase 4.2 backend direct-v2 compatibility isolation complete. Backend `v2_planner_loop` generated-by / created-by compatibility is now owned by `historical_direct_v2_compatibility.py`; service and graph call sites use named helper functions instead of service-local literals. Persisted old plan/session projection and historical direct-v2 approval payload resume behavior are preserved. Phase 4.1 classified remaining legacy/shadow/direct-v2 trace values as active compatibility schema, persisted historical parse compatibility, frontend fixture/release vocabulary, static guard vocabulary, historical docs only, or later deletion/rewrite candidates with owners. No schema/control values, frontend fixtures, release harness behavior, Qwen/proposer policy, planner-owned graph behavior, old graph authority, or direct-v2 execution authority changed.
 
 Plan:
 
@@ -22,7 +22,7 @@ Baseline release-proof commit:
 | 1 | Full legacy and v2 usage audit | Complete | pending final commit hash | Audit table complete, no runtime change |
 | 2 | Direct-v2 runtime deletion | Complete | pending final commit hash | Full backend, response-document, seeded, real-LangGraph, release |
 | 3 | Old graph scaffold deletion | Phase 3.8 complete; old scaffold deleted and active seams retained | pending final commit hash | Full backend, frontend release |
-| 4 | Engine and trace compatibility cleanup | Phase 4.1 audit complete; engine/trace values classified, no behavior changes, cleanup rewrites not started | pending final commit hash | Full backend, response-document, seeded, release |
+| 4 | Engine and trace compatibility cleanup | Phase 4.2 complete; backend direct-v2 compatibility literals isolated behind named helper, schema/control values retained | pending final commit hash | Full backend, response-document, seeded, release |
 | 5 | Legacy RAG shortcut compatibility cleanup | Not started |  | RAG suites, full backend, response-document, release |
 | 6 | Frontend legacy expectation cleanup | Not started |  | Frontend unit, response-document, seeded, real-LangGraph, release |
 | 7 | Migration test suite consolidation | Not started |  | Full backend plus all frontend E2E release gates |
@@ -1459,18 +1459,90 @@ Remaining cleanup candidates:
 - `legacy_rag_route` schema/evidence/source compatibility remains a Phase 5 cleanup candidate.
 - Migration-era direct-v2 compatibility tests remain a Phase 7 consolidation candidate.
 
+## Phase 4.2: Backend Direct-V2 Compatibility Isolation
+
+Status: complete.
+
+Phase result:
+
+- Backend historical direct-v2 `created_by` and `generated_by` handling now has one explicit owner: `factory-agent/factory_agent/planning/historical_direct_v2_compatibility.py`.
+- `PlanCreationService` completion handling, `ApprovalResumeService` historical approval payload detection and resume persistence, `graph/session_detection.py` persisted step projection, and `v2_trace_compatibility.py` trace construction now call named helpers instead of embedding service-local compatibility literals/checks.
+- Persisted old plans with `created_by="v2_planner_loop"` still allow step projection.
+- Historical direct-v2 approval payload resume still persists the same old backend marker through the helper.
+- Historical direct-v2 trace compatibility still emits the same generated-by marker through the helper.
+- `v2_contracts.py` schema/control values were intentionally retained.
+- No frontend fixtures, release harness behavior, planner-owned graph runtime, Qwen/proposer policy, exact-prompt branches, seeded-ID branches, source-ID branches, old graph authority, or direct-v2 execution authority changed.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+- `factory-agent/factory_agent/planning/historical_direct_v2_compatibility.py`
+- `factory-agent/factory_agent/planning/v2_trace_compatibility.py`
+- `factory-agent/factory_agent/services/plan_creation_service.py`
+- `factory-agent/factory_agent/services/approval_resume_service.py`
+- `factory-agent/factory_agent/graph/session_detection.py`
+- `factory-agent/tests/test_graph_session_detection.py`
+- `factory-agent/tests/test_planner_owned_loop_phase15_legacy_cleanup.py`
+
+Candidate disposition:
+
+| Candidate | Phase 4.2 disposition | Owner | Evidence | Removal gate |
+| --- | --- | --- | --- | --- |
+| `v2_planner_loop` generated-by construction in trace compatibility | Isolated behind `historical_direct_v2_generated_by()` | `planning/historical_direct_v2_compatibility.py` plus `planning/v2_trace_compatibility.py` | Phase 15 helper-ownership guard and quarantined direct-v2 trace tests still pass | Persisted direct-v2 trace migration or explicit retirement of direct-v2 trace replay compatibility |
+| `created_by == "v2_planner_loop"` persisted plan/session projection | Isolated behind `is_historical_direct_v2_created_by()` | `planning/historical_direct_v2_compatibility.py` plus `graph/session_detection.py` | `test_graph_session_detection.py` proves old created-by values still allow step projection | Persisted old plan/session migration or explicit unsupported-data decision |
+| Direct-v2 approval payload compatibility | Isolated behind `is_historical_direct_v2_approval_payload()` and `historical_direct_v2_created_by()` | `planning/historical_direct_v2_compatibility.py` plus `services/approval_resume_service.py` | Focused historical approval payload resume test passed | Historical direct-v2 approval payload compatibility retirement |
+| `PlanCreationService` empty-plan and max-step compatibility allowlists | Routed through `is_historical_direct_v2_created_by()` | `planning/historical_direct_v2_compatibility.py` plus `services/plan_creation_service.py` | Full backend passed; Phase 15 guard proves no service-local literal remains | Same persisted plan/session migration gate |
+
+Tracker update:
+
+- Phase 4 table row updated from Phase 4.1 audit-only status to Phase 4.2 complete.
+- Top-level status now records backend helper ownership.
+- Remaining cleanup candidates were narrowed: backend direct-v2 `created_by` / `generated_by` literals are no longer scattered cleanup candidates, but the historical compatibility value itself remains intentionally retained.
+
+Verification:
+
+- `python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q` -> `21 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_graph_session_detection.py -q` -> `4 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `1 warning`.
+- `python -m pytest tests/test_api_endpoints.py::test_phase14_historical_approval_payload_resume_queues_second_actionable_approval -q` -> `1 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `47 warnings`.
+- `python -m pytest tests/test_planner_owned_agent_graph_phase10_runtime_switch.py::test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume -q` -> `1 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest tests/test_planner_owned_loop_phase9_hard_query_release.py::test_phase9_historical_approval_compatibility_rows_use_next_production_week_when_calendar_week_has_no_rows tests/test_planner_owned_loop_phase9_hard_query_release.py::test_phase9_historical_approval_compatibility_rows_keep_literal_calendar_week_when_matching_rows_exist -q` -> `2 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `python -m pytest -q` -> `934 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1331 warnings`.
+- `git diff --check` -> passed with LF/CRLF conversion warnings only; no whitespace errors.
+
+Guardrail outcome:
+
+- No persisted old plan/session behavior changed.
+- No direct-v2 approval resume behavior changed except helper routing.
+- No `v2_planner_loop` schema/control values removed.
+- No planner-owned graph runtime behavior changed.
+- No frontend fixtures or release harness behavior changed.
+- No Qwen/proposer policy changed.
+- No exact-prompt, seeded-ID, source-ID, or source-specific runtime branches added.
+- No old graph or direct-v2 authority reintroduced.
+
+Remaining cleanup candidates:
+
+- Frontend hard-query generated-by and legacy-detector vocabulary remains a Phase 6 release-harness rewrite candidate.
+- `legacy_rag_route` schema/evidence/source compatibility remains a Phase 5 cleanup candidate.
+- Migration-era direct-v2 compatibility tests remain a Phase 7 consolidation candidate.
+- The retained historical direct-v2 compatibility marker remains until persisted-data migration or an explicit retirement decision.
+
+Commit:
+
+- pending.
+
 ## Current Handoff Prompt
 
 ```text
-You are implementing the next narrow cleanup phase after Phase 4.1 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
+You are implementing the next narrow cleanup phase after Phase 4.2 of docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md.
 
 Goal:
-Continue cleanup without changing product behavior. Phase 4.1 audited every remaining legacy/shadow/direct-v2 trace value and classified the references. No schema/control values, runtime behavior, frontend fixtures, release harness behavior, planner-owned graph behavior, or Qwen/proposer policy changed. Normal runtime remains `PlannerOwnedAgentGraph`. Compatibility owners now include `v2_contracts.py`, `v2_trace_compatibility.py`, `v2_interrupts.py`, `v2_satisfaction.py`, `PlanCreationService`, `ApprovalResumeService`, `graph/session_detection.py`, frontend hard-query fixtures, and static guard tests.
+Continue cleanup without changing product behavior. Phase 4.2 isolated backend historical direct-v2 `v2_planner_loop` generated-by / created-by compatibility behind `planning/historical_direct_v2_compatibility.py`. Persisted old plan/session projection and historical direct-v2 approval payload resume behavior stayed compatible. Normal runtime remains `PlannerOwnedAgentGraph`.
 
 Read first:
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_PLAN.md
 - docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
-- factory-agent/factory_agent/config.py
+- factory-agent/factory_agent/planning/historical_direct_v2_compatibility.py
 - factory-agent/factory_agent/planning/v2_contracts.py
 - factory-agent/factory_agent/planning/v2_trace_compatibility.py
 - factory-agent/factory_agent/planning/v2_interrupts.py
@@ -1485,13 +1557,11 @@ Read first:
 - factory-agent/tests/test_planner_owned_loop_phase9_hard_query_release.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase1_state.py
 - factory-agent/tests/test_planner_owned_agent_graph_phase7_rag.py
-- eMas Front/e2e/support/hardQueryScenarios.js
-- eMas Front/e2e/specs/response-document-hard-query-oracle.spec.js
 
 Scope:
-- Recommended next narrow move: Phase 4.2 backend compatibility isolation. Decide whether service-local `v2_planner_loop` completion/projection/approval-resume literals should move behind one named compatibility helper, with tests proving old `created_by="v2_planner_loop"` plans and historical direct-v2 approval payloads still behave the same.
-- Do not remove `EngineVersion`, `ExecutionTraceGeneratedBy`, legacy detector fields, `legacy_rag_route`, `legacy_rag_shortcut`, or `v2_shadow_state` unless the phase explicitly includes a persisted-data migration or compatibility-parser replacement.
-- Do not rewrite frontend hard-query release fixtures in Phase 4.2. Leave `generatedBy`, `legacyIntentCompletionLoopUsed`, and `legacyRagShortcutUsed` to Phase 6 unless scope is explicitly expanded with frontend E2E gates.
+- Recommended next narrow move: Phase 5 legacy RAG shortcut compatibility cleanup. Audit `legacy_rag_route`, `legacy_rag_shortcut`, and related evidence/source schema before deleting or moving anything.
+- Preserve persisted historical RAG route trace/evidence parsing unless a compatibility-parser replacement or explicit persisted-data migration is included.
+- Keep frontend hard-query release fixtures unchanged unless the phase is explicitly expanded with frontend E2E gates.
 - Keep `PlannerOwnedV2Loop`, `PlannerOwnedV2LoopRun`, and `planning/v2_planner_loop.py` deleted.
 - Keep `_create_direct_v2_plan()`, `_create_historical_direct_v2_plan()`, `_execute_direct_v2_steps()`, `_execute_direct_v2_api_step()`, and `_execute_direct_v2_rag_step()` absent.
 - Preserve persisted-data compatibility for old traces/sessions.
@@ -1509,6 +1579,7 @@ Verification:
 - git status --short --branch
 - cd factory-agent
 - python -m pytest tests/test_planner_owned_loop_phase15_legacy_cleanup.py -q
+- Run focused legacy RAG shortcut / satisfaction / source rendering tests if touched.
 - python -m pytest -q
 - cd ..
 - git diff --check
@@ -1516,7 +1587,7 @@ Verification:
 Commit only if cleanup stays within the recorded post-scaffold scope and verification passes.
 
 Suggested commit:
-docs: audit engine trace compatibility cleanup
+refactor: isolate legacy rag route compatibility
 
 Final response format:
 Phase Result

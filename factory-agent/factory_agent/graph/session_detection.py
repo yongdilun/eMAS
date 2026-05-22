@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factory_agent.persistence.models import Plan as PlanRow
 from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.persistence.models import WorkflowCheckpoint as WorkflowCheckpointRow
+from factory_agent.planning.historical_direct_v2_compatibility import is_historical_direct_v2_created_by
 
 
 def is_langgraph_plan(plan: PlanRow | None) -> bool:
@@ -16,7 +17,7 @@ def is_langgraph_plan(plan: PlanRow | None) -> bool:
 
 
 def is_planner_owned_v2_plan(plan: PlanRow | None) -> bool:
-    return bool(plan and str(getattr(plan, "created_by", "") or "").strip().lower() == "v2_planner_loop")
+    return bool(plan and is_historical_direct_v2_created_by(getattr(plan, "created_by", None)))
 
 
 def allows_persisted_step_projection(plan: PlanRow | None) -> bool:

@@ -41,6 +41,7 @@ from factory_agent.planning.intent import (
     semantic_frame_for_text,
 )
 from factory_agent.planning.plan_validator import validate_plan
+from factory_agent.planning.historical_direct_v2_compatibility import is_historical_direct_v2_created_by
 from factory_agent.planning.tool_output_alignment import align_tool_outputs_to_steps
 from factory_agent.planning.tool_selector import ToolSelector
 from factory_agent.planning.v2_rag_tool import ensure_v2_rag_tool
@@ -71,7 +72,7 @@ PLANNER_NO_ACTION_MESSAGE = (
     "request. Current state: blocked before execution. Next action: refine the request or check tool availability, "
     "then retry."
 )
-EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_planner_loop", "v2_rag_tool", "planner_owned_agent_graph"}
+EMPTY_PLAN_COMPLETION_BACKENDS = {"system", "v2_rag_tool", "planner_owned_agent_graph"}
 
 
 class PlanCreationService:
@@ -235,7 +236,10 @@ class PlanCreationService:
         limit = int(self._settings.max_plan_steps)
         steps = getattr(draft, "steps", []) or []
         if (
-            backend_used in {"langgraph", "v2_planner_loop", "planner_owned_agent_graph"}
+            (
+                backend_used in {"langgraph", "planner_owned_agent_graph"}
+                or is_historical_direct_v2_created_by(backend_used)
+            )
             and kind == "execution"
             and status == "COMPLETED"
             and tool_outputs
@@ -722,7 +726,11 @@ class PlanCreationService:
             and not draft_steps
             and (
                 status != "COMPLETED"
-                or (backend_used not in EMPTY_PLAN_COMPLETION_BACKENDS and not tool_outputs)
+                or (
+                    backend_used not in EMPTY_PLAN_COMPLETION_BACKENDS
+                    and not is_historical_direct_v2_created_by(backend_used)
+                    and not tool_outputs
+                )
             )
         )
         persisted_status = "DRAFT" if planner_no_action and status == "COMPLETED" else status

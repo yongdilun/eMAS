@@ -15,6 +15,10 @@ from factory_agent.observability.telemetry import log_event
 from factory_agent.orchestration.session_manager import SessionManager
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.planner import PlannerApprovalRequired, PlannerBackendError, PlannerClarificationError, PlannerPlanRejected
+from factory_agent.planning.historical_direct_v2_compatibility import (
+    historical_direct_v2_created_by,
+    is_historical_direct_v2_approval_payload,
+)
 from factory_agent.planning.v2_interrupts import execution_result_is_stale_after_interrupt
 from factory_agent.graph.http_tool_client import execute_tool_http
 from factory_agent.schemas import PlanDraft, PlanStepDraft
@@ -426,9 +430,9 @@ class ApprovalResumeService:
         intent: str,
     ) -> bool:
         payload = row.args if isinstance(row.args, dict) else {}
-        bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
-        if bundle_ui.get("kind") != "v2_planner_owned_approval_preview":
+        if not is_historical_direct_v2_approval_payload(payload):
             return False
+        bundle_ui = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else {}
 
         tools_by_name = await self._plan_service._ensure_registry_health(db=db)
         preview = payload.get("preview") if isinstance(payload.get("preview"), list) else []
@@ -571,7 +575,7 @@ class ApprovalResumeService:
             sess=sess,
             draft=draft,
             tools_by_name=tools_by_name,
-            backend_used="v2_planner_loop",
+            backend_used=historical_direct_v2_created_by(),
             kind="execution",
             status="FAILED" if failed else "COMPLETED",
             intent=intent,
