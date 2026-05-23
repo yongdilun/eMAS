@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 2 approval preview and staged-write helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 3 interrupt and revision policy helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -20,8 +20,8 @@ Baseline commit at tracker creation:
 | --- | --- | --- | --- | --- |
 | 0 | Runtime responsibility audit | Complete | `9026e3cb` | Docs/tracker only, diff check |
 | 1 | Checkpoint and state utility extraction | Complete | `14f24635` | Graph run/resume/interrupt tests plus full backend |
-| 2 | Approval preview and staged write module | Complete pending commit |  | Approval/API tests plus full backend |
-| 3 | Interrupt and revision policy module | Not started |  | Interrupt/stale-work tests plus full backend |
+| 2 | Approval preview and staged write module | Complete | `5a631f8d` | Approval/API tests plus full backend |
+| 3 | Interrupt and revision policy module | Complete pending commit |  | Interrupt/stale-work tests plus full backend |
 | 4 | Tool choice and execution helper split | Not started |  | ToolSelector plus graph read/RAG/write tests |
 | 5 | Evidence and response projection split | Not started |  | Response-document backend and E2E gates |
 | 6 | Graph file slimming and interface freeze | Not started |  | Full backend and frontend E2E release gates |
@@ -307,16 +307,99 @@ Commit:
 
 - pending
 
+## Phase 3: Interrupt And Revision Policy Module
+
+Status: complete pending commit.
+
+Phase 3 verdict:
+
+- Complete as a narrow graph interrupt/revision/stale-work policy extraction.
+- Runtime entrypoints stayed in `v2_agent_graph.py`: `run`, `run_state`, `resume_from_approval`, and `interrupt_with_user_message`.
+- Graph topology, graph nodes, approval preview/staged-write helpers, approval resume state machine, response projection, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior were not changed.
+- `session.replan_context` remains pointer/projection context only, not authoritative graph state.
+- No exact-prompt, seeded-ID, source-ID, legacy/direct-v2, or old-graph authority branch was added.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/graph/v2_graph_interrupts.py`
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- `_apply_graph_revision_evidence_policy`
+- `_invalidate_graph_work_after_interrupt`
+- `_close_graph_after_cancel_interrupt`
+- `_record_graph_interrupt_revision_trace`
+- `_store_graph_interrupt_pointer_for_ui`
+- `_attach_graph_work_identity`
+- `_attach_graph_evidence_identity`
+- `_stale_background_result_reason`
+- `_evidence_can_satisfy_active_revision`
+- `_planner_decision_is_active_for_graph_revision`
+- `_record_graph_requirement_update`
+
+Symbols intentionally not moved:
+
+- `interrupt_with_user_message` remains in `v2_agent_graph.py` because it is the public graph runtime entrypoint for checkpoint-backed user revisions.
+- Graph nodes remain in `v2_agent_graph.py`.
+- `run`, `run_state`, and `resume_from_approval` remain in `v2_agent_graph.py`.
+- Approval preview/staged-write helpers remain in `graph/v2_graph_approval.py`.
+- Response projection helpers remain in `v2_agent_graph.py`.
+- `_explicit_carried_forward_evidence_refs` remains in `v2_agent_graph.py` because it reads runtime option/session context immediately before interrupt policy application.
+
+Module ownership:
+
+- `graph/v2_graph_interrupts.py` now owns graph revision evidence policy, stale-work invalidation after interrupts, cancel-run closure policy, graph interrupt revision trace metadata, UI interrupt pointer storage, active-revision evidence/work identity, stale background result checks, active planner-decision filtering, and graph requirement update bookkeeping.
+- `planning/v2_interrupts.py` remains the generic interrupt classification and ledger mutation owner.
+- `v2_agent_graph.py` remains the owner of graph topology/orchestration, public runtime entrypoints, graph nodes, approval pause/resume state machine, graph checkpoint identity during approval staging, and response-document context assembly.
+- `graph/v2_graph_state_utils.py` remains the graph checkpoint/session-context utility owner consumed by the interrupt policy module.
+- `services/planner_owned_graph_runtime.py` remains the graph-result persistence and API/session projection owner.
+
+Audit commands used:
+
+```powershell
+rg -n "_apply_graph_revision_evidence_policy|_invalidate_graph_work_after_interrupt|_close_graph_after_cancel_interrupt|_record_graph_interrupt_revision_trace|_store_graph_interrupt_pointer_for_ui|_attach_graph_work_identity|_attach_graph_evidence_identity|_stale_background_result_reason|_evidence_can_satisfy_active_revision|_planner_decision_is_active_for_graph_revision|_record_graph_requirement_update" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests
+rg -n "Phase 0|Phase 2|interrupt|revision|stale|tracker|extraction|approval preview|staged-write" .
+rg -n "v2_agent_graph|interrupt|revision|approval preview|staged|Phase 0|Phase 2|Phase 3" factory-agent/phase_checklists factory-agent/docs factory-agent/runbooks
+rg -n "Phase 1 extracted|Phase 2 extracted|checkpoint/state|staged-write|approval preview|Module Extraction|extraction|v2_graph_state_utils|v2_graph_approval|v2_graph_interrupts|v2_agent_graph" . -g "*.md"
+rg -n "def _requirement_by_id|_requirement_by_id\(|_sync_graph_satisfaction_state\(|_unique_graph_evidence_id\(" factory-agent/factory_agent/graph/v2_agent_graph.py
+rg -n "uuid4|RequirementRevisionRecord|RequirementSatisfactionState|validate_graph_state_final_state|record_planner_decision\(|PendingApprovalState|EvidenceLedgerEntry|SatisfactionCheck|UserInterrupt|GraphToolExecutionResult|_coerce_positive_int|_current_graph_checkpoint_id|_session_context_value" factory-agent/factory_agent/graph/v2_agent_graph.py
+rg -n "test_planner_owned_graph_interrupts|phase9|interrupt|approval_resume|resume_from_approval|stale" factory-agent/tests -g "*.py"
+```
+
+Verification:
+
+- `python -m compileall factory_agent/graph/v2_agent_graph.py factory_agent/graph/v2_graph_interrupts.py` -> compiled both files.
+- `python -m pytest tests/test_planner_owned_graph_interruptions.py -q` -> `9 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary before tracing was disabled for later runs.
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_planner_owned_graph_approval_resume.py -q` -> `10 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`.
+- `$files = (Get-ChildItem -LiteralPath 'tests' -Filter 'test_planner_owned_graph_*.py').FullName; python -m pytest $files -q` -> `117 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `64 warnings`.
+- `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `git diff --check` -> passed; LF/CRLF warnings only, no whitespace errors.
+
+Blockers:
+
+- none
+
+Open issues:
+
+- LangSmith ingest emitted non-blocking 429/network messages after the first interruption test run. Later pytest commands disabled LangSmith tracing and exited green.
+
+Commit:
+
+- pending
+
 ## Next Handoff Prompt
 
 ```text
-You are implementing Phase 2 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
+You are implementing Phase 4 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
 
 Goal:
-Extract approval preview and staged-write helper behavior from `factory-agent/factory_agent/graph/v2_agent_graph.py` only if ownership is clear and the new module has real depth.
+Extract tool choice and execution helper behavior from `factory-agent/factory_agent/graph/v2_agent_graph.py` only if ownership is clear and the new module has real depth.
 
 Context:
-The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved only checkpoint/state utilities into `graph/v2_graph_state_utils.py`. Runtime entrypoints, graph topology, interrupt policy, response projection, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
+The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved checkpoint/state utilities into `graph/v2_graph_state_utils.py`, Phase 2 moved approval preview/staged-write helpers into `graph/v2_graph_approval.py`, and Phase 3 moved graph interrupt/revision policy helpers into `graph/v2_graph_interrupts.py`. Runtime entrypoints, graph topology, response projection, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
 
 Read first:
 - docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md
@@ -332,26 +415,34 @@ Read first:
 - factory-agent/factory_agent/planning/v2_interrupts.py
 
 Scope:
-- Implement only Phase 2.
-- Move only the smallest coherent approval preview/staged-write helper cluster if it improves depth and locality.
+- Implement only Phase 4.
+- Move only the smallest coherent tool choice/execution helper cluster if it improves depth and locality.
 - Do not move graph run/resume/interrupt entrypoints.
 - Do not move graph topology.
+- Do not move graph nodes.
+- Do not move approval preview/staged-write helpers.
+- Do not move interrupt/revision/stale-work helpers.
+- Do not move response projection.
 - Do not rename symbols.
 - Do not change product behavior.
 - Do not change tests except imports/references required by the extraction.
 - Update the tracker.
 
 Candidate helpers:
-- `_normalize_approval_preview`
-- `_graph_write_approval_preview`
-- `_approval_preview_read_card`
-- `_approval_preview_read_args`
-- `_execute_approval_preview_read`
-- `_rows_from_projected_body`
-- `_approval_preview_rows_from_read`
-- `_prior_write_ids_moved_into_source_priority`
-- `_staged_write_tool_calls_from_preview`
-- `_commit_args_from_preview`
+- `_deterministic_choose_tool_if_state_proves_single_document_tool`
+- `_tool_choice_requires_graph_approval`
+- `_tool_calls_for_card`
+- `_select_graph_tool_card`
+- `_card_supports_collection_read`
+- `_card_supports_collection_identity_read`
+- `_card_supports_batched_item_read`
+- `_batch_identity_arg`
+- `_identity_arg_names`
+- `_multi_entity_identity_values`
+- `_hydrated_card_for_tool_call`
+- `_hydrated_cards_for_requirement`
+- `_args_for_tool_call`
+- `_argument_value_for`
 
 Maintainability rules:
 - Increase module depth and locality.
@@ -369,13 +460,13 @@ Guardrails:
 - Do not reopen legacy/direct-v2/old graph authority.
 
 Suggested audit commands:
-- `rg -n "_normalize_approval_preview|_graph_write_approval_preview|_approval_preview_read_card|_approval_preview_read_args|_execute_approval_preview_read|_rows_from_projected_body|_approval_preview_rows_from_read|_prior_write_ids_moved_into_source_priority|_staged_write_tool_calls_from_preview|_commit_args_from_preview" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
-- `rg -n "approval|preview|staged|pending_approval|graph_write_approval_required|approval_summary|approval_persister" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests/test_planner_owned_graph_approval_resume.py factory-agent/tests/test_api_endpoints.py factory-agent/tests/test_planner_owned_graph_runtime_adapter.py`
+- `rg -n "_deterministic_choose_tool_if_state_proves_single_document_tool|_tool_choice_requires_graph_approval|_tool_calls_for_card|_select_graph_tool_card|_card_supports_collection_read|_card_supports_collection_identity_read|_card_supports_batched_item_read|_batch_identity_arg|_identity_arg_names|_multi_entity_identity_values|_hydrated_card_for_tool_call|_hydrated_cards_for_requirement|_args_for_tool_call|_argument_value_for" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
+- `rg -n "tool_choice|choose_tool|execute_tool|selected_tool_call|candidate_tool_windows|hydrated_tool_cards|ToolSelector|V2CapabilityToolRetriever" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
 
 Verification:
 - `cd factory-agent`
-- `python -m pytest tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_runtime_adapter.py -q`
-- `python -m pytest tests/test_api_endpoints.py -q`
+- `python -m pytest tests/test_tool_selector.py -q`
+- `python -m pytest tests/test_planner_owned_graph_retrieval_contract.py tests/test_planner_owned_graph_execution_observation.py tests/test_route_to_execution_contract.py -q`
 - `python -m pytest tests/test_planner_owned_graph_*.py -q` using an explicit file list under PowerShell if needed
 - `python -m pytest -q`
 - `cd ..`
@@ -385,7 +476,7 @@ Verification:
 Commit only if behavior is unchanged and the focused plus full backend tests pass.
 
 Suggested commit:
-`refactor: extract graph approval preview helpers`
+`refactor: extract graph tool choice helpers`
 
 Final response sections:
 Phase Result
