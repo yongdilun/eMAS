@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 6 graph file slimming and public interface freeze complete. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 7 final runtime refactor release proof complete. This active-runtime maintainability lane for `PlannerOwnedAgentGraph` is complete. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -25,7 +25,7 @@ Baseline commit at tracker creation:
 | 4 | Tool choice and execution helper split | Complete | `3277948d` | ToolSelector plus graph read/RAG/write tests |
 | 5 | Evidence and response projection split | Complete | `0eb4c7b7` | Response-document backend and E2E gates |
 | 6 | Graph file slimming and interface freeze | Complete | `5eee9285` | Full backend and frontend E2E release gates |
-| 7 | Final runtime refactor release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
+| 7 | Final runtime refactor release proof | Complete | `41cdc685` | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
 
@@ -305,7 +305,7 @@ Open issues:
 
 Commit:
 
-- pending
+- `41cdc685`
 
 ## Phase 3: Interrupt And Revision Policy Module
 
@@ -522,88 +522,70 @@ Commit:
 
 - `5eee9285`
 
+## Phase 7: Final Runtime Refactor Release Proof
+
+Phase result:
+
+- Passed. Recorded the final behavior-preserving release proof for the planner-owned graph runtime refactor lane.
+- Phase 6 and Phase 7 are both marked complete.
+- The public runtime interface remains frozen as `PlannerOwnedAgentGraph`, `PlannerOwnedAgentGraphAdapters`, `PlannerOwnedAgentGraphRunOptions`, and `PlannerOwnedGraphResult`.
+- No additional code extraction, symbol rename, release harness change, frontend fixture change, Qwen/proposer policy change, exact-prompt branch, seeded-ID branch, or source-ID branch was introduced for Phase 7.
+
+Files changed:
+
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- none
+
+Module ownership:
+
+- Unchanged from Phase 6.
+- `v2_agent_graph.py` remains frozen as graph topology, graph nodes, public runtime entrypoints, execution orchestration, approval pause/resume behavior, repeated-retrieval guard telemetry, and response-document node assembly owner.
+- Extracted helper modules remain the owners documented in Phase 6.
+
+Verification:
+
+- `python -m compileall -q factory-agent/factory_agent/graph`: passed.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`: 24 passed, 2 warnings.
+- `cd factory-agent; $files = Get-ChildItem -LiteralPath tests -Filter 'test_planner_owned_graph_*.py' | ForEach-Object { $_.FullName }; python -m pytest @files -q`: 117 passed, 64 warnings.
+- `cd factory-agent; python -m pytest -q`: 932 passed, 3 skipped, 1290 warnings.
+- `cd "eMas Front"; npm test`: 133 passed.
+- `cd "eMas Front"; npm run test:e2e:response-document`: 30 passed.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles`: 35 passed.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph`: 3 passed.
+- `cd "eMas Front"; npm run test:e2e:release`: final full rerun passed 21 passed. Earlier release retries failed scenario 60 because the remote planner model returned `503 Service Unavailable` before the Go API outage branch.
+- `git diff --check`: passed with Git line-ending warnings only, no whitespace errors.
+
+Guardrails:
+
+- No runtime behavior changed.
+- No tests were weakened.
+- No shallow pass-through module was created.
+- No exact-prompt, seeded-ID, or source-ID runtime branch was added.
+- No legacy/direct-v2/old graph authority was restored.
+- `session.replan_context` remains pointer/projection context only, not authoritative graph state.
+
+Blockers:
+
+- none
+
+Open issues:
+
+- none
+
+Commit:
+
+- pending
+
 ## Next Handoff Prompt
 
 ```text
-You are implementing Phase 7 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
+Planner-owned graph runtime refactor Phases 0 through 7 are complete.
 
 Goal:
-Run the final planner-owned graph runtime refactor release proof and make the current refactor baseline explicit.
-
-Context:
-The planner-owned graph migration and legacy cleanup are separate. Phases 1 through 5 moved checkpoint/state, approval preview/staged-write, interrupt/revision policy, tool choice, and response projection helpers into focused modules. Phase 6 slimmed `v2_agent_graph.py` and froze the public runtime interface. Runtime entrypoints, graph topology, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
-
-Read first:
-- docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md
-- docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md
-- docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md
-- factory-agent/factory_agent/graph/v2_agent_graph.py
-- factory-agent/factory_agent/services/planner_owned_graph_runtime.py
-- factory-agent/factory_agent/planning/v2_agent_state.py
-- factory-agent/factory_agent/planning/v2_graph_adapters.py
-- factory-agent/factory_agent/planning/v2_planner_decisions.py
-- factory-agent/factory_agent/planning/v2_planner_proposer.py
-- factory-agent/factory_agent/planning/v2_satisfaction.py
-- factory-agent/factory_agent/planning/v2_interrupts.py
-
-Scope:
-- Implement only Phase 7.
-- Treat this as release proof, not a new extraction phase.
-- Confirm the public runtime interface remains `PlannerOwnedAgentGraph`, `PlannerOwnedAgentGraphAdapters`, `PlannerOwnedAgentGraphRunOptions`, and `PlannerOwnedGraphResult`.
-- Do not move graph run/resume/interrupt entrypoints, graph topology, or graph nodes.
-- Do not reopen approval, interrupt, tool-choice, checkpoint, or response projection extraction decisions unless a compile/test failure proves a misplaced helper.
-- Do not rename symbols.
-- Do not change product behavior.
-- Update the tracker.
-
-Maintainability rules:
-- Increase module depth and locality.
-- Do not create shallow pass-through modules.
-- Keep graph runtime public interface stable.
-- Do not duplicate ToolSelector, RAG, approval, response-document, checkpoint, or proposer stacks.
-- Do not make session.replan_context authoritative graph state.
-
-Guardrails:
-- No product behavior changes.
-- No planner-owned graph runtime behavior changes.
-- No release harness changes.
-- No Qwen/proposer policy changes.
-- No exact-prompt, seeded-ID, or source-ID runtime branches.
-- Do not reopen legacy/direct-v2/old graph authority.
-
-Suggested audit commands:
-- `rg -n "class PlannerOwnedAgentGraph|async def run|async def resume_from_approval|async def interrupt_with_user_message|PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER|_response_document_node" factory-agent/factory_agent/graph/v2_agent_graph.py`
-- `rg -n "PlannerOwnedAgentGraphRunResult|exact prompt|seeded.*branch|source.*branch|session\\.replan_context.*authoritative" factory-agent/factory_agent docs/qa`
-
-Verification:
-- `cd factory-agent`
-- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`
-- `python -m pytest -q`
-- `cd ..`
-- `cd "eMas Front"`
-- `npm test`
-- `npm run test:e2e:response-document`
-- `npm run test:e2e:seeded-oracles`
-- `npm run test:e2e:real-langgraph`
-- `npm run test:e2e:release`
-- `cd ..`
-- `git diff --check`
-- `git status --short --branch`
-
-Commit only if behavior is unchanged and all required backend/frontend gates pass.
-
-Suggested commit:
-`test: record planner-owned graph refactor release proof`
-
-Final response sections:
-Phase Result
-Files Changed
-Module Ownership
-Tracker Update
-Verification
-Guardrail Checklist
-Open Issues
-Next Step
+Use `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md` as the final baseline record for this maintainability lane. Start a new scoped plan for any further planner-owned graph runtime work.
 ```
 
 ## Update Rules
