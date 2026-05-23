@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 1 checkpoint/state utility extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 2 approval preview and staged-write helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -19,8 +19,8 @@ Baseline commit at tracker creation:
 | Phase | Name | Status | Commit | Required Gate |
 | --- | --- | --- | --- | --- |
 | 0 | Runtime responsibility audit | Complete | `9026e3cb` | Docs/tracker only, diff check |
-| 1 | Checkpoint and state utility extraction | Complete pending commit |  | Graph run/resume/interrupt tests plus full backend |
-| 2 | Approval preview and staged write module | Not started |  | Approval/API tests plus full backend |
+| 1 | Checkpoint and state utility extraction | Complete | `14f24635` | Graph run/resume/interrupt tests plus full backend |
+| 2 | Approval preview and staged write module | Complete pending commit |  | Approval/API tests plus full backend |
 | 3 | Interrupt and revision policy module | Not started |  | Interrupt/stale-work tests plus full backend |
 | 4 | Tool choice and execution helper split | Not started |  | ToolSelector plus graph read/RAG/write tests |
 | 5 | Evidence and response projection split | Not started |  | Response-document backend and E2E gates |
@@ -205,6 +205,92 @@ Verification:
 - `python -m pytest tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_interruptions.py -q` -> `19 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
 - `python -m pytest tests/test_planner_owned_graph_shell_contract.py tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_interruptions.py tests/test_planner_owned_graph_runtime_adapter.py -q` -> `33 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `5 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
 - `python -m pytest tests/test_planner_owned_graph_*.py -q` -> PowerShell passed the wildcard literally, so pytest reported `file or directory not found` before collection. Corrected with an explicit file list.
+- `$files = (Get-ChildItem -LiteralPath 'tests' -Filter 'test_planner_owned_graph_*.py').FullName; python -m pytest $files -q` -> `117 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `64 warnings`. Non-blocking LangSmith ingest 429 messages printed after the pytest summary.
+- `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `git diff --check` -> passed; LF/CRLF warnings only, no whitespace errors.
+
+Blockers:
+
+- none
+
+Open issues:
+
+- LangSmith ingest emitted non-blocking 429/network messages after several pytest summaries. Pytest exit codes were green.
+
+Commit:
+
+- pending
+
+## Phase 2: Approval Preview And Staged Write Module
+
+Status: complete pending commit.
+
+Phase 2 verdict:
+
+- Complete as a narrow approval preview and staged-write helper extraction.
+- Runtime entrypoints stayed in `v2_agent_graph.py`: `run`, `run_state`, `resume_from_approval`, and `interrupt_with_user_message`.
+- Graph topology, node orchestration, approval resume state machine, interrupt/revision policy helpers, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior were not changed.
+- `session.replan_context` remains pointer/projection context only, not authoritative graph state.
+- No exact-prompt, seeded-ID, source-ID, legacy/direct-v2, or old-graph authority branch was added.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/graph/v2_graph_approval.py`
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- `PlannerOwnedGraphApprovalPreview`
+- `_normalize_approval_preview`
+- `_graph_write_approval_preview`
+- `_approval_preview_read_card`
+- `_approval_preview_read_args`
+- `_execute_approval_preview_read`
+- `_mapping_or_empty`
+- `_rows_from_projected_body`
+- `_approval_preview_rows_from_read`
+- `_prior_write_ids_moved_into_source_priority`
+- `_priority_pair_from_preview_rows`
+- `_staged_write_tool_calls_from_preview`
+- `_pending_staged_tool_calls`
+- `_source_priority_constraint`
+- `_target_priority_constraint`
+- `_no_records_preview_message`
+- `_default_approval_preview`
+- `_commit_args_from_preview`
+- `_pending_approval_response_block`
+
+Symbols intentionally not moved:
+
+- `_next_approval_index` remains in `v2_agent_graph.py` because approval numbering is tied to graph planner decisions.
+- `_write_choice_finished_without_pending_approval` remains in `v2_agent_graph.py` because it gates graph node continuation after no-record/impossible approval staging.
+- `_approval_decision_matches_pending` remains in `v2_agent_graph.py` because it is part of checkpoint-aware graph approval resume behavior.
+- `_card_supports_collection_read` remains in `v2_agent_graph.py` for Phase 2 because tool-choice card selection also uses it. The approval module receives this predicate from the graph adapter instead of importing graph topology/helpers back and creating a circular owner.
+
+Module ownership:
+
+- `graph/v2_graph_approval.py` now owns graph approval preview normalization, preview read-tool selection/argument construction, preview read execution, API body projection to preview rows, prior-approved-write exclusion, priority constraint extraction, staged write-call expansion, pending staged-call recovery, commit args derived from preview rows, default/no-record preview messages, and pending approval response block projection.
+- `v2_agent_graph.py` remains the owner of graph topology/orchestration, public runtime entrypoints, graph nodes, approval pause/resume state machine, graph decision recording, graph checkpoint identity during approval staging, interrupt/revision policy, and response-document context assembly.
+- `graph/approval_summary.py` remains the approval payload summary owner.
+- `services/planner_owned_graph_runtime.py` remains the graph-result persistence and API/session projection owner.
+
+Audit commands used:
+
+```powershell
+rg -n "_normalize_approval_preview|_graph_write_approval_preview|_approval_preview|_staged_write|_pending_staged|_source_priority_constraint|_target_priority_constraint|_commit_args_from_preview|_pending_approval_response_block|_next_approval_index|_approval_decision_matches_pending" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests
+rg -n "v2_graph_state_utils|Approval Preview|approval preview|staged-write|staged write|graph approval module|Phase 2" docs factory-agent -g "*.md"
+rg -n "PlannerOwnedGraphApprovalPreview|PlannerOwnedGraphRetrieval|PlannerOwnedAgentGraphRunOptions" factory-agent/factory_agent factory-agent/tests
+rg -n "_commit_args_from_preview|_staged_write_tool_calls_from_preview|_pending_staged_tool_calls|_pending_approval_response_block|_source_priority_constraint|_target_priority_constraint|_no_records_preview_message|_default_approval_preview|_rows_from_projected_body" factory-agent/factory_agent factory-agent/tests
+rg -n "api_row_id|project_api_body|def _normalize_approval_preview|def _graph_write_approval_preview|def _approval_preview_read_card|def _approval_preview_read_args|def _execute_approval_preview_read|def _rows_from_projected_body|def _approval_preview_rows_from_read|def _prior_write_ids_moved_into_source_priority|def _priority_pair_from_preview_rows|def _staged_write_tool_calls_from_preview|def _pending_staged_tool_calls|def _source_priority_constraint|def _target_priority_constraint|def _no_records_preview_message|def _default_approval_preview|def _commit_args_from_preview|def _pending_approval_response_block" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/factory_agent/graph/v2_graph_approval.py
+```
+
+Verification:
+
+- `python -m compileall factory-agent\factory_agent\graph\v2_agent_graph.py factory-agent\factory_agent\graph\v2_graph_approval.py` -> compiled both files.
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_runtime_adapter.py -q` -> `17 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `4 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
+- `python -m pytest tests/test_api_endpoints.py -q` -> `42 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `828 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
 - `$files = (Get-ChildItem -LiteralPath 'tests' -Filter 'test_planner_owned_graph_*.py').FullName; python -m pytest $files -q` -> `117 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `64 warnings`. Non-blocking LangSmith ingest 429 messages printed after the pytest summary.
 - `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
 - `git diff --check` -> passed; LF/CRLF warnings only, no whitespace errors.
