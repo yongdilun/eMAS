@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 5 evidence and response projection helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 6 graph file slimming and public interface freeze complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -21,10 +21,10 @@ Baseline commit at tracker creation:
 | 0 | Runtime responsibility audit | Complete | `9026e3cb` | Docs/tracker only, diff check |
 | 1 | Checkpoint and state utility extraction | Complete | `14f24635` | Graph run/resume/interrupt tests plus full backend |
 | 2 | Approval preview and staged write module | Complete | `5a631f8d` | Approval/API tests plus full backend |
-| 3 | Interrupt and revision policy module | Complete pending commit |  | Interrupt/stale-work tests plus full backend |
-| 4 | Tool choice and execution helper split | Complete pending commit |  | ToolSelector plus graph read/RAG/write tests |
-| 5 | Evidence and response projection split | Complete pending commit |  | Response-document backend and E2E gates |
-| 6 | Graph file slimming and interface freeze | Not started |  | Full backend and frontend E2E release gates |
+| 3 | Interrupt and revision policy module | Complete | `37ebf1eb` | Interrupt/stale-work tests plus full backend |
+| 4 | Tool choice and execution helper split | Complete | `3277948d` | ToolSelector plus graph read/RAG/write tests |
+| 5 | Evidence and response projection split | Complete | `0eb4c7b7` | Response-document backend and E2E gates |
+| 6 | Graph file slimming and interface freeze | Complete pending commit |  | Full backend and frontend E2E release gates |
 | 7 | Final runtime refactor release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
@@ -42,8 +42,8 @@ Phase 0 audited `factory-agent/factory_agent/graph/v2_agent_graph.py` at about `
 
 | Classification | Current Location | Current Owner | Existing Proof | Extraction Risk | Candidate Owner / Disposition |
 | --- | --- | --- | --- | --- | --- |
-| graph topology/orchestration | `v2_agent_graph.py:67-79` `PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER`; `:296-317` constructor; `:528-556` `_compile_graph`; node methods `:558-1268`; node visit helper `:2157-2166` | `PlannerOwnedAgentGraph` | `tests/test_planner_owned_graph_shell_contract.py:143`, `:161`, `:214`, `:285`; `tests/test_planner_owned_graph_runtime_adapter.py:133`, `:160` | High | Keep in `v2_agent_graph.py`; this is the graph file's core depth. |
-| runtime entrypoints/run/resume/interrupt | `v2_agent_graph.py:327-362` `run` / `run_state`; `:364-426` `resume_from_approval`; `:428-526` `interrupt_with_user_message`; `:1583-1600` `_load_checkpoint_state`; service entry adapter in `services/planner_owned_graph_runtime.py:29-82`, `:155-173` | `PlannerOwnedAgentGraph` public runtime plus `PlannerOwnedGraphRuntimeAdapter` persistence adapter | `tests/test_planner_owned_graph_runtime_adapter.py:133`, `:160`, `:218`; `tests/test_planner_owned_graph_approval_resume.py:307`, `:369`; `tests/test_planner_owned_graph_interruptions.py:22`, `:238` | High | Keep entrypoints stable until Phase 6; do not move or rename public runtime symbols in early phases. |
+| graph topology/orchestration | `v2_agent_graph.py:118-130` `PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER`; `:334-360` constructor; `:566-594` `_compile_graph`; node methods `:596-1296`; node visit helper `:1777-1786` | `PlannerOwnedAgentGraph` | `tests/test_planner_owned_graph_shell_contract.py:143`, `:161`, `:214`, `:285`; `tests/test_planner_owned_graph_runtime_adapter.py:133`, `:160` | High | Keep in `v2_agent_graph.py`; this is the graph file's core depth. |
+| runtime entrypoints/run/resume/interrupt | `v2_agent_graph.py:365-400` `run` / `run_state`; `:402-464` `resume_from_approval`; `:466-564` `interrupt_with_user_message`; `:1621-1638` `_load_checkpoint_state`; service entry adapter in `services/planner_owned_graph_runtime.py:29-82`, `:155-173` | `PlannerOwnedAgentGraph` public runtime plus `PlannerOwnedGraphRuntimeAdapter` persistence adapter | `tests/test_planner_owned_graph_runtime_adapter.py:133`, `:160`, `:218`; `tests/test_planner_owned_graph_approval_resume.py:307`, `:369`; `tests/test_planner_owned_graph_interruptions.py:22`, `:238` | High | Public runtime symbols are frozen as `PlannerOwnedAgentGraph`, `PlannerOwnedAgentGraphAdapters`, `PlannerOwnedAgentGraphRunOptions`, and `PlannerOwnedGraphResult`. |
 | planner decision/proposer flow | `v2_agent_graph.py:580-672`; proposer trace helpers `:1603-1685`; proposed ledger helper `:1688-1706`; state lookup helpers `:3128-3292`; existing proposer/validator modules `v2_planner_proposer.py`, `v2_planner_decisions.py` | Existing planning proposer/decision modules own proposer contract and validation; graph owns node timing and diagnostics | `tests/test_planner_owned_graph_llm_proposer.py:275`, `:297`, `:314`, `:330`, `:345`, `:741`, `:856`, `:944`; `tests/test_planner_owned_graph_proposer_policy.py:147`, `:169`, `:190`, `:222`; `tests/test_planner_owned_graph_decision_contract.py` | Medium | Possible future `graph/planner_decision_flow.py` only if it owns proposer context construction plus acceptance/rejection diagnostics; avoid pass-through wrappers over `record_planner_decision()`. |
 | tool/RAG execution | Retrieval node `v2_agent_graph.py:674-743`; choose node `:745-839`; execution node `:841-974`; candidate/tool-call helpers `:1709-1731`, `:2661-2834`, `:3139-3328`; adapter methods `:166-246`; existing execution owner `planning/v2_graph_adapters.py` | `v2_tool_retriever.py`, `ToolSelector`, and `v2_graph_adapters.py` own retrieval/execution stacks; graph owns sequencing and selected-call construction | `tests/test_planner_owned_graph_retrieval_contract.py:189`, `:210`, `:298`, `:319`, `:344`, `:356`; `tests/test_planner_owned_graph_execution_observation.py:265`, `:294`, `:318`, `:358`, `:381`, `:401`, `:416`; `tests/test_route_to_execution_contract.py:194`, `:207`, `:218`, `:227`, `:258`, `:271`, `:332`; `tests/test_tool_selector.py` | Medium/High | Candidate `graph/tool_choice.py` can own card selection, tool-call construction, and deterministic single-document choice. Do not duplicate ToolSelector, retriever, RAG, or HTTP execution. |
 | evidence observation | `v2_agent_graph.py:976-1084`; identity/stale helpers `:2035-2122`; no-record evidence helper `:3006-3042`; unique id helper `:3094-3101`; existing evidence adapter `planning/v2_graph_adapters.py:331-369` | Graph owns observation node and active-revision filtering; `v2_graph_adapters.py` owns conversion from execution result to typed evidence | `tests/test_planner_owned_graph_execution_observation.py:294`, `:318`, `:358`, `:381`; `tests/test_planner_owned_graph_rag_evidence.py:121`, `:171`, `:210`; `tests/test_planner_owned_graph_interruptions.py:157`, `:203` | Medium | Candidate `graph/evidence_observation.py` only if it owns active-revision observation policy, stale-result ignoring, aggregation, and graph evidence identity together. |
@@ -454,18 +454,84 @@ Blockers and owners:
 
 Commit:
 
-- Pending final commit.
+- `0eb4c7b7`
+
+## Phase 6: Graph File Slimming And Interface Freeze
+
+Phase result:
+
+- Passed. Slimmed `v2_agent_graph.py` without changing graph runtime behavior.
+- Removed two obsolete local leftovers from earlier extractions: the duplicate `_sync_graph_satisfaction_state()` helper now owned by `v2_graph_interrupts.py`, and unused `_latest_decision()`.
+- Removed the now-unused `RequirementSatisfactionState` import.
+- Confirmed no unused import candidates beyond `from __future__ import annotations`, and no zero-reference top-level graph helpers remain.
+- Confirmed the public runtime interface remains stable: `PlannerOwnedAgentGraph`, `PlannerOwnedAgentGraphAdapters`, `PlannerOwnedAgentGraphRunOptions`, and `PlannerOwnedGraphResult`. No `PlannerOwnedAgentGraphRunResult` symbol exists in the current runtime.
+- LOC check with `(Get-Content factory-agent/factory_agent/graph/v2_agent_graph.py).Count`: Phase 6 start `2110`, after slimming `2085`.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- none
+
+Symbols removed:
+
+- `_sync_graph_satisfaction_state` duplicate in `v2_agent_graph.py`; canonical owner remains `graph/v2_graph_interrupts.py`.
+- `_latest_decision`; unused local helper.
+
+Module ownership:
+
+- `v2_agent_graph.py` is frozen as the owner of graph topology, graph nodes, public runtime entrypoints, execution orchestration, approval pause/resume behavior, repeated-retrieval guard telemetry, and response-document node assembly.
+- `graph/v2_graph_state_utils.py` owns run options and checkpoint/session-context helper utilities.
+- `graph/v2_graph_approval.py` owns approval preview/staged-write helpers and pending approval response block projection.
+- `graph/v2_graph_interrupts.py` owns graph interrupt/revision/stale-work policy and satisfaction sync after graph requirement updates.
+- `graph/v2_graph_tool_choice.py` owns graph tool choice/card/call helper logic.
+- `graph/v2_graph_response_projection.py` owns graph-local evidence-to-response block and response summary projection.
+- Existing ToolSelector, RAG/tool execution, planner proposer/decision, approval persistence, response-document rendering, and checkpoint construction owners remain unchanged.
+
+Verification:
+
+- `python -m compileall -q factory-agent/factory_agent/graph`: passed.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`: 24 passed, 2 warnings.
+- `cd factory-agent; $files = Get-ChildItem -LiteralPath tests -Filter 'test_planner_owned_graph_*.py' | ForEach-Object { $_.FullName }; python -m pytest @files -q`: 117 passed, 64 warnings.
+- `cd factory-agent; python -m pytest -q`: 932 passed, 3 skipped, 1290 warnings.
+- `cd "eMas Front"; npm run test:e2e:response-document`: 30 passed.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles`: 35 passed.
+- `cd "eMas Front"; npm run test:e2e:real-langgraph`: 3 passed.
+- `cd "eMas Front"; npm run test:e2e:release`: first two full runs had 20 passed and 1 failed in scenario 60 because the remote planner model returned `503 Service Unavailable` before the Go API outage branch; final full rerun with LangSmith tracing disabled passed 21 passed.
+- `git diff --check`: passed with Git line-ending warnings only, no whitespace errors.
+
+Guardrails:
+
+- No runtime behavior changed.
+- No graph topology, graph nodes, public entrypoints, response-document semantics, approval behavior, interrupt behavior, tool/RAG execution behavior, release harness/frontend fixtures, or Qwen/proposer policy changed.
+- No exact-prompt, seeded-ID, or source-ID runtime branch was added.
+- `session.replan_context` remains pointer/projection context only, not authoritative graph state.
+
+Blockers:
+
+- none
+
+Open issues:
+
+- Earlier release retries were blocked by transient remote planner provider `503` in scenario 60. Final full release run passed after rerun.
+
+Commit:
+
+- pending
 
 ## Next Handoff Prompt
 
 ```text
-You are implementing Phase 6 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
+You are implementing Phase 7 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
 
 Goal:
-Slim `factory-agent/factory_agent/graph/v2_agent_graph.py` after the completed helper extractions and freeze the graph runtime interface without changing behavior.
+Run the final planner-owned graph runtime refactor release proof and make the current refactor baseline explicit.
 
 Context:
-The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved checkpoint/state utilities into `graph/v2_graph_state_utils.py`, Phase 2 moved approval preview/staged-write helpers into `graph/v2_graph_approval.py`, Phase 3 moved graph interrupt/revision policy helpers into `graph/v2_graph_interrupts.py`, Phase 4 moved graph tool choice helpers into `graph/v2_graph_tool_choice.py`, and Phase 5 moved graph evidence/response projection helpers into `graph/v2_graph_response_projection.py`. Runtime entrypoints, graph topology, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
+The planner-owned graph migration and legacy cleanup are separate. Phases 1 through 5 moved checkpoint/state, approval preview/staged-write, interrupt/revision policy, tool choice, and response projection helpers into focused modules. Phase 6 slimmed `v2_agent_graph.py` and froze the public runtime interface. Runtime entrypoints, graph topology, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
 
 Read first:
 - docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md
@@ -481,16 +547,13 @@ Read first:
 - factory-agent/factory_agent/planning/v2_interrupts.py
 
 Scope:
-- Implement only Phase 6.
-- Confirm the public runtime interface and moved module ownership.
-- Remove obsolete comments/imports only if behavior remains identical.
-- Do not move graph run/resume/interrupt entrypoints.
-- Do not move graph topology.
-- Do not move graph nodes.
+- Implement only Phase 7.
+- Treat this as release proof, not a new extraction phase.
+- Confirm the public runtime interface remains `PlannerOwnedAgentGraph`, `PlannerOwnedAgentGraphAdapters`, `PlannerOwnedAgentGraphRunOptions`, and `PlannerOwnedGraphResult`.
+- Do not move graph run/resume/interrupt entrypoints, graph topology, or graph nodes.
 - Do not reopen approval, interrupt, tool-choice, checkpoint, or response projection extraction decisions unless a compile/test failure proves a misplaced helper.
 - Do not rename symbols.
 - Do not change product behavior.
-- Do not change tests except imports/references required by the extraction.
 - Update the tracker.
 
 Maintainability rules:
@@ -509,17 +572,19 @@ Guardrails:
 - Do not reopen legacy/direct-v2/old graph authority.
 
 Suggested audit commands:
-- `rg -n "def _phase6_response|def _phase6_rows|def _phase6_fields|def _first_field_value|def _single_status_summary|def _collection_summary|def _mutation_summary|def _no_match_summary|def _plural_entity|def _normalize_options|def _graph_write_approval_preview|def _apply_graph_revision_evidence_policy|def _tool_calls_for_card" factory-agent/factory_agent/graph/v2_agent_graph.py`
 - `rg -n "class PlannerOwnedAgentGraph|async def run|async def resume_from_approval|async def interrupt_with_user_message|PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER|_response_document_node" factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `rg -n "PlannerOwnedAgentGraphRunResult|exact prompt|seeded.*branch|source.*branch|session\\.replan_context.*authoritative" factory-agent/factory_agent docs/qa`
 
 Verification:
 - `cd factory-agent`
-- `python -m pytest tests/test_planner_owned_graph_*.py -q` using an explicit file list under PowerShell if needed
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`
 - `python -m pytest -q`
 - `cd ..`
 - `cd "eMas Front"`
+- `npm test`
 - `npm run test:e2e:response-document`
 - `npm run test:e2e:seeded-oracles`
+- `npm run test:e2e:real-langgraph`
 - `npm run test:e2e:release`
 - `cd ..`
 - `git diff --check`
@@ -528,7 +593,7 @@ Verification:
 Commit only if behavior is unchanged and all required backend/frontend gates pass.
 
 Suggested commit:
-`refactor: slim planner-owned graph runtime`
+`test: record planner-owned graph refactor release proof`
 
 Final response sections:
 Phase Result

@@ -27,7 +27,6 @@ from ..planning.v2_contracts import (
     HydratedToolCard,
     HydratedToolCards,
     RequirementLedger,
-    RequirementSatisfactionState,
     SatisfactionCheck,
     ToolRetrievalTrace,
     V2ContractModel,
@@ -1775,19 +1774,6 @@ def _explicit_carried_forward_evidence_refs(
     return refs
 
 
-def _sync_graph_satisfaction_state(state: PlannerOwnedAgentGraphState) -> None:
-    state.satisfaction_state.requirements = [
-        RequirementSatisfactionState(
-            requirement_id=requirement.id,
-            status=requirement.status,
-            evidence_refs=list(requirement.evidence_refs),
-            satisfaction_checks=list(requirement.satisfaction_checks),
-            blocker_reason=requirement.blockers[-1] if requirement.blockers else None,
-        )
-        for requirement in state.requirement_ledger.requirements
-    ]
-
-
 def _record_node_visit(
     state: PlannerOwnedAgentGraphState,
     node_name: str,
@@ -2046,17 +2032,6 @@ def _has_graph_write_activity(state: PlannerOwnedAgentGraphState) -> bool:
     ):
         return True
     return any(evidence.source_type == "approval" for evidence in state.evidence_ledger.evidence)
-
-
-def _latest_decision(state: PlannerOwnedAgentGraphState, decision_kind: str) -> PlannerDecisionRecord | None:
-    return next(
-        (
-            decision
-            for decision in reversed(state.planner_decisions)
-            if decision.decision_kind == decision_kind
-        ),
-        None,
-    )
 
 
 def _record_repeated_retrieval_guard_trace(
