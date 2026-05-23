@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 6 graph file slimming and public interface freeze complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 6 graph file slimming and public interface freeze complete. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -24,7 +24,7 @@ Baseline commit at tracker creation:
 | 3 | Interrupt and revision policy module | Complete | `37ebf1eb` | Interrupt/stale-work tests plus full backend |
 | 4 | Tool choice and execution helper split | Complete | `3277948d` | ToolSelector plus graph read/RAG/write tests |
 | 5 | Evidence and response projection split | Complete | `0eb4c7b7` | Response-document backend and E2E gates |
-| 6 | Graph file slimming and interface freeze | Complete pending commit |  | Full backend and frontend E2E release gates |
+| 6 | Graph file slimming and interface freeze | Complete | `5eee9285` | Full backend and frontend E2E release gates |
 | 7 | Final runtime refactor release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
@@ -219,7 +219,7 @@ Open issues:
 
 Commit:
 
-- pending
+- `5eee9285`
 
 ## Phase 2: Approval Preview And Staged Write Module
 
@@ -520,7 +520,7 @@ Open issues:
 
 Commit:
 
-- pending
+- `5eee9285`
 
 ## Next Handoff Prompt
 
