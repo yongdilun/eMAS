@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 3 interrupt and revision policy helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
+Status: Phase 5 evidence and response projection helper extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -22,8 +22,8 @@ Baseline commit at tracker creation:
 | 1 | Checkpoint and state utility extraction | Complete | `14f24635` | Graph run/resume/interrupt tests plus full backend |
 | 2 | Approval preview and staged write module | Complete | `5a631f8d` | Approval/API tests plus full backend |
 | 3 | Interrupt and revision policy module | Complete pending commit |  | Interrupt/stale-work tests plus full backend |
-| 4 | Tool choice and execution helper split | Not started |  | ToolSelector plus graph read/RAG/write tests |
-| 5 | Evidence and response projection split | Not started |  | Response-document backend and E2E gates |
+| 4 | Tool choice and execution helper split | Complete pending commit |  | ToolSelector plus graph read/RAG/write tests |
+| 5 | Evidence and response projection split | Complete pending commit |  | Response-document backend and E2E gates |
 | 6 | Graph file slimming and interface freeze | Not started |  | Full backend and frontend E2E release gates |
 | 7 | Final runtime refactor release proof | Not started |  | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
@@ -390,16 +390,82 @@ Commit:
 
 - pending
 
+## Phase 5: Evidence And Response Projection Split
+
+Phase result:
+
+- Passed. Extracted graph evidence-to-response block projection and summary helpers from `v2_agent_graph.py` into `factory_agent/graph/v2_graph_response_projection.py`.
+- `v2_agent_graph.py` still owns graph topology, public runtime entrypoints, graph nodes, runtime orchestration, approval pause/resume behavior, response-document context assembly, repeated-retrieval guard telemetry, and execution orchestration.
+- `_response_document_node()` stayed in `v2_agent_graph.py`; no second response-document renderer was introduced.
+- `_pending_approval_response_block` stayed in `v2_graph_approval.py` because approval response projection is already owned with graph approval preview/staging behavior.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/graph/v2_graph_response_projection.py`
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- `_phase6_response_blocks`
+- `_phase6_response_summary`
+- `_phase6_response_block_for_evidence`
+- `_phase6_rows`
+- `_phase6_fields`
+- `_first_field_value`
+- `_single_status_summary`
+- `_collection_summary`
+- `_mutation_summary`
+- `_no_match_summary`
+- `_plural_entity`
+- `_evidence_has_no_match`
+- `_is_document_insufficient_context_evidence`
+
+Module ownership changed:
+
+- `graph/v2_graph_response_projection.py` now owns graph-local evidence-to-response block projection, graph response summary construction, no-record/RAG-insufficient-context evidence classification for response diagnostics, normalized row/field extraction for graph response blocks, and compact single/collection/mutation/no-match summaries.
+- `v2_agent_graph.py` remains the owner of graph topology/orchestration, public runtime entrypoints, graph nodes, approval pause/resume behavior, response-document context assembly, active/historical evidence reference assembly, repeated-retrieval guard telemetry, and execution orchestration.
+- `graph/v2_graph_approval.py` remains the owner of approval preview/staged-write helpers and pending approval response block projection.
+- `ResponseDocumentService` remains the persisted/API response-document renderer.
+
+Verification:
+
+- `python -m py_compile factory-agent\factory_agent\graph\v2_agent_graph.py factory-agent\factory_agent\graph\v2_graph_response_projection.py`: passed.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`: 24 passed, 2 warnings.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_read_flows.py tests/test_planner_owned_graph_rag.py tests/test_response_document*.py -q`: no tests ran because `tests/test_planner_owned_graph_rag.py` is not present in this checkout.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_read_flows.py tests/test_planner_owned_graph_rag_evidence.py tests/test_response_document_contract.py tests/test_response_document_failures.py -q`: 61 passed, 141 warnings.
+- `cd factory-agent; $files = Get-ChildItem tests -Filter 'test_planner_owned_graph_*.py' | ForEach-Object { $_.FullName }; python -m pytest @files -q`: 117 passed, 64 warnings.
+- `cd factory-agent; python -m pytest -q`: 932 passed, 3 skipped, 1289 warnings.
+- `cd "eMas Front"; npm run test:e2e:response-document`: 30 passed.
+- `cd "eMas Front"; npm run test:e2e:seeded-oracles`: first run had 33 passed and 2 failed hard-query checks where the backend remained in `PLANNING`; targeted rerun of the two failed hard-query checks passed 2/2; full required rerun passed 35/35.
+- `cd "eMas Front"; npm run test:e2e:release`: 21 passed.
+- `git diff --check`: passed with Git line-ending warnings only.
+
+Candidate dispositions changed:
+
+- Graph evidence/response projection helpers moved to `v2_graph_response_projection.py`.
+- Approval response block projection retained in `v2_graph_approval.py`.
+- Response-document context assembly retained in `_response_document_node()`.
+- No graph topology, graph nodes, runtime entrypoints, adapters, ToolSelector, RAG/tool execution stack, approval pause/resume behavior, planner decision validation, frontend fixtures, release harness behavior, Qwen/proposer policy, exact-prompt branches, seeded-ID branches, or source-ID branches changed.
+
+Blockers and owners:
+
+- None. The initial seeded-oracle failure reproduced as a transient hard-query timing/backend-state gap and passed both targeted and full reruns.
+
+Commit:
+
+- Pending final commit.
+
 ## Next Handoff Prompt
 
 ```text
-You are implementing Phase 4 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
+You are implementing Phase 6 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
 
 Goal:
-Extract tool choice and execution helper behavior from `factory-agent/factory_agent/graph/v2_agent_graph.py` only if ownership is clear and the new module has real depth.
+Slim `factory-agent/factory_agent/graph/v2_agent_graph.py` after the completed helper extractions and freeze the graph runtime interface without changing behavior.
 
 Context:
-The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved checkpoint/state utilities into `graph/v2_graph_state_utils.py`, Phase 2 moved approval preview/staged-write helpers into `graph/v2_graph_approval.py`, and Phase 3 moved graph interrupt/revision policy helpers into `graph/v2_graph_interrupts.py`. Runtime entrypoints, graph topology, response projection, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
+The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved checkpoint/state utilities into `graph/v2_graph_state_utils.py`, Phase 2 moved approval preview/staged-write helpers into `graph/v2_graph_approval.py`, Phase 3 moved graph interrupt/revision policy helpers into `graph/v2_graph_interrupts.py`, Phase 4 moved graph tool choice helpers into `graph/v2_graph_tool_choice.py`, and Phase 5 moved graph evidence/response projection helpers into `graph/v2_graph_response_projection.py`. Runtime entrypoints, graph topology, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
 
 Read first:
 - docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md
@@ -415,34 +481,17 @@ Read first:
 - factory-agent/factory_agent/planning/v2_interrupts.py
 
 Scope:
-- Implement only Phase 4.
-- Move only the smallest coherent tool choice/execution helper cluster if it improves depth and locality.
+- Implement only Phase 6.
+- Confirm the public runtime interface and moved module ownership.
+- Remove obsolete comments/imports only if behavior remains identical.
 - Do not move graph run/resume/interrupt entrypoints.
 - Do not move graph topology.
 - Do not move graph nodes.
-- Do not move approval preview/staged-write helpers.
-- Do not move interrupt/revision/stale-work helpers.
-- Do not move response projection.
+- Do not reopen approval, interrupt, tool-choice, checkpoint, or response projection extraction decisions unless a compile/test failure proves a misplaced helper.
 - Do not rename symbols.
 - Do not change product behavior.
 - Do not change tests except imports/references required by the extraction.
 - Update the tracker.
-
-Candidate helpers:
-- `_deterministic_choose_tool_if_state_proves_single_document_tool`
-- `_tool_choice_requires_graph_approval`
-- `_tool_calls_for_card`
-- `_select_graph_tool_card`
-- `_card_supports_collection_read`
-- `_card_supports_collection_identity_read`
-- `_card_supports_batched_item_read`
-- `_batch_identity_arg`
-- `_identity_arg_names`
-- `_multi_entity_identity_values`
-- `_hydrated_card_for_tool_call`
-- `_hydrated_cards_for_requirement`
-- `_args_for_tool_call`
-- `_argument_value_for`
 
 Maintainability rules:
 - Increase module depth and locality.
@@ -460,23 +509,26 @@ Guardrails:
 - Do not reopen legacy/direct-v2/old graph authority.
 
 Suggested audit commands:
-- `rg -n "_deterministic_choose_tool_if_state_proves_single_document_tool|_tool_choice_requires_graph_approval|_tool_calls_for_card|_select_graph_tool_card|_card_supports_collection_read|_card_supports_collection_identity_read|_card_supports_batched_item_read|_batch_identity_arg|_identity_arg_names|_multi_entity_identity_values|_hydrated_card_for_tool_call|_hydrated_cards_for_requirement|_args_for_tool_call|_argument_value_for" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
-- `rg -n "tool_choice|choose_tool|execute_tool|selected_tool_call|candidate_tool_windows|hydrated_tool_cards|ToolSelector|V2CapabilityToolRetriever" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
+- `rg -n "def _phase6_response|def _phase6_rows|def _phase6_fields|def _first_field_value|def _single_status_summary|def _collection_summary|def _mutation_summary|def _no_match_summary|def _plural_entity|def _normalize_options|def _graph_write_approval_preview|def _apply_graph_revision_evidence_policy|def _tool_calls_for_card" factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `rg -n "class PlannerOwnedAgentGraph|async def run|async def resume_from_approval|async def interrupt_with_user_message|PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER|_response_document_node" factory-agent/factory_agent/graph/v2_agent_graph.py`
 
 Verification:
 - `cd factory-agent`
-- `python -m pytest tests/test_tool_selector.py -q`
-- `python -m pytest tests/test_planner_owned_graph_retrieval_contract.py tests/test_planner_owned_graph_execution_observation.py tests/test_route_to_execution_contract.py -q`
 - `python -m pytest tests/test_planner_owned_graph_*.py -q` using an explicit file list under PowerShell if needed
 - `python -m pytest -q`
+- `cd ..`
+- `cd "eMas Front"`
+- `npm run test:e2e:response-document`
+- `npm run test:e2e:seeded-oracles`
+- `npm run test:e2e:release`
 - `cd ..`
 - `git diff --check`
 - `git status --short --branch`
 
-Commit only if behavior is unchanged and the focused plus full backend tests pass.
+Commit only if behavior is unchanged and all required backend/frontend gates pass.
 
 Suggested commit:
-`refactor: extract graph tool choice helpers`
+`refactor: slim planner-owned graph runtime`
 
 Final response sections:
 Phase Result
