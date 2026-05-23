@@ -1,6 +1,8 @@
 name: Playwright Reliability Soak
 
 on:
+  # Reliability soak is manual until GitHub has the required planner/LLM
+  # credentials and service configuration.
   workflow_dispatch:
     inputs:
       repeat:
@@ -11,8 +13,6 @@ on:
         description: Include the opt-in chromium-release smoke inside the soak runner.
         required: false
         default: "true"
-  schedule:
-    - cron: "17 9 * * 1"
 
 jobs:
   reliability-soak:
