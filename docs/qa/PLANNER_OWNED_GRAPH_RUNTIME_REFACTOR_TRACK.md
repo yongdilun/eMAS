@@ -1,6 +1,6 @@
 # Planner-Owned Graph Runtime Refactor Tracker
 
-Status: Phase 0 runtime responsibility audit complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. No runtime code, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, or `session.replan_context` authority changed.
+Status: Phase 1 checkpoint/state utility extraction complete pending commit. This is a separate active-runtime maintainability lane for `PlannerOwnedAgentGraph`, not legacy cleanup. Runtime behavior, tests, product behavior, planner proposer policy, ToolSelector/RAG/approval/response-document/checkpoint stack, and `session.replan_context` authority remain unchanged.
 
 Plan:
 
@@ -18,8 +18,8 @@ Baseline commit at tracker creation:
 
 | Phase | Name | Status | Commit | Required Gate |
 | --- | --- | --- | --- | --- |
-| 0 | Runtime responsibility audit | Complete pending commit |  | Docs/tracker only, diff check |
-| 1 | Checkpoint and state utility extraction | Not started |  | Graph run/resume/interrupt tests plus full backend |
+| 0 | Runtime responsibility audit | Complete | `9026e3cb` | Docs/tracker only, diff check |
+| 1 | Checkpoint and state utility extraction | Complete pending commit |  | Graph run/resume/interrupt tests plus full backend |
 | 2 | Approval preview and staged write module | Not started |  | Approval/API tests plus full backend |
 | 3 | Interrupt and revision policy module | Not started |  | Interrupt/stale-work tests plus full backend |
 | 4 | Tool choice and execution helper split | Not started |  | ToolSelector plus graph read/RAG/write tests |
@@ -77,7 +77,7 @@ Phase 0 audited `factory-agent/factory_agent/graph/v2_agent_graph.py` at about `
 
 ## Phase 0: Runtime Responsibility Audit
 
-Status: complete pending commit.
+Status: complete.
 
 Phase 0 verdict:
 
@@ -145,18 +145,92 @@ Open issues:
 
 Commit:
 
+- `9026e3cb`
+
+## Phase 1: Checkpoint And State Utility Extraction
+
+Status: complete pending commit.
+
+Phase 1 verdict:
+
+- Complete as a narrow checkpoint/state utility extraction.
+- Runtime entrypoints stayed in `v2_agent_graph.py`: `run`, `run_state`, `resume_from_approval`, and `interrupt_with_user_message`.
+- Graph topology, node orchestration, approval preview/staged-write helpers, interrupt/revision policy helpers, response projection helpers, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior were not changed.
+- `session.replan_context` remains pointer/projection context only, not authoritative graph state.
+- No exact-prompt, seeded-ID, or source-ID runtime branch was added.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/graph/v2_graph_state_utils.py`
+- `docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_TRACK.md`
+
+Symbols moved:
+
+- `PlannerOwnedAgentGraphRunOptions`
+- `_normalize_options`
+- `_checkpoint_config`
+- `_checkpoint_tuple_id`
+- `_graph_checkpoint_identity`
+- `_graph_checkpoint_identity_for_current_revision`
+- `_current_graph_checkpoint_id`
+- `_state_update`
+- `_session_context_value`
+- `_coerce_positive_int`
+
+Symbols intentionally not moved:
+
+- `_record_node_visit` remains in `v2_agent_graph.py` because Phase 0 classifies it with graph topology/orchestration and it records through `LocalPlannerOwnedGraphTracer`.
+- `_maybe_await` remains in `v2_agent_graph.py` with checkpoint loading, which still belongs to the public resume/interrupt entrypoints in Phase 1.
+
+Module ownership:
+
+- `graph/v2_graph_state_utils.py` now owns graph run option normalization, LangGraph checkpoint config shape, graph checkpoint identity derivation, checkpoint tuple id extraction, current checkpoint id lookup, session-context field lookup, graph state update projection, and positive revision integer coercion.
+- `v2_agent_graph.py` remains the owner of graph topology/orchestration, public runtime entrypoints, graph nodes, approval pause/resume flow, interrupt/revision policy, and response projection.
+- `graph/checkpointing.py` remains the checkpointer construction owner.
+- `services/planner_owned_graph_runtime.py` remains the graph-result persistence and API/session projection owner.
+
+Audit commands used:
+
+```powershell
+rg -n "_normalize_options|_checkpoint_config|_checkpoint_tuple_id|_graph_checkpoint_identity|_graph_checkpoint_identity_for_current_revision|_current_graph_checkpoint_id|_state_update|_session_context_value|_coerce_positive_int|_record_node_visit" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests
+rg -n "PlannerOwnedAgentGraphRunOptions|PlannerOwnedGraphResult|LocalPlannerOwnedGraphTracer|_state_update|_checkpoint_config|_graph_checkpoint_identity" factory-agent/factory_agent factory-agent/tests
+rg -n "def _normalize_options|def _checkpoint_config|def _checkpoint_tuple_id|def _graph_checkpoint_identity|def _graph_checkpoint_identity_for_current_revision|def _current_graph_checkpoint_id|def _state_update|def _session_context_value|def _coerce_positive_int|def _record_node_visit|class PlannerOwnedAgentGraphRunOptions" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/factory_agent/graph/v2_graph_state_utils.py
+```
+
+Verification:
+
+- `python -m compileall factory-agent\factory_agent\graph\v2_agent_graph.py factory-agent\factory_agent\graph\v2_graph_state_utils.py` -> compiled both files.
+- `python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q` -> `24 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `2 warnings`.
+- `python -m pytest tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_interruptions.py -q` -> `19 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `3 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
+- `python -m pytest tests/test_planner_owned_graph_shell_contract.py tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_interruptions.py tests/test_planner_owned_graph_runtime_adapter.py -q` -> `33 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `5 warnings`. Non-blocking LangSmith ingest 429/network messages printed after the pytest summary.
+- `python -m pytest tests/test_planner_owned_graph_*.py -q` -> PowerShell passed the wildcard literally, so pytest reported `file or directory not found` before collection. Corrected with an explicit file list.
+- `$files = (Get-ChildItem -LiteralPath 'tests' -Filter 'test_planner_owned_graph_*.py').FullName; python -m pytest $files -q` -> `117 passed`, `0 failed`, `0 skipped`, `0 xfailed`, `64 warnings`. Non-blocking LangSmith ingest 429 messages printed after the pytest summary.
+- `python -m pytest -q` -> `932 passed`, `0 failed`, `3 skipped`, `0 xfailed`, `1289 warnings`.
+- `git diff --check` -> passed; LF/CRLF warnings only, no whitespace errors.
+
+Blockers:
+
+- none
+
+Open issues:
+
+- LangSmith ingest emitted non-blocking 429/network messages after several pytest summaries. Pytest exit codes were green.
+
+Commit:
+
 - pending
 
 ## Next Handoff Prompt
 
 ```text
-You are implementing Phase 1 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
+You are implementing Phase 2 of docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md.
 
 Goal:
-Extract low-risk checkpoint/state utility helpers from `factory-agent/factory_agent/graph/v2_agent_graph.py` only if the Phase 0 responsibility map still holds.
+Extract approval preview and staged-write helper behavior from `factory-agent/factory_agent/graph/v2_agent_graph.py` only if ownership is clear and the new module has real depth.
 
 Context:
-The planner-owned graph migration and legacy cleanup are separate. This plan refactors active runtime code for maintainability. Phase 0 completed the responsibility audit and identified checkpoint/state helpers as the lowest-risk first extraction. Do not change product behavior.
+The planner-owned graph migration and legacy cleanup are separate. Phase 1 moved only checkpoint/state utilities into `graph/v2_graph_state_utils.py`. Runtime entrypoints, graph topology, interrupt policy, response projection, release harness behavior, Qwen/proposer policy, frontend fixtures, and product behavior remained unchanged.
 
 Read first:
 - docs/qa/PLANNER_OWNED_GRAPH_RUNTIME_REFACTOR_PLAN.md
@@ -172,23 +246,26 @@ Read first:
 - factory-agent/factory_agent/planning/v2_interrupts.py
 
 Scope:
-- Implement only Phase 1.
-- Move only the smallest coherent checkpoint/state helper cluster if it improves depth and locality.
+- Implement only Phase 2.
+- Move only the smallest coherent approval preview/staged-write helper cluster if it improves depth and locality.
 - Do not move graph run/resume/interrupt entrypoints.
+- Do not move graph topology.
 - Do not rename symbols.
 - Do not change product behavior.
 - Do not change tests except imports/references required by the extraction.
 - Update the tracker.
 
 Candidate helpers:
-- `_normalize_options`
-- `_checkpoint_config`
-- `_session_context_value`
-- `_current_graph_checkpoint_id`
-- `_graph_checkpoint_identity`
-- `_graph_checkpoint_identity_for_current_revision`
-- `_checkpoint_tuple_id`
-- `_state_update`
+- `_normalize_approval_preview`
+- `_graph_write_approval_preview`
+- `_approval_preview_read_card`
+- `_approval_preview_read_args`
+- `_execute_approval_preview_read`
+- `_rows_from_projected_body`
+- `_approval_preview_rows_from_read`
+- `_prior_write_ids_moved_into_source_priority`
+- `_staged_write_tool_calls_from_preview`
+- `_commit_args_from_preview`
 
 Maintainability rules:
 - Increase module depth and locality.
@@ -206,20 +283,23 @@ Guardrails:
 - Do not reopen legacy/direct-v2/old graph authority.
 
 Suggested audit commands:
-- `rg -n "_normalize_options|_checkpoint_config|_session_context_value|_current_graph_checkpoint_id|_graph_checkpoint_identity|_checkpoint_tuple_id|_state_update" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
-- `rg -n "resume_from_approval|interrupt_with_user_message|run_state|aupdate_state|aget_tuple|session_replan_context_authoritative" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
+- `rg -n "_normalize_approval_preview|_graph_write_approval_preview|_approval_preview_read_card|_approval_preview_read_args|_execute_approval_preview_read|_rows_from_projected_body|_approval_preview_rows_from_read|_prior_write_ids_moved_into_source_priority|_staged_write_tool_calls_from_preview|_commit_args_from_preview" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests`
+- `rg -n "approval|preview|staged|pending_approval|graph_write_approval_required|approval_summary|approval_persister" factory-agent/factory_agent/graph/v2_agent_graph.py factory-agent/tests/test_planner_owned_graph_approval_resume.py factory-agent/tests/test_api_endpoints.py factory-agent/tests/test_planner_owned_graph_runtime_adapter.py`
 
 Verification:
 - `cd factory-agent`
-- `python -m pytest tests/test_planner_owned_graph_shell_contract.py tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_interruptions.py tests/test_planner_owned_graph_runtime_adapter.py -q`
+- `python -m pytest tests/test_planner_owned_graph_approval_resume.py tests/test_planner_owned_graph_runtime_adapter.py -q`
+- `python -m pytest tests/test_api_endpoints.py -q`
+- `python -m pytest tests/test_planner_owned_graph_*.py -q` using an explicit file list under PowerShell if needed
+- `python -m pytest -q`
 - `cd ..`
 - `git diff --check`
 - `git status --short --branch`
 
-Commit only if behavior is unchanged and the focused tests pass.
+Commit only if behavior is unchanged and the focused plus full backend tests pass.
 
 Suggested commit:
-`refactor: extract planner-owned graph checkpoint helpers`
+`refactor: extract graph approval preview helpers`
 
 Final response sections:
 Phase Result
