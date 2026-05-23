@@ -25,7 +25,7 @@ Baseline commit at tracker creation:
 | 4 | Tool choice and execution helper split | Complete | `3277948d` | ToolSelector plus graph read/RAG/write tests |
 | 5 | Evidence and response projection split | Complete | `0eb4c7b7` | Response-document backend and E2E gates |
 | 6 | Graph file slimming and interface freeze | Complete | `5eee9285` | Full backend and frontend E2E release gates |
-| 7 | Final runtime refactor release proof | Complete | `41cdc685` | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
+| 7 | Final runtime refactor release proof | Complete | `5646ef43` | Full backend, frontend unit, response-document, seeded, real-LangGraph, release |
 
 ## Current Baseline
 
@@ -388,7 +388,7 @@ Open issues:
 
 Commit:
 
-- pending
+- `5646ef43`
 
 ## Phase 5: Evidence And Response Projection Split
 
