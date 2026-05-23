@@ -2055,6 +2055,51 @@ Open Issues
 Next Step
 ```
 
+## Phase 4: Tool Choice And Execution Helper Split
+
+Phase result:
+
+- Passed. Extracted graph tool-choice, hydrated-card lookup, GraphToolCall construction, selected-call normalization, and requirement/candidate-window helper predicates from `v2_agent_graph.py` into `factory_agent/graph/v2_graph_tool_choice.py`.
+- `v2_agent_graph.py` remains the owner for graph topology, public runtime entrypoints, graph nodes, approval pause/resume behavior, response projection, evidence checks, and tool execution orchestration.
+- `_record_repeated_retrieval_guard_trace` stayed in `v2_agent_graph.py` because it mutates retrieval-loop diagnostics and belongs with the retrieval node's repeated-retrieval guard, not tool-call construction.
+
+Files changed:
+
+- `factory-agent/factory_agent/graph/v2_agent_graph.py`
+- `factory-agent/factory_agent/graph/v2_graph_tool_choice.py`
+- `docs/qa/PLANNER_OWNED_AGENT_LEGACY_CLEANUP_TRACK.md`
+
+Candidate dispositions changed:
+
+- Tool choice and tool-call construction helpers moved to `v2_graph_tool_choice.py`.
+- Hydrated-card, requirement, candidate-window, planner selected-call, and graph choice/execution decision lookup helpers moved to `v2_graph_tool_choice.py`.
+- Repeated retrieval guard trace helper retained in `v2_agent_graph.py` as retrieval node policy/telemetry.
+- No graph topology, graph nodes, runtime entrypoints, adapters, ToolSelector, RAG/tool execution stack, approval behavior, planner decision validation, response projection, frontend fixtures, release harness behavior, Qwen/proposer policy, exact-prompt branches, seeded-ID branches, or source-ID branches changed.
+
+Verification:
+
+- `python -m py_compile factory-agent\factory_agent\graph\v2_agent_graph.py factory-agent\factory_agent\graph\v2_graph_tool_choice.py`: passed.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_no_legacy_authority.py -q`: 24 passed, 2 warnings.
+- `cd factory-agent; python -m pytest tests/test_planner_owned_graph_retrieval_contract.py tests/test_planner_owned_graph_execution_observation.py tests/test_planner_owned_graph_read_flows.py tests/test_planner_owned_graph_rag_evidence.py tests/test_planner_owned_graph_approval_resume.py -q`: 35 passed, 5 warnings. LangSmith telemetry upload hit an external 429 after pytest completion; tests passed.
+- `cd factory-agent; $env:LANGCHAIN_TRACING_V2='false'; $env:LANGSMITH_TRACING='false'; python -m pytest tests/test_tool_selector.py -q`: 27 passed, 11 warnings.
+- `cd factory-agent; $env:LANGCHAIN_TRACING_V2='false'; $env:LANGSMITH_TRACING='false'; python -m pytest tests/test_planner_owned_graph_*.py -q`: failed before collection because PowerShell did not expand the wildcard and pytest received a literal path; no tests ran.
+- `cd factory-agent; $env:LANGCHAIN_TRACING_V2='false'; $env:LANGSMITH_TRACING='false'; $files = Get-ChildItem tests -Filter 'test_planner_owned_graph_*.py' | ForEach-Object { $_.FullName }; python -m pytest @files -q`: 117 passed, 64 warnings.
+- `cd factory-agent; $env:LANGCHAIN_TRACING_V2='false'; $env:LANGSMITH_TRACING='false'; python -m pytest -q`: 932 passed, 3 skipped, 1289 warnings.
+- `git diff --check`: passed with Git line-ending warnings only.
+
+Remaining cleanup candidates:
+
+- None introduced by this split.
+- `v2_agent_graph.py` still owns graph nodes and orchestration by design; additional helper extraction should remain limited to clear ownership boundaries.
+
+Blockers and owners:
+
+- No code blockers. External LangSmith telemetry rate limits were observed only after an already-passing targeted test command; remaining verification disabled tracing locally.
+
+Commit:
+
+- Created after green verification; final response records the resulting commit hash.
+
 ## Update Rules
 
 Every phase update must include:
