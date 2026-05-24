@@ -25,6 +25,7 @@ Important current decisions:
 - Run 1 uses the existing local judge model on port `900`: `Qwen2.5-7B-Instruct-Q4_K_M`.
 - The local judge is a practical triage judge, not the final gold-standard judge.
 - Phase 6 manually audited judge samples and found Qwen2.5 7B reliable enough for rough triage only, weak for safety and citation adjudication.
+- Phase 6.5 has been added before Document Augmentation to fix unfair comparison defects, especially the reranker fallback, then rerun the affected variants.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -46,6 +47,7 @@ Important current decisions:
 | 4 | Add scoring | Done | Codex | Added rule scoring, retrieval metrics, borderline detection, optional Qwen2.5 7B judge support, random reliability audit sample export, summary aggregates, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Done | Codex | Run 1 completed across 12 variants in fixed randomized order. Artifacts validated: 600 case artifacts, 12 summaries, and 12 judge audit samples. |
 | 6 | Review and decision memo | Done | Codex | Decision memo added. Provisional champion: V12. Runner-up: V7. Run 2 carry-forward set: V12, V7, and V2 if budget permits. |
+| 6.5 | Fairness fix and corrected rerun | Not Started | TBD | Fix/audit reranker fallback, improve evidence/citation and safety-boundary contracts where needed, then rerun affected variants before Document Augmentation. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
@@ -563,4 +565,4 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Next Action
 
-Before Phase 7, fix or audit the reranker fallback and decide whether Run 2 can use a stronger judge such as Qwen3 14B. Then run Phase 7 only when requested: compare `V12`, `V7`, and optionally `V2` against Document Augmentation `V8` and `V13`.
+Start Phase 6.5 before Phase 7: fix or audit the reranker fallback, improve evidence/citation and safety-boundary contracts only where they correct unfair evaluation defects, then rerun the affected comparison set. Do not implement Document Augmentation `V8`/`V13` until Phase 6.5 produces a corrected baseline.

@@ -528,13 +528,48 @@ Exit criteria:
 - Run 2 scope is clear.
 - If no candidate is safe enough, the memo says so directly and explains blockers.
 
+### Phase 6.5: Fairness Fix And Corrected Rerun
+
+Goal: fix benchmark defects that made Run 1 unfair or hard to interpret, then rerun the affected comparison set before Document Augmentation is tested.
+
+This phase exists because Run 1 can identify promising candidates but should not be treated as the final fair comparison if core evaluation infrastructure was degraded. In particular, rerank-enabled variants must not be compared as true reranker variants when the reranker fell back to initial boosted scores.
+
+Scope rules:
+
+- Fix benchmark or pipeline defects that distort the comparison.
+- Do not change the 50-question bank to make results easier.
+- Do not tune prompts or expected answers to favor a variant.
+- Do not implement Document Augmentation V8/V13.
+- Do not change the production winner based only on Phase 6.5; use it to produce a corrected Run 1 baseline for Phase 7.
+
+Tasks:
+
+- Fix or replace the reranker integration so V1, V3, V5, V6, V7, V10, V11, and V12 really use the intended rerank stage.
+- Add a focused proof that rerank-enabled variants call a working reranker and do not silently fall back unless explicitly configured to do so.
+- Improve citation support in artifacts where needed so answer claims can be tied to supporting chunks, pages, and sections more fairly.
+- Improve high-risk safety and boundary-answer contracts so OSHA/live-status questions require concrete cautions and safe next steps.
+- Audit extractive compression to confirm V6/V11 quality loss is real, not caused by accidental removal of required evidence.
+- Keep scoring strict; do not loosen `citation_does_not_support_answer` or serious-failure rules just to raise scores.
+- Rerun a corrected benchmark subset:
+  - Required: V1, V3, V5, V6, V7, V10, V11, V12.
+  - Recommended anchors: V0, V2, V4, V9.
+- Compare corrected results against Run 1 and explain what changed.
+
+Exit criteria:
+
+- Reranker behavior is fixed, replaced, or explicitly downgraded with a documented reason.
+- Corrected artifacts exist for all affected rerank variants.
+- Any citation/safety contract fixes are covered by focused tests.
+- A short corrected-run addendum explains whether the provisional champion changes.
+- Phase 7 has a fairer baseline for comparing Document Augmentation.
+
 ### Phase 7: Benchmark Run 2 With Document Augmentation
 
-Goal: test whether indexing-time document augmentation improves the best Run 1 result.
+Goal: test whether indexing-time document augmentation improves the best corrected Run 1 result after Phase 6.5.
 
 Run 2 scope:
 
-- Top 2-3 Run 1 variants.
+- Top 2-3 variants from the corrected Run 1 / Phase 6.5 result.
 - V8 Document Augmentation + Hybrid Search + Small-to-Big + Rerank.
 - V13 Document Augmentation + Hybrid Search + RSE + Rerank.
 
