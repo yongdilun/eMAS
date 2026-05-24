@@ -17,21 +17,22 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 5 Benchmark Run 1 is complete. The fresh 50-question bank was run once across all 12 Run 1 variants, producing 600 case artifacts, 12 summaries, and judge audit samples under `test-artifacts/rag-eval/`. Document Augmentation V8/V13 has not been implemented or run. The Phase 6 manual review and final decision memo have not started.
+Phase 6 Review and Decision Memo is complete. The fresh 50-question bank was run once across all 12 Run 1 variants, producing 600 case artifacts, 12 summaries, and judge audit samples under `test-artifacts/rag-eval/`. `docs/qa/RAG_EVALUATION_DECISION_MEMO.md` selects `V12` as the provisional champion, with `V7` as runner-up and `V2` as the clean hybrid control to carry into Run 2 if budget permits. Document Augmentation V8/V13 has not been implemented or run.
 
 Important current decisions:
 
 - Run 1 is a 50-question benchmark across 12 variants.
 - Run 1 uses the existing local judge model on port `900`: `Qwen2.5-7B-Instruct-Q4_K_M`.
 - The local judge is a practical triage judge, not the final gold-standard judge.
-- A random judge reliability audit is required before judge scores are trusted in the decision memo.
+- Phase 6 manually audited judge samples and found Qwen2.5 7B reliable enough for rough triage only, weak for safety and citation adjudication.
+- Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
 - Phase 5 ran the benchmark only. It did not change the question bank, scoring, RSE, Small-to-Big, compression, or Document Augmentation.
-- Run 1 judge calls completed without runtime errors, but judge output remains triage evidence only until the Phase 6 manual audit.
+- Run 1 judge calls completed without runtime errors, but judge output remains triage evidence only after the Phase 6 manual audit.
 - V7 and V12 use a deterministic retrieval-only query rewrite path that appends retrieval focus terms and acronym expansions; generation still receives the original user query.
 - Light compression is extractive and keyword-overlap based for Phase 3. It preserves source sentence order and section context, but does not yet use embedding-based semantic sentence selection.
-- Important Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Phase 6 should treat all rerank-enabled results as using fallback ranking behavior unless this is audited or fixed before Run 2.
+- Important Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Phase 6 treats all rerank-enabled results as degraded fallback-rerank behavior, not true reranker results. Fix or replace reranker integration before Run 2.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -44,7 +45,7 @@ Important current decisions:
 | 3 | Implement context-building strategies | Done | Codex | Implemented Small-to-Big, RSE, cheap segment scoring, deterministic retrieval query rewrite for V7/V12, and extractive compression for V6/V11. |
 | 4 | Add scoring | Done | Codex | Added rule scoring, retrieval metrics, borderline detection, optional Qwen2.5 7B judge support, random reliability audit sample export, summary aggregates, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Done | Codex | Run 1 completed across 12 variants in fixed randomized order. Artifacts validated: 600 case artifacts, 12 summaries, and 12 judge audit samples. |
-| 6 | Review and decision memo | Not Started | TBD | Review failures, borderline cases, top candidates, safety cases, and judge reliability sample. Select provisional champion. |
+| 6 | Review and decision memo | Done | Codex | Decision memo added. Provisional champion: V12. Runner-up: V7. Run 2 carry-forward set: V12, V7, and V2 if budget permits. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
@@ -292,6 +293,43 @@ Important runtime caveats:
 | V10 | `run1-20260525-v10` | 50 | 0 | 27 | 33 | 33/33, 0 errors | 65.17 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.35 | 545/756/756 |
 | V4 | `run1-20260525-v04` | 50 | 0 | 23 | 32 | 32/32, 0 errors | 69.21 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 3.21 | 1978/2363/2363 |
 
+## Phase 6 Findings
+
+Date: 2026-05-25
+
+Phase 6 stayed limited to artifact review and documentation:
+
+- Loaded all 12 Run 1 `summary.json` files and compared average rule score, serious failures, borderline counts, judge counts, automated pass/fail counts, retrieval hit rates, average duration, and context-token estimates.
+- Loaded all 12 `judge_audit_sample.json` files.
+- Manually inspected 29 judged answers from the audit samples, covering 7 variants, pass/fail/borderline judge buckets, safety-sensitive answers, citation-sensitive answers, and top-candidate/baseline variants.
+- Added `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`.
+- Updated this tracker.
+- Did not rerun the full benchmark.
+- Did not run live judge calls.
+- Did not change the question bank.
+- Did not change RAG pipeline behavior.
+- Did not implement or start Document Augmentation V8/V13.
+
+Phase 6 decision:
+
+- Provisional champion: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank flag.
+- Runner-up: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank flag.
+- Top Run 1 variants for Run 2: `V12`, `V7`, and `V2` if budget permits a clean non-rerank control.
+- Confidence: medium for choosing the Run 2 candidate set, low for production rollout.
+
+Important interpretation:
+
+- `V12` is not a validated true-reranker champion. Because rerank-enabled variants fell back, `V12` should be read as the best query-rewrite + hybrid + RSE + fallback-ranking Run 1 candidate.
+- `V2` remains important because it is the strongest clean non-rerank baseline: 69.66 average rule score, 23 serious failures, no reranker fallback caveat.
+- Query rewrite helped materially: `V7` and `V12` improved `doc_hit@5` to 1.00 and `section_or_page_hit@5` to 0.94.
+- Compression lowered token cost but hurt quality, so `V6` and `V11` should not be production defaults yet.
+- Safety answers generally avoided direct unsafe authorization, but high-risk boundary answers were often too generic.
+- Qwen2.5 7B judge output is useful only as triage evidence. It is weak for safety scoring and inconsistent for citation support. Run 2 should use Qwen3 14B if available.
+
+Required bug fix before Run 2:
+
+- Fix or replace the BGE reranker integration and add a smoke assertion that rerank-enabled variants fail loudly if reranking falls back.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -435,6 +473,15 @@ git diff --check
 git status --short
 git diff --stat
 python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag_eval/audit.py tests/rag_eval/run_eval.py tests/rag_eval/artifact_schema.py
+git status --short
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_PLAN.md'
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_TRACK.md'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/README.md'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/cases.json'
+Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
+@'<summary aggregation scripts for all 12 Run 1 summary.json files>'@ | python -
+@'<serious failure and safety aggregation scripts>'@ | python -
+@'<judge audit sampling and manual-review prep scripts>'@ | python -
 ```
 
 ## Test Results
@@ -464,6 +511,9 @@ python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag
 - Phase 5 artifact validation passed: every full run folder has exactly 50 case JSON artifacts plus `summary.json`; every judged run has `judge_audit_sample.json` with 20 sampled judged cases.
 - Phase 5 judge calls completed without errors: 398 requested, 398 completed, 0 errors.
 - Phase 5 smoke tests passed for `smoke-v3-score` and `smoke-v11-context`.
+- Phase 6 loaded all 12 `summary.json` files and all 12 `judge_audit_sample.json` files for local analysis.
+- Phase 6 manually inspected 29 judged answers from the audit samples.
+- Phase 6 did not run the full benchmark, did not run live judge calls, and did not change RAG behavior.
 
 ## Files Created
 
@@ -484,6 +534,7 @@ python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag
 - `tests/rag_eval/test_judge.py`
 - `tests/rag_eval/test_audit.py`
 - `tests/rag_eval/test_run_eval_judge.py`
+- `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
 
 ## Files Updated
 
@@ -506,8 +557,10 @@ python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag
 
 ## Current Blockers
 
-- None for Phase 5. Phase 6 should explicitly account for the reranker fallback caveat before treating rerank-enabled variants as true rerank results.
+- Reranker integration is broken for rerank-enabled variants. Run 1 rerank variants must be interpreted as fallback-rank variants, and the reranker should be fixed or replaced before Run 2.
+- The provisional champion `V12` still has 21 automated serious failures out of 50 and is not production-ready.
+- Judge safety and citation scoring are weak enough that top Run 2 candidates require manual review.
 
 ## Next Action
 
-Start Phase 6 only when requested: manually audit judge reliability samples, review automated serious failures and borderline cases, then write the decision memo. Do not implement Document Augmentation V8/V13 until Phase 7.
+Before Phase 7, fix or audit the reranker fallback and decide whether Run 2 can use a stronger judge such as Qwen3 14B. Then run Phase 7 only when requested: compare `V12`, `V7`, and optionally `V2` against Document Augmentation `V8` and `V13`.
