@@ -50,7 +50,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FACTORY_AGENT_DIR = REPO_ROOT / "factory-agent"
@@ -63,6 +63,7 @@ from factory_agent.rag.context_building import rewrite_query_for_retrieval  # no
 from factory_agent.rag.pipeline import RAGPipeline  # noqa: E402
 from factory_agent.rag.retrieval import HybridRetriever  # noqa: E402
 
+from tests.rag_eval.audit import build_judge_audit_sample  # noqa: E402
 from tests.rag_eval.artifact_schema import (  # noqa: E402
     AutomatedReport,
     CheckResult,
@@ -75,6 +76,8 @@ from tests.rag_eval.artifact_schema import (  # noqa: E402
     serialize_rag_result,
     serialize_retrieval_debug,
 )
+from tests.rag_eval.judge import JudgeConfig, judge_case  # noqa: E402
+from tests.rag_eval.scoring import score_case  # noqa: E402
 from tests.rag_eval.variants import (  # noqa: E402
     DEFAULT_VARIANT_ID,
     RUN_1_VARIANT_IDS,
@@ -237,6 +240,10 @@ class RunnerOptions:
     run_id: str | None = None
     retrieval_top_n: int = 10
     variant_id: str = DEFAULT_VARIANT_ID
+    judge_enabled: bool | None = None
+    judge_base_url: str | None = None
+    judge_model: str | None = None
+    judge_audit_seed: int = 13
 
 
 def _gen_run_id() -> str:
@@ -265,6 +272,17 @@ def _resolve_base_url(settings: Any) -> str | None:
         getattr(settings, "rag_answer_openai_base_url", None)
         or getattr(settings, "planner_openai_base_url", None)
         or getattr(settings, "openai_base_url", None)
+    )
+
+
+def _build_judge_config(opts: RunnerOptions) -> JudgeConfig:
+    config = JudgeConfig.from_env(enabled=opts.judge_enabled)
+    return JudgeConfig(
+        enabled=config.enabled,
+        base_url=opts.judge_base_url or config.base_url,
+        model=opts.judge_model or config.model,
+        api_key=config.api_key,
+        timeout_s=config.timeout_s,
     )
 
 
@@ -352,6 +370,36 @@ async def _run_case(
     return route_decision, rag_result, agent_response, retrieval_debug, error
 
 
+def _maybe_judge_case(
+    *,
+    case: dict[str, Any],
+    agent_response: dict[str, Any] | None,
+    rag_result: dict[str, Any] | None,
+    retrieval_debug: dict[str, Any] | None,
+    scoring: dict[str, Any],
+    judge_config: JudgeConfig,
+    judge_runner: Any = judge_case,
+) -> tuple[bool, dict[str, Any] | None, str | None]:
+    """Run the optional judge only for borderline cases."""
+
+    if not judge_config.enabled:
+        return False, None, None
+    if not scoring.get("borderline"):
+        return False, None, None
+    try:
+        result = judge_runner(
+            case=case,
+            agent_response=agent_response,
+            rag_result=rag_result,
+            retrieval_debug=retrieval_debug,
+            scoring=scoring,
+            config=judge_config,
+        )
+    except Exception as exc:  # pragma: no cover - live judge defensive path
+        return True, None, f"{type(exc).__name__}: {exc}"
+    return True, result, None
+
+
 def _build_retriever() -> HybridRetriever | None:
     """Instantiate ``HybridRetriever`` if the persisted indexes look usable.
 
@@ -374,6 +422,7 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
     except (ValueError, NotImplementedError) as exc:
         raise SystemExit(str(exc)) from exc
     variant_config = variant.to_dict()
+    judge_config = _build_judge_config(opts)
 
     if not _live_mode_enabled():
         raise SystemExit(
@@ -406,7 +455,7 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
 
     print(
         f"[rag-eval] run_id={run_id} variant={variant.variant_id} "
-        f"cases={len(cases)} output={run_dir}"
+        f"cases={len(cases)} judge={'on' if judge_config.enabled else 'off'} output={run_dir}"
     )
 
     for idx, case in enumerate(cases, start=1):
@@ -432,6 +481,21 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
             retrieval_debug=retrieval_debug,
             error=error,
         )
+        scoring = score_case(
+            case=case,
+            agent_response=agent_response,
+            rag_result=rag_result,
+            retrieval_debug=retrieval_debug,
+            automated=report.to_dict(),
+        )
+        judge_requested, judge_result, judge_error = _maybe_judge_case(
+            case=case,
+            agent_response=agent_response,
+            rag_result=rag_result,
+            retrieval_debug=retrieval_debug,
+            scoring=scoring,
+            judge_config=judge_config,
+        )
 
         artifact = build_case_artifact(
             run_id=run_id,
@@ -448,6 +512,10 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
             agent_response=agent_response,
             retrieval_debug=retrieval_debug,
             automated=report,
+            scoring=scoring,
+            judge_requested=judge_requested,
+            judge_result=judge_result,
+            judge_error=judge_error,
             error=error,
         )
 
@@ -461,9 +529,29 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
 
         status = "OK" if report.ok else "FAIL"
         warn_count = len(report.warnings)
-        print(f"[rag-eval]    -> {status} (warnings={warn_count}) artifact={artifact_path.name}")
+        judge_status = "judge=skipped"
+        if judge_requested:
+            judge_status = "judge=ok" if judge_result is not None else "judge=error"
+        print(
+            f"[rag-eval]    -> {status} score={scoring['rule_score']} "
+            f"borderline={scoring['borderline']} {judge_status} "
+            f"(warnings={warn_count}) artifact={artifact_path.name}"
+        )
 
     finished_at = now_iso()
+    judge_audit_path: str | None = None
+    if judge_config.enabled:
+        audit_payload = build_judge_audit_sample(
+            case_results,
+            seed=opts.judge_audit_seed,
+        )
+        audit_path = run_dir / "judge_audit_sample.json"
+        audit_path.write_text(
+            json.dumps(audit_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        judge_audit_path = str(audit_path.relative_to(REPO_ROOT))
+
     summary = build_summary(
         run_id=run_id,
         variant_id=variant.variant_id,
@@ -472,6 +560,7 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
         finished_at=finished_at,
         env=env,
         case_results=case_results,
+        judge_audit_path=judge_audit_path,
     )
     summary_path = run_dir / "summary.json"
     summary_path.write_text(
@@ -528,6 +617,35 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
         choices=RUN_1_VARIANT_IDS,
         help="Run 1 RAG variant ID to execute.",
     )
+    parser.add_argument(
+        "--judge",
+        dest="judge_enabled",
+        action="store_true",
+        default=None,
+        help="Enable optional LLM judge for borderline cases only.",
+    )
+    parser.add_argument(
+        "--no-judge",
+        dest="judge_enabled",
+        action="store_false",
+        help="Disable optional LLM judge even if judge env vars are set.",
+    )
+    parser.add_argument(
+        "--judge-base-url",
+        default=None,
+        help="OpenAI-compatible judge base URL. Defaults to http://127.0.0.1:900/v1.",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Judge model name. Defaults to Qwen2.5-7B-Instruct-Q4_K_M.",
+    )
+    parser.add_argument(
+        "--judge-audit-seed",
+        type=int,
+        default=13,
+        help="Random seed for judge_audit_sample.json selection.",
+    )
     args = parser.parse_args(argv)
     return RunnerOptions(
         cases_path=args.cases,
@@ -536,6 +654,10 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
         run_id=args.run_id,
         retrieval_top_n=args.retrieval_top_n,
         variant_id=args.variant,
+        judge_enabled=args.judge_enabled,
+        judge_base_url=args.judge_base_url,
+        judge_model=args.judge_model,
+        judge_audit_seed=args.judge_audit_seed,
     )
 
 

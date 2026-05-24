@@ -23,7 +23,10 @@
   Chunks to log per case in retrieval_debug (default 10).
 
 .PARAMETER Variant
-  Run 1 variant ID to execute. Phase 2 supports V0, V1, V2, and V3.
+  Run 1 variant ID to execute.
+
+.PARAMETER Judge
+  Enable optional LLM judge for borderline cases only.
 
 .PARAMETER OpenAiBaseUrl
   LLM base URL (default http://127.0.0.1:900/v1).
@@ -56,6 +59,7 @@ param(
   [int]$RetrievalTopN = 10,
   [ValidateSet("V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V9", "V10", "V11", "V12")]
   [string]$Variant = "V3",
+  [switch]$Judge,
   [string]$OpenAiBaseUrl = "http://127.0.0.1:900/v1",
   [string]$OpenAiApiKey = "local",
   [string]$PythonExe = "",
@@ -120,6 +124,9 @@ try {
       $runArgs += "--retrieval-top-n", "$RetrievalTopN"
     }
     $runArgs += "--variant", $Variant
+    if ($Judge) {
+      $runArgs += "--judge"
+    }
     Write-Host "==> tests.rag_eval.run_eval $($runArgs -join ' ')" -ForegroundColor Cyan
     & $PythonExe @runArgs
     exit $LASTEXITCODE

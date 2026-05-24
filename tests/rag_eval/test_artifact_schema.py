@@ -81,6 +81,14 @@ def test_case_artifact_and_summary_include_variant_config():
         agent_response={"answer": "ok"},
         retrieval_debug={"queried": True, "top_chunks": [], "error": None},
         automated=AutomatedReport(),
+        scoring={
+            "rule_score": 88.0,
+            "rule_dimensions": {"answer_non_empty": {"score": 1}},
+            "retrieval_metrics": {"doc_hit@3": True},
+            "borderline": False,
+            "serious_failures": [],
+            "serious_failure": False,
+        },
         error=None,
     )
     artifact["_artifact_path"] = "artifact.json"
@@ -97,6 +105,10 @@ def test_case_artifact_and_summary_include_variant_config():
 
     assert artifact["variant_id"] == "V0"
     assert artifact["variant_config"]["pipeline_config"]["retrieval_mode"] == "vector"
+    assert artifact["rule_score"] == 88.0
+    assert artifact["retrieval_metrics"]["doc_hit@3"] is True
     assert summary["variant_id"] == "V0"
     assert summary["variant_config"]["pipeline_config"]["use_rerank"] is False
+    assert summary["scoring"]["average_rule_score"] == 88.0
+    assert summary["variant_aggregates"]["V0"]["retrieval_metric_rates"]["doc_hit@3"]["rate"] == 1.0
     assert summary["cases"][0]["variant_id"] == "V0"

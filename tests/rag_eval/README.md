@@ -1,9 +1,9 @@
 # Live RAG Evaluation Harness
 
 Opt-in harness that drives the **real router + RAG pipeline** against an LLM and writes
-structured JSON artifacts for manual review. RAG output is non-deterministic, so the
-runner deliberately avoids exact-string matching on answers; automated checks are
-**structural only** and routing mismatches are logged as warnings, never hard failures.
+structured JSON artifacts for manual review. RAG output is non-deterministic, so
+the runner separates structural checks, deterministic rule scoring, retrieval
+metrics, and optional borderline-only LLM judge triage.
 
 - Cases: [`tests/rag_eval/cases.json`](cases.json)
 - Schema helpers: [`tests/rag_eval/artifact_schema.py`](artifact_schema.py)
@@ -60,7 +60,7 @@ From the repo root (or anywhere — the script resolves repo root):
 .\tests\rag_eval\run_rag_eval.ps1 -Action Pytest -Filter loto-
 ```
 
-Parameters: `-Ingest`, `-Action RunEval|Pytest`, `-Filter`, `-RunId`, `-Variant`,
+Parameters: `-Ingest`, `-Action RunEval|Pytest`, `-Filter`, `-RunId`, `-Variant`, `-Judge`,
 `-RetrievalTopN`, `-OpenAiBaseUrl`, `-OpenAiApiKey`, `-PythonExe`, `-NoCleanup`.
 Defaults match local `llama-server` on `:900` and the Phase 2 V3 variant.
 
@@ -70,7 +70,7 @@ Defaults match local `llama-server` on `:900` and the Phase 2 V3 variant.
 # from repo root
 python -m tests.rag_eval.run_eval
 
-# select a Phase 2 executable variant:
+# select a Run 1 variant:
 python -m tests.rag_eval.run_eval --variant V0
 python -m tests.rag_eval.run_eval --variant V1
 python -m tests.rag_eval.run_eval --variant V2
@@ -82,6 +82,9 @@ python -m tests.rag_eval.run_eval --filter router-
 
 # pin a run id (useful for diffs):
 python -m tests.rag_eval.run_eval --run-id 2026-05-10-baseline
+
+# optional judge: only borderline cases are judged
+python -m tests.rag_eval.run_eval --variant V3 --judge
 ```
 
 ### Pytest
@@ -146,11 +149,18 @@ Per-case fields (full schema in
 | `retrieval_debug` | top chunks (`chunk_id`, `doc_id`, scores, `snippet`) — debug-only |
 | `automated.checks` | structural checks with `severity = fail` or `warn` |
 | `automated.errors` / `automated.warnings` | flat lists for triage |
+| `rule_score` / `rule_dimensions` | deterministic rule score and per-dimension evidence |
+| `retrieval_metrics` | `doc_hit@3/@5/@10` and `section_or_page_hit@3/@5/@10` |
+| `borderline` / `borderline_reasons` | whether optional judge triage should consider the case |
+| `serious_failures` | deterministic serious-failure classifications |
+| `judge_requested` / `judge_result` / `judge_error` | optional borderline-only LLM judge output |
 | `manual_evaluation` | `{score, dimensions, reviewer_notes}` placeholders for you |
 | `error` | exception trace if the harness itself blew up |
 
 `summary.json` aggregates per-case `route` / `route_source` / `automated_ok` /
-`warnings` / `errors` plus run totals.
+`warnings` / `errors`, scoring averages, retrieval hit rates, judge counts, and
+per-variant aggregates. When judge mode is enabled, the run folder also receives
+`judge_audit_sample.json` for manual reliability review.
 
 ## Automated checks (structural only)
 
@@ -167,6 +177,20 @@ Per-case fields (full schema in
 
 Routing checks are warnings because the router falls back to `_llm_classify` on
 ambiguous queries (`route_source = "llm"`), which is non-deterministic.
+
+## Rule scoring and judge triage
+
+Rule scoring checks answer presence, expected document citation, page and section
+locator hits when available, expected answer-point coverage, safety warnings,
+boundary answers, retrieval hit@k, and serious-failure signals. Borderline cases
+are flagged when the rule score is in the 60-80 band or when source, answer, or
+safety signals are plausible but unclear.
+
+The optional judge is off by default. Enable it with `--judge` or
+`FACTORY_AGENT_RAG_EVAL_JUDGE=1`; it uses the local OpenAI-compatible server at
+`http://127.0.0.1:900/v1` with `Qwen2.5-7B-Instruct-Q4_K_M` unless overridden by
+`--judge-base-url`, `--judge-model`, or matching `RAG_EVAL_JUDGE_*` env vars.
+Judge output is triage evidence only and is sampled into `judge_audit_sample.json`.
 
 ## Manual evaluation workflow
 

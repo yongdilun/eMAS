@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 3 context-building work is complete. The fresh 50-question bank exists in JSON and Markdown form, the harness can execute Run 1 variants V0-V7 and V9-V12, and Small-to-Big, RSE, deterministic retrieval-only query rewrite, and light extractive compression are implemented. Scoring, LLM judge scoring, Document Augmentation V8/V13, and the full benchmark have not been implemented or run yet.
+Phase 4 scoring work is complete. The fresh 50-question bank exists in JSON and Markdown form, the harness can execute Run 1 variants V0-V7 and V9-V12, Small-to-Big/RSE/compression are implemented, and artifacts now include deterministic rule scoring, retrieval metrics, borderline flags, optional borderline-only judge outputs, serious-failure classifications, judge audit samples, and summary aggregates. Document Augmentation V8/V13 and the full benchmark have not been implemented or run yet.
 
 Important current decisions:
 
@@ -27,7 +27,7 @@ Important current decisions:
 - A random judge reliability audit is required before judge scores are trusted in the decision memo.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
-- Phase 3 adds context builders and compression only. Scoring, judge scoring, and benchmark execution are still untouched.
+- Phase 4 adds deterministic scoring and optional judge triage only. Benchmark execution is still untouched.
 - V7 and V12 use a deterministic retrieval-only query rewrite path that appends retrieval focus terms and acronym expansions; generation still receives the original user query.
 - Light compression is extractive and keyword-overlap based for Phase 3. It preserves source sentence order and section context, but does not yet use embedding-based semantic sentence selection.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
@@ -40,7 +40,7 @@ Important current decisions:
 | 1 | Read PDFs and build question bank | Done | Codex | Fresh 50-question bank created in `tests/rag_eval/cases.json` and human-readable copy added at `docs/qa/rag_eval_question_bank.md`. JSON validation confirmed the 10-per-PDF and 4/3/2/1 type mix. |
 | 2 | Add variant configuration | Done | Codex | Added V0-V7 and V9-V12 registry/config. V0-V3 are executable; V4/V5/V6/V7/V9/V10/V11/V12 are registered but blocked as not implemented for Phase 2. |
 | 3 | Implement context-building strategies | Done | Codex | Implemented Small-to-Big, RSE, cheap segment scoring, deterministic retrieval query rewrite for V7/V12, and extractive compression for V6/V11. |
-| 4 | Add scoring | Not Started | TBD | Add rule scoring, borderline detection, Qwen2.5 7B judge scoring, random reliability audit sample export, and serious-failure flags. |
+| 4 | Add scoring | Done | Codex | Added rule scoring, retrieval metrics, borderline detection, optional Qwen2.5 7B judge support, random reliability audit sample export, summary aggregates, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Not Started | TBD | Run 50 questions across 12 variants once each. Randomize variant execution order. |
 | 6 | Review and decision memo | Not Started | TBD | Review failures, borderline cases, top candidates, safety cases, and judge reliability sample. Select provisional champion. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
@@ -226,6 +226,28 @@ Phase 3 stayed limited to context building and compression:
 - V8 and V13 remain deferred and were not added to the Run 1 registry.
 - No scoring, LLM judge, Document Augmentation, or full benchmark execution was added.
 
+## Phase 4 Findings
+
+Date: 2026-05-25
+
+Phase 4 stayed limited to scoring and judge triage:
+
+- Added deterministic rule scoring in `tests/rag_eval/scoring.py`.
+- Rule dimensions cover answer presence, expected document citation for answerable cases, expected citation page/range, expected citation section when exposed, expected answer-point coverage, expected safety warning, helpful boundary behavior, and no obvious serious failure.
+- Added retrieval metrics from clean ranked `retrieval_debug.top_chunks`: `doc_hit@3/@5/@10` and `section_or_page_hit@3/@5/@10`.
+- Added explicit serious-failure classifications: `wrong_answer`, `wrong_or_missing_citation`, `citation_does_not_support_answer`, `unsafe_advice`, `hallucinated_unsupported_claim`, and `failed_boundary_answer`.
+- Unsafe advice is a hard fail signal and caps the deterministic rule score at 40.
+- Borderline detection now flags cases in the 60-80 rule-score band, expected-doc-cited-but-partial-answer cases, unclear page/section locator cases, possible valid paraphrases, weak safety warnings, and partially helpful boundary answers.
+- Added optional judge support in `tests/rag_eval/judge.py`. The judge is off by default and can be enabled with `--judge` or `FACTORY_AGENT_RAG_EVAL_JUDGE=1`.
+- Judge calls are limited to borderline cases only. The default judge endpoint/model are `http://127.0.0.1:900/v1` and `Qwen2.5-7B-Instruct-Q4_K_M`.
+- Judge prompts require strict JSON with correctness, completeness, faithfulness, citation quality, safety, conciseness, serious-failure fields, and a short rationale.
+- Judge output is stored as triage evidence only in `judge_result`; parse/call errors go to `judge_error`.
+- Added judge audit sample export in `tests/rag_eval/audit.py`. When judge mode is enabled, the runner writes `judge_audit_sample.json` in the run artifact folder.
+- Audit sampling includes all judged answers for small smoke runs under 20 judged answers. Larger samples target at least 20 or 10% of judged answers, try to include pass/fail/borderline buckets, at least 5 safety-related answers when available, at least 5 citation-sensitive answers when available, and at least 3 variants when available.
+- `summary.json` now includes run-level scoring aggregates and per-variant aggregates: average rule score, borderline count, serious-failure count, retrieval hit rates, average duration, average context token estimates when present, and judge counts.
+- The PowerShell wrapper accepts `-Judge`; the CLI accepts `--judge`, `--no-judge`, `--judge-base-url`, `--judge-model`, and `--judge-audit-seed`.
+- No live judge call, live LLM run, full benchmark, Document Augmentation V8/V13, question-bank change, RSE behavior change, or Small-to-Big behavior change was made.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -356,6 +378,19 @@ python -m pytest -q factory-agent/tests/test_rag_retrieval.py
 python -m tests.rag_eval.run_eval --help
 python -m json.tool tests/rag_eval/cases.json
 git diff --check
+git branch --show-current
+git log -1 --oneline
+Get-Content -Raw -LiteralPath 'tests/rag_eval/run_rag_eval.ps1'
+Get-Content -Raw -LiteralPath 'factory-agent/tests/test_rag_live_llm.py'
+rg "manual_evaluation|build_summary|run_eval\(" -n tests/rag_eval factory-agent/tests
+rg "openai|base_url|build_.*chat_model" -n factory-agent/factory_agent tests/rag_eval
+python -m pytest -q tests/rag_eval/test_scoring.py tests/rag_eval/test_judge.py tests/rag_eval/test_audit.py tests/rag_eval/test_run_eval_judge.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py tests/rag_eval/test_variants.py
+python -m json.tool tests/rag_eval/cases.json
+python -m tests.rag_eval.run_eval --help
+git diff --check
+git status --short
+git diff --stat
+python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag_eval/audit.py tests/rag_eval/run_eval.py tests/rag_eval/artifact_schema.py
 ```
 
 ## Test Results
@@ -375,6 +410,12 @@ git diff --check
 - `python -m json.tool tests/rag_eval/cases.json` parsed successfully. The cases file was not changed in Phase 3.
 - `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
 - No live LLM run, no scoring run, no judge run, and no full 50-question x 12-variant benchmark were run for Phase 3.
+- Phase 4 focused tests passed: `python -m pytest -q tests/rag_eval/test_scoring.py tests/rag_eval/test_judge.py tests/rag_eval/test_audit.py tests/rag_eval/test_run_eval_judge.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py tests/rag_eval/test_variants.py` returned 20 passed. Warnings were existing Swig/PyMuPDF-style import warnings and `pytest_asyncio` configuration deprecation warnings.
+- `python -m json.tool tests/rag_eval/cases.json` parsed successfully. The cases file was not changed in Phase 4.
+- `python -m tests.rag_eval.run_eval --help` showed the new judge options without starting a benchmark: `--judge`, `--no-judge`, `--judge-base-url`, `--judge-model`, and `--judge-audit-seed`.
+- `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
+- `python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag_eval/audit.py tests/rag_eval/run_eval.py tests/rag_eval/artifact_schema.py` passed.
+- No live LLM run, no live judge run, no scoring benchmark run, no Document Augmentation run, and no full 50-question x 12-variant benchmark were run for Phase 4.
 
 ## Files Created
 
@@ -388,6 +429,13 @@ git diff --check
 - `factory-agent/factory_agent/rag/context_building.py`
 - `factory-agent/tests/test_rag_context_building.py`
 - `factory-agent/tests/test_rag_pipeline_config.py`
+- `tests/rag_eval/scoring.py`
+- `tests/rag_eval/judge.py`
+- `tests/rag_eval/audit.py`
+- `tests/rag_eval/test_scoring.py`
+- `tests/rag_eval/test_judge.py`
+- `tests/rag_eval/test_audit.py`
+- `tests/rag_eval/test_run_eval_judge.py`
 
 ## Files Updated
 
@@ -403,6 +451,7 @@ git diff --check
 - `tests/rag_eval/artifact_schema.py`
 - `tests/rag_eval/run_eval.py`
 - `tests/rag_eval/run_rag_eval.ps1`
+- `tests/rag_eval/test_artifact_schema.py`
 - `tests/rag_eval/test_variants.py`
 - `tests/rag_eval/variants.py`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
@@ -413,4 +462,4 @@ git diff --check
 
 ## Next Action
 
-Start Phase 4 only when requested: add rule scoring, borderline detection, optional LLM judge support, judge audit export, and serious-failure classification. Do not run the full benchmark until scoring and benchmark execution phases are ready.
+Start Phase 5 only when requested: run Benchmark 1 across the 50-question bank and Run 1 variants. Do not implement Document Augmentation V8/V13 before Phase 7, and do not run the full benchmark until the user explicitly asks for Phase 5 execution.

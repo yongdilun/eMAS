@@ -93,7 +93,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Severity for automated checks. ``fail`` flips ``automated.ok`` to false;
 # ``warn`` is recorded but does not fail the run.
@@ -315,10 +315,15 @@ def build_case_artifact(
     agent_response: dict[str, Any] | None,
     retrieval_debug: dict[str, Any],
     automated: AutomatedReport,
+    scoring: dict[str, Any] | None = None,
+    judge_requested: bool = False,
+    judge_result: dict[str, Any] | None = None,
+    judge_error: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the per-case artifact dict in canonical field order."""
 
+    scoring = scoring or {}
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -336,6 +341,16 @@ def build_case_artifact(
         "agent_response": agent_response,
         "retrieval_debug": retrieval_debug,
         "automated": automated.to_dict(),
+        "rule_score": scoring.get("rule_score"),
+        "rule_dimensions": scoring.get("rule_dimensions") or {},
+        "retrieval_metrics": scoring.get("retrieval_metrics") or {},
+        "borderline": bool(scoring.get("borderline", False)),
+        "borderline_reasons": scoring.get("borderline_reasons") or [],
+        "serious_failures": scoring.get("serious_failures") or [],
+        "serious_failure": bool(scoring.get("serious_failure", False)),
+        "judge_requested": bool(judge_requested),
+        "judge_result": _ensure_jsonable(judge_result),
+        "judge_error": judge_error,
         "manual_evaluation": empty_manual_evaluation(),
         "error": error,
     }
@@ -350,12 +365,14 @@ def build_summary(
     finished_at: str,
     env: dict[str, Any],
     case_results: list[dict[str, Any]],
+    judge_audit_path: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate per-case artifacts into a ``summary.json`` payload."""
 
     automated_pass = sum(1 for r in case_results if r.get("automated", {}).get("ok"))
     automated_fail = len(case_results) - automated_pass
     warnings = sum(len(r.get("automated", {}).get("warnings") or []) for r in case_results)
+    variant_ids = sorted({str(r.get("variant_id") or variant_id) for r in case_results})
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -371,6 +388,14 @@ def build_summary(
             "automated_fail": automated_fail,
             "warnings": warnings,
         },
+        "scoring": _build_scoring_aggregate(case_results),
+        "variant_aggregates": {
+            variant: _build_scoring_aggregate(
+                [r for r in case_results if str(r.get("variant_id") or variant_id) == variant]
+            )
+            for variant in variant_ids
+        },
+        "judge_audit_path": judge_audit_path,
         "cases": [
             {
                 "case_id": r.get("case_id"),
@@ -380,6 +405,12 @@ def build_summary(
                 "automated_ok": (r.get("automated") or {}).get("ok"),
                 "warnings": (r.get("automated") or {}).get("warnings") or [],
                 "errors": (r.get("automated") or {}).get("errors") or [],
+                "rule_score": r.get("rule_score"),
+                "borderline": r.get("borderline"),
+                "serious_failures": r.get("serious_failures") or [],
+                "retrieval_metrics": r.get("retrieval_metrics") or {},
+                "judge_requested": r.get("judge_requested"),
+                "judge_error": r.get("judge_error"),
                 "duration_s": r.get("duration_s"),
                 "artifact_path": r.get("_artifact_path"),
             }
@@ -404,6 +435,88 @@ def _serialize_source(source: Any) -> dict[str, Any]:
     if isinstance(source, dict):
         return _ensure_jsonable(source)
     return {"raw": str(source)}
+
+
+def _build_scoring_aggregate(case_results: list[dict[str, Any]]) -> dict[str, Any]:
+    rule_scores = [
+        float(score)
+        for result in case_results
+        if (score := result.get("rule_score")) is not None
+    ]
+    retrieval_metric_names = (
+        "doc_hit@3",
+        "doc_hit@5",
+        "doc_hit@10",
+        "section_or_page_hit@3",
+        "section_or_page_hit@5",
+        "section_or_page_hit@10",
+    )
+    return {
+        "cases": len(case_results),
+        "average_rule_score": _average(rule_scores),
+        "borderline_count": sum(1 for result in case_results if result.get("borderline")),
+        "serious_failure_count": sum(
+            1
+            for result in case_results
+            if result.get("serious_failure") or result.get("serious_failures")
+        ),
+        "retrieval_metric_rates": {
+            name: _metric_rate(case_results, name)
+            for name in retrieval_metric_names
+        },
+        "average_duration_s": _average(
+            [float(result["duration_s"]) for result in case_results if result.get("duration_s") is not None]
+        ),
+        "average_context_token_estimates": _average_context_token_estimates(case_results),
+        "judge_counts": {
+            "requested": sum(1 for result in case_results if result.get("judge_requested")),
+            "completed": sum(1 for result in case_results if result.get("judge_result") is not None),
+            "errors": sum(1 for result in case_results if result.get("judge_error")),
+            "serious_failure": sum(
+                1
+                for result in case_results
+                if (result.get("judge_result") or {}).get("serious_failure") is True
+            ),
+        },
+    }
+
+
+def _metric_rate(case_results: list[dict[str, Any]], metric_name: str) -> dict[str, Any]:
+    values = [
+        (result.get("retrieval_metrics") or {}).get(metric_name)
+        for result in case_results
+        if (result.get("retrieval_metrics") or {}).get(metric_name) is not None
+    ]
+    hits = sum(1 for value in values if value is True)
+    applicable = len(values)
+    return {
+        "rate": round(hits / applicable, 4) if applicable else None,
+        "hits": hits,
+        "applicable": applicable,
+    }
+
+
+def _average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 4)
+
+
+def _average_context_token_estimates(case_results: list[dict[str, Any]]) -> dict[str, float | None]:
+    buckets: dict[str, list[float]] = {
+        "before_expansion": [],
+        "after_expansion": [],
+        "after_compression": [],
+    }
+    for result in case_results:
+        rag_metadata = ((result.get("rag") or {}).get("metadata") or {})
+        context_metadata = rag_metadata.get("context_building") or {}
+        estimates = context_metadata.get("token_estimates") or {}
+        for key in buckets:
+            value = estimates.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                buckets[key].append(float(value))
+    return {key: _average(values) for key, values in buckets.items()}
 
 
 def _ensure_jsonable(value: Any) -> Any:
