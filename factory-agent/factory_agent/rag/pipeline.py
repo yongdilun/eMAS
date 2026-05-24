@@ -4,6 +4,12 @@ import asyncio
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from factory_agent.rag.context_building import (
+    RAGContextBuilder,
+    normalize_compression,
+    normalize_context_builder,
+    rewrite_query_for_retrieval,
+)
 from factory_agent.rag.generation import AnswerGenerator
 from factory_agent.rag.reranking import LLMReranker
 from factory_agent.rag.retrieval import HybridRetriever
@@ -30,6 +36,10 @@ class RAGPipelineConfig:
     query_rewrite: bool = False
     context_builder: str = "none"
     compression: str = "none"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "context_builder", normalize_context_builder(self.context_builder))
+        object.__setattr__(self, "compression", normalize_compression(self.compression))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,6 +75,9 @@ class RAGPipeline:
             route=route,
             retrieval_mode=config.retrieval_mode,
             use_rerank=config.use_rerank,
+            query_rewrite=config.query_rewrite,
+            context_builder=config.context_builder,
+            compression=config.compression,
         )
         result = await asyncio.to_thread(
             self._run_sync,
@@ -92,10 +105,11 @@ class RAGPipeline:
         config: RAGPipelineConfig | None = None,
     ) -> AnswerResult:
         config = config or RAGPipelineConfig()
+        retrieval_query = rewrite_query_for_retrieval(query) if config.query_rewrite else query
 
         # 1. Retrieval
         candidates = self._retriever.retrieve(
-            query=query,
+            query=retrieval_query,
             route=route,
             vector_top_k=config.vector_top_k,
             keyword_top_k=config.keyword_top_k,
@@ -109,6 +123,7 @@ class RAGPipeline:
             candidate_count=len(candidates),
             retrieval_mode=config.retrieval_mode,
             expand_neighbors=config.expand_neighbors,
+            query_rewrite=config.query_rewrite,
         )
 
         # 2. Reranking
@@ -128,13 +143,40 @@ class RAGPipeline:
             use_rerank=config.use_rerank,
         )
 
-        # 3. Generation
-        return self._generator.generate(
+        # 3. Context building
+        context_result = RAGContextBuilder(self._retriever).build(
+            query=retrieval_query,
+            selected_chunks=selected_chunks,
+            candidates=candidates,
+            context_builder=config.context_builder,
+            compression=config.compression,
+        )
+        log_event(
+            "rag_context_build_complete",
+            session_id=session_id,
+            context_builder=config.context_builder,
+            compression=config.compression,
+            segment_count=len(context_result.chunks),
+            compression_ran=context_result.metadata.get("compression_ran"),
+        )
+
+        # 4. Generation
+        result = self._generator.generate(
             query=query,
-            chunks=selected_chunks,
+            chunks=context_result.chunks,
             api_data=api_data,
             route=route,
         )
+        result.metadata = {
+            **(result.metadata or {}),
+            "query_rewrite": {
+                "enabled": config.query_rewrite,
+                "original_query": query,
+                "retrieval_query": retrieval_query,
+            },
+            "context_building": context_result.metadata,
+        }
+        return result
 
 
 def _chunks_from_candidates(candidates: list[ScoredChunk], *, top_k: int | None = None) -> list[Chunk]:

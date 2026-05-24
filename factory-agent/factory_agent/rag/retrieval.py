@@ -218,6 +218,56 @@ class HybridRetriever:
             logger.debug(f"Neighbor fetch error for {chunk_id}: {e}")
             return None
 
+    def get_chunks_for_doc(self, doc_id: str) -> List[Chunk]:
+        """Fetch all stored chunks for a document, ordered by chunk index when available."""
+        chunks: List[Chunk] = []
+
+        if self.bm25_chunks:
+            chunks = [
+                Chunk(
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    metadata=self._clean_metadata(chunk.metadata),
+                )
+                for chunk in self.bm25_chunks
+                if str(self._clean_metadata(chunk.metadata).get("doc_id") or "") == str(doc_id)
+            ]
+
+        if not chunks:
+            try:
+                result = self.collection.get(
+                    where={"doc_id": str(doc_id)},
+                    include=["documents", "metadatas"],
+                )
+                chunks = [
+                    Chunk(
+                        chunk_id=chunk_id,
+                        text=document or "",
+                        metadata=self._clean_metadata(metadata or {}),
+                    )
+                    for chunk_id, document, metadata in zip(
+                        result.get("ids") or [],
+                        result.get("documents") or [],
+                        result.get("metadatas") or [],
+                    )
+                ]
+            except Exception as e:
+                logger.debug(f"Document chunk fetch error for {doc_id}: {e}")
+                return []
+
+        def chunk_index(chunk: Chunk) -> int:
+            value = chunk.metadata.get("chunk_index")
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+            try:
+                return int(str(chunk.chunk_id).rsplit("_c", 1)[1])
+            except Exception:
+                return 10**9
+
+        return sorted(chunks, key=chunk_index)
+
     def apply_metadata_filter_and_boost(
         self,
         chunks: List[ScoredChunk],

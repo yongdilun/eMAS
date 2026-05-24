@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 2 variant-configuration work is complete. The fresh 50-question bank exists in JSON and Markdown form, and the harness can now execute clean Phase 2 variants V0-V3 with explicit retrieval/rerank settings. RSE, Small-to-Big, compression, scoring, judge scoring, and the full benchmark have not been implemented or run yet.
+Phase 3 context-building work is complete. The fresh 50-question bank exists in JSON and Markdown form, the harness can execute Run 1 variants V0-V7 and V9-V12, and Small-to-Big, RSE, deterministic retrieval-only query rewrite, and light extractive compression are implemented. Scoring, LLM judge scoring, Document Augmentation V8/V13, and the full benchmark have not been implemented or run yet.
 
 Important current decisions:
 
@@ -27,7 +27,9 @@ Important current decisions:
 - A random judge reliability audit is required before judge scores are trusted in the decision memo.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
-- Phase 2 adds variant config and retrieval/debug plumbing only. Context builders, compression, scoring, and judging are still untouched.
+- Phase 3 adds context builders and compression only. Scoring, judge scoring, and benchmark execution are still untouched.
+- V7 and V12 use a deterministic retrieval-only query rewrite path that appends retrieval focus terms and acronym expansions; generation still receives the original user query.
+- Light compression is extractive and keyword-overlap based for Phase 3. It preserves source sentence order and section context, but does not yet use embedding-based semantic sentence selection.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -37,7 +39,7 @@ Important current decisions:
 | 0 | Confirm baseline harness shape | Done | Codex | Findings recorded below. Confirmed current artifact schema, citation metadata, retrieval metadata, PDF metadata, neighbor expansion toggle, and smallest safe Phase 1/2 plan. |
 | 1 | Read PDFs and build question bank | Done | Codex | Fresh 50-question bank created in `tests/rag_eval/cases.json` and human-readable copy added at `docs/qa/rag_eval_question_bank.md`. JSON validation confirmed the 10-per-PDF and 4/3/2/1 type mix. |
 | 2 | Add variant configuration | Done | Codex | Added V0-V7 and V9-V12 registry/config. V0-V3 are executable; V4/V5/V6/V7/V9/V10/V11/V12 are registered but blocked as not implemented for Phase 2. |
-| 3 | Implement context-building strategies | Not Started | TBD | Implement Small-to-Big, RSE, two-stage segment scoring, and extractive compression. |
+| 3 | Implement context-building strategies | Done | Codex | Implemented Small-to-Big, RSE, cheap segment scoring, deterministic retrieval query rewrite for V7/V12, and extractive compression for V6/V11. |
 | 4 | Add scoring | Not Started | TBD | Add rule scoring, borderline detection, Qwen2.5 7B judge scoring, random reliability audit sample export, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Not Started | TBD | Run 50 questions across 12 variants once each. Randomize variant execution order. |
 | 6 | Review and decision memo | Not Started | TBD | Review failures, borderline cases, top candidates, safety cases, and judge reliability sample. Select provisional champion. |
@@ -206,6 +208,24 @@ Phase 2 stayed limited to variant configuration and clean retrieval/debug plumbi
 - Default eval variant is V3. The CLI and PowerShell wrapper now accept `--variant` / `-Variant`.
 - No RSE, Small-to-Big, compression, scoring, judge scoring, or full benchmark execution was added.
 
+## Phase 3 Findings
+
+Date: 2026-05-25
+
+Phase 3 stayed limited to context building and compression:
+
+- Added `factory-agent/factory_agent/rag/context_building.py` with a post-retrieval context builder used by the RAG pipeline.
+- Small-to-Big now expands selected small chunks to all chunks in the same `doc_id` and `section_path` parent section. If the parent section is over the token cap, it keeps section context plus extractive matching spans using original wording.
+- RSE now starts from top selected/reranked chunks, joins only same-`doc_id` chunks, keeps same `section_path` when available, preserves chunk order inside each segment, respects a plus/minus 2 window, and caps segment size before generation.
+- The second stage after expansion uses cheap segment scoring based on max child score, query coverage, and metadata/source bonuses. It does not call the LLM reranker again.
+- V6 and V11 now run light extractive compression after expansion. Compression preserves section heading/context, source sentence order, selected evidence sentences, and nearby evidence sentences where budget allows. It targets roughly 40-50% reduction with a 1,500-token hard cap.
+- Small-to-Big and RSE are mutually exclusive at `RAGPipelineConfig` validation time.
+- V7 and V12 are executable with deterministic retrieval-only query rewrite. The rewrite appends retrieval focus terms and known acronym expansions; it is not an LLM rewrite.
+- Per-case artifacts now receive context-building metadata through `rag.metadata.context_building`, including builder type, segment IDs, child chunk IDs, doc/section/page metadata, token estimates before expansion, after expansion, after compression, segment scores, and compression status.
+- Source citations now carry section title/path and page start/end when available.
+- V8 and V13 remain deferred and were not added to the Run 1 registry.
+- No scoring, LLM judge, Document Augmentation, or full benchmark execution was added.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -214,14 +234,14 @@ Phase 2 stayed limited to variant configuration and clean retrieval/debug plumbi
 | V1 | Vector + Rerank | Phase 2 Executable |
 | V2 | Hybrid Search | Phase 2 Executable |
 | V3 | Hybrid Search + Rerank | Phase 2 Executable |
-| V4 | Hybrid Search + Small-to-Big | Registered; Context Builder Not Implemented |
-| V5 | Hybrid Search + Small-to-Big + Rerank | Registered; Context Builder Not Implemented |
-| V6 | Hybrid Search + Small-to-Big + Rerank + Light Compression | Registered; Context Builder/Compression Not Implemented |
-| V7 | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | Registered; Query Rewrite/Context Builder Not Implemented |
-| V9 | Hybrid Search + RSE | Registered; RSE Not Implemented |
-| V10 | Hybrid Search + RSE + Rerank | Registered; RSE Not Implemented |
-| V11 | Hybrid Search + RSE + Rerank + Light Compression | Registered; RSE/Compression Not Implemented |
-| V12 | Query Rewrite + Hybrid Search + RSE + Rerank | Registered; Query Rewrite/RSE Not Implemented |
+| V4 | Hybrid Search + Small-to-Big | Phase 3 Executable |
+| V5 | Hybrid Search + Small-to-Big + Rerank | Phase 3 Executable |
+| V6 | Hybrid Search + Small-to-Big + Rerank + Light Compression | Phase 3 Executable |
+| V7 | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | Phase 3 Executable with deterministic retrieval rewrite |
+| V9 | Hybrid Search + RSE | Phase 3 Executable |
+| V10 | Hybrid Search + RSE + Rerank | Phase 3 Executable |
+| V11 | Hybrid Search + RSE + Rerank + Light Compression | Phase 3 Executable |
+| V12 | Query Rewrite + Hybrid Search + RSE + Rerank | Phase 3 Executable with deterministic retrieval rewrite |
 
 ## Deferred Run 2 Variant Set
 
@@ -313,6 +333,29 @@ python -m pytest -q factory-agent/tests/test_rag_retrieval.py factory-agent/test
 python -m json.tool tests/rag_eval/cases.json
 python -m tests.rag_eval.run_eval --help
 git diff --check
+git status --short
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_PLAN.md'
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_TRACK.md'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/variants.py'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/run_eval.py'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/artifact_schema.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/pipeline.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/retrieval.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/reranking.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/generation.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/schemas.py'
+Get-Content -Raw -LiteralPath 'factory-agent/factory_agent/rag/ingestion.py'
+rg "context_builder|RAGPipelineConfig|context|chunks" -n factory-agent tests/rag_eval
+Get-Content -Raw -LiteralPath 'factory-agent/tests/test_rag_pipeline_config.py'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/test_variants.py'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/test_run_eval_variants.py'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/test_artifact_schema.py'
+python -m pytest -q factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_pipeline_config.py tests/rag_eval/test_variants.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py
+python -m pytest -q factory-agent/tests/test_rag_generation.py
+python -m pytest -q factory-agent/tests/test_rag_retrieval.py
+python -m tests.rag_eval.run_eval --help
+python -m json.tool tests/rag_eval/cases.json
+git diff --check
 ```
 
 ## Test Results
@@ -325,6 +368,13 @@ git diff --check
 - `python -m tests.rag_eval.run_eval --help` showed the new `--variant {V0,V1,V2,V3,V4,V5,V6,V7,V9,V10,V11,V12}` option without starting a benchmark.
 - `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
 - No live LLM run and no full 50-question benchmark were run for Phase 2.
+- Phase 3 focused tests passed: `python -m pytest -q factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_pipeline_config.py tests/rag_eval/test_variants.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py` returned 16 passed. Warnings were existing Swig/PyMuPDF-style import warnings, `pytest_asyncio`, and `datetime.utcnow()` telemetry warnings.
+- Additional touched-generation test passed: `python -m pytest -q factory-agent/tests/test_rag_generation.py` returned 15 passed.
+- Additional touched-retrieval test passed: `python -m pytest -q factory-agent/tests/test_rag_retrieval.py` returned 10 passed.
+- `python -m tests.rag_eval.run_eval --help` showed all Run 1 variant choices without starting a benchmark.
+- `python -m json.tool tests/rag_eval/cases.json` parsed successfully. The cases file was not changed in Phase 3.
+- `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
+- No live LLM run, no scoring run, no judge run, and no full 50-question x 12-variant benchmark were run for Phase 3.
 
 ## Files Created
 
@@ -335,6 +385,8 @@ git diff --check
 - `tests/rag_eval/test_artifact_schema.py`
 - `tests/rag_eval/test_run_eval_variants.py`
 - `tests/rag_eval/test_variants.py`
+- `factory-agent/factory_agent/rag/context_building.py`
+- `factory-agent/tests/test_rag_context_building.py`
 - `factory-agent/tests/test_rag_pipeline_config.py`
 
 ## Files Updated
@@ -342,12 +394,17 @@ git diff --check
 - `tests/rag_eval/cases.json`
 - `factory-agent/factory_agent/rag/pipeline.py`
 - `factory-agent/factory_agent/rag/retrieval.py`
+- `factory-agent/factory_agent/rag/generation.py`
+- `factory-agent/factory_agent/rag/schemas.py`
 - `factory-agent/tests/test_rag_live_llm.py`
+- `factory-agent/tests/test_rag_pipeline_config.py`
 - `factory-agent/tests/test_rag_retrieval.py`
 - `tests/rag_eval/README.md`
 - `tests/rag_eval/artifact_schema.py`
 - `tests/rag_eval/run_eval.py`
 - `tests/rag_eval/run_rag_eval.ps1`
+- `tests/rag_eval/test_variants.py`
+- `tests/rag_eval/variants.py`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
 
 ## Current Blockers
@@ -356,4 +413,4 @@ git diff --check
 
 ## Next Action
 
-Start Phase 3 only when requested: implement context-building strategies such as Small-to-Big, RSE, and light extractive compression. Do not run the full benchmark until scoring and benchmark execution phases are ready.
+Start Phase 4 only when requested: add rule scoring, borderline detection, optional LLM judge support, judge audit export, and serious-failure classification. Do not run the full benchmark until scoring and benchmark execution phases are ready.

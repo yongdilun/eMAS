@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from factory_agent.rag.pipeline import RAGPipeline, RAGPipelineConfig
 from factory_agent.rag.schemas import AnswerResult, Chunk, ScoredChunk
 
@@ -8,8 +10,26 @@ class FakeRetriever:
     def __init__(self) -> None:
         self.calls = []
         self.chunks = [
-            Chunk(chunk_id="c1", text="alpha", metadata={"doc_id": "doc"}),
-            Chunk(chunk_id="c2", text="bravo", metadata={"doc_id": "doc"}),
+            Chunk(
+                chunk_id="doc_c0001",
+                text="[Section: Main] alpha",
+                metadata={
+                    "doc_id": "doc",
+                    "chunk_index": 1,
+                    "section_title": "Main",
+                    "section_path": "Doc > Main",
+                },
+            ),
+            Chunk(
+                chunk_id="doc_c0002",
+                text="[Section: Main] bravo",
+                metadata={
+                    "doc_id": "doc",
+                    "chunk_index": 2,
+                    "section_title": "Main",
+                    "section_path": "Doc > Main",
+                },
+            ),
         ]
 
     def retrieve(self, **kwargs):
@@ -18,6 +38,9 @@ class FakeRetriever:
             ScoredChunk(chunk=self.chunks[0], vector_score=0.9, fusion_score=0.9),
             ScoredChunk(chunk=self.chunks[1], vector_score=0.8, fusion_score=0.8),
         ]
+
+    def get_chunks_for_doc(self, doc_id):
+        return list(self.chunks)
 
 
 class FakeReranker:
@@ -73,7 +96,7 @@ def test_pipeline_config_can_skip_rerank_and_disable_neighbor_expansion():
         }
     ]
     assert reranker.calls == []
-    assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["c1", "c2"]
+    assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["doc_c0001", "doc_c0002"]
 
 
 def test_pipeline_config_uses_reranker_when_enabled():
@@ -93,4 +116,32 @@ def test_pipeline_config_uses_reranker_when_enabled():
 
     assert len(reranker.calls) == 1
     assert reranker.calls[0]["top_k"] == 1
-    assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["c2"]
+    assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["doc_c0002"]
+
+
+def test_pipeline_applies_context_builder_before_generation():
+    retriever = FakeRetriever()
+    reranker = FakeReranker()
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(retriever=retriever, reranker=reranker, generator=generator)
+
+    config = RAGPipelineConfig(
+        retrieval_mode="hybrid",
+        use_rerank=False,
+        expand_neighbors=False,
+        context_builder="small_to_big",
+    )
+
+    result = asyncio.run(pipeline.run(query="alpha", route="RAG_ONLY", config=config))
+
+    generated_chunks = generator.calls[0]["chunks"]
+    assert len(generated_chunks) == 1
+    assert generated_chunks[0].metadata["context_builder"] == "small_to_big"
+    assert "alpha" in generated_chunks[0].text
+    assert "bravo" in generated_chunks[0].text
+    assert result.metadata["context_building"]["context_builder"] == "small_to_big"
+
+
+def test_pipeline_config_rejects_combined_context_builders():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        RAGPipelineConfig(context_builder="small_to_big+rse")

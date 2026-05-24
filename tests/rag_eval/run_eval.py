@@ -59,6 +59,7 @@ if str(FACTORY_AGENT_DIR) not in sys.path:
 
 # Imports below need ``factory-agent`` on sys.path, hence the insert above.
 from factory_agent.config import get_settings  # noqa: E402
+from factory_agent.rag.context_building import rewrite_query_for_retrieval  # noqa: E402
 from factory_agent.rag.pipeline import RAGPipeline  # noqa: E402
 from factory_agent.rag.retrieval import HybridRetriever  # noqa: E402
 
@@ -280,7 +281,11 @@ async def _run_case(
 
     query = str(case.get("query") or "")
     pipeline_config = variant.to_pipeline_config()
-    retrieval_settings = variant.retrieval_settings()
+    retrieval_query = rewrite_query_for_retrieval(query) if pipeline_config.query_rewrite else query
+    retrieval_settings = {
+        **variant.retrieval_settings(),
+        "retrieval_query": retrieval_query,
+    }
     error: str | None = None
     route_decision: dict[str, Any] | None = None
     rag_result: dict[str, Any] | None = None
@@ -304,7 +309,10 @@ async def _run_case(
             "sources": rag_result.get("sources") or [],
             "route": rag_result.get("route_used") or "RAG_ONLY",
             "safety_warning": bool(rag_result.get("safety_warning")),
-            "metadata": {"route_decision": route_decision},
+            "metadata": {
+                "route_decision": route_decision,
+                "rag_metadata": rag_result.get("metadata") or {},
+            },
         }
     except Exception as exc:  # pragma: no cover - defensive harness
         error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
@@ -321,7 +329,7 @@ async def _run_case(
     else:
         try:
             scored = retriever.retrieve(
-                query=query,
+                query=retrieval_query,
                 route="RAG_ONLY",
                 vector_top_k=pipeline_config.vector_top_k,
                 keyword_top_k=pipeline_config.keyword_top_k,
@@ -518,7 +526,7 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
         "--variant",
         default=DEFAULT_VARIANT_ID,
         choices=RUN_1_VARIANT_IDS,
-        help="Run 1 RAG variant ID to execute. Phase 2 supports V0-V3.",
+        help="Run 1 RAG variant ID to execute.",
     )
     args = parser.parse_args(argv)
     return RunnerOptions(

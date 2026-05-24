@@ -1,5 +1,3 @@
-import pytest
-
 from tests.rag_eval.variants import (
     RUN_1_VARIANT_IDS,
     RUN_1_VARIANTS,
@@ -49,9 +47,27 @@ def test_phase2_executable_variants_have_clean_retrieval_configs():
         assert config.fusion_top_k >= 10
 
 
-def test_context_builder_variants_are_registered_but_not_phase2_executable():
-    for variant_id in ("V4", "V5", "V6", "V7", "V9", "V10", "V11", "V12"):
+def test_context_builder_variants_are_phase3_executable():
+    expected = {
+        "V4": ("small_to_big", "none", False),
+        "V5": ("small_to_big", "none", False),
+        "V6": ("small_to_big", "light_extractive", False),
+        "V7": ("small_to_big", "none", True),
+        "V9": ("rse", "none", False),
+        "V10": ("rse", "none", False),
+        "V11": ("rse", "light_extractive", False),
+        "V12": ("rse", "none", True),
+    }
+    for variant_id, (context_builder, compression, query_rewrite) in expected.items():
         variant = get_variant(variant_id)
-        assert not variant.phase2_executable
-        with pytest.raises(NotImplementedError):
-            require_phase2_executable(variant)
+        config = variant.to_pipeline_config()
+        assert variant.phase2_executable
+        require_phase2_executable(variant)
+        assert config.context_builder == context_builder
+        assert config.compression == compression
+        assert config.query_rewrite is query_rewrite
+
+
+def test_document_augmentation_variants_remain_deferred():
+    assert "V8" not in RUN_1_VARIANTS
+    assert "V13" not in RUN_1_VARIANTS

@@ -51,6 +51,10 @@ class SourceCitation(BaseModel):
     license: str
     retrieved_date: str
     page: Optional[int] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    section_title: Optional[str] = None
+    section_path: Optional[Any] = None
     pdf_url: Optional[str] = None
     page_label: Optional[str] = None
     bbox: Optional[Any] = None

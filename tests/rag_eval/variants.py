@@ -79,6 +79,9 @@ class RAGVariantConfig:
             "keyword_top_k": config.keyword_top_k,
             "fusion_top_k": config.fusion_top_k,
             "expand_neighbors": config.expand_neighbors,
+            "query_rewrite": config.query_rewrite,
+            "context_builder": config.context_builder,
+            "compression": config.compression,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,8 +131,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         use_rerank=False,
         expand_neighbors=False,
         context_builder="small_to_big",
-        phase2_status="registered_not_implemented",
-        notes="Small-to-Big context building is deferred to Phase 3.",
+        notes="Small-to-Big expands selected chunks to parent sections.",
     ),
     "V5": RAGVariantConfig(
         variant_id="V5",
@@ -138,8 +140,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         use_rerank=True,
         expand_neighbors=False,
         context_builder="small_to_big",
-        phase2_status="registered_not_implemented",
-        notes="Small-to-Big context building is deferred to Phase 3.",
+        notes="Chunk rerank followed by Small-to-Big parent section expansion.",
     ),
     "V6": RAGVariantConfig(
         variant_id="V6",
@@ -149,8 +150,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         expand_neighbors=False,
         context_builder="small_to_big",
         compression="light_extractive",
-        phase2_status="registered_not_implemented",
-        notes="Small-to-Big and compression are deferred to Phase 3.",
+        notes="Small-to-Big parent section expansion followed by extractive compression.",
     ),
     "V7": RAGVariantConfig(
         variant_id="V7",
@@ -160,8 +160,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         expand_neighbors=False,
         query_rewrite=True,
         context_builder="small_to_big",
-        phase2_status="registered_not_implemented",
-        notes="Query rewrite and Small-to-Big are deferred to Phase 3.",
+        notes="Deterministic retrieval query rewrite, chunk rerank, and Small-to-Big expansion.",
     ),
     "V9": RAGVariantConfig(
         variant_id="V9",
@@ -170,8 +169,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         use_rerank=False,
         expand_neighbors=False,
         context_builder="rse",
-        phase2_status="registered_not_implemented",
-        notes="RSE context building is deferred to Phase 3.",
+        notes="RSE joins same-doc, same-section nearby chunks after retrieval.",
     ),
     "V10": RAGVariantConfig(
         variant_id="V10",
@@ -180,8 +178,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         use_rerank=True,
         expand_neighbors=False,
         context_builder="rse",
-        phase2_status="registered_not_implemented",
-        notes="RSE context building is deferred to Phase 3.",
+        notes="Chunk rerank followed by RSE segment building.",
     ),
     "V11": RAGVariantConfig(
         variant_id="V11",
@@ -191,8 +188,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         expand_neighbors=False,
         context_builder="rse",
         compression="light_extractive",
-        phase2_status="registered_not_implemented",
-        notes="RSE and compression are deferred to Phase 3.",
+        notes="Chunk rerank, RSE segment building, and extractive compression.",
     ),
     "V12": RAGVariantConfig(
         variant_id="V12",
@@ -202,8 +198,7 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         expand_neighbors=False,
         query_rewrite=True,
         context_builder="rse",
-        phase2_status="registered_not_implemented",
-        notes="Query rewrite and RSE are deferred to Phase 3.",
+        notes="Deterministic retrieval query rewrite, chunk rerank, and RSE segment building.",
     ),
 }
 
@@ -221,6 +216,6 @@ def require_phase2_executable(variant: RAGVariantConfig) -> None:
     if variant.phase2_executable:
         return
     raise NotImplementedError(
-        f"{variant.variant_id} is registered for Run 1 but is not executable in Phase 2 "
+        f"{variant.variant_id} is registered for Run 1 but is not executable in the current phase "
         f"({variant.name}). {variant.notes}"
     )
