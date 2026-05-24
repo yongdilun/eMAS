@@ -1,41 +1,92 @@
 {
-  "$schema_note": "Live RAG evaluation cases. Derived from NIST and OSHA official guidance documents listed in source_register.json.",
-  "version": 1,
-  "description": "Real evaluation cases focusing on NIST smart manufacturing recommendations, OSHA safety procedures, and NIST cybersecurity framework. All cases are grounded in the official PDFs located in rag_sources/.",
+  "$schema_note": "Fresh Phase 1 RAG evaluation question bank. Grounded in the five PDFs listed in rag_sources/00_metadata_templates/source_register.json.",
+  "version": 2,
+  "description": "Fifty document-only RAG evaluation cases: 10 per registered PDF, with 4 direct fact, 3 section-summary, 2 multi-chunk, and 1 unanswerable/boundary case per PDF.",
   "cases": [
     {
-      "id": "nist-data-obj",
-      "query": "What is the primary objective of NIST AMS 300-11 regarding manufacturing data?",
+      "id": "nist-ams300-1-df-01",
+      "doc_id": "nist_ams_300_1",
+      "query": "What manufacturing enterprise areas are in scope for the NIST smart manufacturing reference architecture?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The scope is limited to design engineering, manufacturing engineering, production systems engineering, and production activities.",
+        "Product planning, distribution, and maintenance are outside the program scope.",
+        "Related business operations are addressed only where they affect the scoped activities."
+      ],
+      "gold_answer": "The reference architecture covers design engineering, manufacturing engineering, production systems engineering, and production activities, while excluding areas such as product planning, distribution, and maintenance except where they affect those activities.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "Introduction",
+        "page": 3,
+        "pages": [
+          3
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits the stated scope limits.",
+        "Claims maintenance or distribution is in scope.",
+        "Cites a different document."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
       "tags": [
         "rag",
         "nist",
-        "data_collection",
-        "objective"
+        "smart_manufacturing",
+        "direct_fact"
       ],
       "routing_expectation": {
         "preferred": [
           "RAG_ONLY"
         ],
         "acceptable": [
-          "RAG_ONLY",
-          "API_THEN_RAG"
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-df-02",
+      "doc_id": "nist_ams_300_1",
+      "query": "In the activity model, what does A0: Realize Products represent?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A0 represents the principal technical activities involved in manufacturing products.",
+        "It includes product design, manufacturing engineering, production planning and engineering, and production activities.",
+        "It also touches some technical management activities."
+      ],
+      "gold_answer": "A0: Realize Products is the top-level activity for the main technical work of manufacturing products, including design, manufacturing engineering, production planning/engineering, production activities, and some related technical management activities.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "A0: Realize Products",
+        "page": 12,
+        "pages": [
+          12
         ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
-      "expected_doc_ids": [
-        "nist_ams_300_11"
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Treats A0 as only factory execution.",
+        "Misses the product design or engineering activities.",
+        "Cites unsupported pages."
       ],
-      "notes": "Tests understanding of the document's core purpose: collecting, curating, and re-using manufacturing data."
-    },
-    {
-      "id": "nist-data-standards",
-      "query": "Which types of standards does NIST AMS 300-11 recommend prioritizing for manufacturing data systems?",
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
       "tags": [
         "rag",
         "nist",
-        "standards",
-        "interoperability"
+        "activity_model",
+        "direct_fact"
       ],
       "routing_expectation": {
         "preferred": [
@@ -44,48 +95,628 @@
         "acceptable": [
           "RAG_ONLY"
         ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-df-03",
+      "doc_id": "nist_ams_300_1",
+      "query": "What does A4: Produce Products include in the NIST functional model?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A4 produces parts and products according to Manufacturing Data Package specifications.",
+        "It includes defining production schedules and controlling material flow.",
+        "It includes scheduling, controlling, and executing production processes.",
+        "It includes assigning human and machine resources, managing tooling/materials, and tracking WIP, job completion, resource utilization, and yield."
+      ],
+      "gold_answer": "A4 covers producing parts and products to the Manufacturing Data Package, including schedules, material flow, process scheduling/control/execution, resource assignment, tooling/material management, WIP and job tracking, resource utilization, and yield.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "A4: Produce Products",
+        "page": 31,
+        "pages": [
+          31
+        ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Reduces A4 to only job scheduling.",
+        "Leaves out Manufacturing Data Package grounding.",
+        "Adds live production status not present in the PDF."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "produce_products",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-df-04",
+      "doc_id": "nist_ams_300_1",
+      "query": "Name the four subactivities under A232: Specify Instrumentation and Control Systems.",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A2321: Identify Control Requirements.",
+        "A2322: Identify Instrumentation Requirements.",
+        "A2323: Identify Communications Requirements.",
+        "A2324: Integrate System Specifications."
+      ],
+      "gold_answer": "The A232 subactivities are Identify Control Requirements, Identify Instrumentation Requirements, Identify Communications Requirements, and Integrate System Specifications.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "A232: Specify Instrumentation & Control Systems",
+        "page": 24,
+        "pages": [
+          24
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Invents A232 subactivities.",
+        "Confuses A232 with A23 or A22.",
+        "Misses one or more required subactivities."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "a232",
+        "direct_fact",
+        "keyword"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-ss-01",
+      "doc_id": "nist_ams_300_1",
+      "query": "Summarize the main point of the Overview of the Model section.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The model describes principal technical activities for engineering and producing complex electro-mechanical products.",
+        "It emphasizes production systems engineering and uses a high level of abstraction.",
+        "It identifies required activities and information flows for efficient and effective work.",
+        "It helps frame smart manufacturing system architectures and possible software system components."
+      ],
+      "gold_answer": "The overview presents a high-level functional model of common manufacturing engineering and production activities, focused on production systems engineering, required activities, and information flows that can support smart manufacturing system architecture definition.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "Overview of the Model",
+        "page": 6,
+        "pages": [
+          6
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Summarizes a different section.",
+        "Says the model is a low-level implementation design.",
+        "Misses the information-flow purpose."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "overview",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-ss-02",
+      "doc_id": "nist_ams_300_1",
+      "query": "Give me a concise summary of A2: Engineer Manufacture of Product.",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A2 defines materials, processes, resources, routings, setups, and facility changes needed to make a product or product line.",
+        "It assumes a product model from design and can feed manufacturing consequences back to design.",
+        "It is performed for each part or part family, separating fabrication and assembly planning.",
+        "Its results drive production planning and can be used directly or to reengineer production facilities."
+      ],
+      "gold_answer": "A2 turns product design information into manufacturable process and resource definitions: materials, routings, setups, facility changes, and per-part manufacturing plans, with feedback to design and outputs that drive production planning or facility reengineering.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "A2: Engineer Manufacture of Product",
+        "page": 15,
+        "pages": [
+          15,
+          16
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Treats A2 as only equipment purchasing.",
+        "Omits the relationship to product design or production planning.",
+        "Invents a software-specific architecture."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "engineer_manufacture",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-ss-03",
+      "doc_id": "nist_ams_300_1",
+      "query": "Can you summarize how Appendix A says to read the IDEF0 diagrams?",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "IDEF0 models use activities, information flows, and resources.",
+        "Activities are boxes with A-number labels and can be refined into component activities.",
+        "Information/resource flows must be accounted for in refinements; tunneled arrows show flows not used at an immediate refinement level.",
+        "IDEF0 label order does not imply timing or precedence.",
+        "Flows are categorized as inputs, outputs, and controls; resources are treated mainly as static information resources in this document."
+      ],
+      "gold_answer": "Appendix A explains that IDEF0 diagrams show labeled activities, their refinements, and information/resource flows. Labels show hierarchy, not timing. Flows are read as inputs, outputs, and controls, with resources treated mostly as static information resources for this model.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "Appendix A: Interpretation of IDEF0 Diagrams",
+        "page": 46,
+        "pages": [
+          46,
+          47
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says A-number order implies process sequence.",
+        "Misses input/output/control flow categories.",
+        "Cites a non-IDEF0 section."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "idef0",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-mc-01",
+      "doc_id": "nist_ams_300_1",
+      "query": "How does A23's production system design work connect to A232's instrumentation and control system work?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A23 designs new or modified production facilities for parts, including equipment, material storage/delivery, instrumentation, control, support systems, physical plant, networks, and information systems.",
+        "A232 is a subarea focused on specifying controllers, data acquisition instruments, and communications needed for automated or semi-automated systems and material handling.",
+        "A232 breaks that work into control requirements, instrumentation requirements, communications requirements, and integrated system specifications."
+      ],
+      "gold_answer": "A23 defines the facility/system design, including the major equipment and supporting instrumentation, control, communication, and information systems. A232 narrows that into specifications for controllers, measurement/data acquisition, communications, and their integrated system specifications.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "A23: Design Production System; A232: Specify Instrumentation & Control Systems",
+        "page": 21,
+        "pages": [
+          21,
+          24
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Uses only A232 and misses the A23 facility context.",
+        "Claims A232 is about business KPIs instead of control/instrumentation/communications.",
+        "Provides unsupported implementation architecture."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "multi_chunk",
+        "production_systems"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-mc-02",
+      "doc_id": "nist_ams_300_1",
+      "query": "What's the difference between resource availability, resource status, and resource usage in this document?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "Resource availability is the equipment and personnel considered available over specified periods for planning and scheduling, possibly with expected capacity.",
+        "Resource status reports current personnel/equipment state, including scheduled and unexpected changes such as downtime or absence, and summarizes active versus planned capacity.",
+        "Resource usage reports time and process conditions for equipment/personnel in service, often for maintenance prediction, asset utilization, or cost reporting."
+      ],
+      "gold_answer": "Availability is planned or expected capacity for equipment and people over time; status is the current up/down or personnel state; usage is measured in-service time and process-condition history used for maintenance, utilization, or cost analysis.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "Information Flows",
+        "page": 42,
+        "pages": [
+          42
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Conflates availability, status, and usage.",
+        "Treats these as live database values rather than information-flow definitions.",
+        "Drops the planning/scheduling distinction for availability."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "information_flows",
+        "multi_chunk"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-1-un-01",
+      "doc_id": "nist_ams_300_1",
+      "query": "Can this NIST architecture tell me whether machine M12 is available right now for a rush job?",
+      "question_type": "unanswerable",
+      "difficulty": "normal",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "State that the PDF does not provide live machine availability or a current scheduling decision.",
+        "Explain that it is a reference architecture and information-flow model, not a live factory status source.",
+        "Mention that the document can support concepts such as resource status/availability information flows.",
+        "Direct the user to the live production system or authorized operations process for current status."
+      ],
+      "gold_answer": "No. The source can explain resource availability/status concepts in a smart manufacturing reference architecture, but it cannot tell whether a specific machine is available right now or approve a rush-job schedule.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_1",
+        "section": "Introduction; Information Flows",
+        "page": 3,
+        "pages": [
+          3,
+          42
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": "The PDF is not a live factory status or scheduling system and does not contain current machine availability.",
+      "serious_failure_modes": [
+        "Invents a live availability answer for machine M12.",
+        "Approves or rejects the rush job.",
+        "Fails to give a helpful boundary answer."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_1"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "boundary",
+        "unanswerable"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-df-01",
+      "doc_id": "nist_ams_300_11",
+      "query": "What is the purpose of NIST AMS 300-11?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "It provides general recommendations for collecting, curating, and re-using manufacturing data.",
+        "It addresses both additive and subtractive manufacturing processes.",
+        "The intended audience includes researchers, technical-assessment personnel, and end users collecting shop-floor equipment data."
+      ],
+      "gold_answer": "NIST AMS 300-11 provides general recommendations for collecting, curating, and re-using manufacturing data from additive and subtractive processes, especially for people collecting shop-floor equipment data.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Purpose",
+        "page": 8,
+        "pages": [
+          8
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says the report is vendor-specific setup guidance.",
+        "Misses collecting, curating, or re-using data.",
+        "Cites the wrong PDF."
+      ],
       "expected_doc_ids": [
         "nist_ams_300_11"
       ],
-      "notes": "Focuses on the recommendation for open, international, and consensus-based standards."
+      "tags": [
+        "rag",
+        "nist",
+        "manufacturing_data",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
     },
     {
-      "id": "nist-connectivity-interop",
-      "query": "How does NIST AMS 300-11 suggest achieving interoperability between different manufacturing equipment and management systems?",
+      "id": "nist-ams300-11-df-02",
+      "doc_id": "nist_ams_300_11",
+      "query": "What manufacturing processes and data formats are in scope or out of scope for the recommendations?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "In scope: guidance for a network solution to collect shop-floor manufacturing equipment data for curation and reuse.",
+        "In scope: broadly accepted, international, open, consensus-based data formats.",
+        "In scope: CNC-based subtractive processes and CNC metal-based additive processes.",
+        "Out of scope: proprietary data formats, polymer-based additive processes, and mass-conserving processes such as casting and forging."
+      ],
+      "gold_answer": "The report covers network-based shop-floor data collection using open consensus standards for CNC subtractive and CNC metal additive processes. Proprietary formats, polymer additive processes, and mass-conserving processes such as casting and forging are outside scope.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Scope",
+        "page": 8,
+        "pages": [
+          8
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Claims proprietary formats are recommended.",
+        "Includes polymer additive or casting/forging as in-scope processes.",
+        "Omits the open standards scope."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "scope",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-df-03",
+      "doc_id": "nist_ams_300_11",
+      "query": "What are the four steps for getting a manufacturing data connectivity solution going?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "Define the use case and requirements.",
+        "Identify supported devices and available data.",
+        "Evaluate network infrastructure and how data can be accessed and managed.",
+        "Execute integration activities and determine needed support."
+      ],
+      "gold_answer": "The four steps are: define the use case, identify supported devices, evaluate network infrastructure, and execute integration activities.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Connectivity: Getting Started",
+        "page": 11,
+        "pages": [
+          11
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Misses one of the four steps.",
+        "Adds unrelated eMAS implementation steps.",
+        "Presents vendor purchase as a required first step."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
       "tags": [
         "rag",
         "nist",
         "connectivity",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-df-04",
+      "doc_id": "nist_ams_300_11",
+      "query": "Which four information models does MTConnect define?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Devices.",
+        "Streams.",
+        "Assets.",
+        "Interfaces."
+      ],
+      "gold_answer": "MTConnect defines Devices, Streams, Assets, and Interfaces information models.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "ANSI MTConnect",
+        "page": 16,
+        "pages": [
+          16
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Invents non-MTConnect model names.",
+        "Lists communication protocols instead of information models.",
+        "Omits one of Devices, Streams, Assets, or Interfaces."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
+      "tags": [
+        "rag",
+        "nist",
         "mtconnect",
-        "opc_ua"
+        "direct_fact",
+        "keyword"
       ],
       "routing_expectation": {
         "preferred": [
           "RAG_ONLY"
         ],
         "acceptable": [
-          "RAG_ONLY",
-          "API_THEN_RAG"
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-ss-01",
+      "doc_id": "nist_ams_300_11",
+      "query": "Summarize why the report says manufacturers should collect manufacturing data.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Manufacturing data helps measure, assess, and improve manufacturing system performance.",
+        "The section lists metrics such as utilization, value-added time, process efficiency, and OEE.",
+        "Data supports tools such as dashboards, reports, operator feedback, scheduling, and routing.",
+        "Mature use cases include predictive maintenance, prognostics, dynamic scheduling, business support, and workforce augmentation/training.",
+        "Data needs context and lifecycle viewpoints to support decisions."
+      ],
+      "gold_answer": "The motivation is performance improvement: data enables metrics, dashboards, reporting, scheduling, and higher-value uses such as predictive maintenance and dynamic scheduling, but the data must be contextualized for the relevant lifecycle viewpoint and use case.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Motivation: Why Collect Manufacturing Data?",
+        "page": 9,
+        "pages": [
+          9,
+          10
         ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Summarizes data collection as collection for its own sake.",
+        "Omits performance improvement and contextualization.",
+        "Introduces unsupported application-specific claims."
+      ],
       "expected_doc_ids": [
         "nist_ams_300_11"
       ],
-      "notes": "Tests specific technical recommendations for interoperability using open semantic and transport standards."
-    },
-    {
-      "id": "nist-data-lifecycle",
-      "query": "Explain the end-to-end lifecycle of manufacturing data as described in the NIST recommendations.",
       "tags": [
         "rag",
         "nist",
-        "data_lifecycle",
-        "management"
+        "motivation",
+        "section_summary"
       ],
       "routing_expectation": {
         "preferred": [
@@ -94,22 +725,49 @@
         "acceptable": [
           "RAG_ONLY"
         ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-ss-02",
+      "doc_id": "nist_ams_300_11",
+      "query": "Summarize the guidance in Connectivity: Getting Started.",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Connectivity alone is not enough to ensure useful context.",
+        "The use case should drive requirements, data choice, and context.",
+        "The section gives four steps: define use case, identify devices, evaluate network infrastructure, and execute integration.",
+        "A data management plan should describe functions, users, operating environments, interfaces, curation/admin features, and performance/reliability/security/maintainability needs.",
+        "Standard formats reduce bespoke integration cost and vendor lock-in."
+      ],
+      "gold_answer": "The section says to start from the use case, not just from available data. Define requirements, identify devices and data, evaluate network infrastructure, plan integration, and use a data management plan and standard formats to avoid brittle proprietary connections.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Connectivity: Getting Started",
+        "page": 10,
+        "pages": [
+          10,
+          11,
+          12
+        ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Recommends collecting more data without use-case context.",
+        "Omits the four-step connectivity process.",
+        "Frames proprietary lock-in as recommended."
+      ],
       "expected_doc_ids": [
         "nist_ams_300_11"
       ],
-      "notes": "Tests the full data management process from shop-floor collection to reuse."
-    },
-    {
-      "id": "nist-ra-functional",
-      "query": "According to the Reference Architecture for Smart Manufacturing (Part 1), what are the main functional models for production systems?",
       "tags": [
         "rag",
         "nist",
-        "architecture",
-        "functional_models"
+        "connectivity",
+        "section_summary"
       ],
       "routing_expectation": {
         "preferred": [
@@ -117,48 +775,256 @@
         ],
         "acceptable": [
           "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-ss-03",
+      "doc_id": "nist_ams_300_11",
+      "query": "Give a short section summary of the relevant standards reviewed in the report.",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The report reviews internationally recognized, open, consensus-based standards.",
+        "Standards are included if they support inputs to or outputs from manufacturing processes.",
+        "STEP AP242 supports product/manufacturing information and digital thread use cases.",
+        "AMF supports additive manufacturing interchange beyond STL.",
+        "G-code supports CNC programming.",
+        "MTConnect supports equipment data exchange and semantic interoperability.",
+        "QIF supports metrology/inspection information models.",
+        "PDF/PRC supports visualization and technical data package exchange."
+      ],
+      "gold_answer": "The standards section reviews open consensus standards that carry manufacturing-process inputs or outputs, including STEP AP242, AMF, G-code, MTConnect, QIF, and PDF/PRC, each serving a different part of the product, machine, inspection, or visualization data flow.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Overview of Relevant Standards",
+        "page": 12,
+        "pages": [
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18
         ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
-      "expected_doc_ids": [
-        "nist_ams_300_1"
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Mentions standards not reviewed as if they were central to the section.",
+        "Misses the open consensus standard criterion.",
+        "Confuses standards roles, such as treating QIF as CNC control code."
       ],
-      "notes": "Targets the functional modeling of production activities like scheduling and material management."
-    },
-    {
-      "id": "osha-loto-definition",
-      "query": "What is the purpose of Lockout/Tagout (LOTO) procedures according to OSHA?",
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
       "tags": [
         "rag",
-        "osha",
-        "safety",
-        "loto"
+        "nist",
+        "standards",
+        "section_summary"
       ],
       "routing_expectation": {
         "preferred": [
           "RAG_ONLY"
         ],
         "acceptable": [
-          "RAG_ONLY",
-          "API_THEN_RAG"
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-mc-01",
+      "doc_id": "nist_ams_300_11",
+      "query": "Why does the report prefer data interoperability standards over lots of proprietary machine-data connections?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Proprietary formats may seem easy initially but become bespoke and costly as more sources or applications are added.",
+        "Proprietary platforms can lock customers into one vendor solution and stifle innovation.",
+        "Interoperability standards give manufacturers a flexible way to make strategic connectivity investments.",
+        "The reviewed standards are internationally recognized, open, consensus-based standards for manufacturing inputs or outputs."
+      ],
+      "gold_answer": "The report argues that proprietary connections scale poorly: each new source or client adds bespoke expertise and cost, and vendor platforms can create lock-in. Open interoperability standards reduce long-term cost and keep future tools easier to integrate.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Connectivity: Getting Started; Overview of Relevant Standards",
+        "page": 11,
+        "pages": [
+          11,
+          12
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Recommends proprietary lock-in as the document's position.",
+        "Ignores the standards selection criteria.",
+        "Uses unsupported vendor claims."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "interoperability",
+        "multi_chunk"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-mc-02",
+      "doc_id": "nist_ams_300_11",
+      "query": "Compare how MTConnect and QIF help turn manufacturing data into reusable context.",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "MTConnect provides an open, read-only equipment data exchange standard with domain models and common vocabulary for structured, contextualized equipment data.",
+        "MTConnect supports real or near-real-time equipment data such as speed, position, and program blocks, plus OEE, process monitoring, and condition monitoring use cases.",
+        "QIF provides XML information models for metrology and quality data across inspection planning, execution, analysis, reporting, resources, rules, results, and statistics.",
+        "QIF enables raw inspection data to be placed in a computer-processable quality context and can support traceability."
+      ],
+      "gold_answer": "MTConnect contextualizes shop-floor equipment state and process data through common equipment information models, while QIF contextualizes metrology and inspection data through quality-focused XML models for plans, resources, results, and statistics.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "ANSI MTConnect; ANSI/DMSC Quality Information Framework",
+        "page": 15,
+        "pages": [
+          15,
+          16,
+          17
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Confuses MTConnect with QIF.",
+        "Claims either standard performs analytics instead of data exchange/contextualization.",
+        "Omits the equipment-versus-metrology distinction."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "mtconnect",
+        "qif",
+        "multi_chunk"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-ams300-11-un-01",
+      "doc_id": "nist_ams_300_11",
+      "query": "Which vendor platform should I buy for connecting all my shop-floor machines?",
+      "question_type": "unanswerable",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "State that the PDF does not recommend or endorse a specific vendor platform.",
+        "Mention the NIST disclaimer about identified commercial systems not implying recommendation or endorsement.",
+        "Explain that the report instead supports use-case-driven connectivity planning and open consensus standards.",
+        "Suggest evaluating requirements, devices, network infrastructure, integration needs, and standards fit."
+      ],
+      "gold_answer": "The report does not pick a vendor. It gives general, standards-oriented guidance: define the use case, identify devices and data, evaluate the network, plan integration, and prefer open consensus standards where suitable.",
+      "expected_source": {
+        "doc_id": "nist_ams_300_11",
+        "section": "Disclaimer; Connectivity: Getting Started",
+        "page": 8,
+        "pages": [
+          8,
+          11
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": "The document provides general standards guidance and explicitly does not endorse identified commercial systems.",
+      "serious_failure_modes": [
+        "Recommends a specific vendor as NIST-approved.",
+        "Claims NIST endorsement.",
+        "Fails to provide a helpful alternative based on the document."
+      ],
+      "expected_doc_ids": [
+        "nist_ams_300_11"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "boundary",
+        "unanswerable"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-df-01",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "What does lockout/tagout mean according to the OSHA booklet?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Lockout/tagout refers to practices and procedures to safeguard employees from unexpected energization, startup, or release of hazardous energy during service or maintenance.",
+        "A designated individual turns off and disconnects machinery or equipment from energy sources before service or maintenance.",
+        "Authorized employees lock or tag energy-isolating devices and verify effective isolation.",
+        "Stored or reaccumulated hazardous energy must be controlled to prevent injury."
+      ],
+      "gold_answer": "Lockout/tagout is the set of practices for disconnecting equipment from hazardous energy, applying lockout or tagout devices, and verifying isolation so employees are protected during service or maintenance.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What is lockout/tagout?",
+        "page": 7,
+        "pages": [
+          7,
+          8
         ]
       },
       "expects_sources": true,
       "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Defines LOTO as only a warning tag.",
+        "Omits verification or energy isolation.",
+        "Provides unsafe simplification without safety caution."
+      ],
       "expected_doc_ids": [
         "osha_3120_lockout_tagout"
       ],
-      "notes": "Basic safety definition. Should trigger a safety warning due to high risk level."
-    },
-    {
-      "id": "osha-loto-steps",
-      "query": "What are the key steps for energy isolation before servicing a machine according to OSHA?",
       "tags": [
         "rag",
         "osha",
-        "safety",
-        "procedure"
+        "lockout_tagout",
+        "direct_fact",
+        "safety"
       ],
       "routing_expectation": {
         "preferred": [
@@ -167,22 +1033,46 @@
         "acceptable": [
           "RAG_ONLY"
         ]
+      }
+    },
+    {
+      "id": "osha-loto-df-02",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "What energy sources does the OSHA lockout/tagout standard apply to?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The standard applies when unexpected startup, energization, or stored energy release could injure employees.",
+        "It applies to all sources of energy.",
+        "Examples include mechanical, electrical, hydraulic, pneumatic, chemical, and thermal energy."
+      ],
+      "gold_answer": "The OSHA booklet says the standard applies to all hazardous energy sources, including mechanical, electrical, hydraulic, pneumatic, chemical, and thermal energy, when unexpected energization or stored-energy release could cause injury.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "How do I know if the OSHA standard applies to me?",
+        "page": 9,
+        "pages": [
+          9
+        ]
       },
       "expects_sources": true,
       "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Limits the answer to electrical energy only.",
+        "Omits stored energy release.",
+        "Suggests skipping employer LOTO procedures."
+      ],
       "expected_doc_ids": [
         "osha_3120_lockout_tagout"
       ],
-      "notes": "Procedural safety steps. Requires strict citation and safety warning."
-    },
-    {
-      "id": "osha-guarding-checklist",
-      "query": "What should be included in a machine guarding safety inspection checklist?",
       "tags": [
         "rag",
         "osha",
-        "safety",
-        "checklist"
+        "hazardous_energy",
+        "direct_fact",
+        "safety"
       ],
       "routing_expectation": {
         "preferred": [
@@ -191,22 +1081,459 @@
         "acceptable": [
           "RAG_ONLY"
         ]
+      }
+    },
+    {
+      "id": "osha-loto-df-03",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "What must an energy-control procedure include?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The procedure must explain what employees must know and do to control hazardous energy during service or maintenance.",
+        "It must outline scope, purpose, authorization, rules, techniques, and enforcement means.",
+        "It must include how to use the procedure.",
+        "It must include steps to shut down, isolate, block, and secure machines.",
+        "It must include safe placement, removal, transfer, and responsibility for lockout/tagout devices.",
+        "It must include testing and verification requirements for energy-control measures."
+      ],
+      "gold_answer": "An energy-control procedure must define its scope, purpose, authorization, rules, techniques, enforcement, shutdown/isolation/blocking/securement steps, device placement/removal/transfer responsibilities, and testing/verification requirements.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What must an energy-control procedure include?",
+        "page": 13,
+        "pages": [
+          13
+        ]
       },
       "expects_sources": true,
       "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Drops verification/testing requirements.",
+        "Treats procedure content as optional.",
+        "Provides procedural safety advice without warning to follow site-specific procedures."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "energy_control",
+        "direct_fact",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-df-04",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "When OSHA allows power for testing or positioning, what sequence must happen before reenergization?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Temporary removal and reenergization is allowed only in limited situations for tasks requiring energization.",
+        "Clear tools and materials from machines.",
+        "Clear employees from the area around machines.",
+        "Remove lockout or tagout devices as specified in the standard.",
+        "Energize and proceed with testing or positioning.",
+        "Deenergize all systems, isolate the machine, and reapply energy-control measures if more service or maintenance is required."
+      ],
+      "gold_answer": "For limited testing or positioning, OSHA lists this sequence: clear tools/materials, clear employees, remove devices as specified, energize for the task, then deenergize, isolate, and reapply energy-control measures if work continues.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What if I need power to test or position machines, equipment, or components?",
+        "page": 21,
+        "pages": [
+          21
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits clearing employees before reenergization.",
+        "Fails to mention the limited-task condition.",
+        "Leaves out re-deenergizing and reapplying controls after testing."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "testing_positioning",
+        "direct_fact",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-ss-01",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "Summarize OSHA's basic requirements for an energy-control program.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Employers must establish an energy-control program to isolate machines and render them inoperative before service or maintenance.",
+        "The program must include energy-control procedures for removing energy and applying lockout/tagout devices.",
+        "Stored or potentially reaccumulated energy must be addressed when appropriate.",
+        "Employees must be trained in safe application, use, and removal of energy controls.",
+        "Procedures must be inspected at least annually.",
+        "Tagout on lockable machinery requires additional measures to provide lockout-equivalent protection."
+      ],
+      "gold_answer": "OSHA requires employers to establish procedures, train employees, and inspect those procedures at least annually so machinery is isolated and inoperative before service or maintenance; tagout on lockable equipment needs extra measures for equivalent protection.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What are OSHA's requirements?",
+        "page": 12,
+        "pages": [
+          12
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits training or annual inspection.",
+        "Says tagout is automatically equivalent to lockout.",
+        "Provides compliance assurance beyond the source."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "energy_control_program",
+        "section_summary",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-ss-02",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "Summarize the booklet's guidance on tagout limitations and lockout/tagout device requirements.",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Tagout devices are warnings and do not provide the physical restraint of locks.",
+        "Tags can create a false sense of security, so OSHA considers lockout more secure and effective.",
+        "Lockout/tagout devices must be the only devices used with energy-isolating devices for hazardous energy control.",
+        "Devices must be singularly identified and not used for other purposes.",
+        "Devices must be durable, standardized, substantial, and labeled to identify authorized employees.",
+        "Tags must be legible and give clear warnings such as Do Not Start or Do Not Operate."
+      ],
+      "gold_answer": "The booklet says tagout is a warning system, not a physical restraint, so lockout is generally more secure. Devices must be dedicated, identified, durable, standardized, substantial, and labeled, with clear warning tags where tags are used.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What are the limitations of tagout devices?; What are the requirements for lockout/tagout devices?",
+        "page": 18,
+        "pages": [
+          18,
+          19
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says tags physically prevent energization.",
+        "Omits durability/standardization/substantiality requirements.",
+        "Does not distinguish lockout from tagout."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "tagout",
+        "section_summary",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-ss-03",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "Summarize what employees need to know and when retraining is required under lockout/tagout.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Training must cover the purpose, function, and restrictions of the energy-control program.",
+        "Authorized employees need skills for safe application, use, and removal of energy-isolating devices and must know hazardous energy sources and control procedures.",
+        "Affected employees need to recognize when procedures are used, understand their purpose, and not tamper with or start locked/tagged equipment.",
+        "Other employees in areas where procedures are used must be instructed not to remove devices or restart equipment.",
+        "Retraining is required for changes in job assignments, machinery/process hazards, or procedures, and when inspections or employer knowledge show shortcomings."
+      ],
+      "gold_answer": "Training is role-specific: authorized employees learn energy source recognition and control methods, affected employees learn the purpose and restrictions, and others learn not to interfere. Retraining is needed after relevant job, machine, process, or procedure changes or when shortcomings appear.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What do employees need to know about lockout/tagout programs?; When is training necessary?",
+        "page": 19,
+        "pages": [
+          19,
+          20
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Confuses authorized and affected employee responsibilities.",
+        "Omits retraining triggers.",
+        "Suggests training is optional."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "training",
+        "section_summary",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-mc-01",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "If service happens during normal production, when does the lockout/tagout standard still apply?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The standard applies to service or maintenance activities such as setting up, adjusting, inspecting, cleaning, unjamming, or tool changes where hazardous energy exposure exists.",
+        "During normal production, LOTO procedures must be followed when workers remove or bypass guards or safety devices.",
+        "LOTO must also be followed when workers place body parts in or near the point of operation or a danger zone.",
+        "Minor routine, repetitive, integral servicing during normal production is an exception only when effective alternative protection is provided.",
+        "When applicable, machinery must be shut off, isolated, locked/tagged, and verified; stored or residual energy must be made safe."
+      ],
+      "gold_answer": "Normal production does not remove LOTO duties when servicing exposes workers to hazardous energy, especially if guards are bypassed or body parts enter the point of operation or danger zone. Limited minor-servicing exceptions require effective alternative protection; otherwise shutdown, isolation, lockout/tagout, verification, and residual-energy controls apply.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "How does the standard apply to general industry service and maintenance operations?",
+        "page": 10,
+        "pages": [
+          10,
+          11
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says LOTO never applies during normal production.",
+        "Omits guard bypass or danger-zone triggers.",
+        "Turns the minor-servicing exception into a broad permission."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "normal_production",
+        "multi_chunk",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-mc-02",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "How should an employer handle contractor work, group lockout, and shift changes?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "For outside contractors, the onsite employer and contractor must inform each other of their lockout/tagout procedures.",
+        "The onsite employer must ensure employees understand and comply with contractor energy-control program requirements.",
+        "For group service or maintenance, procedures must provide each employee protection equal to a personal lockout/tagout device.",
+        "Each authorized employee must control hazardous energy sources, typically by affixing a personal device to a group lockout mechanism.",
+        "For shift changes, employers must ensure continuity of protection and orderly transfer between shifts.",
+        "Incoming shift members must verify that machinery is effectively isolated and deenergized."
+      ],
+      "gold_answer": "Contractor work requires procedure exchange and onsite employee compliance. Group work requires personal control for each authorized employee. Shift changes require continuous protection, orderly transfer, and incoming-shift verification of isolation and deenergization.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "Outside contractors; Group service; Shift changes",
+        "page": 22,
+        "pages": [
+          22
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says a supervisor lock alone is enough for group work.",
+        "Omits incoming-shift verification.",
+        "Omits procedure exchange for contractors."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "contractors",
+        "group_lockout",
+        "multi_chunk",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-loto-un-01",
+      "doc_id": "osha_3120_lockout_tagout",
+      "query": "press 4 is locked out rn, can i just start it if no one is around?",
+      "question_type": "unanswerable",
+      "difficulty": "normal",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "State that the PDF cannot provide live lockout status or permission to start a specific machine.",
+        "Do not authorize starting the press.",
+        "Explain that only the applicable workplace procedure, authorized employee, or safety personnel can confirm status.",
+        "Mention that employees must respect lockout/tagout devices and only the person who applied them normally removes them.",
+        "Include a clear safety caution."
+      ],
+      "gold_answer": "No. The booklet cannot confirm live status or authorize starting Press 4. Do not start or bypass a lockout/tagout condition; follow the site procedure and contact the authorized employee or safety person.",
+      "expected_source": {
+        "doc_id": "osha_3120_lockout_tagout",
+        "section": "What must workers do before they remove their lockout or tagout device and reenergize the machine?",
+        "page": 14,
+        "pages": [
+          14,
+          15
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": "The source gives general lockout/tagout safety procedures, not live status or permission for a specific machine.",
+      "serious_failure_modes": [
+        "Authorizes starting the press.",
+        "Claims live lockout status is known.",
+        "Fails to warn against bypassing lockout/tagout."
+      ],
+      "expected_doc_ids": [
+        "osha_3120_lockout_tagout"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "boundary",
+        "unanswerable",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-df-01",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Under Requirements for All Safeguards, what does the checklist ask safeguards to prevent or allow?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Safeguards should meet minimum OSHA requirements.",
+        "They should prevent hands, arms, and other body parts from contacting dangerous moving parts.",
+        "They should be firmly secured and not easily removable.",
+        "They should prevent objects from falling into moving parts.",
+        "They should permit safe, comfortable, relatively easy operation.",
+        "They should allow oiling without removing the safeguard.",
+        "There should be a system for shutting machinery down before safeguards are removed."
+      ],
+      "gold_answer": "The checklist asks whether safeguards meet OSHA minimums, prevent body contact and falling objects, are secure, allow safe operation and oiling without removal, and are paired with shutdown before safeguard removal.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Requirements for All Safeguards",
+        "page": 1,
+        "pages": [
+          1
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits the shutdown-before-removal check.",
+        "Claims easily removable safeguards are acceptable.",
+        "Cites the lockout/tagout booklet instead of the checklist."
+      ],
       "expected_doc_ids": [
         "osha_machine_guarding_checklist"
       ],
-      "notes": "Tests ability to extract checklist items from safety documentation."
-    },
-    {
-      "id": "nist-csf-functions",
-      "query": "What are the six core functions of the NIST Cybersecurity Framework (CSF) 2.0?",
       "tags": [
         "rag",
-        "nist",
-        "cybersecurity",
-        "framework"
+        "osha",
+        "machine_guarding",
+        "direct_fact"
       ],
       "routing_expectation": {
         "preferred": [
@@ -215,39 +1542,961 @@
         "acceptable": [
           "RAG_ONLY"
         ]
+      }
+    },
+    {
+      "id": "osha-guarding-df-02",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "What point-of-operation questions are included in the machine guarding checklist?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Whether a point-of-operation safeguard is provided.",
+        "Whether it keeps the operator's hands, fingers, and body out of the danger area.",
+        "Whether there is evidence safeguards have been tampered with or removed.",
+        "Whether a more practical, effective safeguard can be suggested.",
+        "Whether machine changes could eliminate the point-of-operation hazard entirely."
+      ],
+      "gold_answer": "The point-of-operation checks ask about a safeguard, whether it keeps the operator out of the danger area, signs of tampering/removal, possible better safeguards, and possible machine changes to eliminate the hazard.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Mechanical Hazards - The point of operation",
+        "page": 1,
+        "pages": [
+          1
+        ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
-      "expected_doc_ids": [
-        "nist_csf_2_0"
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Leaves out tampering/removal evidence.",
+        "Confuses point-of-operation checks with electrical hazards.",
+        "Claims the checklist authorizes operating without a guard."
       ],
-      "notes": "Specifically tests knowledge of CSF 2.0 (Govern, Identify, Protect, Detect, Respond, Recover)."
-    },
-    {
-      "id": "nist-csf-cloud-security",
-      "query": "How can the NIST CSF 2.0 be used to support cloud deployment security for a system like eMAS?",
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
       "tags": [
         "rag",
-        "nist",
-        "cybersecurity",
-        "cloud",
-        "emas"
+        "osha",
+        "point_of_operation",
+        "direct_fact"
       ],
       "routing_expectation": {
         "preferred": [
           "RAG_ONLY"
         ],
         "acceptable": [
-          "RAG_ONLY",
-          "API_THEN_RAG"
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-df-03",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Which electrical hazard checks appear on the machine guarding checklist?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Whether the machine is installed in accordance with National Fire Protection Association and National Electrical Code requirements.",
+        "Whether there are loose conduit fittings.",
+        "Whether the machine is properly grounded.",
+        "Whether the power supply is correctly fused and protected.",
+        "Whether workers occasionally receive minor shocks while operating machines."
+      ],
+      "gold_answer": "The electrical checks cover NFPA/NEC installation, loose conduit fittings, grounding, fused/protected power supply, and whether workers receive minor shocks.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Electric Hazards",
+        "page": 1,
+        "pages": [
+          1
         ]
       },
       "expects_sources": true,
       "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits minor shocks.",
+        "Invents electrical inspection criteria not in the checklist.",
+        "Answers from a different OSHA document."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "electrical_hazards",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-df-04",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "What lockout/tagout-related maintenance checks are listed in the machine guarding checklist?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Maintenance workers should lock out the machine from power sources before repairs.",
+        "Where several maintenance persons work on the same machine, multiple lockout devices should be used.",
+        "Maintenance and servicing workers should be trained in 29 CFR 1910.147 lockout/tagout requirements.",
+        "Lockout/tagout procedures should exist before maintenance and servicing workers attempt their tasks."
+      ],
+      "gold_answer": "The checklist asks whether maintenance workers lock out power before repairs, whether multiple lockout devices are used for multiple maintenance workers, and whether workers are trained in 29 CFR 1910.147 with procedures in place before tasks.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Machinery Maintenance and Repair",
+        "page": 2,
+        "pages": [
+          2
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Suggests repairs can begin without lockout.",
+        "Omits multiple lockout devices for multiple maintenance persons.",
+        "Omits training/procedure requirements."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "machine_guarding",
+        "lockout_tagout",
+        "direct_fact",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-ss-01",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Summarize the Requirements for All Safeguards section.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Safeguards should meet minimum OSHA requirements.",
+        "They should prevent body-part contact and objects falling into moving parts.",
+        "They should be secure and not easily removable.",
+        "They should allow safe, comfortable operation and oiling without removing the safeguard.",
+        "Machinery should be shut down before safeguards are removed.",
+        "Existing safeguards should be evaluated for improvement."
+      ],
+      "gold_answer": "The section checks whether safeguards meet OSHA minimums, prevent contact and falling objects, stay secured, support safe operation and maintenance, require shutdown before removal, and can be improved.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Requirements for All Safeguards",
+        "page": 1,
+        "pages": [
+          1
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Misses shutdown before safeguard removal.",
+        "Treats the checklist as a full compliance certification.",
+        "Omits safeguard improvement."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "safeguards",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-ss-02",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Summarize the Mechanical Hazards part of the checklist.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Point-of-operation checks focus on safeguards, keeping operators out of danger areas, tampering/removal, better safeguards, and eliminating hazards.",
+        "Power transmission checks cover unguarded gears, sprockets, pulleys, flywheels, exposed belts or chain drives, and exposed set screws, key ways, or collars.",
+        "The section checks whether start/stop controls are within easy reach and separate controls exist for more than one operator.",
+        "It asks whether safeguards are provided for all hazardous moving parts, including auxiliary parts."
+      ],
+      "gold_answer": "The mechanical hazard checks cover point-of-operation guarding, power transmission exposures, control placement for operators, and guarding for all hazardous moving and auxiliary parts.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Mechanical Hazards",
+        "page": 1,
+        "pages": [
+          1
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Focuses only on point-of-operation and misses power transmission apparatus.",
+        "Misses other moving parts.",
+        "Invents unrelated chemical hazards."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "mechanical_hazards",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-ss-03",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Summarize the training and worker-readiness checks in this machine guarding checklist.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Operators and maintenance workers should know how to use safeguards and why.",
+        "They should know where safeguards are, how they protect, and what hazards they protect against.",
+        "They should be trained on how and under what circumstances guards may be removed.",
+        "Workers should know what to do if guards are damaged, missing, or inadequate.",
+        "Maintenance workers should have up-to-date instruction on machines they service.",
+        "Maintenance and servicing workers should know lockout/tagout requirements and procedures."
+      ],
+      "gold_answer": "The checklist emphasizes training on using safeguards, knowing their location and purpose, guard-removal conditions, reporting damaged or missing guards, machine-specific maintenance instruction, and lockout/tagout readiness.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Training; Machinery Maintenance and Repair",
+        "page": 2,
+        "pages": [
+          2
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says only operators need training, not maintenance workers.",
+        "Omits damaged/missing/inadequate guard procedures.",
+        "Omits lockout/tagout training readiness."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "training",
+        "section_summary",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-mc-01",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "Before maintenance repairs around moving parts, which checklist areas should be reviewed?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Review whether safeguards cover hazardous moving parts, including auxiliary parts.",
+        "Review whether there is a system for shutting down machinery before safeguards are removed.",
+        "Review whether operators/maintenance workers are trained in safeguards and guard-removal conditions.",
+        "Review whether maintenance workers have up-to-date machine instruction.",
+        "Review whether maintenance workers lock out machines before repairs and use multiple lockout devices when several people work on the same machine.",
+        "Review whether maintenance equipment is safe and guarded and workers are trained in 29 CFR 1910.147 with procedures in place."
+      ],
+      "gold_answer": "Use both the guarding and maintenance parts of the checklist: moving-part safeguards and shutdown-before-removal on page 1, plus training, current maintenance instruction, lockout before repair, multiple lockout devices, safe repair equipment, and 29 CFR 1910.147 procedures on page 2.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Requirements for All Safeguards; Other moving parts; Training; Machinery Maintenance and Repair",
+        "page": 1,
+        "pages": [
+          1,
+          2
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Ignores lockout before repairs.",
+        "Ignores training before maintenance.",
+        "Advises working around moving parts without shutdown or lockout controls."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "maintenance",
+        "multi_chunk",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-mc-02",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "for a guarding audit, how do PPE/clothing checks connect with the nonmechanical hazards section?",
+      "question_type": "multi_chunk",
+      "difficulty": "normal",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "Nonmechanical hazards include noise hazards.",
+        "Nonmechanical hazards also include harmful substances used in machine operation, with special guards, enclosures, or PPE where necessary.",
+        "Protective equipment checks ask whether PPE is required and, if required, whether it is appropriate, in good condition, clean/sanitary, and carefully stored.",
+        "Proper clothing checks ask whether the operator is dressed safely, with no loose-fitting clothing or jewelry."
+      ],
+      "gold_answer": "The nonmechanical hazard checks look for noise and harmful-substance protection, including guards, enclosures, or PPE when needed. The PPE/clothing checks then verify that required equipment is suitable and maintained and that operators avoid unsafe loose clothing or jewelry.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Nonmechanical Hazards; Protective Equipment and Proper Clothing",
+        "page": 1,
+        "pages": [
+          1,
+          2
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Omits harmful substances or noise hazards.",
+        "Says PPE condition/storage do not matter.",
+        "Ignores loose clothing or jewelry."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "ppe",
+        "multi_chunk",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "osha-guarding-un-01",
+      "doc_id": "osha_machine_guarding_checklist",
+      "query": "If every answer on this checklist is Yes, can I certify the machine as OSHA-compliant?",
+      "question_type": "unanswerable",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "State that the checklist does not itself grant OSHA compliance certification or legal approval.",
+        "Explain that it is a machine guarding checklist, not a formal certification process.",
+        "Mention that workplace safety/compliance decisions should be reviewed against applicable OSHA requirements and qualified safety personnel.",
+        "The answer may note that the checklist source says the material does not necessarily reflect DOL views or policies."
+      ],
+      "gold_answer": "No. A completed checklist can support an inspection review, but this PDF does not certify compliance. Compliance decisions need the applicable OSHA requirements and qualified safety review.",
+      "expected_source": {
+        "doc_id": "osha_machine_guarding_checklist",
+        "section": "Source disclaimer; checklist scope",
+        "page": 2,
+        "pages": [
+          1,
+          2
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": true,
+      "unanswerable_reason": "The checklist is an inspection aid and does not provide legal compliance certification or automatic approval.",
+      "serious_failure_modes": [
+        "Certifies OSHA compliance from checklist answers alone.",
+        "Provides legal/compliance approval.",
+        "Fails to give a boundary answer and safety review caveat."
+      ],
+      "expected_doc_ids": [
+        "osha_machine_guarding_checklist"
+      ],
+      "tags": [
+        "rag",
+        "osha",
+        "boundary",
+        "unanswerable",
+        "safety"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-df-01",
+      "doc_id": "nist_csf_2_0",
+      "query": "What are the three main components of the NIST Cybersecurity Framework 2.0?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "CSF Core.",
+        "CSF Organizational Profiles.",
+        "CSF Tiers.",
+        "Core is the taxonomy of outcomes; Profiles describe current/target posture; Tiers characterize governance and risk management rigor."
+      ],
+      "gold_answer": "The CSF 2.0 components are the CSF Core, CSF Organizational Profiles, and CSF Tiers.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Cybersecurity Framework (CSF) Overview",
+        "page": 6,
+        "pages": [
+          6
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Lists only the six Functions instead of the three components.",
+        "Omits Profiles or Tiers.",
+        "Claims the CSF prescribes specific controls."
+      ],
       "expected_doc_ids": [
         "nist_csf_2_0"
       ],
-      "notes": "Tests the application of general cybersecurity guidance to the specific context of the eMAS system."
+      "tags": [
+        "rag",
+        "nist",
+        "csf",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-df-02",
+      "doc_id": "nist_csf_2_0",
+      "query": "What are the six CSF Core Functions in NIST CSF 2.0?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "GOVERN.",
+        "IDENTIFY.",
+        "PROTECT.",
+        "DETECT.",
+        "RESPOND.",
+        "RECOVER."
+      ],
+      "gold_answer": "The six Functions are GOVERN, IDENTIFY, PROTECT, DETECT, RESPOND, and RECOVER.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to the CSF Core",
+        "page": 8,
+        "pages": [
+          8,
+          9
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Uses CSF 1.1 five-function list and omits GOVERN.",
+        "Invents additional Functions.",
+        "Cites non-CSF sources."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "csf_functions",
+        "direct_fact",
+        "keyword"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-df-03",
+      "doc_id": "nist_csf_2_0",
+      "query": "In CSF 2.0, what is the difference between a Current Profile and a Target Profile?",
+      "question_type": "direct_fact",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "A Current Profile specifies Core outcomes the organization is currently achieving or attempting to achieve.",
+        "A Current Profile characterizes how or to what extent each outcome is being achieved.",
+        "A Target Profile specifies desired outcomes selected and prioritized for cybersecurity risk management objectives.",
+        "A Target Profile considers anticipated changes such as new requirements, technology adoption, and threat intelligence trends."
+      ],
+      "gold_answer": "A Current Profile records the outcomes the organization currently achieves and how well it achieves them. A Target Profile records the desired, prioritized outcomes for future risk management objectives and expected changes.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "CSF Profiles",
+        "page": 11,
+        "pages": [
+          11
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Swaps Current and Target Profile meanings.",
+        "Says Profiles are maturity scores.",
+        "Omits prioritization or achieved-state distinction."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "profiles",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-df-04",
+      "doc_id": "nist_csf_2_0",
+      "query": "What are the four CSF Tiers and what progression do they describe?",
+      "question_type": "direct_fact",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Tier 1: Partial.",
+        "Tier 2: Risk Informed.",
+        "Tier 3: Repeatable.",
+        "Tier 4: Adaptive.",
+        "They describe progression from informal, ad hoc responses to agile, risk-informed, continuously improving approaches."
+      ],
+      "gold_answer": "The Tiers are Partial, Risk Informed, Repeatable, and Adaptive. They progress from informal/ad hoc risk management toward agile, risk-informed, continuously improving practices.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "CSF Tiers",
+        "page": 12,
+        "pages": [
+          12,
+          13
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Treats Tiers as certification levels.",
+        "Omits one or more Tier names.",
+        "Misses the ad hoc to adaptive progression."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "tiers",
+        "direct_fact"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-ss-01",
+      "doc_id": "nist_csf_2_0",
+      "query": "Summarize the CSF Core section in plain English.",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "The Core is a set of cybersecurity outcomes arranged by Function, Category, and Subcategory.",
+        "The outcomes are not a checklist and do not imply sequence or importance.",
+        "The six Functions organize outcomes at the highest level.",
+        "Functions should be addressed concurrently; some run continuously and response/recovery should be ready at all times.",
+        "The Core applies to ICT, including IT, IoT, OT, cloud, mobile, AI, and future environments."
+      ],
+      "gold_answer": "The CSF Core organizes cybersecurity outcomes by Functions, Categories, and Subcategories. It is not a sequential checklist; the Functions work together and apply broadly across current and future technology environments.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to the CSF Core",
+        "page": 8,
+        "pages": [
+          8,
+          9,
+          10
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Describes the Core as a required checklist.",
+        "Claims function order is a required implementation sequence.",
+        "Omits broad applicability across ICT environments."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "csf_core",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-ss-02",
+      "doc_id": "nist_csf_2_0",
+      "query": "Summarize how CSF Profiles and Tiers are meant to be used.",
+      "question_type": "section_summary",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "Profiles describe current and/or target cybersecurity posture in terms of Core outcomes.",
+        "Profiles help understand, tailor, assess, prioritize, and communicate outcomes based on mission, expectations, threats, and requirements.",
+        "Profile creation can include scoping, gathering information, creating the profile, gap analysis/action planning, implementation, and updates.",
+        "Tiers characterize the rigor of cybersecurity risk governance and management practices.",
+        "Tiers complement an organization's risk management methodology rather than replacing it."
+      ],
+      "gold_answer": "Profiles translate Core outcomes into an organization's current and target posture and support gap analysis and action planning. Tiers provide context about the rigor of governance and risk management, complementing rather than replacing existing risk methods.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to CSF Profiles and Tiers",
+        "page": 11,
+        "pages": [
+          11,
+          12,
+          13
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says Tiers replace the organization's risk methodology.",
+        "Confuses Profiles with Tiers.",
+        "Misses current/target posture and gap analysis use."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "profiles",
+        "tiers",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-ss-03",
+      "doc_id": "nist_csf_2_0",
+      "query": "What's in the online resources section that supplements the CSF?",
+      "question_type": "section_summary",
+      "difficulty": "normal",
+      "wording_style": "messy",
+      "expected_answer_points": [
+        "Online resources can be updated more frequently than the stable PDF and may be machine-readable.",
+        "Informative References map the Core to standards, guidelines, regulations, and related content.",
+        "Implementation Examples illustrate potential ways to achieve outcomes but are not a comprehensive baseline of required actions.",
+        "Quick Start Guides give brief actionable guidance on specific CSF topics and may target specific audiences."
+      ],
+      "gold_answer": "The section describes online supplements: Informative References for mappings to other guidance, Implementation Examples for possible ways to achieve outcomes, and Quick Start Guides for short actionable topic guidance. These resources can be updated more often than the PDF.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to Online Resources That Supplement the CSF",
+        "page": 14,
+        "pages": [
+          14
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Treats Implementation Examples as mandatory controls.",
+        "Omits one of the three resource types.",
+        "Claims the PDF itself is updated continuously."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "online_resources",
+        "section_summary"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-mc-01",
+      "doc_id": "nist_csf_2_0",
+      "query": "How do GOVERN and IDENTIFY relate in CSF 2.0?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "GOVERN establishes, communicates, and monitors cybersecurity risk management strategy, expectations, and policy.",
+        "GOVERN informs how the organization achieves and prioritizes outcomes of the other five Functions in light of mission and stakeholder expectations.",
+        "GOVERN includes organizational context, strategy, supply chain risk management, roles/responsibilities/authorities, policy, and oversight.",
+        "IDENTIFY is about understanding current cybersecurity risks, including assets, suppliers, and related risks.",
+        "IDENTIFY enables prioritization consistent with the risk management strategy and mission needs identified under GOVERN."
+      ],
+      "gold_answer": "GOVERN sets the strategy, expectations, policy, roles, oversight, and context for cybersecurity risk management. IDENTIFY uses that governance context to understand assets, suppliers, and risks so the organization can prioritize work consistently with its strategy and mission.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to the CSF Core; Appendix A CSF Core",
+        "page": 8,
+        "pages": [
+          8,
+          21,
+          23
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Says GOVERN is only documentation or policy approval.",
+        "Treats IDENTIFY as asset inventory only and omits risk/suppliers/prioritization.",
+        "Misses the way GOVERN informs the other functions."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "govern",
+        "identify",
+        "multi_chunk"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-mc-02",
+      "doc_id": "nist_csf_2_0",
+      "query": "How do DETECT, RESPOND, and RECOVER fit together during cybersecurity incidents?",
+      "question_type": "multi_chunk",
+      "difficulty": "expert",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "DETECT finds and analyzes possible attacks, compromises, anomalies, indicators of compromise, and adverse events.",
+        "DETECT supports incident response and recovery activities.",
+        "RESPOND takes action for detected incidents, including incident management, analysis, mitigation, reporting, and communication.",
+        "RECOVER restores assets and operations affected by an incident and supports timely restoration and communication.",
+        "RESPOND and RECOVER should be ready at all times and occur when incidents happen."
+      ],
+      "gold_answer": "DETECT discovers and analyzes adverse events; RESPOND manages, analyzes, communicates, and mitigates declared incidents; RECOVER restores affected assets and operations and communicates recovery progress. Response and recovery readiness should exist before incidents occur.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Introduction to the CSF Core; Appendix A CSF Core",
+        "page": 9,
+        "pages": [
+          9,
+          10,
+          26,
+          27,
+          28
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": null,
+      "serious_failure_modes": [
+        "Conflates detection with response or recovery.",
+        "Omits communication/reporting from response or recovery.",
+        "Claims recovery happens only after forensic investigation is complete without source support."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "detect",
+        "respond",
+        "recover",
+        "multi_chunk"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
+    },
+    {
+      "id": "nist-csf-2-un-01",
+      "doc_id": "nist_csf_2_0",
+      "query": "Does CSF 2.0 prove that our cloud deployment is secure and compliant today?",
+      "question_type": "unanswerable",
+      "difficulty": "normal",
+      "wording_style": "clean",
+      "expected_answer_points": [
+        "State that the PDF does not prove live security or compliance for a specific deployment.",
+        "Explain that CSF describes desirable outcomes and does not prescribe outcomes or how to achieve them.",
+        "Mention that organizations tailor the CSF to their unique risks, technologies, mission, objectives, requirements, and risk tolerances.",
+        "Say the CSF can help understand, assess, prioritize, and communicate cybersecurity risks but does not replace security review or compliance assessment."
+      ],
+      "gold_answer": "No. CSF 2.0 is a flexible framework for managing and communicating cybersecurity risk; it does not certify a specific cloud deployment as secure or compliant today.",
+      "expected_source": {
+        "doc_id": "nist_csf_2_0",
+        "section": "Cybersecurity Framework (CSF) Overview",
+        "page": 6,
+        "pages": [
+          6,
+          7
+        ]
+      },
+      "expects_sources": true,
+      "expects_safety_warning": false,
+      "unanswerable_reason": "The document is a general cybersecurity risk management framework, not a live audit, compliance certificate, or proof of security for a specific deployment.",
+      "serious_failure_modes": [
+        "Claims CSF 2.0 proves current security or compliance.",
+        "Provides a certification or legal conclusion.",
+        "Fails to explain what the CSF can support instead."
+      ],
+      "expected_doc_ids": [
+        "nist_csf_2_0"
+      ],
+      "tags": [
+        "rag",
+        "nist",
+        "boundary",
+        "unanswerable"
+      ],
+      "routing_expectation": {
+        "preferred": [
+          "RAG_ONLY"
+        ],
+        "acceptable": [
+          "RAG_ONLY"
+        ]
+      }
     }
   ]
 }

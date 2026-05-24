@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 0 baseline harness inspection is complete. No question bank, scoring logic, RAG pipeline variants, RSE, Small-to-Big, compression, or judge scoring have been implemented for this track yet.
+Phase 1 question-bank work is complete. The fresh 50-question bank now exists in JSON and Markdown form. No scoring logic, RAG pipeline variants, RSE, Small-to-Big, compression, or judge scoring have been implemented for this track yet.
 
 Important current decisions:
 
@@ -27,6 +27,7 @@ Important current decisions:
 - A random judge reliability audit is required before judge scores are trusted in the decision memo.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
+- Phase 1 is question-bank only. The RAG pipeline, variant config, context builders, compression, and scoring are still untouched.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -34,7 +35,7 @@ Important current decisions:
 | Phase | Name | Status | Owner | Notes |
 | --- | --- | --- | --- | --- |
 | 0 | Confirm baseline harness shape | Done | Codex | Findings recorded below. Confirmed current artifact schema, citation metadata, retrieval metadata, PDF metadata, neighbor expansion toggle, and smallest safe Phase 1/2 plan. |
-| 1 | Read PDFs and build question bank | Not Started | TBD | Create fresh 50-question bank and replace existing `tests/rag_eval/cases.json`. |
+| 1 | Read PDFs and build question bank | Done | Codex | Fresh 50-question bank created in `tests/rag_eval/cases.json` and human-readable copy added at `docs/qa/rag_eval_question_bank.md`. JSON validation confirmed the 10-per-PDF and 4/3/2/1 type mix. |
 | 2 | Add variant configuration | Not Started | TBD | Add V0-V7 and V9-V12 registry/config. Keep V8/V13 deferred. |
 | 3 | Implement context-building strategies | Not Started | TBD | Implement Small-to-Big, RSE, two-stage segment scoring, and extractive compression. |
 | 4 | Add scoring | Not Started | TBD | Add rule scoring, borderline detection, Qwen2.5 7B judge scoring, random reliability audit sample export, and serious-failure flags. |
@@ -144,6 +145,46 @@ Phase 2 should make the harness configurable before adding new context-building 
 - Add runtime metric placeholders now, even if scoring waits for Phase 4.
 - Do not silently run V4+ as plain hybrid before Phase 3. Either mark unsupported context-builder variants as pending or make the runner fail clearly if Small-to-Big/RSE/compression is requested before implementation.
 
+## Phase 1 Findings
+
+Date: 2026-05-25
+
+Phase 1 stayed data/documentation-only:
+
+- Replaced the old 10-case `tests/rag_eval/cases.json` with 50 fresh document-only questions.
+- Added `docs/qa/rag_eval_question_bank.md` as the human-readable review copy.
+- Read the five registered PDFs directly and grounded each case to page-level source expectations.
+- Preserved current-harness compatibility fields in each case: `expected_doc_ids`, `tags`, and `routing_expectation`.
+- Added planned scoring fields in each case: `doc_id`, `question_type`, `difficulty`, `wording_style`, `expected_answer_points`, `gold_answer`, `expected_source`, `expects_sources`, `expects_safety_warning`, `unanswerable_reason`, and `serious_failure_modes`.
+- `expected_source` records `doc_id`, a section label, a representative `page`, and a `pages` array for multi-page evidence. Current answer citations still expose only `doc_id` and `page`, so section labels are future-facing for Phase 4 scoring.
+
+Question-bank mix:
+
+| Doc ID | Direct Fact | Section Summary | Multi-Chunk | Boundary | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `nist_ams_300_1` | 4 | 3 | 2 | 1 | 10 |
+| `nist_ams_300_11` | 4 | 3 | 2 | 1 | 10 |
+| `osha_3120_lockout_tagout` | 4 | 3 | 2 | 1 | 10 |
+| `osha_machine_guarding_checklist` | 4 | 3 | 2 | 1 | 10 |
+| `nist_csf_2_0` | 4 | 3 | 2 | 1 | 10 |
+
+Boundary cases intentionally cover:
+
+- Live factory status/scheduling request unsupported by the NIST reference architecture.
+- Vendor purchase recommendation unsupported by NIST manufacturing data guidance.
+- Live lockout permission unsupported by the OSHA lockout/tagout booklet.
+- OSHA compliance certification unsupported by the machine guarding checklist.
+- Live cloud security/compliance proof unsupported by NIST CSF 2.0.
+
+Safety-warning expectations are set only where the query has high-risk safety intent. OSHA lockout/tagout procedural cases expect safety warnings; descriptive machine-guarding checklist recall does not always expect one.
+
+Validation:
+
+- JSON parsed successfully.
+- All 50 cases include the required Phase 1 fields.
+- No duplicate case IDs were found.
+- Each registered PDF has exactly 10 cases with the required 4/3/2/1 question-type mix.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -222,16 +263,35 @@ Get-Content -Raw rag_sources\00_metadata_templates\source_register.json
 Get-Content -Raw factory-agent\factory_agent\rag\ingestion.py
 Get-Content -Raw factory-agent\factory_agent\rag\pipeline.py
 Get-Content -Raw factory-agent\factory_agent\rag\retrieval.py
+git status --short
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_PLAN.md'
+Get-Content -Raw -LiteralPath 'docs/qa/RAG_EVALUATION_TRACK.md'
+Get-Content -Raw -LiteralPath 'tests/rag_eval/cases.json'
+Get-Content -Raw -LiteralPath 'rag_sources/00_metadata_templates/source_register.json'
+rg --files -g '*.pdf'
+python -c "import fitz; print('pymupdf ok')"
+python -c "import pypdf; print('pypdf ok')"
+python -c "import PyPDF2; print('PyPDF2 ok')"
+@'<pdf extraction scripts for TOC, headings, page text, and source snippets>'@ | python -
+@'<JSON validation and mix-count script>'@ | python -
+git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md docs/qa/RAG_EVALUATION_TRACK.md
 ```
 
 ## Test Results
 
-No tests have been run for this track yet. The current changes are documentation-only.
+- JSON validation passed for `tests/rag_eval/cases.json`: 50 cases, no missing required fields, no duplicate IDs, and exact 4/3/2/1 question-type mix for each registered PDF.
+- `git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md docs/qa/RAG_EVALUATION_TRACK.md` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
+- No RAG harness, LLM, or application tests were run because Phase 1 is question-bank only.
 
 ## Files Created
 
 - `docs/qa/RAG_EVALUATION_PLAN.md`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
+- `docs/qa/rag_eval_question_bank.md`
+
+## Files Updated
+
+- `tests/rag_eval/cases.json`
 
 ## Current Blockers
 
@@ -239,4 +299,4 @@ No tests have been run for this track yet. The current changes are documentation
 
 ## Next Action
 
-Start Phase 1 only after the user confirms question-bank work should begin. Do not implement variants, RSE, Small-to-Big, compression, or scoring before the Phase 1 question bank is grounded in the five PDFs.
+Start Phase 2 only when requested: add variant configuration and clean retrieval/debug plumbing before implementing RSE, Small-to-Big, compression, scoring, or benchmark execution.
