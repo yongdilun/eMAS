@@ -90,6 +90,129 @@ def _write_pdf_test_register(tmp_path):
     return register_path, doc_path
 
 
+def _write_structured_pdf_test_register(tmp_path):
+    sources = tmp_path / "sources"
+    sources.mkdir(exist_ok=True)
+    doc_path = sources / "structured_loto.pdf"
+    pdf = fitz.open()
+    page_1 = pdf.new_page()
+    page_1.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Factory Safety SOP",
+                "Preparation",
+                "The control docu-",
+                "ment explains the preparation step.",
+                "What must workers do before they begin service",
+                "or maintenance activities?",
+                "1. Notify affected employees before shutdown.",
+                "Is the lockout device ready?",
+                "1",
+            ]
+        ),
+    )
+    page_2 = pdf.new_page()
+    page_2.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Factory Safety SOP",
+                "Verification",
+                "Verify zero energy after isolation.",
+                "Record the verification result before maintenance starts.",
+                "2",
+            ]
+        ),
+    )
+    pdf.set_toc(
+        [
+            [1, "Preparation", 1],
+            [2, "What must workers do before they begin service or maintenance activities?", 1],
+            [1, "Verification", 2],
+        ]
+    )
+    pdf.save(doc_path)
+    pdf.close()
+    register_path = tmp_path / "source_register.json"
+    register_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "doc_id": "PDF-STRUCTURED-LOTO",
+                        "title": "Structured LOTO Procedure",
+                        "file_path": str(doc_path),
+                        "source_type": "official_public_pdf",
+                        "organization": "Factory Safety",
+                        "domain": "safety",
+                        "subdomain": "loto",
+                        "authority_level": "mandatory_procedure",
+                        "use_for": ["loto"],
+                        "do_not_use_for": ["live factory status lookup"],
+                        "related_entities": ["machine"],
+                        "risk_level": "high",
+                        "license": "internal",
+                        "version": "1.0",
+                        "retrieved_date": "2026-05-10",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return register_path, doc_path
+
+
+def _write_long_pdf_test_register(tmp_path):
+    sources = tmp_path / "sources"
+    sources.mkdir(exist_ok=True)
+    doc_path = sources / "long_loto.pdf"
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text(
+        (72, 72),
+        "Procedure\n"
+        + "\n".join(
+            [
+                f"Step {i} confirms isolation before work starts."
+                for i in range(1, 25)
+            ]
+        ),
+    )
+    pdf.set_toc([[1, "Procedure", 1]])
+    pdf.save(doc_path)
+    pdf.close()
+    register_path = tmp_path / "source_register.json"
+    register_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "doc_id": "PDF-LONG-LOTO",
+                        "title": "Long LOTO Procedure",
+                        "file_path": str(doc_path),
+                        "source_type": "official_public_pdf",
+                        "organization": "Factory Safety",
+                        "domain": "safety",
+                        "subdomain": "loto",
+                        "authority_level": "mandatory_procedure",
+                        "use_for": ["loto"],
+                        "do_not_use_for": ["live factory status lookup"],
+                        "related_entities": ["machine"],
+                        "risk_level": "high",
+                        "license": "internal",
+                        "version": "1.0",
+                        "retrieved_date": "2026-05-10",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return register_path, doc_path
+
+
 def test_pdf_text_range_tolerates_extracted_whitespace():
     page_text = "Control of \nHazardous Energy \nLockout/Tagout \n"
     chunk_text = "Control of\nHazardous Energy\nLockout/Tagout"
@@ -166,8 +289,8 @@ def test_pdf_ingestion_preserves_page_locator_metadata(engine, tmp_path):
 
     results = engine.collection.get(where={"doc_id": "PDF-LOTO"}, include=["documents", "metadatas"])
     assert results["ids"]
-    pages = {meta.get("page") for meta in results["metadatas"]}
-    assert pages == {1, 2}
+    assert min(meta.get("page_start") for meta in results["metadatas"]) == 1
+    assert max(meta.get("page_end") for meta in results["metadatas"]) == 2
     assert resolve_source_pdf_path("PDF-LOTO", register_path=register_path) == doc_path.resolve()
     for meta, text in zip(results["metadatas"], results["documents"]):
         assert meta["pdf_url"] == source_pdf_url("PDF-LOTO")
@@ -176,10 +299,84 @@ def test_pdf_ingestion_preserves_page_locator_metadata(engine, tmp_path):
         assert meta["source_id"] == f"PDF-LOTO#{meta['chunk_id']}"
         assert meta["chunk_id"]
         assert meta["snippet"]
-        assert "char_range" in meta
-        assert isinstance(json.loads(meta["char_range"]), list)
+        assert meta["page"] == meta["page_start"]
+        assert meta["page_start"] <= meta["page_end"]
+        assert meta["chunk_strategy_version"] == "pdf_struct_sentence_v1"
+        assert "paragraph_start" in meta
+        assert "sentence_start" in meta
+        if "char_range" in meta:
+            assert isinstance(json.loads(meta["char_range"]), list)
         assert meta["text_search"]
         assert text.startswith("[Section:")
+
+
+def test_pdf_ingestion_uses_real_sections_and_cleans_paragraphs(engine, tmp_path):
+    register_path, _ = _write_structured_pdf_test_register(tmp_path)
+
+    engine.run_full_ingestion(str(register_path))
+
+    results = engine.collection.get(
+        where={"doc_id": "PDF-STRUCTURED-LOTO"},
+        include=["documents", "metadatas"],
+    )
+    assert results["ids"]
+    section_titles = {meta["section_title"] for meta in results["metadatas"]}
+    assert "Preparation" in section_titles
+    assert "What must workers do before they begin service or maintenance activities?" in section_titles
+    assert "Verification" in section_titles
+    assert section_titles != {"General"}
+
+    combined_text = " ".join(results["documents"])
+    combined_body_text = " ".join(text.split("] ", 1)[1] for text in results["documents"])
+    assert "Factory Safety SOP" not in combined_text
+    assert "docu- ment" not in combined_text
+    assert "document explains the preparation step." in combined_text
+    assert "What must workers do before they begin service or maintenance activities?" not in combined_body_text
+    assert "1. Notify affected employees before shutdown." in combined_text
+    assert "Is the lockout device ready?" in combined_text
+
+    for meta in results["metadatas"]:
+        assert meta["section_title"] in {
+            "Preparation",
+            "What must workers do before they begin service or maintenance activities?",
+            "Verification",
+        }
+        assert meta["split_reason"]
+
+
+def test_pdf_token_budget_packs_sentence_chunks(engine, tmp_path):
+    register_path, _ = _write_long_pdf_test_register(tmp_path)
+    engine.PDF_TARGET_TOKENS = 18
+    engine.PDF_MAX_TOKENS = 24
+    engine.PDF_MIN_TOKENS = 5
+
+    engine.run_full_ingestion(str(register_path))
+
+    results = engine.collection.get(
+        where={"doc_id": "PDF-LONG-LOTO"},
+        include=["documents", "metadatas"],
+    )
+    assert len(results["ids"]) >= 3
+    for meta, text in zip(results["metadatas"], results["documents"]):
+        assert meta["chunk_token_estimate"] <= 24
+        body = text.split("] ", 1)[1]
+        assert body[0].isupper() or body[0].isdigit()
+        assert body[-1] in ".?!"
+
+
+def test_pdf_reingests_when_chunk_strategy_version_changes(engine, tmp_path):
+    register_path, _ = _write_pdf_test_register(tmp_path)
+    engine.PDF_CHUNK_STRATEGY_VERSION = "legacy_pdf_chunks"
+    engine.run_full_ingestion(str(register_path))
+
+    first = engine.collection.get(where={"doc_id": "PDF-LOTO"}, limit=1)
+    assert first["metadatas"][0]["chunk_strategy_version"] == "legacy_pdf_chunks"
+
+    engine.PDF_CHUNK_STRATEGY_VERSION = "pdf_struct_sentence_v1"
+    engine.run_full_ingestion(str(register_path))
+
+    second = engine.collection.get(where={"doc_id": "PDF-LOTO"}, limit=1)
+    assert second["metadatas"][0]["chunk_strategy_version"] == "pdf_struct_sentence_v1"
 
 def test_reingestion_logic(engine):
     # First ingestion
