@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 4 scoring work is complete. The fresh 50-question bank exists in JSON and Markdown form, the harness can execute Run 1 variants V0-V7 and V9-V12, Small-to-Big/RSE/compression are implemented, and artifacts now include deterministic rule scoring, retrieval metrics, borderline flags, optional borderline-only judge outputs, serious-failure classifications, judge audit samples, and summary aggregates. Document Augmentation V8/V13 and the full benchmark have not been implemented or run yet.
+Phase 5 Benchmark Run 1 is complete. The fresh 50-question bank was run once across all 12 Run 1 variants, producing 600 case artifacts, 12 summaries, and judge audit samples under `test-artifacts/rag-eval/`. Document Augmentation V8/V13 has not been implemented or run. The Phase 6 manual review and final decision memo have not started.
 
 Important current decisions:
 
@@ -27,9 +27,11 @@ Important current decisions:
 - A random judge reliability audit is required before judge scores are trusted in the decision memo.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
-- Phase 4 adds deterministic scoring and optional judge triage only. Benchmark execution is still untouched.
+- Phase 5 ran the benchmark only. It did not change the question bank, scoring, RSE, Small-to-Big, compression, or Document Augmentation.
+- Run 1 judge calls completed without runtime errors, but judge output remains triage evidence only until the Phase 6 manual audit.
 - V7 and V12 use a deterministic retrieval-only query rewrite path that appends retrieval focus terms and acronym expansions; generation still receives the original user query.
 - Light compression is extractive and keyword-overlap based for Phase 3. It preserves source sentence order and section context, but does not yet use embedding-based semantic sentence selection.
+- Important Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Phase 6 should treat all rerank-enabled results as using fallback ranking behavior unless this is audited or fixed before Run 2.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -41,7 +43,7 @@ Important current decisions:
 | 2 | Add variant configuration | Done | Codex | Added V0-V7 and V9-V12 registry/config. V0-V3 are executable; V4/V5/V6/V7/V9/V10/V11/V12 are registered but blocked as not implemented for Phase 2. |
 | 3 | Implement context-building strategies | Done | Codex | Implemented Small-to-Big, RSE, cheap segment scoring, deterministic retrieval query rewrite for V7/V12, and extractive compression for V6/V11. |
 | 4 | Add scoring | Done | Codex | Added rule scoring, retrieval metrics, borderline detection, optional Qwen2.5 7B judge support, random reliability audit sample export, summary aggregates, and serious-failure flags. |
-| 5 | Run Benchmark 1 | Not Started | TBD | Run 50 questions across 12 variants once each. Randomize variant execution order. |
+| 5 | Run Benchmark 1 | Done | Codex | Run 1 completed across 12 variants in fixed randomized order. Artifacts validated: 600 case artifacts, 12 summaries, and 12 judge audit samples. |
 | 6 | Review and decision memo | Not Started | TBD | Review failures, borderline cases, top candidates, safety cases, and judge reliability sample. Select provisional champion. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
@@ -248,6 +250,48 @@ Phase 4 stayed limited to scoring and judge triage:
 - The PowerShell wrapper accepts `-Judge`; the CLI accepts `--judge`, `--no-judge`, `--judge-base-url`, `--judge-model`, and `--judge-audit-seed`.
 - No live judge call, live LLM run, full benchmark, Document Augmentation V8/V13, question-bank change, RSE behavior change, or Small-to-Big behavior change was made.
 
+## Phase 5 Findings
+
+Date: 2026-05-25
+
+Phase 5 stayed limited to live benchmark execution and tracker documentation:
+
+- Confirmed current branch `main` at `aa90b87c feat: add rag eval scoring`.
+- Confirmed local llama-server on `http://127.0.0.1:900/v1/models`; reported model ID `Qwen2.5-7B-Instruct-Q4_K_M.gguf`.
+- Re-ran ingestion before the benchmark. All five PDFs were already ingested at the expected versions; BM25 was rebuilt.
+- Ran the requested smoke tests:
+  - `smoke-v3-score`: V3, case `nist-csf-2-df-01`, score 100.0, no warnings.
+  - `smoke-v11-context`: V11, case `nist-csf-2-df-01`, score 100.0, no warnings. Judge was enabled but skipped because the case was not borderline.
+- Ran the 12 Run 1 variants one at a time in the fixed randomized order: V9, V3, V6, V0, V12, V5, V2, V11, V7, V1, V10, V4.
+- All full runs used `--judge`; all judge calls completed without errors.
+- Artifact validation passed for every full run: each folder has 50 case JSON artifacts plus `summary.json` and `judge_audit_sample.json`.
+- Total full benchmark artifacts: 600 case artifacts, 12 summaries, and 12 judge audit sample files.
+- Each judge audit sample contains 20 sampled judged cases.
+- No question-bank, scoring, RSE, Small-to-Big, compression, or Document Augmentation changes were made.
+
+Important runtime caveats:
+
+- Rerank-enabled variants repeatedly logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants: V1, V3, V5, V6, V7, V10, V11, and V12. This did not crash the runs, but Phase 6 should treat their reranking behavior as degraded/fallback behavior.
+- Judge output is still triage evidence only. Phase 6 must manually audit the judge samples before relying on judge conclusions.
+- Serious-failure counts below are automated classifications, not final manual adjudications.
+
+### Run 1 Summary
+
+| Variant | Run ID | Cases | Automated Failures | Serious Failures | Borderline | Judge | Avg Rule | doc@3/5/10 | section/page@3/5/10 | Avg Sec | Context Tokens Before/After/Compressed |
+| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- | --- | ---: | --- |
+| V9 | `run1-20260525-v09` | 50 | 0 | 25 | 30 | 30/30, 0 errors | 67.03 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 3.39 | 1832/2445/2445 |
+| V3 | `run1-20260525-v03` | 50 | 0 | 24 | 35 | 35/35, 0 errors | 67.99 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.29 | 592/592/592 |
+| V6 | `run1-20260525-v06` | 50 | 0 | 26 | 37 | 37/37, 0 errors | 63.98 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.11 | 592/728/443 |
+| V0 | `run1-20260525-v00` | 50 | 0 | 27 | 32 | 32/32, 0 errors | 65.73 | 0.96/0.96/1.00 | 0.78/0.86/0.92 | 2.78 | 1623/1623/1623 |
+| V12 | `run1-20260525-v12` | 50 | 0 | 21 | 34 | 34/34, 0 errors | 69.82 | 0.94/1.00/1.00 | 0.86/0.94/0.96 | 2.42 | 628/928/928 |
+| V5 | `run1-20260525-v05` | 50 | 0 | 26 | 33 | 33/33, 0 errors | 66.37 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.28 | 592/728/728 |
+| V2 | `run1-20260525-v02` | 50 | 0 | 23 | 32 | 32/32, 0 errors | 69.66 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 3.01 | 1978/1978/1978 |
+| V11 | `run1-20260525-v11` | 50 | 0 | 26 | 37 | 37/37, 0 errors | 64.01 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.04 | 545/756/472 |
+| V7 | `run1-20260525-v07` | 50 | 0 | 22 | 32 | 32/32, 0 errors | 69.35 | 0.94/1.00/1.00 | 0.86/0.94/0.96 | 2.45 | 640/898/898 |
+| V1 | `run1-20260525-v01` | 50 | 0 | 29 | 31 | 31/31, 0 errors | 61.13 | 0.96/0.96/1.00 | 0.78/0.86/0.92 | 2.09 | 487/487/487 |
+| V10 | `run1-20260525-v10` | 50 | 0 | 27 | 33 | 33/33, 0 errors | 65.17 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.35 | 545/756/756 |
+| V4 | `run1-20260525-v04` | 50 | 0 | 23 | 32 | 32/32, 0 errors | 69.21 | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 3.21 | 1978/2363/2363 |
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -416,6 +460,10 @@ python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag
 - `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
 - `python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag_eval/audit.py tests/rag_eval/run_eval.py tests/rag_eval/artifact_schema.py` passed.
 - No live LLM run, no live judge run, no scoring benchmark run, no Document Augmentation run, and no full 50-question x 12-variant benchmark were run for Phase 4.
+- Phase 5 live benchmark completed for all 12 Run 1 variants with judge enabled: 600 case artifacts, 12 summaries, and 12 judge audit samples were written under `test-artifacts/rag-eval/`.
+- Phase 5 artifact validation passed: every full run folder has exactly 50 case JSON artifacts plus `summary.json`; every judged run has `judge_audit_sample.json` with 20 sampled judged cases.
+- Phase 5 judge calls completed without errors: 398 requested, 398 completed, 0 errors.
+- Phase 5 smoke tests passed for `smoke-v3-score` and `smoke-v11-context`.
 
 ## Files Created
 
@@ -458,8 +506,8 @@ python -m py_compile tests/rag_eval/scoring.py tests/rag_eval/judge.py tests/rag
 
 ## Current Blockers
 
-- None.
+- None for Phase 5. Phase 6 should explicitly account for the reranker fallback caveat before treating rerank-enabled variants as true rerank results.
 
 ## Next Action
 
-Start Phase 5 only when requested: run Benchmark 1 across the 50-question bank and Run 1 variants. Do not implement Document Augmentation V8/V13 before Phase 7, and do not run the full benchmark until the user explicitly asks for Phase 5 execution.
+Start Phase 6 only when requested: manually audit judge reliability samples, review automated serious failures and borderline cases, then write the decision memo. Do not implement Document Augmentation V8/V13 until Phase 7.
