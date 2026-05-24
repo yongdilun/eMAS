@@ -160,24 +160,33 @@ class HybridRetriever:
         """Combines results using Reciprocal Rank Fusion."""
         scores = {}
         all_chunks = {}
+        vector_scores = {}
+        keyword_scores = {}
         
         # Process vector results
         for rank, item in enumerate(vector_results):
             cid = item.chunk.chunk_id
             all_chunks[cid] = item.chunk
+            vector_scores[cid] = item.vector_score
             scores[cid] = scores.get(cid, 0) + 1.0 / (k + rank + 1)
             
         # Process keyword results
         for rank, item in enumerate(keyword_results):
             cid = item.chunk.chunk_id
             all_chunks[cid] = item.chunk
+            keyword_scores[cid] = item.keyword_score
             scores[cid] = scores.get(cid, 0) + 1.0 / (k + rank + 1)
             
         # Sort by RRF score
         sorted_ids = sorted(scores, key=scores.get, reverse=True)[:top_k]
         
         return [
-            ScoredChunk(chunk=all_chunks[cid], fusion_score=scores[cid])
+            ScoredChunk(
+                chunk=all_chunks[cid],
+                vector_score=vector_scores.get(cid),
+                keyword_score=keyword_scores.get(cid),
+                fusion_score=scores[cid],
+            )
             for cid in sorted_ids
         ]
 
@@ -282,14 +291,29 @@ class HybridRetriever:
         vector_top_k: int = 8,
         keyword_top_k: int = 8,
         fusion_top_k: int = 8,
-        expand_neighbors: bool = True
+        expand_neighbors: bool = True,
+        retrieval_mode: str = "hybrid",
     ) -> List[ScoredChunk]:
-        """Main entry point for hybrid retrieval."""
-        v_results = self.vector_search(query, top_k=vector_top_k)
-        k_results = self.keyword_search(query, top_k=keyword_top_k)
-        
-        f_results = self.reciprocal_rank_fusion(v_results, k_results, top_k=fusion_top_k)
-        
+        """Main entry point for retrieval.
+
+        ``retrieval_mode="hybrid"`` preserves the existing vector + BM25 path.
+        ``retrieval_mode="vector"`` skips BM25/RRF for clean vector-only evals.
+        """
+        mode = retrieval_mode.lower().replace("_", "-")
+        if mode in {"vector", "vector-only"}:
+            f_results = self.vector_search(query, top_k=vector_top_k)
+            for result in f_results:
+                if result.fusion_score is None:
+                    result.fusion_score = result.vector_score
+        elif mode == "hybrid":
+            v_results = self.vector_search(query, top_k=vector_top_k)
+            k_results = self.keyword_search(query, top_k=keyword_top_k)
+            f_results = self.reciprocal_rank_fusion(v_results, k_results, top_k=fusion_top_k)
+        else:
+            raise ValueError(
+                f"Unsupported retrieval_mode={retrieval_mode!r}; expected 'hybrid' or 'vector'"
+            )
+
         final_results = self.apply_metadata_filter_and_boost(f_results, query, route)
         
         if not expand_neighbors:

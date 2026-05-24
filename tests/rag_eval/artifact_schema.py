@@ -15,6 +15,8 @@ Top-level per-case schema
 {
   "schema_version": 1,
   "run_id": "20260510T101530Z-abcd",
+  "variant_id": "V3",
+  "variant_config": { ... },
   "case_id": "loto-01-overview",
   "started_at": "2026-05-10T10:15:30.123456+00:00",
   "finished_at": "2026-05-10T10:15:34.456789+00:00",
@@ -46,11 +48,20 @@ Top-level per-case schema
     "queried": true,
     "top_chunks": [
       {
+        "rank": 1,
         "chunk_id": "...",
         "doc_id": "SOP-LOTO-001",
-        "title": "LOTO Procedure Standard",
-        "fusion_score": 0.123,
-        "boosted_score": 0.456,
+        "page": 4,
+        "page_start": 4,
+        "page_end": 5,
+        "section_title": "Lockout Application",
+        "section_path": ["Control of Hazardous Energy", "Lockout Application"],
+        "scores": {
+          "vector": 0.111,
+          "keyword": 0.222,
+          "fusion": 0.123,
+          "boosted": 0.456
+        },
         "snippet": "first 240 chars..."
       }
     ],
@@ -216,38 +227,63 @@ def serialize_agent_response(response: Any) -> dict[str, Any]:
     }
 
 
-def serialize_retrieval_debug(scored_chunks: Iterable[Any] | None, *, top_n: int = 5,
-                              snippet_chars: int = 240, error: str | None = None) -> dict[str, Any]:
+def serialize_retrieval_debug(
+    scored_chunks: Iterable[Any] | None,
+    *,
+    top_n: int = 10,
+    snippet_chars: int = 240,
+    error: str | None = None,
+    retrieval_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the ``retrieval_debug`` block from a list of ``ScoredChunk``."""
 
     if scored_chunks is None and error is None:
-        return {"queried": False, "top_chunks": [], "error": None}
+        return {
+            "queried": False,
+            "retrieval_settings": _ensure_jsonable(retrieval_settings or {}),
+            "top_chunks": [],
+            "error": None,
+        }
 
     top: list[dict[str, Any]] = []
     if scored_chunks is not None:
-        for sc in list(scored_chunks)[:top_n]:
+        for rank, sc in enumerate(list(scored_chunks)[:top_n], start=1):
             chunk = getattr(sc, "chunk", None)
             metadata = getattr(chunk, "metadata", {}) or {}
             text = getattr(chunk, "text", "") or ""
+            scores = {
+                "vector": getattr(sc, "vector_score", None),
+                "keyword": getattr(sc, "keyword_score", None),
+                "fusion": getattr(sc, "fusion_score", None),
+                "boosted": getattr(sc, "boosted_score", None),
+            }
             top.append(
                 {
+                    "rank": rank,
                     "chunk_id": getattr(chunk, "chunk_id", None),
                     "doc_id": metadata.get("doc_id"),
+                    "page": metadata.get("page"),
+                    "page_start": metadata.get("page_start"),
+                    "page_end": metadata.get("page_end"),
+                    "section_title": metadata.get("section_title"),
+                    "section_path": _ensure_jsonable(metadata.get("section_path")),
                     "title": metadata.get("title"),
                     "domain": metadata.get("domain"),
                     "subdomain": metadata.get("subdomain"),
                     "authority_level": metadata.get("authority_level"),
                     "risk_level": metadata.get("risk_level"),
-                    "vector_score": getattr(sc, "vector_score", None),
-                    "keyword_score": getattr(sc, "keyword_score", None),
-                    "fusion_score": getattr(sc, "fusion_score", None),
-                    "boosted_score": getattr(sc, "boosted_score", None),
+                    "scores": scores,
+                    "vector_score": scores["vector"],
+                    "keyword_score": scores["keyword"],
+                    "fusion_score": scores["fusion"],
+                    "boosted_score": scores["boosted"],
                     "snippet": text[:snippet_chars],
                 }
             )
 
     return {
         "queried": scored_chunks is not None,
+        "retrieval_settings": _ensure_jsonable(retrieval_settings or {}),
         "top_chunks": top,
         "error": error,
     }
@@ -266,6 +302,8 @@ def empty_manual_evaluation() -> dict[str, Any]:
 def build_case_artifact(
     *,
     run_id: str,
+    variant_id: str,
+    variant_config: dict[str, Any],
     case: dict[str, Any],
     query: str,
     started_at: str,
@@ -284,6 +322,8 @@ def build_case_artifact(
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
+        "variant_id": variant_id,
+        "variant_config": _ensure_jsonable(variant_config),
         "case_id": case.get("id"),
         "started_at": started_at,
         "finished_at": finished_at,
@@ -304,6 +344,8 @@ def build_case_artifact(
 def build_summary(
     *,
     run_id: str,
+    variant_id: str,
+    variant_config: dict[str, Any],
     started_at: str,
     finished_at: str,
     env: dict[str, Any],
@@ -318,6 +360,8 @@ def build_summary(
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
+        "variant_id": variant_id,
+        "variant_config": _ensure_jsonable(variant_config),
         "started_at": started_at,
         "finished_at": finished_at,
         "env": env,
@@ -330,6 +374,7 @@ def build_summary(
         "cases": [
             {
                 "case_id": r.get("case_id"),
+                "variant_id": r.get("variant_id"),
                 "route": (r.get("route_decision") or {}).get("route"),
                 "route_source": (r.get("route_decision") or {}).get("route_source"),
                 "automated_ok": (r.get("automated") or {}).get("ok"),

@@ -12,6 +12,7 @@ Usage (from the repo root)::
     # Optional flags:
     python -m tests.rag_eval.run_eval --cases tests/rag_eval/cases.json `
                                       --output test-artifacts/rag-eval `
+                                      --variant V3 `
                                       --filter loto-
 
 This module exposes :func:`run_eval` so the pytest wrapper in
@@ -20,13 +21,15 @@ This module exposes :func:`run_eval` so the pytest wrapper in
 The harness:
 
 1. Loads cases from ``tests/rag_eval/cases.json``.
-2. Builds a real :class:`factory_agent.rag.pipeline.RAGPipeline` (hybrid
-   retriever + LLM reranker + answer generator).
-3. Runs each case directly through the current RAG pipeline. The retired
+2. Resolves a Run 1 variant config (default: V3).
+3. Builds a real :class:`factory_agent.rag.pipeline.RAGPipeline` with the
+   selected variant's retrieval/rerank settings.
+4. Runs each case directly through the current RAG pipeline. The retired
    Phase5Agent/QueryRouter compatibility layer is intentionally not imported.
-4. For each case, runs the pipeline **and** issues a separate
-   ``HybridRetriever.retrieve`` call for retrieval debug logging (top chunks).
-5. Writes one JSON artifact per case plus a run-level ``summary.json``.
+5. For each case, runs the pipeline **and** issues a separate
+   ``HybridRetriever.retrieve`` call with the same retrieval settings for debug
+   logging (top chunks).
+6. Writes one JSON artifact per case plus a run-level ``summary.json``.
 
 Failure policy: structural-only checks (answer non-empty, sources present when
 a RAG-bearing route is used, hard ``do_not_use_for`` violations) flip
@@ -70,6 +73,13 @@ from tests.rag_eval.artifact_schema import (  # noqa: E402
     now_iso,
     serialize_rag_result,
     serialize_retrieval_debug,
+)
+from tests.rag_eval.variants import (  # noqa: E402
+    DEFAULT_VARIANT_ID,
+    RUN_1_VARIANT_IDS,
+    RAGVariantConfig,
+    get_variant,
+    require_phase2_executable,
 )
 
 
@@ -224,7 +234,8 @@ class RunnerOptions:
     output_root: Path
     case_filter: str | None = None
     run_id: str | None = None
-    retrieval_top_n: int = 5
+    retrieval_top_n: int = 10
+    variant_id: str = DEFAULT_VARIANT_ID
 
 
 def _gen_run_id() -> str:
@@ -261,23 +272,32 @@ async def _run_case(
     case: dict[str, Any],
     rag_pipeline: RAGPipeline,
     retriever: HybridRetriever | None,
+    variant: RAGVariantConfig,
     retrieval_top_n: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None,
            dict[str, Any], str | None]:
     """Execute a single case. Returns (route_decision, rag, agent_response, retrieval_debug, error)."""
 
     query = str(case.get("query") or "")
+    pipeline_config = variant.to_pipeline_config()
+    retrieval_settings = variant.retrieval_settings()
     error: str | None = None
     route_decision: dict[str, Any] | None = None
     rag_result: dict[str, Any] | None = None
     agent_response: dict[str, Any] | None = None
 
     try:
-        response = await rag_pipeline.run(query=query, session_id=case.get("id"), route="RAG_ONLY")
+        response = await rag_pipeline.run(
+            query=query,
+            session_id=case.get("id"),
+            route="RAG_ONLY",
+            config=pipeline_config,
+        )
         rag_result = serialize_rag_result(response)
         route_decision = {
             "route": rag_result.get("route_used") or "RAG_ONLY",
             "route_source": "rag_pipeline_direct",
+            "variant_id": variant.variant_id,
         }
         agent_response = {
             "answer": rag_result.get("answer"),
@@ -294,15 +314,31 @@ async def _run_case(
     retrieval_debug: dict[str, Any]
     if retriever is None:
         retrieval_debug = serialize_retrieval_debug(
-            None, error="HybridRetriever unavailable (vector_db / bm25 not initialised)"
+            None,
+            error="HybridRetriever unavailable (vector_db / bm25 not initialised)",
+            retrieval_settings=retrieval_settings,
         )
     else:
         try:
-            scored = retriever.retrieve(query=query, route="RAG_ONLY")
-            retrieval_debug = serialize_retrieval_debug(scored, top_n=retrieval_top_n)
+            scored = retriever.retrieve(
+                query=query,
+                route="RAG_ONLY",
+                vector_top_k=pipeline_config.vector_top_k,
+                keyword_top_k=pipeline_config.keyword_top_k,
+                fusion_top_k=pipeline_config.fusion_top_k,
+                expand_neighbors=pipeline_config.expand_neighbors,
+                retrieval_mode=pipeline_config.retrieval_mode,
+            )
+            retrieval_debug = serialize_retrieval_debug(
+                scored,
+                top_n=retrieval_top_n,
+                retrieval_settings=retrieval_settings,
+            )
         except Exception as exc:
             retrieval_debug = serialize_retrieval_debug(
-                None, error=f"{type(exc).__name__}: {exc}"
+                None,
+                error=f"{type(exc).__name__}: {exc}",
+                retrieval_settings=retrieval_settings,
             )
 
     return route_decision, rag_result, agent_response, retrieval_debug, error
@@ -324,6 +360,13 @@ def _build_retriever() -> HybridRetriever | None:
 
 
 async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
+    try:
+        variant = get_variant(opts.variant_id)
+        require_phase2_executable(variant)
+    except (ValueError, NotImplementedError) as exc:
+        raise SystemExit(str(exc)) from exc
+    variant_config = variant.to_dict()
+
     if not _live_mode_enabled():
         raise SystemExit(
             "Live RAG eval is opt-in. Set FACTORY_AGENT_LIVE_RAG=1 (or "
@@ -353,7 +396,10 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
     started_at = now_iso()
     case_results: list[dict[str, Any]] = []
 
-    print(f"[rag-eval] run_id={run_id} cases={len(cases)} output={run_dir}")
+    print(
+        f"[rag-eval] run_id={run_id} variant={variant.variant_id} "
+        f"cases={len(cases)} output={run_dir}"
+    )
 
     for idx, case in enumerate(cases, start=1):
         case_id = str(case.get("id") or f"case-{idx}")
@@ -365,6 +411,7 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
             case=case,
             rag_pipeline=rag_pipeline,
             retriever=retriever,
+            variant=variant,
             retrieval_top_n=opts.retrieval_top_n,
         )
         duration_s = time.perf_counter() - t0
@@ -380,6 +427,8 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
 
         artifact = build_case_artifact(
             run_id=run_id,
+            variant_id=variant.variant_id,
+            variant_config=variant_config,
             case=case,
             query=str(case.get("query") or ""),
             started_at=case_started_iso,
@@ -409,6 +458,8 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
     finished_at = now_iso()
     summary = build_summary(
         run_id=run_id,
+        variant_id=variant.variant_id,
+        variant_config=variant_config,
         started_at=started_at,
         finished_at=finished_at,
         env=env,
@@ -460,8 +511,14 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
     parser.add_argument(
         "--retrieval-top-n",
         type=int,
-        default=5,
+        default=10,
         help="How many top retrieved chunks to log per case (debug only).",
+    )
+    parser.add_argument(
+        "--variant",
+        default=DEFAULT_VARIANT_ID,
+        choices=RUN_1_VARIANT_IDS,
+        help="Run 1 RAG variant ID to execute. Phase 2 supports V0-V3.",
     )
     args = parser.parse_args(argv)
     return RunnerOptions(
@@ -470,6 +527,7 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
         case_filter=args.filter,
         run_id=args.run_id,
         retrieval_top_n=args.retrieval_top_n,
+        variant_id=args.variant,
     )
 
 

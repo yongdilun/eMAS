@@ -139,5 +139,32 @@ class TestHybridRetriever(unittest.TestCase):
         elapsed = time.time() - start_time
         self.assertLess(elapsed, 2.0)
 
+    def test_vector_mode_skips_keyword_search_and_neighbor_expansion(self):
+        chunk = Chunk(chunk_id="c1", text="vector text", metadata={})
+        self.retriever.vector_search = MagicMock(
+            return_value=[ScoredChunk(chunk=chunk, vector_score=0.91)]
+        )
+        self.retriever.keyword_search = MagicMock()
+        self.retriever.reciprocal_rank_fusion = MagicMock()
+        self.retriever.get_neighbor_chunks = MagicMock()
+
+        results = self.retriever.retrieve(
+            "test query",
+            retrieval_mode="vector",
+            vector_top_k=3,
+            expand_neighbors=False,
+        )
+
+        self.retriever.vector_search.assert_called_once_with("test query", top_k=3)
+        self.retriever.keyword_search.assert_not_called()
+        self.retriever.reciprocal_rank_fusion.assert_not_called()
+        self.retriever.get_neighbor_chunks.assert_not_called()
+        self.assertEqual([result.chunk.chunk_id for result in results], ["c1"])
+        self.assertEqual(results[0].fusion_score, 0.91)
+
+    def test_invalid_retrieval_mode_fails_clearly(self):
+        with self.assertRaises(ValueError):
+            self.retriever.retrieve("test query", retrieval_mode="keyword")
+
 if __name__ == "__main__":
     unittest.main()

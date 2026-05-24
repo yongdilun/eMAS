@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 1 question-bank work is complete. The fresh 50-question bank now exists in JSON and Markdown form. No scoring logic, RAG pipeline variants, RSE, Small-to-Big, compression, or judge scoring have been implemented for this track yet.
+Phase 2 variant-configuration work is complete. The fresh 50-question bank exists in JSON and Markdown form, and the harness can now execute clean Phase 2 variants V0-V3 with explicit retrieval/rerank settings. RSE, Small-to-Big, compression, scoring, judge scoring, and the full benchmark have not been implemented or run yet.
 
 Important current decisions:
 
@@ -27,7 +27,7 @@ Important current decisions:
 - A random judge reliability audit is required before judge scores are trusted in the decision memo.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
-- Phase 1 is question-bank only. The RAG pipeline, variant config, context builders, compression, and scoring are still untouched.
+- Phase 2 adds variant config and retrieval/debug plumbing only. Context builders, compression, scoring, and judging are still untouched.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -36,7 +36,7 @@ Important current decisions:
 | --- | --- | --- | --- | --- |
 | 0 | Confirm baseline harness shape | Done | Codex | Findings recorded below. Confirmed current artifact schema, citation metadata, retrieval metadata, PDF metadata, neighbor expansion toggle, and smallest safe Phase 1/2 plan. |
 | 1 | Read PDFs and build question bank | Done | Codex | Fresh 50-question bank created in `tests/rag_eval/cases.json` and human-readable copy added at `docs/qa/rag_eval_question_bank.md`. JSON validation confirmed the 10-per-PDF and 4/3/2/1 type mix. |
-| 2 | Add variant configuration | Not Started | TBD | Add V0-V7 and V9-V12 registry/config. Keep V8/V13 deferred. |
+| 2 | Add variant configuration | Done | Codex | Added V0-V7 and V9-V12 registry/config. V0-V3 are executable; V4/V5/V6/V7/V9/V10/V11/V12 are registered but blocked as not implemented for Phase 2. |
 | 3 | Implement context-building strategies | Not Started | TBD | Implement Small-to-Big, RSE, two-stage segment scoring, and extractive compression. |
 | 4 | Add scoring | Not Started | TBD | Add rule scoring, borderline detection, Qwen2.5 7B judge scoring, random reliability audit sample export, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Not Started | TBD | Run 50 questions across 12 variants once each. Randomize variant execution order. |
@@ -185,22 +185,43 @@ Validation:
 - No duplicate case IDs were found.
 - Each registered PDF has exactly 10 cases with the required 4/3/2/1 question-type mix.
 
+## Phase 2 Findings
+
+Date: 2026-05-25
+
+Phase 2 stayed limited to variant configuration and clean retrieval/debug plumbing:
+
+- Added `tests/rag_eval/variants.py` with the Run 1 registry for V0, V1, V2, V3, V4, V5, V6, V7, V9, V10, V11, and V12.
+- V0-V3 are executable in Phase 2:
+  - V0: vector retrieval only, no BM25, no rerank, no neighbor expansion.
+  - V1: vector retrieval plus rerank, no BM25, no neighbor expansion.
+  - V2: hybrid retrieval, no rerank, no neighbor expansion.
+  - V3: hybrid retrieval plus rerank, no neighbor expansion.
+- V4/V5/V6/V7/V9/V10/V11/V12 are registered as Run 1 variants but marked `registered_not_implemented`; selecting them through the runner fails clearly instead of silently running plain hybrid retrieval.
+- Added `RAGPipelineConfig` so the eval harness can pass retrieval mode, top-k settings, rerank enablement, and `expand_neighbors` while normal RAG callers keep the old default behavior: hybrid retrieval, rerank enabled, neighbor expansion enabled.
+- Added vector-only retrieval mode to `HybridRetriever.retrieve(...)`; it skips BM25 and reciprocal-rank fusion and preserves vector score as the base fusion score for downstream ordering/debug output.
+- Added a no-rerank path in `RAGPipeline` so V0 and V2 pass retrieved chunks directly to generation.
+- Updated retrieval debug to use the selected variant's retrieval settings and to log rank, doc ID, page, page_start/page_end, section_title, section_path, chunk_id, score fields, and snippet.
+- Added `variant_id` and `variant_config` to every per-case artifact and to `summary.json`.
+- Default eval variant is V3. The CLI and PowerShell wrapper now accept `--variant` / `-Variant`.
+- No RSE, Small-to-Big, compression, scoring, judge scoring, or full benchmark execution was added.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
 | --- | --- | --- |
-| V0 | Basic Vector RAG | Not Started |
-| V1 | Vector + Rerank | Not Started |
-| V2 | Hybrid Search | Not Started |
-| V3 | Hybrid Search + Rerank | Not Started |
-| V4 | Hybrid Search + Small-to-Big | Not Started |
-| V5 | Hybrid Search + Small-to-Big + Rerank | Not Started |
-| V6 | Hybrid Search + Small-to-Big + Rerank + Light Compression | Not Started |
-| V7 | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | Not Started |
-| V9 | Hybrid Search + RSE | Not Started |
-| V10 | Hybrid Search + RSE + Rerank | Not Started |
-| V11 | Hybrid Search + RSE + Rerank + Light Compression | Not Started |
-| V12 | Query Rewrite + Hybrid Search + RSE + Rerank | Not Started |
+| V0 | Basic Vector RAG | Phase 2 Executable |
+| V1 | Vector + Rerank | Phase 2 Executable |
+| V2 | Hybrid Search | Phase 2 Executable |
+| V3 | Hybrid Search + Rerank | Phase 2 Executable |
+| V4 | Hybrid Search + Small-to-Big | Registered; Context Builder Not Implemented |
+| V5 | Hybrid Search + Small-to-Big + Rerank | Registered; Context Builder Not Implemented |
+| V6 | Hybrid Search + Small-to-Big + Rerank + Light Compression | Registered; Context Builder/Compression Not Implemented |
+| V7 | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | Registered; Query Rewrite/Context Builder Not Implemented |
+| V9 | Hybrid Search + RSE | Registered; RSE Not Implemented |
+| V10 | Hybrid Search + RSE + Rerank | Registered; RSE Not Implemented |
+| V11 | Hybrid Search + RSE + Rerank + Light Compression | Registered; RSE/Compression Not Implemented |
+| V12 | Query Rewrite + Hybrid Search + RSE + Rerank | Registered; Query Rewrite/RSE Not Implemented |
 
 ## Deferred Run 2 Variant Set
 
@@ -275,6 +296,23 @@ python -c "import PyPDF2; print('PyPDF2 ok')"
 @'<pdf extraction scripts for TOC, headings, page text, and source snippets>'@ | python -
 @'<JSON validation and mix-count script>'@ | python -
 git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md docs/qa/RAG_EVALUATION_TRACK.md
+git status --short
+Get-Content -Raw -Path 'docs/qa/RAG_EVALUATION_PLAN.md'
+Get-Content -Raw -Path 'docs/qa/RAG_EVALUATION_TRACK.md'
+Get-Content -Raw -Path 'tests/rag_eval/run_eval.py'
+Get-Content -Raw -Path 'tests/rag_eval/artifact_schema.py'
+Get-Content -Raw -Path 'tests/rag_eval/cases.json'
+Get-Content -Raw -Path 'factory-agent/factory_agent/rag/pipeline.py'
+Get-Content -Raw -Path 'factory-agent/factory_agent/rag/retrieval.py'
+Get-Content -Raw -Path 'factory-agent/factory_agent/rag/reranking.py'
+Get-Content -Raw -Path 'factory-agent/factory_agent/rag/generation.py'
+rg "RAGPipeline|HybridRetriever|serialize_retrieval_debug|RunnerOptions|run_eval" -n
+rg --files -g '*rag*test*.py' -g 'test_*rag*.py' -g '*rag_eval*'
+python -m pytest -q factory-agent/tests/test_rag_retrieval.py factory-agent/tests/test_rag_pipeline_config.py tests/rag_eval/test_variants.py tests/rag_eval/test_artifact_schema.py
+python -m pytest -q factory-agent/tests/test_rag_retrieval.py factory-agent/tests/test_rag_pipeline_config.py tests/rag_eval/test_variants.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py
+python -m json.tool tests/rag_eval/cases.json
+python -m tests.rag_eval.run_eval --help
+git diff --check
 ```
 
 ## Test Results
@@ -282,16 +320,35 @@ git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md 
 - JSON validation passed for `tests/rag_eval/cases.json`: 50 cases, no missing required fields, no duplicate IDs, and exact 4/3/2/1 question-type mix for each registered PDF.
 - `git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md docs/qa/RAG_EVALUATION_TRACK.md` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
 - No RAG harness, LLM, or application tests were run because Phase 1 is question-bank only.
+- Phase 2 focused tests passed: `python -m pytest -q factory-agent/tests/test_rag_retrieval.py factory-agent/tests/test_rag_pipeline_config.py tests/rag_eval/test_variants.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_run_eval_variants.py` returned 18 passed. Warnings were existing deprecation warnings from Swig/PyMuPDF-style imports, `pytest_asyncio`, and `datetime.utcnow()` in telemetry.
+- `python -m json.tool tests/rag_eval/cases.json` parsed the question bank successfully.
+- `python -m tests.rag_eval.run_eval --help` showed the new `--variant {V0,V1,V2,V3,V4,V5,V6,V7,V9,V10,V11,V12}` option without starting a benchmark.
+- `git diff --check` passed with exit code 0. Git reported LF-to-CRLF normalization warnings for touched text files, but no whitespace errors.
+- No live LLM run and no full 50-question benchmark were run for Phase 2.
 
 ## Files Created
 
 - `docs/qa/RAG_EVALUATION_PLAN.md`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
 - `docs/qa/rag_eval_question_bank.md`
+- `tests/rag_eval/variants.py`
+- `tests/rag_eval/test_artifact_schema.py`
+- `tests/rag_eval/test_run_eval_variants.py`
+- `tests/rag_eval/test_variants.py`
+- `factory-agent/tests/test_rag_pipeline_config.py`
 
 ## Files Updated
 
 - `tests/rag_eval/cases.json`
+- `factory-agent/factory_agent/rag/pipeline.py`
+- `factory-agent/factory_agent/rag/retrieval.py`
+- `factory-agent/tests/test_rag_live_llm.py`
+- `factory-agent/tests/test_rag_retrieval.py`
+- `tests/rag_eval/README.md`
+- `tests/rag_eval/artifact_schema.py`
+- `tests/rag_eval/run_eval.py`
+- `tests/rag_eval/run_rag_eval.ps1`
+- `docs/qa/RAG_EVALUATION_TRACK.md`
 
 ## Current Blockers
 
@@ -299,4 +356,4 @@ git diff --check -- tests/rag_eval/cases.json docs/qa/rag_eval_question_bank.md 
 
 ## Next Action
 
-Start Phase 2 only when requested: add variant configuration and clean retrieval/debug plumbing before implementing RSE, Small-to-Big, compression, scoring, or benchmark execution.
+Start Phase 3 only when requested: implement context-building strategies such as Small-to-Big, RSE, and light extractive compression. Do not run the full benchmark until scoring and benchmark execution phases are ready.

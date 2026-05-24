@@ -8,6 +8,7 @@ runner deliberately avoids exact-string matching on answers; automated checks ar
 - Cases: [`tests/rag_eval/cases.json`](cases.json)
 - Schema helpers: [`tests/rag_eval/artifact_schema.py`](artifact_schema.py)
 - Runner: [`tests/rag_eval/run_eval.py`](run_eval.py)
+- Variant registry: [`tests/rag_eval/variants.py`](variants.py)
 - PowerShell wrapper: [`tests/rag_eval/run_rag_eval.ps1`](run_rag_eval.ps1)
 - Pytest wrapper: [`factory-agent/tests/test_rag_live_llm.py`](../../factory-agent/tests/test_rag_live_llm.py)
 - Artifacts: `test-artifacts/rag-eval/<run_id>/` (gitignored, mirroring [`tests/e2e/README.md`](../e2e/README.md))
@@ -59,14 +60,21 @@ From the repo root (or anywhere — the script resolves repo root):
 .\tests\rag_eval\run_rag_eval.ps1 -Action Pytest -Filter loto-
 ```
 
-Parameters: `-Ingest`, `-Action RunEval|Pytest`, `-Filter`, `-RunId`, `-OpenAiBaseUrl`,
-`-OpenAiApiKey`, `-PythonExe`, `-NoCleanup`. Defaults match local `llama-server` on `:900`.
+Parameters: `-Ingest`, `-Action RunEval|Pytest`, `-Filter`, `-RunId`, `-Variant`,
+`-RetrievalTopN`, `-OpenAiBaseUrl`, `-OpenAiApiKey`, `-PythonExe`, `-NoCleanup`.
+Defaults match local `llama-server` on `:900` and the Phase 2 V3 variant.
 
 ### CLI
 
 ```powershell
 # from repo root
 python -m tests.rag_eval.run_eval
+
+# select a Phase 2 executable variant:
+python -m tests.rag_eval.run_eval --variant V0
+python -m tests.rag_eval.run_eval --variant V1
+python -m tests.rag_eval.run_eval --variant V2
+python -m tests.rag_eval.run_eval --variant V3
 
 # subset by case id substring:
 python -m tests.rag_eval.run_eval --filter loto-
@@ -129,6 +137,7 @@ Per-case fields (full schema in
 |---|---|
 | `run_id`, `case_id`, `started_at`, `finished_at`, `duration_s` | run/case metadata |
 | `env` | non-secret fingerprint (model ids, base URL **host only**) |
+| `variant_id` / `variant_config` | selected Run 1 variant and its retrieval/rerank settings |
 | `case` | original entry from `cases.json` for self-contained review |
 | `query` | exact prompt sent to the agent |
 | `route_decision` | full router dict (`route`, `route_source`, `confidence`, `scores`, `signals`, `clarify_reason`, …) |

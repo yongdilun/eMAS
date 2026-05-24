@@ -1,14 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from factory_agent.rag.generation import AnswerGenerator
 from factory_agent.rag.reranking import LLMReranker
 from factory_agent.rag.retrieval import HybridRetriever
-from factory_agent.rag.schemas import AnswerResult
+from factory_agent.rag.schemas import AnswerResult, Chunk, ScoredChunk
 from factory_agent.rag.source_metadata import is_insufficient_context_answer
 from factory_agent.observability.telemetry import log_event
+
+
+@dataclass(frozen=True)
+class RAGPipelineConfig:
+    """Runtime knobs for retrieval/rerank behavior.
+
+    Defaults preserve the existing production behavior. The RAG eval harness
+    passes explicit configs to isolate Run 1 variants.
+    """
+
+    retrieval_mode: str = "hybrid"
+    use_rerank: bool = True
+    expand_neighbors: bool = True
+    vector_top_k: int = 8
+    keyword_top_k: int = 8
+    fusion_top_k: int = 8
+    rerank_top_k: int | None = None
+    query_rewrite: bool = False
+    context_builder: str = "none"
+    compression: str = "none"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class RAGPipeline:
@@ -31,19 +55,24 @@ class RAGPipeline:
         session_id: str | None = None,
         route: str = "RAG_ONLY",
         api_data: dict[str, Any] | None = None,
+        config: RAGPipelineConfig | None = None,
     ) -> AnswerResult:
+        config = config or RAGPipelineConfig()
         log_event(
             "rag_pipeline_start",
             session_id=session_id,
             query=query,
-            route=route
+            route=route,
+            retrieval_mode=config.retrieval_mode,
+            use_rerank=config.use_rerank,
         )
         result = await asyncio.to_thread(
             self._run_sync,
             query=query,
             route=route,
             api_data=api_data,
-            session_id=session_id
+            session_id=session_id,
+            config=config,
         )
         log_event(
             "rag_pipeline_complete",
@@ -60,23 +89,45 @@ class RAGPipeline:
         route: str,
         api_data: dict[str, Any] | None,
         session_id: str | None = None,
+        config: RAGPipelineConfig | None = None,
     ) -> AnswerResult:
+        config = config or RAGPipelineConfig()
+
         # 1. Retrieval
-        candidates = self._retriever.retrieve(query=query, route=route)
+        candidates = self._retriever.retrieve(
+            query=query,
+            route=route,
+            vector_top_k=config.vector_top_k,
+            keyword_top_k=config.keyword_top_k,
+            fusion_top_k=config.fusion_top_k,
+            expand_neighbors=config.expand_neighbors,
+            retrieval_mode=config.retrieval_mode,
+        )
         log_event(
             "rag_retrieval_complete",
             session_id=session_id,
-            candidate_count=len(candidates)
+            candidate_count=len(candidates),
+            retrieval_mode=config.retrieval_mode,
+            expand_neighbors=config.expand_neighbors,
         )
-        
+
         # 2. Reranking
-        selected_chunks = self._reranker.rerank(query=query, candidates=candidates, route=route)
+        if config.use_rerank:
+            selected_chunks = self._reranker.rerank(
+                query=query,
+                candidates=candidates,
+                route=route,
+                top_k=config.rerank_top_k,
+            )
+        else:
+            selected_chunks = _chunks_from_candidates(candidates, top_k=config.rerank_top_k)
         log_event(
             "rag_rerank_complete",
             session_id=session_id,
-            selected_count=len(selected_chunks)
+            selected_count=len(selected_chunks),
+            use_rerank=config.use_rerank,
         )
-        
+
         # 3. Generation
         return self._generator.generate(
             query=query,
@@ -84,3 +135,10 @@ class RAGPipeline:
             api_data=api_data,
             route=route,
         )
+
+
+def _chunks_from_candidates(candidates: list[ScoredChunk], *, top_k: int | None = None) -> list[Chunk]:
+    chunks = [sc.chunk for sc in candidates]
+    if top_k is None:
+        return chunks
+    return chunks[:top_k]

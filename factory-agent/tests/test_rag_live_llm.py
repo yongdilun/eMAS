@@ -51,6 +51,7 @@ def test_live_rag_eval_writes_artifacts():
         output_root=REPO_ROOT / "test-artifacts" / "rag-eval",
         case_filter=os.getenv("FACTORY_AGENT_RAG_EVAL_FILTER") or None,
         run_id=os.getenv("FACTORY_AGENT_RAG_EVAL_RUN_ID") or None,
+        variant_id=os.getenv("FACTORY_AGENT_RAG_EVAL_VARIANT") or "V3",
     )
 
     summary = run_eval(opts)

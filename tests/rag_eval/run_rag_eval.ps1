@@ -20,7 +20,10 @@
   Optional run id for artifact folder name.
 
 .PARAMETER RetrievalTopN
-  Chunks to log per case in retrieval_debug (default 5).
+  Chunks to log per case in retrieval_debug (default 10).
+
+.PARAMETER Variant
+  Run 1 variant ID to execute. Phase 2 supports V0, V1, V2, and V3.
 
 .PARAMETER OpenAiBaseUrl
   LLM base URL (default http://127.0.0.1:900/v1).
@@ -50,7 +53,9 @@ param(
   [string]$Action = "RunEval",
   [string]$Filter = "",
   [string]$RunId = "",
-  [int]$RetrievalTopN = 5,
+  [int]$RetrievalTopN = 10,
+  [ValidateSet("V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V9", "V10", "V11", "V12")]
+  [string]$Variant = "V3",
   [string]$OpenAiBaseUrl = "http://127.0.0.1:900/v1",
   [string]$OpenAiApiKey = "local",
   [string]$PythonExe = "",
@@ -111,9 +116,10 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($RunId)) {
       $runArgs += "--run-id", $RunId
     }
-    if ($RetrievalTopN -ne 5) {
+    if ($RetrievalTopN -ne 10) {
       $runArgs += "--retrieval-top-n", "$RetrievalTopN"
     }
+    $runArgs += "--variant", $Variant
     Write-Host "==> tests.rag_eval.run_eval $($runArgs -join ' ')" -ForegroundColor Cyan
     & $PythonExe @runArgs
     exit $LASTEXITCODE
@@ -122,11 +128,15 @@ try {
   if (-not [string]::IsNullOrWhiteSpace($Filter)) {
     $env:FACTORY_AGENT_RAG_EVAL_FILTER = $Filter
   }
+  $env:FACTORY_AGENT_RAG_EVAL_VARIANT = $Variant
   Write-Host "==> pytest test_rag_live_llm.py" -ForegroundColor Cyan
   & $PythonExe -m pytest (Join-Path $RepoRoot "factory-agent\tests\test_rag_live_llm.py") -v
   $code = $LASTEXITCODE
   if (Test-Path Env:FACTORY_AGENT_RAG_EVAL_FILTER) {
     Remove-Item Env:FACTORY_AGENT_RAG_EVAL_FILTER
+  }
+  if (Test-Path Env:FACTORY_AGENT_RAG_EVAL_VARIANT) {
+    Remove-Item Env:FACTORY_AGENT_RAG_EVAL_VARIANT
   }
   exit $code
 }
