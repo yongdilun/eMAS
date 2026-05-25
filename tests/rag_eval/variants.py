@@ -50,6 +50,7 @@ class RAGVariantConfig:
     keyword_top_k: int = 10
     fusion_top_k: int = 10
     rerank_top_k: int | None = None
+    allow_rerank_fallback: bool = False
     phase2_status: str = "executable"
     notes: str = ""
 
@@ -66,6 +67,7 @@ class RAGVariantConfig:
             keyword_top_k=self.keyword_top_k,
             fusion_top_k=self.fusion_top_k,
             rerank_top_k=self.rerank_top_k,
+            allow_rerank_fallback=self.allow_rerank_fallback,
             query_rewrite=self.query_rewrite,
             context_builder=self.context_builder,
             compression=self.compression,
@@ -82,6 +84,7 @@ class RAGVariantConfig:
             "query_rewrite": config.query_rewrite,
             "context_builder": config.context_builder,
             "compression": config.compression,
+            "allow_rerank_fallback": config.allow_rerank_fallback,
         }
 
     def to_dict(self) -> dict[str, Any]:

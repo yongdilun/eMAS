@@ -169,3 +169,49 @@ def test_light_compression_is_extractive_and_preserves_sentence_order():
         assert sentence_text in original_body
         positions.append(original_body.index(sentence_text))
     assert positions == sorted(positions)
+
+
+def test_context_builder_metadata_preserves_source_chunk_evidence_for_audit():
+    chunks = [
+        _chunk("doc", 1, "The selected lockout sentence is here.", page=7),
+        _chunk("doc", 2, "Verification support remains nearby.", page=8),
+    ]
+    builder = RAGContextBuilder(FakeRetriever(chunks))
+
+    result = builder.build(
+        query="lockout verification",
+        selected_chunks=[chunks[0]],
+        candidates=[_scored(chunks[0])],
+        context_builder="small_to_big",
+        compression="none",
+    )
+
+    segment = result.metadata["segments"][0]
+    assert segment["page_start"] == 7
+    assert segment["page_end"] == 8
+    assert segment["source_chunk_evidence"][0]["chunk_id"] == "doc_c0001"
+    assert segment["source_chunk_evidence"][1]["page"] == 8
+    assert "Verification support" in segment["source_chunk_evidence"][1]["snippet"]
+
+
+def test_light_compression_preserves_required_child_evidence_from_extra_text():
+    text = (
+        "[Section: Lockout]\n"
+        "General background about machines. "
+        "This query-matching sentence talks about lockout. "
+        "The required permit evidence must be retained. "
+        "More filler about unrelated administration. "
+        "Final filler sentence."
+    )
+
+    result = light_extractive_compress(
+        text,
+        query="lockout",
+        max_tokens=35,
+        target_ratio=0.35,
+        extra_text="required permit evidence",
+    )
+
+    assert result.compression_ran is True
+    assert "query-matching sentence talks about lockout" in result.text
+    assert "required permit evidence must be retained" in result.text

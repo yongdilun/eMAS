@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 6 Review and Decision Memo is complete. The fresh 50-question bank was run once across all 12 Run 1 variants, producing 600 case artifacts, 12 summaries, and judge audit samples under `test-artifacts/rag-eval/`. `docs/qa/RAG_EVALUATION_DECISION_MEMO.md` selects `V12` as the provisional champion, with `V7` as runner-up and `V2` as the clean hybrid control to carry into Run 2 if budget permits. Document Augmentation V8/V13 has not been implemented or run.
+Phase 6.5 Fairness Fix and Corrected Rerun is complete. The fresh 50-question bank now has the original Run 1 artifacts plus a corrected comparison set for the 8 rerank-enabled variants and 4 anchor variants. `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md` records the corrected baseline. The corrected provisional champion is `V7`, with `V12` effectively tied as co-lead and `V10` as the third carry-forward candidate for Phase 7. Document Augmentation V8/V13 has not been implemented or run.
 
 Important current decisions:
 
@@ -25,7 +25,8 @@ Important current decisions:
 - Run 1 uses the existing local judge model on port `900`: `Qwen2.5-7B-Instruct-Q4_K_M`.
 - The local judge is a practical triage judge, not the final gold-standard judge.
 - Phase 6 manually audited judge samples and found Qwen2.5 7B reliable enough for rough triage only, weak for safety and citation adjudication.
-- Phase 6.5 has been added before Document Augmentation to fix unfair comparison defects, especially the reranker fallback, then rerun the affected variants.
+- Phase 6.5 fixed the unfair reranker fallback, improved citation/evidence audit artifacts and safety-boundary checks, then reran the affected variants plus anchors.
+- Corrected Phase 6.5 provisional champion: `V7`. Co-lead: `V12`. Recommended top 3 for Phase 7: `V7`, `V12`, and `V10`; `V5` is a close alternate and `V2` remains an optional clean control.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -33,7 +34,7 @@ Important current decisions:
 - Run 1 judge calls completed without runtime errors, but judge output remains triage evidence only after the Phase 6 manual audit.
 - V7 and V12 use a deterministic retrieval-only query rewrite path that appends retrieval focus terms and acronym expansions; generation still receives the original user query.
 - Light compression is extractive and keyword-overlap based for Phase 3. It preserves source sentence order and section context, but does not yet use embedding-based semantic sentence selection.
-- Important Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Phase 6 treats all rerank-enabled results as degraded fallback-rerank behavior, not true reranker results. Fix or replace reranker integration before Run 2.
+- Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Phase 6.5 resolved this for corrected artifacts by replacing the reranker integration and requiring visible, explicit fallback.
 - Phase 0 findings reflect the current worktree and persisted indexes. Several RAG ingestion/index files were already dirty before Phase 0 started, so future agents should not assume those ingestion changes are part of the committed baseline until they are reviewed and committed separately.
 
 ## Phase Status
@@ -47,7 +48,7 @@ Important current decisions:
 | 4 | Add scoring | Done | Codex | Added rule scoring, retrieval metrics, borderline detection, optional Qwen2.5 7B judge support, random reliability audit sample export, summary aggregates, and serious-failure flags. |
 | 5 | Run Benchmark 1 | Done | Codex | Run 1 completed across 12 variants in fixed randomized order. Artifacts validated: 600 case artifacts, 12 summaries, and 12 judge audit samples. |
 | 6 | Review and decision memo | Done | Codex | Decision memo added. Provisional champion: V12. Runner-up: V7. Run 2 carry-forward set: V12, V7, and V2 if budget permits. |
-| 6.5 | Fairness fix and corrected rerun | Not Started | TBD | Fix/audit reranker fallback, improve evidence/citation and safety-boundary contracts where needed, then rerun affected variants before Document Augmentation. |
+| 6.5 | Fairness fix and corrected rerun | Done | Codex | Fixed/replaced reranker integration, added visible fallback tracing, improved citation/evidence artifacts and safety-boundary scoring, reran V1/V3/V5/V6/V7/V10/V11/V12 plus V0/V2/V4/V9 anchors. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
@@ -332,6 +333,64 @@ Required bug fix before Run 2:
 
 - Fix or replace the BGE reranker integration and add a smoke assertion that rerank-enabled variants fail loudly if reranking falls back.
 
+## Phase 6.5 Findings
+
+Date: 2026-05-25
+
+Phase 6.5 corrected fairness defects and reran the affected comparison set:
+
+- Replaced the broken FlagEmbedding reranker integration with a direct Transformers cross-encoder wrapper for `BAAI/bge-reranker-v2-m3`.
+- Added strict reranker behavior: rerank-enabled variants fail loudly by default if reranking cannot run, and fallback is allowed only when explicitly configured and recorded.
+- Added rerank trace artifacts and summary counts for enabled, attempted, succeeded, and fallback-used cases.
+- Added citation support artifacts with supporting chunk IDs, pages, sections, and evidence snippets.
+- Improved OSHA/live-status boundary behavior so high-risk unsupported requests require a concrete caution and a safe next step.
+- Audited compression with focused tests showing required evidence is preserved in representative compressed contexts.
+- Kept the 50-question bank unchanged.
+- Did not implement Document Augmentation `V8` or `V13`.
+
+Corrected rerun scope:
+
+- Required rerank variants: `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`.
+- Anchor variants: `V0`, `V2`, `V4`, and `V9`.
+- All corrected runs used `--judge`; judge calls completed without errors.
+- Artifact validation passed for every corrected folder: 50 case artifacts, `summary.json`, and `judge_audit_sample.json`.
+- Rerank variants recorded 50/50 attempted, 50/50 succeeded, and 0 fallback.
+
+Corrected result:
+
+| Variant | Avg Rule | Serious | Borderline | Rerank Succeeded/Fallback |
+| --- | ---: | ---: | ---: | --- |
+| `V7` | 76.58 | 17 | 35 | 50/0 |
+| `V12` | 76.56 | 17 | 34 | 50/0 |
+| `V10` | 75.55 | 17 | 33 | 50/0 |
+| `V5` | 75.32 | 17 | 33 | 50/0 |
+| `V2` | 74.40 | 17 | 28 | 0/0 |
+| `V3` | 72.58 | 19 | 30 | 50/0 |
+| `V1` | 72.37 | 18 | 35 | 50/0 |
+| `V4` | 71.94 | 19 | 28 | 0/0 |
+| `V0` | 70.93 | 20 | 31 | 0/0 |
+| `V9` | 70.91 | 20 | 26 | 0/0 |
+| `V11` | 70.84 | 21 | 36 | 50/0 |
+| `V6` | 69.45 | 22 | 36 | 50/0 |
+
+Decision update:
+
+- Corrected provisional champion: `V7`.
+- Co-lead: `V12`; the margin is only 0.0194 average rule points, with both at 17 serious failures.
+- Top Phase 7 carry-forward set: `V7`, `V12`, and `V10`.
+- `V5` is a close alternate to `V10`.
+- `V2` remains useful as a clean non-rerank hybrid control, but it is no longer a top-three corrected candidate.
+
+Important interpretation:
+
+- The reranker fix changed the ranking enough that the Phase 6 `V12` champion should be superseded by the corrected `V7`/`V12` co-lead result.
+- Citation-related serious-failure flags dropped from 200 citation flags in original Run 1 to 105 in the corrected comparison.
+- Safety-case serious failures dropped from 91 safety cases with at least one serious failure to 75, while the OSHA live-status boundary case gained concrete caution and safe-next-step metadata.
+- Automated `unsafe_advice` flags increased from 7 to 9 and need manual review; strict hard-failure scoring remains in place.
+- Compression remains quality-negative: `V6` and `V11` save tokens but trail their uncompressed counterparts by 5.87 and 4.72 average rule points respectively.
+
+Full details are in `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -516,6 +575,11 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 6 loaded all 12 `summary.json` files and all 12 `judge_audit_sample.json` files for local analysis.
 - Phase 6 manually inspected 29 judged answers from the audit samples.
 - Phase 6 did not run the full benchmark, did not run live judge calls, and did not change RAG behavior.
+- Phase 6.5 focused tests passed: `python -m pytest -q factory-agent/tests/test_rag_reranking.py factory-agent/tests/test_rag_pipeline_config.py factory-agent/tests/test_rag_generation.py factory-agent/tests/test_rag_context_building.py tests/rag_eval/test_scoring.py tests/rag_eval/test_artifact_schema.py tests/rag_eval/test_variants.py tests/rag_eval/test_run_eval_variants.py` returned 53 passed. Warnings were existing Swig/PyMuPDF-style import warnings, `pytest_asyncio` warnings, and telemetry `datetime.utcnow()` deprecation warnings.
+- `python -m tests.rag_eval.run_eval --help` passed and showed the expected variant and judge options.
+- Phase 6.5 corrected live reruns completed with `--judge` for `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, `V12`, and anchor variants `V0`, `V2`, `V4`, and `V9`.
+- Phase 6.5 artifact validation passed for all corrected run folders: every folder has 50 case artifacts plus `summary.json` and `judge_audit_sample.json`; all judge-requested cases completed with 0 judge errors.
+- Phase 6.5 rerank validation passed: all required rerank variants recorded 50 enabled, 50 attempted, 50 succeeded, and 0 fallback.
 
 ## Files Created
 
@@ -537,6 +601,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `tests/rag_eval/test_audit.py`
 - `tests/rag_eval/test_run_eval_judge.py`
 - `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
+- `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`
 
 ## Files Updated
 
@@ -545,24 +610,33 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `factory-agent/factory_agent/rag/retrieval.py`
 - `factory-agent/factory_agent/rag/generation.py`
 - `factory-agent/factory_agent/rag/schemas.py`
+- `factory-agent/factory_agent/rag/reranking.py`
+- `factory-agent/factory_agent/rag/source_metadata.py`
+- `factory-agent/factory_agent/llm/models.py`
 - `factory-agent/tests/test_rag_live_llm.py`
+- `factory-agent/tests/test_rag_context_building.py`
+- `factory-agent/tests/test_rag_generation.py`
 - `factory-agent/tests/test_rag_pipeline_config.py`
 - `factory-agent/tests/test_rag_retrieval.py`
+- `factory-agent/tests/test_rag_reranking.py`
 - `tests/rag_eval/README.md`
 - `tests/rag_eval/artifact_schema.py`
 - `tests/rag_eval/run_eval.py`
 - `tests/rag_eval/run_rag_eval.ps1`
 - `tests/rag_eval/test_artifact_schema.py`
+- `tests/rag_eval/test_scoring.py`
 - `tests/rag_eval/test_variants.py`
 - `tests/rag_eval/variants.py`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
+- `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
 
 ## Current Blockers
 
-- Reranker integration is broken for rerank-enabled variants. Run 1 rerank variants must be interpreted as fallback-rank variants, and the reranker should be fixed or replaced before Run 2.
-- The provisional champion `V12` still has 21 automated serious failures out of 50 and is not production-ready.
+- Corrected reranker integration is fixed for Phase 6.5 artifacts, but the corrected champion `V7` still has 17 automated serious failures out of 50 and is not production-ready.
 - Judge safety and citation scoring are weak enough that top Run 2 candidates require manual review.
+- Automated `unsafe_advice` flags increased slightly in the corrected comparison and need manual review before production conclusions.
+- Compression remains quality-negative despite focused evidence-preservation fixes.
 
 ## Next Action
 
-Start Phase 6.5 before Phase 7: fix or audit the reranker fallback, improve evidence/citation and safety-boundary contracts only where they correct unfair evaluation defects, then rerun the affected comparison set. Do not implement Document Augmentation `V8`/`V13` until Phase 6.5 produces a corrected baseline.
+Start Phase 7 only after accepting the corrected Phase 6.5 baseline: compare Document Augmentation `V8` and `V13` against the corrected top candidates, preferably `V7`, `V12`, and `V10`, with `V2` only as an optional clean control.

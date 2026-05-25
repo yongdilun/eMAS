@@ -176,6 +176,7 @@ def build_env_fingerprint(settings: Any) -> dict[str, Any]:
         "planner_model": getattr(settings, "planner_model", None),
         "rag_answer_model": getattr(settings, "rag_answer_model", None),
         "rag_reranker_model": getattr(settings, "rag_reranker_model", None),
+        "bge_reranker_model": getattr(settings, "bge_reranker_model", None),
         "openai_base_url_host": host,
     }
 
@@ -468,6 +469,7 @@ def _build_scoring_aggregate(case_results: list[dict[str, Any]]) -> dict[str, An
             [float(result["duration_s"]) for result in case_results if result.get("duration_s") is not None]
         ),
         "average_context_token_estimates": _average_context_token_estimates(case_results),
+        "rerank_counts": _rerank_counts(case_results),
         "judge_counts": {
             "requested": sum(1 for result in case_results if result.get("judge_requested")),
             "completed": sum(1 for result in case_results if result.get("judge_result") is not None),
@@ -517,6 +519,19 @@ def _average_context_token_estimates(case_results: list[dict[str, Any]]) -> dict
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 buckets[key].append(float(value))
     return {key: _average(values) for key, values in buckets.items()}
+
+
+def _rerank_counts(case_results: list[dict[str, Any]]) -> dict[str, int]:
+    traces = [
+        ((result.get("rag") or {}).get("metadata") or {}).get("rerank") or {}
+        for result in case_results
+    ]
+    return {
+        "enabled": sum(1 for trace in traces if trace.get("enabled") is True),
+        "attempted": sum(1 for trace in traces if trace.get("attempted") is True),
+        "succeeded": sum(1 for trace in traces if trace.get("succeeded") is True),
+        "fallback_used": sum(1 for trace in traces if trace.get("fallback_used") is True),
+    }
 
 
 def _ensure_jsonable(value: Any) -> Any:

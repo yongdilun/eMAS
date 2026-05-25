@@ -137,6 +137,8 @@ class _SegmentDraft:
             "token_estimate_after_compression": self.token_estimate_after_compression,
             "compression_ran": self.compression_ran,
             "compression_selected_sentence_indices": self.compression_selected_sentence_indices,
+            "segment_text_snippet": _snippet(self.text, limit=420),
+            "source_chunk_evidence": [_chunk_evidence(chunk) for chunk in self.chunks_in_segment],
         }
 
 
@@ -602,16 +604,25 @@ def light_extractive_compress(
     running_tokens = 0
     evidence_indices: list[int] = []
 
-    def try_add(index: int) -> bool:
+    def try_add(index: int, *, limit: int = target_tokens) -> bool:
         nonlocal running_tokens
         if index < 0 or index >= len(sentences) or index in selected:
             return False
         sentence_tokens = estimate_tokens(sentences[index])
-        if selected and running_tokens + sentence_tokens > target_tokens:
+        if selected and running_tokens + sentence_tokens > limit:
             return False
         selected.add(index)
         running_tokens += sentence_tokens
         return True
+
+    required_indices = _required_evidence_indices(
+        sentences,
+        query_terms=query_terms,
+        extra_terms=extra_terms,
+    )
+    for index in required_indices:
+        if try_add(index, limit=body_budget):
+            evidence_indices.append(index)
 
     for index, score in scored:
         if running_tokens >= target_tokens:
@@ -797,6 +808,28 @@ def _sentence_score(
     return score
 
 
+def _required_evidence_indices(
+    sentences: list[str],
+    *,
+    query_terms: set[str],
+    extra_terms: set[str],
+) -> list[int]:
+    required: list[int] = []
+    for terms in (query_terms, extra_terms):
+        if not terms:
+            continue
+        best_index = None
+        best_overlap = 0
+        for index, sentence in enumerate(sentences):
+            overlap = len(_support_tokens(sentence) & terms)
+            if overlap > best_overlap:
+                best_index = index
+                best_overlap = overlap
+        if best_index is not None and best_overlap > 0 and best_index not in required:
+            required.append(best_index)
+    return required
+
+
 def _support_tokens(text: str) -> set[str]:
     tokens: set[str] = set()
     for raw in WORD_RE.findall((text or "").lower()):
@@ -909,6 +942,27 @@ def _segment_locator_metadata(chunks: list[Chunk]) -> dict[str, Any]:
         "page_start": page_start,
         "page_end": page_end,
     }
+
+
+def _chunk_evidence(chunk: Chunk) -> dict[str, Any]:
+    metadata = _clean_metadata(chunk.metadata)
+    return {
+        "chunk_id": chunk.chunk_id,
+        "doc_id": metadata.get("doc_id"),
+        "page": metadata.get("page"),
+        "page_start": metadata.get("page_start"),
+        "page_end": metadata.get("page_end"),
+        "section_title": metadata.get("section_title"),
+        "section_path": _jsonable_section_path(metadata.get("section_path")),
+        "snippet": _snippet(_strip_section_prefix(chunk.text), limit=360),
+    }
+
+
+def _snippet(text: str, *, limit: int) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 1].rstrip()}..."
 
 
 def _metadata_int(metadata: dict[str, Any], key: str) -> int | None:

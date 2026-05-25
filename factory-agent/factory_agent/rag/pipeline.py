@@ -33,6 +33,7 @@ class RAGPipelineConfig:
     keyword_top_k: int = 8
     fusion_top_k: int = 8
     rerank_top_k: int | None = None
+    allow_rerank_fallback: bool = False
     query_rewrite: bool = False
     context_builder: str = "none"
     compression: str = "none"
@@ -133,14 +134,29 @@ class RAGPipeline:
                 candidates=candidates,
                 route=route,
                 top_k=config.rerank_top_k,
+                allow_fallback=config.allow_rerank_fallback,
             )
+            rerank_trace = dict(getattr(self._reranker, "last_trace", {}) or {})
         else:
             selected_chunks = _chunks_from_candidates(candidates, top_k=config.rerank_top_k)
+            rerank_trace = {
+                "enabled": False,
+                "attempted": False,
+                "succeeded": False,
+                "fallback_used": False,
+                "fallback_allowed": config.allow_rerank_fallback,
+                "candidate_count": len(candidates),
+                "selected_count": len(selected_chunks),
+                "input_chunk_ids": [sc.chunk.chunk_id for sc in candidates],
+                "output_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
+            }
         log_event(
             "rag_rerank_complete",
             session_id=session_id,
             selected_count=len(selected_chunks),
             use_rerank=config.use_rerank,
+            rerank_succeeded=rerank_trace.get("succeeded"),
+            rerank_fallback_used=rerank_trace.get("fallback_used"),
         )
 
         # 3. Context building
@@ -174,6 +190,7 @@ class RAGPipeline:
                 "original_query": query,
                 "retrieval_query": retrieval_query,
             },
+            "rerank": rerank_trace,
             "context_building": context_result.metadata,
         }
         return result

@@ -3,13 +3,15 @@ from unittest.mock import MagicMock, patch
 import json
 import time
 
-from factory_agent.rag.reranking import LLMReranker
+import pytest
+
+from factory_agent.rag.reranking import LLMReranker, RerankerExecutionError
 from factory_agent.rag.schemas import Chunk, ScoredChunk
 
 class TestLLMReranker(unittest.TestCase):
     
     def setUp(self):
-        with patch('factory_agent.rag.reranking.build_rag_reranker_chat_model'):
+        with patch('factory_agent.rag.reranking.build_bge_reranker'):
             self.reranker = LLMReranker()
             self.reranker.llm = MagicMock()
 
@@ -157,9 +159,42 @@ class TestLLMReranker(unittest.TestCase):
         # Mock LLM to raise timeout
         self.reranker.llm.invoke = MagicMock(side_effect=Exception("Timeout"))
         
-        result = self.reranker.rerank("query", candidates, "RAG_ONLY", top_k=1)
+        result = self.reranker.rerank("query", candidates, "RAG_ONLY", top_k=1, allow_fallback=True)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].chunk_id, "id1")
+        self.assertTrue(self.reranker.last_trace["fallback_used"])
+        self.assertTrue(self.reranker.last_trace["fallback_allowed"])
+
+    def test_rr5_fallback_requires_explicit_permission(self):
+        """RR5b: reranker errors fail loudly unless fallback is explicitly allowed."""
+        chunk1 = Chunk(chunk_id="id1", text="t1", metadata={})
+        candidates = [ScoredChunk(chunk=chunk1, boosted_score=0.9)]
+
+        self.reranker.llm.invoke = MagicMock(side_effect=Exception("Timeout"))
+
+        with pytest.raises(RerankerExecutionError):
+            self.reranker.rerank("query", candidates, "RAG_ONLY", top_k=1)
+        self.assertFalse(self.reranker.last_trace["fallback_used"])
+        self.assertFalse(self.reranker.last_trace["fallback_allowed"])
+
+    def test_bge_model_scores_drive_order_and_trace(self):
+        """RR8: a working BGE-style backend changes order and records scores."""
+        self.reranker.llm = None
+        fake_model = MagicMock()
+        fake_model.compute_score.return_value = [0.1, 2.0]
+        self.reranker.model = fake_model
+        candidates = [
+            ScoredChunk(chunk=Chunk(chunk_id="low", text="less relevant", metadata={}), boosted_score=10.0),
+            ScoredChunk(chunk=Chunk(chunk_id="high", text="very relevant", metadata={}), boosted_score=0.0),
+        ]
+
+        result = self.reranker.rerank("query", candidates, "RAG_ONLY", top_k=2)
+
+        self.assertEqual([chunk.chunk_id for chunk in result], ["high", "low"])
+        self.assertTrue(self.reranker.last_trace["attempted"])
+        self.assertTrue(self.reranker.last_trace["succeeded"])
+        self.assertFalse(self.reranker.last_trace["fallback_used"])
+        self.assertEqual(self.reranker.last_trace["scores_by_chunk_id"]["high"], 2.0)
 
     def test_rr7_latency(self):
         """RR7: Reranker completes in reasonable time (mocked)."""

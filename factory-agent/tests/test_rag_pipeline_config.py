@@ -52,6 +52,35 @@ class FakeReranker:
         return [kwargs["candidates"][1].chunk]
 
 
+class FailingReranker:
+    def __init__(self) -> None:
+        self.last_trace = {
+            "enabled": True,
+            "attempted": True,
+            "succeeded": False,
+            "fallback_used": False,
+            "fallback_allowed": False,
+            "error": "forced failure",
+        }
+
+    def rerank(self, **kwargs):
+        if kwargs.get("allow_fallback"):
+            self.last_trace = {
+                "enabled": True,
+                "attempted": True,
+                "succeeded": False,
+                "fallback_used": True,
+                "fallback_allowed": True,
+                "error": "forced failure",
+                "candidate_count": len(kwargs["candidates"]),
+                "selected_count": 1,
+                "input_chunk_ids": [sc.chunk.chunk_id for sc in kwargs["candidates"]],
+                "output_chunk_ids": [kwargs["candidates"][0].chunk.chunk_id],
+            }
+            return [kwargs["candidates"][0].chunk]
+        raise RuntimeError("forced failure")
+
+
 class FakeGenerator:
     def __init__(self) -> None:
         self.calls = []
@@ -116,6 +145,7 @@ def test_pipeline_config_uses_reranker_when_enabled():
 
     assert len(reranker.calls) == 1
     assert reranker.calls[0]["top_k"] == 1
+    assert reranker.calls[0]["allow_fallback"] is False
     assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["doc_c0002"]
 
 
@@ -145,3 +175,35 @@ def test_pipeline_applies_context_builder_before_generation():
 def test_pipeline_config_rejects_combined_context_builders():
     with pytest.raises(ValueError, match="mutually exclusive"):
         RAGPipelineConfig(context_builder="small_to_big+rse")
+
+
+def test_pipeline_config_does_not_silently_fallback_when_rerank_fails():
+    retriever = FakeRetriever()
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(retriever=retriever, reranker=FailingReranker(), generator=generator)
+
+    config = RAGPipelineConfig(use_rerank=True, expand_neighbors=False)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        asyncio.run(pipeline.run(query="query", route="RAG_ONLY", config=config))
+    assert generator.calls == []
+
+
+def test_pipeline_records_explicit_reranker_fallback_when_allowed():
+    retriever = FakeRetriever()
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(retriever=retriever, reranker=FailingReranker(), generator=generator)
+
+    config = RAGPipelineConfig(
+        use_rerank=True,
+        expand_neighbors=False,
+        allow_rerank_fallback=True,
+    )
+
+    result = asyncio.run(pipeline.run(query="query", route="RAG_ONLY", config=config))
+
+    trace = result.metadata["rerank"]
+    assert trace["fallback_used"] is True
+    assert trace["fallback_allowed"] is True
+    assert trace["attempted"] is True
+    assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["doc_c0001"]

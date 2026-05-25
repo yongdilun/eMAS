@@ -158,3 +158,91 @@ def test_serious_failure_classifies_failed_boundary_answer():
     codes = {failure["code"] for failure in result["serious_failures"]}
     assert "failed_boundary_answer" in codes
     assert "hallucinated_unsupported_claim" in codes
+
+
+def test_citation_scoring_uses_chunk_level_support_fields():
+    case = _case(
+        expected_source={
+            "doc_id": "doc-a",
+            "section": "Required Section",
+            "page": 9,
+            "pages": [9],
+        }
+    )
+    source = _source(
+        page=4,
+        page_start=4,
+        page_end=4,
+        section_title="Representative Section",
+        supporting_pages=[4, 9],
+        supporting_sections=["Representative Section", "Required Section"],
+        evidence_snippets=[
+            {
+                "chunk_id": "doc-a-c0009",
+                "doc_id": "doc-a",
+                "page": 9,
+                "section_title": "Required Section",
+                "snippet": "The cited claim is supported here.",
+            }
+        ],
+    )
+
+    result = score_case(
+        case=case,
+        agent_response={
+            "answer": "Notify affected employees before applying lockout. Use lockout or tagout devices according to the procedure.",
+            "sources": [source],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    assert result["rule_dimensions"]["expected_page_hit"]["passed"] is True
+    assert result["rule_dimensions"]["expected_section_hit"]["passed"] is True
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "citation_does_not_support_answer" not in codes
+
+
+def test_osha_live_boundary_requires_concrete_caution_and_safe_next_step():
+    case = _case(
+        doc_id="osha_3120_lockout_tagout",
+        question_type="unanswerable",
+        query="Is the locked-out press safe to start right now?",
+        unanswerable_reason="The source does not provide live lockout status.",
+        expected_answer_points=[
+            "State that the OSHA source does not provide live machine status.",
+            "Say not to start the equipment based on document-only evidence.",
+            "Check the live system or authorized safety person.",
+        ],
+    )
+
+    generic = score_case(
+        case=case,
+        agent_response={
+            "answer": "The source does not provide live status. Check another system.",
+            "sources": [_source(doc_id="osha_3120_lockout_tagout")],
+            "safety_warning": True,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+    concrete = score_case(
+        case=case,
+        agent_response={
+            "answer": (
+                "The source does not provide live machine status. Do not start the press based on "
+                "this document-only answer. Check the live LOTO or maintenance system and contact "
+                "the authorized employee or site safety officer."
+            ),
+            "sources": [_source(doc_id="osha_3120_lockout_tagout")],
+            "safety_warning": True,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    assert generic["rule_dimensions"]["boundary_answer"]["score"] == 0.0
+    assert concrete["rule_dimensions"]["boundary_answer"]["score"] == 1.0
+    assert "failed_boundary_answer" in {failure["code"] for failure in generic["serious_failures"]}
+    assert "failed_boundary_answer" not in {failure["code"] for failure in concrete["serious_failures"]}

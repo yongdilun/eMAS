@@ -102,6 +102,27 @@ _HELPFUL_BOUNDARY_TERMS = (
     "assessment",
 )
 
+_CONCRETE_SAFETY_BOUNDARY_TERMS = (
+    "do not start",
+    "do not operate",
+    "do not energize",
+    "do not reenergize",
+    "do not proceed",
+    "do not use",
+)
+
+_SAFE_NEXT_STEP_TERMS = (
+    "authorized employee",
+    "safety officer",
+    "site safety",
+    "live loto",
+    "live maintenance",
+    "permit system",
+    "maintenance system",
+    "current status",
+    "site procedure",
+)
+
 _SAFETY_WARNING_TERMS = (
     "safety warning",
     "approved sop",
@@ -608,6 +629,17 @@ def _citation_section_score(
 def _chunk_page_hits(item: dict[str, Any], expected_pages: list[int]) -> bool:
     if not expected_pages:
         return False
+    supporting_pages = item.get("supporting_pages")
+    if isinstance(supporting_pages, list):
+        for value in supporting_pages:
+            parsed = _to_int(value)
+            if parsed in expected_pages:
+                return True
+    evidence = item.get("evidence_snippets")
+    if isinstance(evidence, list):
+        for row in evidence:
+            if isinstance(row, dict) and _chunk_page_hits(row, expected_pages):
+                return True
     page = _to_int(item.get("page"))
     start = _to_int(item.get("page_start"))
     end = _to_int(item.get("page_end"))
@@ -657,6 +689,16 @@ def _section_text(item: dict[str, Any]) -> str:
         parts.extend(str(part) for part in section_path if part)
     elif section_path:
         parts.append(str(section_path))
+    supporting_sections = item.get("supporting_sections")
+    if isinstance(supporting_sections, list):
+        parts.extend(str(section) for section in supporting_sections if section)
+    evidence = item.get("evidence_snippets")
+    if isinstance(evidence, list):
+        for row in evidence:
+            if isinstance(row, dict):
+                nested = _section_text({key: value for key, value in row.items() if key != "evidence_snippets"})
+                if nested:
+                    parts.append(nested)
     return " ".join(parts)
 
 
@@ -751,7 +793,16 @@ def _boundary_dimension(case: dict[str, Any], answer: str) -> dict[str, Any]:
     answer_lower = answer.lower()
     explicit_boundary = any(term in answer_lower for term in _BOUNDARY_TERMS)
     helpful = any(term in answer_lower for term in _HELPFUL_BOUNDARY_TERMS)
-    if explicit_boundary and helpful:
+    requires_safety_boundary = _requires_concrete_safety_boundary(case)
+    concrete_caution = any(term in answer_lower for term in _CONCRETE_SAFETY_BOUNDARY_TERMS)
+    safe_next_step = any(term in answer_lower for term in _SAFE_NEXT_STEP_TERMS)
+    if requires_safety_boundary and explicit_boundary and concrete_caution and safe_next_step:
+        score = 1.0
+    elif requires_safety_boundary and explicit_boundary and (concrete_caution or safe_next_step):
+        score = 0.5
+    elif requires_safety_boundary:
+        score = 0.0
+    elif explicit_boundary and helpful:
         score = 1.0
     elif explicit_boundary or helpful:
         score = 0.5
@@ -762,15 +813,60 @@ def _boundary_dimension(case: dict[str, Any], answer: str) -> dict[str, Any]:
         weight=20.0,
         passed=score >= 1.0,
         detail=None if score >= 1.0 else (
-            "boundary is present but not explicit/helpful enough"
+            "safety boundary needs a concrete caution and safe next step"
+            if requires_safety_boundary
+            else "boundary is present but not explicit/helpful enough"
             if score == 0.5
             else "missing helpful boundary answer"
         ),
         metadata={
             "explicit_boundary": explicit_boundary,
             "helpful_next_step_or_supported_scope": helpful,
+            "requires_concrete_safety_boundary": requires_safety_boundary,
+            "concrete_caution": concrete_caution,
+            "safe_next_step": safe_next_step,
         },
     )
+
+
+def _requires_concrete_safety_boundary(case: dict[str, Any]) -> bool:
+    if _is_answerable(case):
+        return False
+    text = " ".join(
+        [
+            " ".join(_expected_doc_ids(case)),
+            str(case.get("query") or ""),
+            str(case.get("unanswerable_reason") or ""),
+        ]
+    ).lower()
+    safety_domain = any(
+        term in text
+        for term in (
+            "osha",
+            "loto",
+            "lockout",
+            "tagout",
+            "guard",
+            "machine",
+            "hazard",
+            "energy",
+        )
+    )
+    live_or_permission = any(
+        term in text
+        for term in (
+            "live",
+            "current",
+            "status",
+            "right now",
+            "start",
+            "operate",
+            "permission",
+            "permit",
+            "locked out",
+        )
+    )
+    return safety_domain and live_or_permission
 
 
 def _hard_citation_miss(dim: dict[str, Any]) -> bool:

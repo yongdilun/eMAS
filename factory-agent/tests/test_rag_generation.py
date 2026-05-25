@@ -398,6 +398,90 @@ def test_generate_osha_reenergizing_source_locator_uses_supporting_chunk_when_do
     assert "capable of being reenergized" in source["snippet"]
     assert source["text_search"] == source["snippet"]
 
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_records_chunk_level_citation_support(mock_build_llm, mock_settings):
+    first = Chunk(
+        chunk_id="doc_c0001",
+        text="Introductory context for the section.",
+        metadata={
+            "doc_id": "doc",
+            "title": "Evidence Source",
+            "organization": "Org",
+            "authority_level": "official_public_guidance",
+            "domain": "safety",
+            "subdomain": "loto",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1",
+            "retrieved_date": "2026-05-25",
+            "page": 4,
+            "page_start": 4,
+            "page_end": 4,
+            "section_title": "Lockout Application",
+            "section_path": ["Guide", "Lockout Application"],
+        },
+    )
+    second = Chunk(
+        chunk_id="doc_c0002",
+        text="The required evidence appears on the next page.",
+        metadata={
+            **first.metadata,
+            "page": 5,
+            "page_start": 5,
+            "page_end": 5,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "The required evidence appears on the next page [^1]."
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("What evidence is required?", [first, second])
+
+    source = result.sources[0].model_dump()
+    assert source["supporting_chunk_ids"] == ["doc_c0001", "doc_c0002"]
+    assert source["supporting_pages"] == [4, 5]
+    assert "Lockout Application" in source["supporting_sections"]
+    assert source["evidence_snippets"][1]["chunk_id"] == "doc_c0002"
+    assert result.metadata["evidence_chunks"][1]["page"] == 5
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_boundary_fallback_has_concrete_osha_live_status_caution(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="osha_c0001",
+        text="OSHA explains general lockout and tagout requirements.",
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002",
+            "retrieved_date": "2026-05-25",
+            "page": 4,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "The press is safe to start now."
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Is the locked-out press safe to start right now?", [chunk])
+
+    answer = result.answer.lower()
+    assert "do not start" in answer
+    assert "live loto" in answer
+    assert "authorized employee" in answer
+
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_answer_no_safety_warning(mock_build_llm, mock_settings, sample_chunks):
     # Only use the low-risk chunk

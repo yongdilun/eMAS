@@ -2,14 +2,16 @@
 
 Created: 2026-05-25
 
+Updated: 2026-05-25 after Phase 6.5 corrected reranker/citation/safety rerun.
+
 ## Executive Decision
 
-- Provisional champion: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank flag.
-- Runner-up: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank flag.
-- Top Run 1 variants to carry into Run 2: `V12`, `V7`, and `V2`. If Run 2 budget is limited, run `V12` and `V7`; if budget allows a clean non-rerank control, include `V2`.
-- Confidence level: medium for selecting a Run 2 candidate set, low for production rollout. Run 1 still has too many serious failures, the judge is only triage-grade, and rerank-enabled variants did not exercise the intended BGE reranker.
+- Corrected provisional champion: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
+- Corrected co-lead: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank. The corrected `V7` margin over `V12` is only 0.0194 average rule points, with both at 17 serious failures.
+- Top corrected variants to carry into Phase 7: `V7`, `V12`, and `V10`. If budget allows, keep `V5` as a close alternate and `V2` as a clean non-rerank control.
+- Confidence level: medium for selecting a Phase 7 candidate set, low for production rollout. The corrected run fixes the unfair reranker comparison, but the top candidates still have too many serious failures and the judge remains triage-grade.
 
-Important caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Treat these as degraded fallback-rerank results, not true reranker results.
+Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Phase 6.5 resolved this for the corrected run artifacts: all required rerank variants recorded 50 attempted, 50 succeeded, and 0 fallback.
 
 ## Run 1 Scope
 
@@ -20,7 +22,31 @@ Important caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobert
 - Artifact folders: `test-artifacts/rag-eval/run1-20260525-v00`, `v01`, `v02`, `v03`, `v04`, `v05`, `v06`, `v07`, `v09`, `v10`, `v11`, and `v12`.
 - Deferred variants: Document Augmentation `V8` and `V13` were not implemented or run.
 
-## Score Summary
+## Corrected Phase 6.5 Update
+
+Corrected run artifacts live under `test-artifacts/rag-eval/run1-corrected-20260525-vXX`. All corrected runs used `--judge`; all judge-requested cases completed with 0 errors. Full details are in `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`.
+
+| Variant | Pipeline | Avg Rule | Serious | Borderline | Rerank | Judge |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `V7` | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | 76.58 | 17 | 35 | 50 succeeded / 0 fallback | 35/35, 0 errors |
+| `V12` | Query Rewrite + Hybrid Search + RSE + Rerank | 76.56 | 17 | 34 | 50 succeeded / 0 fallback | 34/34, 0 errors |
+| `V10` | Hybrid Search + RSE + Rerank | 75.55 | 17 | 33 | 50 succeeded / 0 fallback | 33/33, 0 errors |
+| `V5` | Hybrid Search + Small-to-Big + Rerank | 75.32 | 17 | 33 | 50 succeeded / 0 fallback | 33/33, 0 errors |
+| `V2` | Hybrid Search | 74.40 | 17 | 28 | 0/0 | 28/28, 0 errors |
+| `V6` | Hybrid Search + Small-to-Big + Rerank + Light Compression | 69.45 | 22 | 36 | 50 succeeded / 0 fallback | 36/36, 0 errors |
+| `V11` | Hybrid Search + RSE + Rerank + Light Compression | 70.84 | 21 | 36 | 50 succeeded / 0 fallback | 36/36, 0 errors |
+
+Decision update:
+
+- The provisional champion changes from original `V12` to corrected `V7`.
+- `V7` and `V12` should be treated as co-leads because the corrected margin is tiny.
+- The reranker fix changed the ranking: true-rerank `V10` and `V5` moved into the top cluster above the non-rerank `V2` control.
+- Citation-related serious-failure flags dropped sharply after preserving chunk/page/section support in artifacts.
+- Compression remains harmful after focused evidence-preservation tests, so `V6` and `V11` should not be production defaults or primary Phase 7 carry-forwards.
+
+## Original Run 1 Score Summary
+
+The table below is the original uncorrected Run 1 summary. It is retained for historical comparison and is superseded by the corrected Phase 6.5 update above for Phase 7 selection.
 
 | Variant | Pipeline | Avg Rule | Serious | Borderline | Judge | Judge SF | Automated | doc@3/5/10 | section/page@3/5/10 | Avg sec | Context tokens before/after/compressed |
 | --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- | --- | ---: | --- |
@@ -37,7 +63,7 @@ Important caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobert
 | `V6` | Hybrid Search + Small-to-Big + Rerank + Light Compression | 63.98 | 26 | 37 | 37/37 | 17 | 50 pass / 0 fail | 0.94/0.96/1.00 | 0.86/0.90/0.96 | 2.11 | 592/728/443 |
 | `V1` | Vector + Rerank | 61.13 | 29 | 31 | 31/31 | 18 | 50 pass / 0 fail | 0.96/0.96/1.00 | 0.78/0.86/0.92 | 2.09 | 487/487/487 |
 
-`V12` wins provisionally because it has the highest average rule score, the lowest automated serious-failure count, best tied retrieval hit rates at `doc_hit@5`, improved section/page hit rates at `@5`, and moderate runtime/context cost. It does not win by average score alone.
+In the original uncorrected Run 1, `V12` won provisionally because it had the highest average rule score, the lowest automated serious-failure count, best tied retrieval hit rates at `doc_hit@5`, improved section/page hit rates at `@5`, and moderate runtime/context cost. That original decision is superseded by the corrected Phase 6.5 result.
 
 ## Retrieval Summary
 
@@ -49,6 +75,8 @@ The retrieval layer was generally strong at document-level recall. Every variant
 - Several answer failures occurred despite good retrieval hits, especially when the correct document was found but the answer cited the wrong section, used incomplete evidence, or failed expected answer points.
 
 ## Safety Summary
+
+This section describes original Run 1. Phase 6.5 improved the OSHA live-status boundary contract and reduced safety-case serious failures; see the corrected update above and the Phase 6.5 addendum for the current interpretation.
 
 There were 15 safety-warning cases per variant. `V12` had no automated `unsafe_advice` cases and 5 safety-case serious failures, all from wrong/incomplete answers or citation support, not from explicit unsafe authorization.
 
@@ -111,28 +139,29 @@ Decision: keep Qwen2.5 7B judge output only as triage notes for Run 1. For Run 2
 
 Small-to-Big vs RSE:
 
-- Without query rewrite and without true reranking, `V4` Small-to-Big beat `V9` RSE: 69.21 average / 23 serious versus 67.03 / 25.
-- With query rewrite plus fallback-rerank behavior, `V12` RSE narrowly beat `V7` Small-to-Big: 69.82 / 21 versus 69.35 / 22.
-- RSE is the provisional winning track only in the query-rewrite setting. Small-to-Big remains a very close runner-up.
+- Original Run 1, without true reranking: `V4` Small-to-Big beat `V9` RSE: 69.21 average / 23 serious versus 67.03 / 25.
+- Corrected Phase 6.5, with true reranking: `V7` Small-to-Big plus query rewrite narrowly beat `V12` RSE plus query rewrite: 76.58 / 17 versus 76.56 / 17.
+- The corrected result is too close to declare a decisive Small-to-Big win over RSE. Carry both `V7` and `V12` forward.
 
 Compression effect:
 
-- `V6` versus `V5`: compression reduced average context from 728 to 443 tokens and improved latency from 2.28s to 2.11s, but average rule score fell from 66.37 to 63.98 and borderline count rose from 33 to 37.
-- `V11` versus `V10`: compression reduced average context from 756 to 472 tokens and improved latency from 2.35s to 2.04s, but average rule score fell from 65.17 to 64.01 and borderline count rose from 33 to 37.
-- Recommendation: do not use compression as a default production setting yet. It is cost-effective but quality-negative in Run 1.
+- Corrected `V6` versus `V5`: compression reduced average context from 1054 to 609 tokens, but average rule score fell from 75.32 to 69.45 and serious failures rose from 17 to 22.
+- Corrected `V11` versus `V10`: compression reduced average context from 1085 to 609 tokens, but average rule score fell from 75.55 to 70.84 and serious failures rose from 17 to 21.
+- Focused tests show compression preserves required evidence in representative cases, so the corrected run indicates real quality loss rather than an obvious evidence-dropping artifact.
+- Recommendation: do not use compression as a default production setting yet.
 
 Query rewrite effect:
 
-- `V7` versus `V5`: average score improved 66.37 to 69.35, serious failures dropped 26 to 22, `doc_hit@5` improved 0.96 to 1.00, and `section_or_page_hit@5` improved 0.90 to 0.94.
-- `V12` versus `V10`: average score improved 65.17 to 69.82, serious failures dropped 27 to 21, `doc_hit@5` improved 0.96 to 1.00, and `section_or_page_hit@5` improved 0.90 to 0.94.
-- Recommendation: deterministic retrieval query rewrite is worth carrying into Run 2.
+- Corrected `V7` versus `V5`: average score improved 75.32 to 76.58 with the same 17 serious failures.
+- Corrected `V12` versus `V10`: average score improved 75.55 to 76.56 with the same 17 serious failures.
+- Recommendation: deterministic retrieval query rewrite remains worth carrying into Phase 7, but the corrected effect is smaller than the original fallback-rerank comparison suggested.
 
 Baseline comparison:
 
-- `V2` Hybrid Search was the strongest clean baseline: 69.66 average, 23 serious failures, and no reranker fallback caveat.
-- `V0` vector-only had slightly higher `doc_hit@3` but weaker page/section localization and more serious failures.
-- `V1` vector plus fallback-rerank was the weakest overall.
-- `V3` hybrid plus fallback-rerank underperformed `V2`, so Run 1 cannot support a claim that reranking helped.
+- Corrected `V2` Hybrid Search remains the strongest clean non-rerank baseline: 74.40 average and 17 serious failures.
+- Corrected true-rerank variants `V7`, `V12`, `V10`, and `V5` rank above `V2` by average rule score, though all still have 17 serious failures.
+- `V0` vector-only still has weaker page/section localization than hybrid/context variants.
+- The corrected run supports carrying true rerank into Phase 7, with `V2` as an optional control rather than a top-three candidate.
 
 ## Serious Failures
 
@@ -173,42 +202,42 @@ Variant/case serious-failure list, grouped by reason code:
 
 ## Provisional Champion Rationale
 
-`V12` is the provisional champion because it gives the best overall Run 1 balance:
+`V7` is the corrected provisional champion because it gives the best overall Phase 6.5 balance:
 
-- Highest average rule score: 69.82.
-- Lowest automated serious-failure count: 21.
-- Best tied retrieval recall at `doc_hit@5` and `doc_hit@10`.
-- Improved page/section localization at `section_or_page_hit@5 = 0.94`.
-- Runtime and context cost are acceptable: 2.42s average and about 928 context tokens after RSE expansion.
-- Safety performance is not production-ready, but it had no automated unsafe-advice flags and tied the best serious-failure count among top variants on safety cases.
+- Highest corrected average rule score: 76.58.
+- Tied-lowest corrected automated serious-failure count: 17.
+- True reranking ran for all 50 cases with 0 fallback.
+- Query rewrite plus Small-to-Big slightly beat query rewrite plus RSE in the corrected run.
+- Runtime and context cost are acceptable for a rerank-enabled variant: 6.40s average and about 1022 context tokens after compression stage.
 
-The caveat is substantial: `V12` is not a validated "RSE + real reranker" champion. It is a "query rewrite + hybrid + RSE + fallback ranking" champion from Run 1. Fixing rerank could change the ordering.
+The caveat is substantial: `V7` only beats `V12` by 0.0194 average rule points, and both have 17 serious failures. Treat them as co-leads. Neither is production-ready without Phase 7 and manual serious-failure review.
 
-## Run 2 Recommendation
+## Phase 7 Recommendation
 
-Run 2 should test:
+Phase 7 should test:
 
-- `V12` as the provisional RSE/query-rewrite champion.
-- `V7` as the Small-to-Big/query-rewrite runner-up.
-- `V2` as the clean hybrid non-rerank control, if budget permits.
+- `V7` as the corrected Small-to-Big/query-rewrite champion.
+- `V12` as the corrected RSE/query-rewrite co-lead.
+- `V10` as the corrected RSE + true-rerank candidate without query rewrite.
+- `V5` as a close alternate to `V10` if budget permits.
+- `V2` as the clean hybrid non-rerank control, only if budget permits.
 - `V8` Document Augmentation + Hybrid Search + Small-to-Big + Rerank.
 - `V13` Document Augmentation + Hybrid Search + RSE + Rerank.
 
-Before Run 2:
+Before Phase 7:
 
-- Fix or replace the BGE reranker integration so rerank-enabled variants actually rerank. Add a smoke assertion that a rerank-enabled run fails loudly if it falls back.
-- Audit scoring around section labels and page ranges. Several cases had correct pages but failed section-string matching; decide whether Run 2 should treat page hit as sufficient when section metadata is noisy.
+- Keep the strict reranker fallback contract: rerank-enabled runs should fail loudly unless fallback is explicitly configured and recorded.
+- Manually review corrected top-variant serious failures, especially automated `unsafe_advice` flags and remaining citation support failures.
 - Improve judge setup. Prefer Qwen3 14B for Run 2 judge triage; otherwise keep Qwen2.5 7B only with manual review for top variants, safety cases, and citation failures.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
 
-Do not start Document Augmentation until the reranker caveat is resolved, because both `V8` and `V13` depend on reranking and would otherwise inherit the same degraded interpretation.
+Do not start Document Augmentation from the original Run 1 baseline. Use the corrected Phase 6.5 baseline.
 
 ## Blockers Before Production
 
-- Reranker integration is broken for all rerank-enabled Run 1 variants.
-- Even the provisional champion still has 21 automated serious failures out of 50.
-- Citation support is not reliable enough for production-sensitive answers.
-- Safety boundary answers are safe in direction but often too generic for high-risk lockout/tagout prompts.
+- Even the corrected provisional champion still has 17 automated serious failures out of 50.
+- Citation support improved, but remaining citation-support failures still need manual review.
+- Safety boundary answers improved for OSHA/live-status prompts, but automated `unsafe_advice` flags need manual review before production conclusions.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has not been tested.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.

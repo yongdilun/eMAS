@@ -7,11 +7,15 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from factory_agent.config import Settings, get_settings
 from factory_agent.llm import build_rag_answer_chat_model
 from factory_agent.rag.answer_contract import (
-    answer_or_insufficient_context,
     validate_knowledge_answer,
 )
 from factory_agent.rag.schemas import Chunk, SourceCitation, AnswerResult
-from factory_agent.rag.source_metadata import insufficient_context_answer, normalize_source_locator, sanitize_rag_answer_text
+from factory_agent.rag.source_metadata import (
+    insufficient_context_answer,
+    normalize_source_locator,
+    sanitize_rag_answer_text,
+    snippet_from_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +146,7 @@ class AnswerGenerator:
         """
         if not chunks and not api_data:
             return AnswerResult(
-                answer=insufficient_context_answer(has_sources=False),
+                answer=insufficient_context_answer(has_sources=False, query=query),
                 sources=[],
                 safety_warning=False,
                 route_used=route
@@ -186,7 +190,7 @@ class AnswerGenerator:
                 context=context,
                 api_data_section=api_section,
                 query=query,
-                insufficient_answer=insufficient_context_answer(has_sources=bool(chunks)),
+                insufficient_answer=insufficient_context_answer(has_sources=bool(chunks), query=query),
             )
 
             # 4. Call LLM
@@ -231,12 +235,22 @@ class AnswerGenerator:
                 sources=sources,
                 safety_warning=has_high_risk,
                 safety_content=safety_text,
-                route_used=route
+                route_used=route,
+                metadata={
+                    "citation_support": self._build_citation_support_metadata(
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    ),
+                    "evidence_chunks": self._build_evidence_chunk_metadata(
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    ),
+                },
             )
 
         except Exception as e:
             logger.error(f"Answer generation failed: {e}")
-            fallback_answer = insufficient_context_answer(has_sources=bool(chunks))
+            fallback_answer = insufficient_context_answer(has_sources=bool(chunks), query=query)
             
             # Recalculate unique docs for fallback
             doc_order = []
@@ -260,7 +274,17 @@ class AnswerGenerator:
                 sources=sources,
                 safety_warning=has_high_risk,
                 safety_content="Safety data may be relevant but could not be fully processed." if has_high_risk else None,
-                route_used=route
+                route_used=route,
+                metadata={
+                    "citation_support": self._build_citation_support_metadata(
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    ),
+                    "evidence_chunks": self._build_evidence_chunk_metadata(
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    ),
+                },
             )
 
     def _build_sources_for_answer(
@@ -280,7 +304,13 @@ class AnswerGenerator:
             for d_id in doc_order
         ]
         return [
-            self.build_source_citation(c, i + 1, query=query, answer=answer)
+            self.build_source_citation(
+                c,
+                i + 1,
+                query=query,
+                answer=answer,
+                support_chunks=doc_chunks[doc_order[i]],
+            )
             for i, c in enumerate(source_chunks)
         ]
 
@@ -301,8 +331,7 @@ class AnswerGenerator:
         validation = validate_knowledge_answer(answer, sources)
         if validation.valid:
             return validation.answer, sources
-        fallback_answer, _validation = answer_or_insufficient_context(answer, sources)
-        return fallback_answer, sources
+        return insufficient_context_answer(has_sources=bool(sources), query=query), sources
 
     def build_context(self, chunks: List[Chunk], source_numbers: Optional[List[int]] = None) -> str:
         """
@@ -336,6 +365,7 @@ class AnswerGenerator:
         *,
         query: str = "",
         answer: str = "",
+        support_chunks: list[Chunk] | None = None,
     ) -> SourceCitation:
         """
         Creates a formatted SourceCitation from chunk metadata (6.4).
@@ -376,6 +406,10 @@ class AnswerGenerator:
             bbox=locator.get("bbox"),
             char_range=locator.get("char_range"),
             text_search=locator.get("text_search"),
+            supporting_chunk_ids=self._supporting_chunk_ids(support_chunks or [chunk]),
+            supporting_pages=self._supporting_pages(support_chunks or [chunk]),
+            supporting_sections=self._supporting_sections(support_chunks or [chunk]),
+            evidence_snippets=self._evidence_snippets(support_chunks or [chunk], source_number=source_number),
         )
 
     def _select_representative_source_chunk(self, *, query: str, answer: str, chunks: List[Chunk]) -> Chunk:
@@ -458,6 +492,89 @@ class AnswerGenerator:
             excerpt = f"{excerpt} {next_sentence}"
         return excerpt
 
+    def _build_citation_support_metadata(
+        self,
+        *,
+        doc_order: list[str],
+        doc_chunks: dict[str, list[Chunk]],
+    ) -> list[dict[str, Any]]:
+        support: list[dict[str, Any]] = []
+        for index, doc_id in enumerate(doc_order, start=1):
+            chunks = doc_chunks.get(doc_id) or []
+            support.append(
+                {
+                    "source_number": index,
+                    "doc_id": doc_id,
+                    "supporting_chunk_ids": self._supporting_chunk_ids(chunks),
+                    "supporting_pages": self._supporting_pages(chunks),
+                    "supporting_sections": self._supporting_sections(chunks),
+                    "evidence_snippets": self._evidence_snippets(chunks, source_number=index),
+                }
+            )
+        return support
+
+    def _build_evidence_chunk_metadata(
+        self,
+        *,
+        doc_order: list[str],
+        doc_chunks: dict[str, list[Chunk]],
+    ) -> list[dict[str, Any]]:
+        evidence: list[dict[str, Any]] = []
+        for index, doc_id in enumerate(doc_order, start=1):
+            for chunk in doc_chunks.get(doc_id) or []:
+                evidence.append(self._chunk_evidence(chunk, source_number=index))
+        return evidence
+
+    def _chunk_evidence(self, chunk: Chunk, *, source_number: int) -> dict[str, Any]:
+        metadata = chunk.metadata
+        return {
+            "source_number": source_number,
+            "doc_id": metadata.get("doc_id"),
+            "chunk_id": chunk.chunk_id,
+            "page": metadata.get("page"),
+            "page_start": metadata.get("page_start"),
+            "page_end": metadata.get("page_end"),
+            "section_title": metadata.get("section_title"),
+            "section_path": metadata.get("section_path"),
+            "context_builder": metadata.get("context_builder"),
+            "context_segment_id": metadata.get("context_segment_id"),
+            "seed_chunk_id": metadata.get("seed_chunk_id"),
+            "child_chunk_ids": metadata.get("child_chunk_ids"),
+            "segment_chunk_ids": metadata.get("segment_chunk_ids"),
+            "snippet": snippet_from_text(chunk.text, limit=420),
+        }
+
+    def _supporting_chunk_ids(self, chunks: list[Chunk]) -> list[str]:
+        return list(dict.fromkeys(chunk.chunk_id for chunk in chunks if chunk.chunk_id))
+
+    def _supporting_pages(self, chunks: list[Chunk]) -> list[int]:
+        pages: list[int] = []
+        for chunk in chunks:
+            meta = chunk.metadata
+            for key in ("page", "page_start", "page_end"):
+                value = _metadata_int(meta.get(key))
+                if value is not None:
+                    pages.append(value)
+        return sorted(set(pages))
+
+    def _supporting_sections(self, chunks: list[Chunk]) -> list[str]:
+        sections: list[str] = []
+        for chunk in chunks:
+            meta = chunk.metadata
+            title = str(meta.get("section_title") or "").strip()
+            if title:
+                sections.append(title)
+            section_path = meta.get("section_path")
+            if isinstance(section_path, list):
+                section_path = " > ".join(str(part) for part in section_path if part)
+            section_path = str(section_path or "").strip()
+            if section_path:
+                sections.append(section_path)
+        return list(dict.fromkeys(sections))
+
+    def _evidence_snippets(self, chunks: list[Chunk], *, source_number: int) -> list[dict[str, Any]]:
+        return [self._chunk_evidence(chunk, source_number=source_number) for chunk in chunks]
+
 
 def _support_tokens(text: str) -> set[str]:
     tokens: set[str] = set()
@@ -511,3 +628,16 @@ def _evidence_sentences(text: str) -> list[str]:
         if sentence.strip(" ;")
     ]
     return sentences or [normalized]
+
+
+def _metadata_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None

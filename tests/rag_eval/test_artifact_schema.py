@@ -77,7 +77,17 @@ def test_case_artifact_and_summary_include_variant_config():
         duration_s=0.12345,
         env={},
         route_decision={"route": "RAG_ONLY"},
-        rag_result={"answer": "ok"},
+        rag_result={
+            "answer": "ok",
+            "metadata": {
+                "rerank": {
+                    "enabled": True,
+                    "attempted": True,
+                    "succeeded": True,
+                    "fallback_used": False,
+                }
+            },
+        },
         agent_response={"answer": "ok"},
         retrieval_debug={"queried": True, "top_chunks": [], "error": None},
         automated=AutomatedReport(),
@@ -110,5 +120,7 @@ def test_case_artifact_and_summary_include_variant_config():
     assert summary["variant_id"] == "V0"
     assert summary["variant_config"]["pipeline_config"]["use_rerank"] is False
     assert summary["scoring"]["average_rule_score"] == 88.0
+    assert summary["scoring"]["rerank_counts"]["enabled"] == 1
+    assert summary["scoring"]["rerank_counts"]["fallback_used"] == 0
     assert summary["variant_aggregates"]["V0"]["retrieval_metric_rates"]["doc_hit@3"]["rate"] == 1.0
     assert summary["cases"][0]["variant_id"] == "V0"

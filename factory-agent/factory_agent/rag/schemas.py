@@ -60,6 +60,10 @@ class SourceCitation(BaseModel):
     bbox: Optional[Any] = None
     char_range: Optional[Any] = None
     text_search: Optional[str] = None
+    supporting_chunk_ids: Optional[List[str]] = None
+    supporting_pages: Optional[List[int]] = None
+    supporting_sections: Optional[List[str]] = None
+    evidence_snippets: Optional[List[Dict[str, Any]]] = None
 
 class AnswerResult(BaseModel):
     answer: str

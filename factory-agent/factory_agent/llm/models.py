@@ -80,13 +80,57 @@ def build_rag_answer_chat_model(settings: Settings):
     return ChatOpenAI(**kwargs)
 
 
-def build_bge_reranker(settings: Settings):
-    try:
-        from FlagEmbedding import FlagReranker
-    except Exception as exc:
-        raise PlannerLLMError("BGE reranker requires FlagEmbedding.") from exc
+class TransformersCrossEncoderReranker:
+    """Small cross-encoder wrapper with the same ``compute_score`` surface as FlagReranker."""
 
-    return FlagReranker(
-        settings.bge_reranker_model,
-        use_fp16=True
-    )
+    def __init__(self, model_name: str, *, device: str | None = None, batch_size: int = 8) -> None:
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        except Exception as exc:  # pragma: no cover - import availability depends on runtime image.
+            raise PlannerLLMError("BGE reranker requires torch and transformers.") from exc
+
+        self._torch = torch
+        self.model_name = model_name
+        self.batch_size = max(1, int(batch_size))
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        self.model.to(self.device)
+        self.model.eval()
+
+    def compute_score(self, pairs: list[list[str]] | list[tuple[str, str]], *, max_length: int = 1024) -> list[float]:
+        if not pairs:
+            return []
+
+        scores: list[float] = []
+        for start in range(0, len(pairs), self.batch_size):
+            batch = pairs[start : start + self.batch_size]
+            queries = [str(pair[0]) for pair in batch]
+            documents = [str(pair[1]) for pair in batch]
+            encoded = self.tokenizer(
+                queries,
+                documents,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt",
+            )
+            encoded = {key: value.to(self.device) for key, value in encoded.items()}
+            with self._torch.inference_mode():
+                output = self.model(**encoded)
+            logits = output.logits.detach().float().cpu().view(-1)
+            scores.extend(float(value) for value in logits.tolist())
+        return scores
+
+
+def build_bge_reranker(settings: Settings):
+    """Build the RAG cross-encoder reranker.
+
+    ``FlagEmbedding`` 1.4.0 calls ``XLMRobertaTokenizer.prepare_for_model``,
+    which is absent in the installed Transformers runtime. The direct
+    Transformers wrapper keeps the same BGE model while avoiding that broken
+    integration layer.
+    """
+
+    return TransformersCrossEncoderReranker(settings.bge_reranker_model)

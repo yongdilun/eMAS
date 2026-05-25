@@ -22,6 +22,16 @@ _LOCATOR_ALIASES = {
     "text_search": ("text_search", "textSearch", "highlight_text", "highlightText"),
 }
 _INSUFFICIENT_CONTEXT_PREFIX = "I do not have enough retrieved evidence to answer that safely."
+_LIVE_SAFETY_QUERY_RE = re.compile(
+    r"\b(live|current|right now|status|start|operate|energiz|reenergiz|locked out|permission|permit)\b",
+    re.IGNORECASE,
+)
+_COMPLIANCE_PROOF_RE = re.compile(
+    r"\b(certif|compliant|compliance|approved|approval|secure|security proof|prove|vendor|buy|purchase)\b",
+    re.IGNORECASE,
+)
+_LIVE_STATUS_RE = re.compile(r"\b(live|current|today|right now|status)\b", re.IGNORECASE)
+_SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy)\b", re.IGNORECASE)
 
 
 def sanitize_rag_answer_text(value: Any) -> str:
@@ -32,17 +42,36 @@ def sanitize_rag_answer_text(value: Any) -> str:
     return text.strip()
 
 
-def insufficient_context_answer(*, has_sources: bool = False) -> str:
+def insufficient_context_answer(*, has_sources: bool = False, query: Any = None) -> str:
+    suffix = _boundary_suffix_for_query(query)
     if has_sources:
         return (
-            f"{_INSUFFICIENT_CONTEXT_PREFIX} The related sources checked are listed below, "
+            f"{_INSUFFICIENT_CONTEXT_PREFIX}{suffix} The related sources checked are listed below, "
             "but they do not prove the requested claim."
         )
-    return _INSUFFICIENT_CONTEXT_PREFIX
+    return f"{_INSUFFICIENT_CONTEXT_PREFIX}{suffix}"
 
 
 def is_insufficient_context_answer(value: Any) -> bool:
     return sanitize_rag_answer_text(value).lower().startswith(_INSUFFICIENT_CONTEXT_PREFIX.lower())
+
+
+def _boundary_suffix_for_query(query: Any) -> str:
+    text = str(query or "")
+    if _LIVE_SAFETY_QUERY_RE.search(text) and _SAFETY_DOMAIN_RE.search(text):
+        return (
+            " Do not start, operate, energize, or reenergize equipment based on this document-only "
+            "answer. Check the live LOTO, maintenance, or permit system and contact the authorized "
+            "employee or site safety officer for current status."
+        )
+    if _COMPLIANCE_PROOF_RE.search(text) or (
+        _LIVE_STATUS_RE.search(text) and re.search(r"\b(compliance|approval|approved|secure|security)\b", text, re.IGNORECASE)
+    ):
+        return (
+            " Do not treat these sources as live approval, vendor, security, or compliance proof. "
+            "Check the current system of record or the responsible compliance owner."
+        )
+    return ""
 
 
 def snippet_from_text(value: Any, *, limit: int = 320) -> str:
