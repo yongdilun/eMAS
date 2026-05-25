@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-25 after Phase 7 Run 2 Document Augmentation comparison and manual serious-failure review.
+Updated: 2026-05-25 after Phase 8 production-readiness recommendation.
 
 ## Executive Decision
 
@@ -20,6 +20,8 @@ Phase 6.6 note: manual review found that Phase 6.5 serious-failure counts were s
 Phase 7 note: Document Augmentation `V8`/`V13` was implemented with separate augmented index paths and original-evidence generation/citation safeguards. Run 2 found modest retrieval gains but no accuracy or serious-failure improvement. Full details are in `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`.
 
 Manual review note: the case-level review of `V12` Run 2 serious failures is recorded in `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`. It did not rerun the benchmark or change the question bank/scoring. The review found that all 8 `V12` serious failures are real, mostly from generation failing to use retrieved evidence or incomplete section summaries. The final recommendation before Phase 8 is do not ship yet.
+
+Phase 8 note: the final production-readiness recommendation is recorded in `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`. It makes production shipment a NO-GO, freezes `V12` only as the engineering candidate config, keeps `V7` as fallback/co-lead, keeps Document Augmentation experimental, keeps compression off by default, and proposes Phase 9 serious-failure remediation before any production reconsideration.
 
 ## Run 1 Scope
 
@@ -287,7 +289,7 @@ The caveat is still substantial: manual review confirmed `V12` has 8 real seriou
 
 ## Phase 8 Guidance
 
-Do not start Phase 8 as a rollout step. The Run 2 serious failures have now been reviewed and the recommendation is do not ship yet.
+Phase 8 is complete as a production-readiness recommendation, not a rollout approval. The final recommendation is production NO-GO; use `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` as the handoff for remediation and future readiness gates.
 
 Recommended next actions:
 

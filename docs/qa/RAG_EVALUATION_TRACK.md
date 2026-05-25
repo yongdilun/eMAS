@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 7 Benchmark Run 2 with Document Augmentation is complete, and the remaining `V12` serious failures have been manually reviewed before Phase 8. `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md` records the Run 2 comparison, and `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md` records the case-level serious-failure review. Document Augmentation improved some retrieval hit rates and citation-support flags, but did not improve answer accuracy or serious-failure count enough to become the production default.
+Phase 8 Production rollout recommendation is complete as a production-readiness NO-GO, not as a rollout approval. `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` records the final selected engineering config, production blockers, remediation roadmap, regression gate, limited-mode monitoring plan, and Phase 9 proposal. `V12` remains the engineering candidate, `V7` remains the fallback/co-lead, Document Augmentation remains experimental, compression remains off by default, and the production gate stays closed.
 
 Important current decisions:
 
@@ -34,7 +34,8 @@ Important current decisions:
 - Manual review found all 8 `V12` serious failures are real enough to keep the production gate closed; none are clear scoring false positives.
 - `V7` did not answer any of the 8 `V12` serious cases better.
 - Document Augmentation fixed one `V12` serious case, `nist-csf-2-ss-03`, but did not change the overall recommendation.
-- Final recommendation before Phase 8: do not ship yet. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
+- Phase 8 final recommendation: production shipment is a NO-GO. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
+- Phase 9 should remediate the 8 manually reviewed `V12` serious failures, add regression tests, rerun `V12`/`V7` on the unchanged 50-question bank, and only then reconsider production readiness.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -60,7 +61,7 @@ Important current decisions:
 | 6.6 | Scoring fairness audit and top-candidate rerun | Done | Codex | Fixed narrow scoring defects from manual review, then reran V7/V12/V10/V5/V2 before Phase 7. |
 | 7 | Benchmark Run 2 with Document Augmentation | Done | Codex | V8/V13 implemented and compared against V7/V12/V10. Run 2 champion: V12. Document Augmentation not recommended as production default. |
 | 7.5 | Manual serious-failure review | Done | Codex | Reviewed all 8 `V12` serious failures against V7/V8/V13/V10. All 8 are real; V7 did not improve any; Document Augmentation fixed only `nist-csf-2-ss-03`; recommendation is do not ship yet. |
-| 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
+| 8 | Production rollout recommendation | Done | Codex | Added production-readiness NO-GO recommendation, froze `V12` as the engineering candidate config, documented remediation roadmap, regression gate, limited-mode monitoring, and Phase 9 proposal. |
 
 ## Phase 0 Checklist
 
@@ -701,6 +702,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 7 rerank validation passed: all five required rerank variants recorded 50 enabled, 50 attempted, 50 succeeded, and 0 fallback.
 - Phase 7 artifact audit passed for augmented variants: V8 and V13 both recorded augmented retrieval in 50/50 cases, and no final evidence snippet contained synthetic augmentation text.
 - Manual serious-failure review completed for all 8 `V12` Run 2 serious cases. No benchmark rerun was performed.
+- Phase 8 was documentation-only. No benchmark rerun, live judge call, scoring rerun, or test artifact generation was performed.
 
 ## Files Created
 
@@ -725,6 +727,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`
 - `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`
 - `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`
+- `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -769,4 +772,4 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Next Action
 
-Do not start Phase 8 as a rollout step. Current recommendation: treat `V12` as the engineering candidate, keep `V7` as a close fallback/co-lead, keep Document Augmentation as experimental eval plumbing, and fix the reviewed serious-failure classes before any production ship decision.
+Start Phase 9: RAG Serious-Failure Remediation. Treat `V12` as the engineering candidate, keep `V7` as a close fallback/co-lead, keep Document Augmentation as experimental eval plumbing, keep compression off by default, and fix the reviewed serious-failure classes before any production ship decision.
