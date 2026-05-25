@@ -89,6 +89,7 @@ class Settings:
     rag_reranker_top_k: int = 3
     rag_answer_timeout_s: float = 20.0
     rag_answer_max_tokens: int = 600
+    rag_advisory_variant: str = "default"
     embedding_backend: str = "disabled"  # sentence-transformers|disabled
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     llm_default_timeout_s: float = 60.0
@@ -369,6 +370,7 @@ def get_settings() -> Settings:
         rag_answer_model=env("RAG_ANSWER_MODEL", env("PLANNER_MODEL", env("LLM_MODEL", "Qwen3.5-9B"))).strip(),
         rag_answer_timeout_s=float(os.getenv("RAG_ANSWER_TIMEOUT_S", "20.0")),
         rag_answer_max_tokens=int(os.getenv("RAG_ANSWER_MAX_TOKENS", "600")),
+        rag_advisory_variant=os.getenv("RAG_ADVISORY_VARIANT", "default").strip() or "default",
         rag_reranker_openai_base_url=(
             env("RAG_RERANKER_OPENAI_BASE_URL")
             or env("OPENAI_BASE_URL")

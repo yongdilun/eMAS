@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 14 Limited-Rollout Readiness is complete. `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md` records the final manual weak-pass review, boundary check, final full/smoke `V12` reruns, runtime configuration, monitoring rules, and rollback rules. Decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO and autonomous safety/compliance authority remain not approved. Document Augmentation remains experimental and compression remains off by default.
+Phase 15 Limited-Rollout Controls is complete. `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md` records the approved advisory config, allowed/refused answer boundaries, human-review rules, monitoring checklist, rollback triggers, first-week sampling plan, and known weak areas. Decision remains **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO and autonomous safety/compliance authority remain not approved. Document Augmentation remains experimental and compression remains off by default.
 
 Important current decisions:
 
@@ -46,8 +46,10 @@ Important current decisions:
 - Phase 14 full `V12` result: 50/50 automated pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
 - Phase 14 smoke `V12` result: 8/8 automated pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
 - Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout** with human review required for safety/compliance answers.
+- Phase 15 added `RAG_ADVISORY_VARIANT`; set it to `V12` for the limited advisory rollout and set/unset it to `default` to roll back to previous behavior.
+- Phase 15 added advisory monitoring fields for selected variant/config, retrieval mode, context builder, reranker attempted/succeeded/fallback, citation IDs/pages/details, no-evidence fallback, boundary refusal, latency, and context token estimate where available.
 - Full production remains not approved. V12 must refuse certification/sign-off/live-status/current-state proof and live machine-action approval.
-- Remaining Phase 15 hardening concerns are weak-but-safe answers such as `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals.
+- Remaining limited-rollout hardening concerns are weak-but-safe answers such as `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals.
 - Future safety/citation review should prefer a stronger judge such as Qwen3 14B if hardware allows; otherwise keep Qwen2.5 7B as triage-only evidence with manual review.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -80,6 +82,7 @@ Important current decisions:
 | 12 | Production-readiness review | Done | Codex | Manually reviewed final `V12` safety/citation/boundary behavior and ran an adjacent wording smoke set; production is NO-GO because `phase12-guarding-compliance-refusal-01` certified OSHA compliance instead of refusing. |
 | 13 | Boundary generalization remediation | Done | Codex | Added a generic compliance-certification refusal boundary and generic recall repairs without changing cases/scoring; smoke and full `V12` reruns both finished with 0 serious failures. |
 | 14 | Limited-rollout readiness review | Done | Codex | Manually reviewed weak/safety passes, reran full and smoke `V12`, and approved CONDITIONAL GO for limited advisory-mode rollout only. |
+| 15 | Limited-rollout controls and runbook | Done | Codex | Added the advisory `RAG_ADVISORY_VARIANT` selector, rollout monitoring fields, rollback controls, and `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md` without changing cases/scoring. |
 
 ## Phase 0 Checklist
 
@@ -761,6 +764,14 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 14 smoke `V12` rerun completed with `--judge`: 8/8 automated structural pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
 - Phase 14 manual weak-pass review found no limited-rollout blocker. Remaining safety/compliance weak passes are acceptable only with monitoring and human review.
 - Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO remains not approved.
+- Phase 15 inspected the production runtime/config path and found production RAG is called from the planner-owned graph virtual `rag_search_documents` tool and direct document-knowledge answer path through `RAGPipeline.run(..., route="RAG_ONLY")`.
+- Phase 15 added `RAG_ADVISORY_VARIANT=V12` as the limited advisory rollout selector and `RAG_ADVISORY_VARIANT=default` as the rollback/default behavior.
+- Phase 15 added monitoring fields in RAG logs and graph evidence metadata for selected variant/config, retrieval mode, context builder, reranker attempted/succeeded/fallback, citation count/source IDs/pages/details, no-evidence fallback, boundary refusal, latency, and context token estimate.
+- Phase 15 created `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`.
+- Phase 15 focused tests passed: `python -m pytest -q factory-agent/tests/test_rag_limited_rollout_config.py factory-agent/tests/test_rag_pipeline_config.py factory-agent/tests/test_planner_owned_graph_rag_evidence.py factory-agent/tests/test_planner_owned_graph_execution_observation.py tests/rag_eval/test_variants.py` returned 30 passed.
+- Phase 15 focused recheck passed after the optional-settings compatibility adjustment: `python -m pytest -q factory-agent/tests/test_rag_limited_rollout_config.py factory-agent/tests/test_planner_owned_graph_rag_evidence.py` returned 10 passed.
+- Phase 15 required validation passed: `python -m tests.rag_eval.run_eval --help`.
+- Phase 15 required validation passed: `git diff --check` with LF-to-CRLF normalization warnings only.
 
 ## Files Created
 
@@ -791,6 +802,9 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`
 - `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`
 - `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`
+- `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`
+- `factory-agent/factory_agent/rag/runtime_config.py`
+- `factory-agent/tests/test_rag_limited_rollout_config.py`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -828,12 +842,13 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 - The Phase 12 adjacent compliance-certification blocker no longer reproduces after Phase 13 and Phase 14 confirmation.
 - Limited advisory-mode rollout is conditionally approved after Phase 14.
+- Phase 15 rollout controls are in place: enable with `RAG_ADVISORY_VARIANT=V12`, roll back with `RAG_ADVISORY_VARIANT=default`.
 - Full production GO and autonomous safety/compliance authority are still not approved.
-- Weak-but-safe cases still require Phase 15 monitoring and hardening, especially `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals such as `nist-csf-2-un-01`.
+- Weak-but-safe cases still require limited-rollout monitoring and hardening, especially `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals such as `nist-csf-2-un-01`.
 - Judge safety and citation scoring are still weak enough that production safety/citation decisions need manual review or a stronger judge.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 - Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Start Phase 15 limited-rollout observation and hardening. Keep `V12` as the limited advisory-mode candidate, manually sample OSHA/procedure and compliance-boundary answers, monitor fallback/citation/reranker signals, and roll back if unsafe advice or compliance-certification/sign-off/current-state approval appears. Do not weaken scoring or edit `tests/rag_eval/cases.json`.
+Begin limited-rollout observation under `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`. Keep `V12` as the limited advisory-mode candidate only when `RAG_ADVISORY_VARIANT=V12` is set, manually sample OSHA/procedure and compliance-boundary answers, monitor fallback/citation/reranker signals, and roll back to `RAG_ADVISORY_VARIANT=default` if unsafe advice or compliance-certification/sign-off/current-state approval appears. Do not weaken scoring or edit `tests/rag_eval/cases.json`.

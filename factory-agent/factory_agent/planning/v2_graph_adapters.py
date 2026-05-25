@@ -6,10 +6,14 @@ from typing import Any, Protocol
 
 from pydantic import Field
 
-from factory_agent.config import Settings
+from factory_agent.config import Settings, get_settings
 from factory_agent.planning.api_result_projection import api_row_id, project_api_row
 from factory_agent.planning.intent import rag_query_with_required_machine_context, semantic_frame_for_text
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
+from factory_agent.rag.runtime_config import (
+    advisory_rag_pipeline_config,
+    run_rag_pipeline_with_optional_config,
+)
 from factory_agent.rag.source_metadata import (
     is_insufficient_context_answer,
     normalize_source_locators,
@@ -62,7 +66,7 @@ class GraphToolExecutionResult(V2ContractModel):
 
 async def execute_graph_tool_call(
     *,
-    settings: Settings,
+    settings: Settings | None = None,
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
     tools_by_name: Mapping[str, ToolInfo],
@@ -88,6 +92,7 @@ async def execute_graph_tool_call(
     tool = tools_by_name.get(call.tool_name)
     if call.kind == "rag_tool":
         return await execute_graph_rag_tool(
+            settings=settings,
             state=state,
             decision=persisted_decision,
             call=call,
@@ -185,6 +190,7 @@ async def execute_graph_api_tool_call(
 
 async def execute_graph_rag_tool(
     *,
+    settings: Settings | None = None,
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
     call: GraphToolCall,
@@ -200,7 +206,13 @@ async def execute_graph_rag_tool(
         pipeline = RAGPipeline()
 
     try:
-        result = await pipeline.run(query=query, session_id=session_id, route="RAG_ONLY")
+        result = await run_rag_pipeline_with_optional_config(
+            pipeline,
+            query=query,
+            session_id=session_id,
+            route="RAG_ONLY",
+            config=advisory_rag_pipeline_config(settings or get_settings()),
+        )
     except Exception as exc:
         return GraphToolExecutionResult(
             tool_call=call,
@@ -229,6 +241,7 @@ async def execute_graph_rag_tool(
     evidence = None
     raw_answer = str(getattr(result, "answer", "") or "")
     raw_sources = list(getattr(result, "sources", []) or [])
+    result_metadata = dict(getattr(result, "metadata", {}) or {})
     safety_content = getattr(result, "safety_content", None)
     semantic_frame = semantic_frame_for_text(query)
     route_family = str(getattr(semantic_frame, "route", "") or "unknown")
@@ -286,6 +299,11 @@ async def execute_graph_rag_tool(
                 "safety_content_present": bool(safety_content),
                 "safety_content_used_as_evidence": False,
                 "direct_v2_execution": False,
+                **_rag_runtime_diagnostic_metadata(
+                    result_metadata=result_metadata,
+                    answer=answer,
+                    sources=sources,
+                ),
             },
         )
 
@@ -323,6 +341,11 @@ async def execute_graph_rag_tool(
             "safety_content_present": bool(safety_content),
             "safety_content_used_as_evidence": False,
             "direct_v2_execution": False,
+            **_rag_runtime_diagnostic_metadata(
+                result_metadata=result_metadata,
+                answer=answer,
+                sources=sources,
+            ),
         },
     )
 
@@ -521,6 +544,79 @@ def _idempotency_key(
     return (
         "planner-owned-agent-graph:"
         f"{state.requirement_ledger.revision}:{decision.decision_id}:{call.call_id}:{call.tool_name}"
+    )
+
+
+def _rag_runtime_diagnostic_metadata(
+    *,
+    result_metadata: dict[str, Any],
+    answer: str,
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    runtime_config = result_metadata.get("runtime_config")
+    runtime_config = runtime_config if isinstance(runtime_config, dict) else {}
+    rerank = result_metadata.get("rerank")
+    rerank = rerank if isinstance(rerank, dict) else {}
+    context = result_metadata.get("context_building")
+    context = context if isinstance(context, dict) else {}
+    token_estimates = context.get("token_estimates")
+    token_estimates = token_estimates if isinstance(token_estimates, dict) else {}
+    generation = result_metadata.get("generation_validation")
+    generation = generation if isinstance(generation, dict) else {}
+    citation_details = _citation_details(sources)
+    boundary_refusal = generation.get("initial_reason") == "certification_boundary_enforced" or _answer_refuses_boundary(answer)
+    return {
+        "rag_variant": runtime_config.get("variant_id"),
+        "rag_operating_mode": runtime_config.get("operating_mode"),
+        "rag_config": runtime_config,
+        "rag_retrieval_mode": runtime_config.get("retrieval_mode"),
+        "rag_context_builder": runtime_config.get("context_builder"),
+        "rag_compression": runtime_config.get("compression"),
+        "rag_document_augmentation": runtime_config.get("document_augmentation"),
+        "rag_rerank_attempted": rerank.get("attempted"),
+        "rag_rerank_succeeded": rerank.get("succeeded"),
+        "rag_rerank_fallback_used": rerank.get("fallback_used"),
+        "rag_rerank_fallback_allowed": rerank.get("fallback_allowed"),
+        "rag_citation_count": len(sources),
+        "rag_citation_source_ids": [item.get("source_id") for item in citation_details],
+        "rag_citation_doc_ids": [item.get("doc_id") for item in citation_details],
+        "rag_citation_pages": [item.get("page") for item in citation_details if item.get("page") is not None],
+        "rag_citation_details": citation_details,
+        "rag_no_evidence_fallback": is_insufficient_context_answer(answer),
+        "rag_boundary_refusal": boundary_refusal,
+        "rag_latency_ms": (result_metadata.get("runtime") or {}).get("latency_ms")
+        if isinstance(result_metadata.get("runtime"), dict)
+        else None,
+        "rag_context_token_estimate": token_estimates.get("after_compression")
+        or token_estimates.get("after_expansion"),
+    }
+
+
+def _citation_details(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    for source in sources or []:
+        details.append(
+            {
+                "source_id": source.get("source_id"),
+                "doc_id": source.get("doc_id"),
+                "chunk_id": source.get("chunk_id"),
+                "page": source.get("page"),
+                "page_start": source.get("page_start"),
+                "page_end": source.get("page_end"),
+                "supporting_pages": source.get("supporting_pages"),
+                "section_title": source.get("section_title"),
+                "section_path": source.get("section_path"),
+            }
+        )
+    return details
+
+
+def _answer_refuses_boundary(answer: str) -> bool:
+    lowered = (answer or "").lower()
+    return (
+        "cannot certify" in lowered
+        or "cannot certify, attest, approve" in lowered
+        or "do not start, operate, energize, or reenergize" in lowered
     )
 
 

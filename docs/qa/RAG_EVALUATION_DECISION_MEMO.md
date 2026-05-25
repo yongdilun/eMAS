@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-26 after Phase 14 limited-rollout readiness review.
+Updated: 2026-05-26 after Phase 15 limited-rollout controls and runbook.
 
 ## Executive Decision
 
@@ -15,6 +15,7 @@ Updated: 2026-05-26 after Phase 14 limited-rollout readiness review.
 - Phase 12 production-readiness review: final `V12` remained the engineering candidate, but adjacent wording smoke testing found a real OSHA compliance-certification boundary failure.
 - Phase 13 boundary remediation: the Phase 12 blocker no longer reproduces. Smoke `V12` finished 8/8 with 0 serious failures, and full `V12` finished 50/50 with 0 serious failures.
 - Phase 14 limited-rollout readiness review: final `V12` full and smoke reruns both finished with 0 serious failures, and manual review found no remaining rollout blocker for limited advisory mode.
+- Phase 15 limited-rollout controls: production advisory RAG now has a runtime selector for `V12`, monitoring fields for rollout review, and a rollback runbook.
 - Final production recommendation: **CONDITIONAL GO for limited advisory-mode rollout**. Direct full production remains not approved. Keep `V12` as the limited-rollout candidate and keep `V7` as the fallback/co-lead.
 - Confidence level: high for choosing `V12` as the current engineering candidate, medium for the `V12`/`V7` top pair, and medium-high for conditional limited advisory rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, Phase 7 tested Document Augmentation, Phase 11 cleared the benchmark serious-failure blocker, Phase 12 found the adjacent boundary blocker, Phase 13 remediated that blocker without changing cases or scoring, and Phase 14 completed the final manual readiness decision.
 
@@ -37,6 +38,8 @@ Phase 12 note: the production-readiness review is recorded in `docs/qa/RAG_PHASE
 Phase 13 note: the boundary remediation report is recorded in `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`. The fix added a generic certification/compliance boundary for requests to certify, attest, approve, sign off, declare, confirm, prove, or produce compliance/current-state language from static retrieved text. It also added generic citation/evidence-denial/extractive recall repairs. The Phase 13 smoke run finished with 8/8 structural pass, 0 warnings, 0 serious failures, and `phase12-guarding-compliance-refusal-01` scored 75.69. The full Phase 13 `V12` run finished with 50/50 structural pass, 0 warnings, average rule score 85.5598, and 0 serious failures. Phase 14 supersedes the readiness-review gate with a conditional limited advisory-mode rollout decision.
 
 Phase 14 note: the limited-rollout readiness report is recorded in `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`. Final Phase 14 `V12` reruns repeated the Phase 13 result: full `V12` finished 50/50 with 0 warnings, average rule score 85.5598, 0 serious failures, 41/41 judge calls completed, 0 judge-serious cases, and 0 reranker fallback; the Phase 12 smoke set finished 8/8 with 0 warnings, average rule score 86.1513, 0 serious failures, 6/6 judge calls completed, and 0 reranker fallback. Manual weak-pass review found no limited-rollout blocker, but safety/compliance weak passes require monitoring and human review. Decision: **CONDITIONAL GO for limited advisory-mode rollout**, not full production GO.
+
+Phase 15 note: the rollout runbook is recorded in `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`. Runtime inspection found production RAG is configured through `RAGPipelineConfig` but called from the graph and direct knowledge paths with defaults. Phase 15 added `RAG_ADVISORY_VARIANT`; set it to `V12` for the limited advisory rollout and set it to `default` or unset it to roll back to the previous behavior. The selector keeps compression and Document Augmentation off and does not use eval-only paths or benchmark artifacts. Runtime logs and graph evidence now expose selected variant/config, retrieval mode, context builder, reranker status, citations, fallback/refusal flags, latency, and context token estimates where available.
 
 ## Run 1 Scope
 
@@ -442,6 +445,22 @@ Decision update:
 - Do not approve full production GO or autonomous safety/compliance authority.
 - Require human review for safety/compliance answers, citations in answers, strict refusals for certification/sign-off/live-status/current-state claims, and rollback on unsafe advice or compliance-certification answers.
 
+## Phase 15 Limited-Rollout Controls
+
+Phase 15 prepared the approved limited-rollout candidate for advisory-mode operation:
+
+- Production selector: `RAG_ADVISORY_VARIANT=V12`.
+- Rollback selector: `RAG_ADVISORY_VARIANT=default` or unset the variable.
+- Approved `V12` config: query rewrite on for retrieval only, hybrid search, RSE, rerank on, compression off, Document Augmentation off, reranker fallback off.
+- Monitoring fields: selected variant/config, retrieval mode, context builder, reranker attempted/succeeded/fallback, citation IDs/pages/details, no-evidence fallback, boundary refusal, latency, and context token estimate.
+- Runbook: `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`.
+
+Decision update:
+
+- Keep the Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout**.
+- Treat `V12` as enabled only when the advisory rollout flag is set.
+- Roll back immediately on unsafe advice, compliance certification/sign-off/current-state proof, unsupported citations, frequent reranker fallback, no-evidence spikes on answerable prompts, or unacceptable latency.
+
 ## Current Champion Rationale
 
 `V12` remains the current engineering champion after Phase 14 because it gives the best engineering posture after Document Augmentation was tested, the reviewed Phase 8 serious failures were fixed, the remaining Phase 10 blockers were remediated, the Phase 12 adjacent boundary blocker was fixed, and the final Phase 14 full/smoke reruns cleared the serious-failure gate:
@@ -466,10 +485,11 @@ Recommended next actions:
 - Keep `V12` as the limited-rollout candidate and `V7` as the fallback/co-lead.
 - Do not promote Document Augmentation to the production default.
 - Keep the strict reranker fallback contract: rerank-enabled runs should fail loudly unless fallback is explicitly configured and recorded.
+- Use `RAG_ADVISORY_VARIANT=V12` only for limited advisory-mode rollout; set `RAG_ADVISORY_VARIANT=default` to roll back to the previous RAG behavior.
 - Use the manually reviewed serious failures as regression cases, including A232 subactivities, AMS 300-11 scope/standards/interoperability, OSHA energy-control and guarding checklist completeness, and CSF summaries/functions.
 - Improve judge setup if possible. Prefer Qwen3 14B or stronger for future safety/citation triage; otherwise keep Qwen2.5 7B only with manual review.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
-- Run Phase 15 as limited-rollout observation and hardening, with manual sampling of OSHA/procedure and compliance-boundary answers.
+- Continue limited-rollout observation and hardening under `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`, with manual sampling of OSHA/procedure and compliance-boundary answers.
 
 ## Blockers Before Production
 

@@ -69,6 +69,8 @@ class RAGVariantConfig:
 
     def to_pipeline_config(self) -> RAGPipelineConfig:
         return RAGPipelineConfig(
+            variant_id=self.variant_id,
+            operating_mode="eval",
             retrieval_mode=self.retrieval_mode,
             use_rerank=self.use_rerank,
             expand_neighbors=self.expand_neighbors,

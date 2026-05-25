@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Scope: production-readiness recommendation for the eMAS RAG evaluation track, updated through Phase 14. This document summarizes the current candidate, production gate decision, remediation roadmap, regression gate, and limited-mode monitoring plan. It does not change scoring, change the question bank, or implement new RAG behavior.
+Scope: production-readiness recommendation for the eMAS RAG evaluation track, updated through Phase 15. This document summarizes the current candidate, production gate decision, remediation roadmap, regression gate, and limited-mode monitoring plan. It does not change scoring, change the question bank, or implement benchmark remediation.
 
 Primary references:
 
@@ -16,6 +16,7 @@ Primary references:
 - `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`
 - `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`
 - `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`
+- `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`
 
 ## Phase 9 Status Update
 
@@ -154,6 +155,21 @@ The local LLM server was available, so Phase 14 reran the final `V12` candidate 
 Manual review found no remaining limited-rollout blocker. Remaining weak safety/compliance passes are acceptable only with monitoring and human review, especially `nist-csf-2-un-01`, `phase12-loto-live-action-refusal-01`, `osha-loto-df-04`, `phase12-guarding-moving-parts-adj-01`, `osha-loto-un-01`, `osha-guarding-df-04`, and `osha-guarding-mc-01`.
 
 Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO remains explicitly not approved.
+
+## Phase 15 Status Update
+
+Phase 15 prepared the approved `V12` candidate for limited advisory-mode rollout without changing `tests/rag_eval/cases.json`, scoring, expected answers, or benchmark artifacts.
+
+Runtime inspection found that production advisory RAG is reached through the planner-owned graph virtual tool `rag_search_documents` and the direct document-knowledge answer path. Both call `RAGPipeline.run(..., route="RAG_ONLY")`. The pipeline already had internal knobs for V12 behavior, but production did not expose a clean selector.
+
+Phase 15 added a production-facing advisory selector:
+
+- Enable limited-rollout `V12`: `RAG_ADVISORY_VARIANT=V12`.
+- Roll back to previous behavior: set `RAG_ADVISORY_VARIANT=default` or unset it.
+
+The `V12` advisory selector uses hybrid retrieval, retrieval-only query rewrite, RSE context building, rerank enabled, compression disabled, Document Augmentation disabled, and reranker fallback disabled. It does not use eval-only paths, test-artifact paths, augmented indexes, or benchmark artifacts.
+
+Phase 15 also added runtime monitoring fields to RAG logs and graph evidence metadata, including selected variant/config, retrieval mode, context builder, reranker attempted/succeeded/fallback fields, citation source IDs/pages, no-evidence fallback, boundary refusal, latency, and context token estimate when available.
 
 ## Executive Decision
 
@@ -316,6 +332,11 @@ For the Phase 14 conditional rollout, eMAS RAG must run in limited advisory mode
 
 Required logs and review signals:
 
+- Selected RAG variant/config and advisory operating mode.
+- Retrieval mode and context builder type.
+- Reranker attempted/succeeded/fallback status.
+- Citation count, source IDs, document IDs, pages, and citation details.
+- Boundary refusal responses and no-evidence fallback responses.
 - No-evidence fallback rate, split by answerable vs boundary-style prompts where possible.
 - Retrieved-document vs cited-document mismatch rate.
 - Expected-page/section support miss rate for eval and sampled internal queries.
@@ -342,11 +363,11 @@ Required limited-mode behavior:
 - Do not change the question bank, scoring, or expected answers just to improve the readiness story.
 - Do not promote advisory-mode rollout into autonomous safety/compliance authority.
 
-## Next Implementation Phase Proposal
+## Phase 15 Runbook And Next Actions
 
-Recommended follow-up phase: **Phase 15: Limited-Rollout Observation and Hardening**.
+The limited rollout runbook is now `docs/qa/RAG_LIMITED_ROLLOUT_RUNBOOK.md`.
 
-Proposed substeps:
+Next actions:
 
 1. Review limited-rollout logs for no-evidence fallback rate, citation support failures, reranker fallback, and boundary refusals.
 2. Manually sample OSHA/procedure, machine-guarding, LOTO, and cybersecurity compliance answers.
@@ -355,4 +376,4 @@ Proposed substeps:
 5. Improve citation localization for checklist sections and broad standards summaries.
 6. Keep Qwen2.5 7B as triage-only unless a stronger judge is introduced and manually audited.
 
-Phase 15 should keep `V12` as the limited-rollout candidate. Keep `V7` as the comparison fallback because it has a higher final Phase 11 average score, but it is weaker for readiness because it still had 2 serious failures while `V12` has 0 in the latest full run.
+Keep `V12` as the limited advisory-mode candidate only while the runbook controls hold. Keep `V7` as the comparison fallback because it has a higher final Phase 11 average score, but it is weaker for readiness because it still had 2 serious failures while `V12` has 0 in the latest full run. The operational rollback target for V12 rollout is the previous/default RAG behavior by setting `RAG_ADVISORY_VARIANT=default`.

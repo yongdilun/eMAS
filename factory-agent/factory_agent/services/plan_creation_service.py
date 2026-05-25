@@ -51,6 +51,10 @@ from factory_agent.planning.v2_trace_compatibility import (
     build_failed_direct_v2_compatibility_state,
 )
 from factory_agent.rag.knowledge_policy import default_knowledge_policy_registry
+from factory_agent.rag.runtime_config import (
+    advisory_rag_pipeline_config,
+    run_rag_pipeline_with_optional_config,
+)
 from factory_agent.rag.source_metadata import normalize_source_locators, sanitize_rag_answer_text
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PlanCreateRequest, PlanDraft, PlanResponse, ToolInfo
@@ -371,7 +375,13 @@ class PlanCreationService:
                 from ..rag.pipeline import RAGPipeline
 
                 self._rag_pipeline = RAGPipeline()
-            result = await self._rag_pipeline.run(query=intent, session_id=sess.session_id, route="RAG_ONLY")
+            result = await run_rag_pipeline_with_optional_config(
+                self._rag_pipeline,
+                query=intent,
+                session_id=sess.session_id,
+                route="RAG_ONLY",
+                config=advisory_rag_pipeline_config(self._settings),
+            )
             answer = str(getattr(result, "answer", "") or "").strip()
             sources = list(getattr(result, "sources", []) or [])
             safety_content = getattr(result, "safety_content", None)
