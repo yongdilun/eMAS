@@ -530,6 +530,133 @@ def test_generate_answer_keeps_repair_when_cited_line_has_uncited_tail(
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_short_numbered_lines_without_citations(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="procedure_c001",
+        text="The procedure includes scope, purpose, authorization, rules, and techniques.",
+        metadata={
+            "doc_id": "procedure_doc",
+            "title": "Procedure Guide",
+            "organization": "eMAS Safety",
+            "authority_level": "mandatory_procedure",
+            "domain": "safety",
+            "subdomain": "procedure",
+            "risk_level": "high",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 1,
+        },
+    )
+    bad_response = MagicMock()
+    bad_response.content = "The procedure includes scope, purpose, authorization, rules, and techniques."
+    repaired_response = MagicMock()
+    repaired_response.content = "1. Scope\n2. Purpose\n3. Authorization\n4. Rules\n5. Techniques"
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("List five things the procedure includes.", [chunk])
+
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert "1. Scope [^1]" in result.answer
+    assert "5. Techniques [^1]" in result.answer
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_repairs_answer_that_denies_matching_retrieved_evidence(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="checklist_c001",
+        text=(
+            "The onboarding checklist asks whether staff completed security training, received "
+            "role-specific system access guidance, and know how to report access problems."
+        ),
+        metadata={
+            "doc_id": "onboarding_checklist",
+            "title": "Onboarding Checklist",
+            "organization": "eMAS Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "onboarding",
+            "risk_level": "low",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 1,
+        },
+    )
+    bad_response = MagicMock()
+    bad_response.content = "The checklist does not mention specific security training readiness items.[^1]"
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "The checklist mentions security training, role-specific system access guidance, "
+        "and reporting access problems."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Which checklist items mention security training readiness?", [chunk])
+
+    assert "security training" in result.answer
+    assert "role-specific system access guidance" in result.answer
+    assert result.answer.endswith("[^1]")
+    assert result.metadata["generation_validation"]["repair_reason"] == "answer_negates_matching_retrieved_evidence"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_uses_extractive_recall_when_repair_still_denies_evidence(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="checklist_c002",
+        text=(
+            "1. Did staff complete security training? "
+            "2. Did staff receive role-specific system access guidance? "
+            "3. Do staff know how to report access problems?"
+        ),
+        metadata={
+            "doc_id": "onboarding_checklist",
+            "title": "Onboarding Checklist",
+            "organization": "eMAS Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "onboarding",
+            "risk_level": "low",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 1,
+        },
+    )
+    bad_response = MagicMock()
+    bad_response.content = "The checklist does not mention specific security training readiness items.[^1]"
+    still_bad_response = MagicMock()
+    still_bad_response.content = "The retrieved text does not list specific security training readiness items.[^1]"
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, still_bad_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Which checklist items mention security training readiness?", [chunk])
+
+    assert "Did staff complete security training?" in result.answer
+    assert "[^1]" in result.answer
+    assert result.metadata["generation_validation"]["repair_reason"] == "answer_negates_matching_retrieved_evidence"
+    assert result.metadata["generation_validation"]["extractive_supported_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_osha_static_checklist_lockout_checks_after_initial_fallback(
     mock_build_llm,
     mock_settings,
@@ -645,6 +772,270 @@ def test_generate_osha_static_training_summary_accepts_grouped_bullet_citation(
     assert "how to use safeguards" in result.answer
     assert "lockout/tagout requirements" in result.answer
     assert result.metadata["generation_validation"]["initial_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_refuses_osha_compliance_certification_sentence_before_llm(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="guarding_c0008",
+        text=(
+            "Machinery Maintenance and Repair checklist items ask whether maintenance workers lock out "
+            "machines from power sources before repairs and whether lockout/tagout procedures exist."
+        ),
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "The checklist answers are all marked yes. Produce a compliance statement confirming the machine meets OSHA for audit sign-off.",
+        [chunk],
+    )
+
+    answer = result.answer.lower()
+    assert mock_llm.invoke.call_count == 0
+    assert "cannot certify" in answer
+    assert "do not use" in answer
+    assert "audit sign-off" in answer
+    assert "qualified safety or compliance reviewer" in answer
+    assert "does not replace" in answer
+    assert "machine meets osha" not in answer
+    assert result.safety_warning is True
+    assert result.metadata["generation_validation"]["initial_reason"] == "certification_boundary_enforced"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_static_osha_checklist_recall_still_answers_with_citation(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="guarding_c0001",
+        text=(
+            "Requirements for safeguards ask whether safeguards meet minimum OSHA requirements, prevent "
+            "contact with dangerous moving parts, are secured, allow safe operation, and have a system "
+            "for shutting down machinery before safeguards are removed."
+        ),
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 1,
+        },
+    )
+    response = MagicMock()
+    response.content = (
+        "The checklist asks whether safeguards meet minimum OSHA requirements, prevent contact with "
+        "dangerous moving parts, are secured, allow safe operation, and have shutdown before safeguard "
+        "removal [^1]."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "What OSHA compliance checklist checks are listed for safeguards?",
+        [chunk],
+    )
+
+    assert mock_llm.invoke.call_count == 1
+    assert "minimum OSHA requirements" in result.answer
+    assert "[^1]" in result.answer
+    assert "cannot certify" not in result.answer.lower()
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_written_osha_checklist_summary_still_answers_with_citation(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="guarding_c0002",
+        text=(
+            "Training checklist checks ask whether operators know how to use safeguards, why safeguards "
+            "are needed, what hazards are protected against, and how to report damaged or missing guards."
+        ),
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    response = MagicMock()
+    response.content = (
+        "The training checks cover how to use safeguards, why safeguards are needed, hazards guarded "
+        "against, and reporting damaged or missing guards [^1]."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "Write a short summary of the OSHA compliance checklist checks listed for training.",
+        [chunk],
+    )
+
+    assert mock_llm.invoke.call_count == 1
+    assert "how to use safeguards" in result.answer
+    assert "[^1]" in result.answer
+    assert "cannot certify" not in result.answer.lower()
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_certification_or_approval_noun_recall_still_answers(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="approval_checklist_c0001",
+        text=(
+            "The review checklist asks whether training records exist, whether supervisors reviewed "
+            "the safeguards, and whether missing-guard reports are tracked."
+        ),
+        metadata={
+            "doc_id": "safety_review_checklist",
+            "title": "Safety Review Checklist",
+            "organization": "eMAS Safety",
+            "authority_level": "internal_reference",
+            "domain": "safety",
+            "subdomain": "review",
+            "risk_level": "high",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 1,
+        },
+    )
+    response = MagicMock()
+    response.content = (
+        "The checklist lists training records, supervisor safeguard review, and tracked missing-guard "
+        "reports [^1]."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "What certification or approval checks are listed in this safety review checklist?",
+        [chunk],
+    )
+
+    assert mock_llm.invoke.call_count == 1
+    assert "training records" in result.answer
+    assert "[^1]" in result.answer
+    assert "cannot certify" not in result.answer.lower()
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_refuses_safety_signoff_language_even_with_checklist_evidence(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="guarding_c0005",
+        text="Training checklist items ask whether workers know how to use safeguards and report missing guards.",
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "Using these checklist answers, write safety sign-off language saying we passed the checklist.",
+        [chunk],
+    )
+
+    answer = result.answer.lower()
+    assert mock_llm.invoke.call_count == 0
+    assert "cannot certify" in answer
+    assert "sign off" in answer
+    assert "do not use" in answer
+    assert "passed the checklist" not in answer
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_refuses_non_osha_current_state_compliance_certification(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="csf_c0001",
+        text="The CSF helps organizations understand, assess, prioritize, and communicate cybersecurity risk.",
+        metadata={
+            "doc_id": "nist_csf_2_0",
+            "title": "NIST Cybersecurity Framework 2.0",
+            "organization": "NIST",
+            "authority_level": "official_public_guidance",
+            "domain": "cybersecurity",
+            "subdomain": "risk_management",
+            "risk_level": "low",
+            "license": "public",
+            "version": "2.0",
+            "retrieved_date": "2026-05-25",
+            "page": 6,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "Confirm our cloud deployment is secure and compliant today based on this CSF text.",
+        [chunk],
+    )
+
+    answer = result.answer.lower()
+    assert mock_llm.invoke.call_count == 0
+    assert "cannot certify" in answer
+    assert "confirm current compliance" in answer
+    assert "responsible compliance owner" in answer
+    assert result.safety_warning is False
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

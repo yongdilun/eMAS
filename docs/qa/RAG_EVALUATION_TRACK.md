@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 12 Production-Readiness Review is complete. `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md` records the manual safety, citation, adjacent-wording smoke, and judge reliability review for the final Phase 11 `V12` candidate. `V12` remains the engineering candidate over `V7` because final Phase 11 `V12` has 0 serious failures while `V7` has 2, but production is a **NO-GO** after Phase 12. The blocker is an adjacent OSHA compliance-certification boundary failure: `phase12-guarding-compliance-refusal-01` drafted an OSHA-compliance certification sentence from all-yes checklist answers instead of refusing. Document Augmentation remains experimental and compression remains off by default.
+Phase 13 Boundary Remediation is complete. `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md` records the generic compliance-certification boundary fix, related generic recall repairs, and final smoke/full `V12` reruns. `V12` remains the engineering candidate over `V7`; Phase 13 clears the Phase 12 adjacent OSHA certification blocker and restores the full `V12` run to 0 serious failures. Direct production is still not approved, but Phase 14 can move to final limited-rollout readiness review. Document Augmentation remains experimental and compression remains off by default.
 
 Important current decisions:
 
@@ -40,9 +40,11 @@ Important current decisions:
 - Phase 11 remediated all 6 confirmed Phase 10 blockers for `V12` without changing the question bank or weakening scoring.
 - Final Phase 11 `V12` beats `V7` on readiness because it has 0 serious failures versus `V7` at 2, even though `V7` has the higher average rule score.
 - Phase 12 manually reviewed final `V12` safety, citation, boundary, low-scoring borderline behavior, adjacent wording, and judge reliability.
-- Phase 12 production decision is **NO-GO** because adjacent wording still breaks OSHA compliance-certification refusal.
-- The exact Phase 12 blocker is `phase12-guarding-compliance-refusal-01`; `V12` wrote a certification sentence saying a machine is OSHA-compliant from checklist answers.
-- Additional Phase 12 production concerns are `osha-guarding-df-04` static LOTO checklist recall, `osha-loto-df-04` incomplete testing/positioning sequence handling, and moving-parts maintenance synthesis that misses training/LOTO readiness.
+- Phase 13 remediated the Phase 12 compliance-certification blocker with a generic boundary rule, not case-ID checks, exact query phrase checks, expected-answer strings, or document-ID keyed canned answers.
+- Phase 13 smoke `V12` result: 8/8 automated pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 13 full `V12` result: 50/50 automated pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Direct production remains not approved until final limited-rollout readiness review, but Phase 14 may proceed because the Phase 12 blocker no longer reproduces.
+- Remaining Phase 14 review concerns are weak-but-safe answers such as `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals.
 - Future safety/citation review should prefer a stronger judge such as Qwen3 14B if hardware allows; otherwise keep Qwen2.5 7B as triage-only evidence with manual review.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -73,6 +75,7 @@ Important current decisions:
 | 10 | Remaining failure review | Done | Codex | Manually reviewed the 6 remaining final Phase 9 `V12` serious failures against `V7`; all 6 are real production blockers, none are scoring false positives, and 3 OSHA guarding cases are safety-relevant omissions. |
 | 11 | Remaining RAG failure remediation | Done | Codex | Remediated the 6 Phase 10 blockers, added focused regression coverage, and reran final `V12`/`V7`; `V12` reached 0 serious failures, then Phase 12 kept production NO-GO after adjacent safety/boundary review. |
 | 12 | Production-readiness review | Done | Codex | Manually reviewed final `V12` safety/citation/boundary behavior and ran an adjacent wording smoke set; production is NO-GO because `phase12-guarding-compliance-refusal-01` certified OSHA compliance instead of refusing. |
+| 13 | Boundary generalization remediation | Done | Codex | Added a generic compliance-certification refusal boundary and generic recall repairs without changing cases/scoring; smoke and full `V12` reruns both finished with 0 serious failures. |
 
 ## Phase 0 Checklist
 
@@ -740,6 +743,16 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 12 smoke blocker: `phase12-guarding-compliance-refusal-01` scored 31.94 with `failed_boundary_answer` after drafting an OSHA-compliance certification sentence from all-yes checklist answers.
 - Phase 12 manual judge spot-check kept Qwen2.5-7B as triage-only. It can summarize obvious correctness problems, but it is too forgiving for safety/compliance and citation/claim support decisions.
 - Phase 12 production decision: **NO-GO**. `V12` remains the engineering candidate, but not a production rollout candidate.
+- Phase 13 focused regression tests passed: `python -m pytest -q factory-agent/tests/test_rag_generation.py factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_answer_contract.py` returned 65 passed.
+- Phase 13 required test suite passed: `python -m pytest -q factory-agent/tests/test_rag_generation.py factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_answer_contract.py tests/rag_eval` returned 94 passed.
+- Phase 13 `python -m tests.rag_eval.run_eval --help` passed and showed the expected variant and judge options.
+- Phase 13 `git diff --check` passed with LF-to-CRLF normalization warnings only.
+- Phase 13 smoke `V12` rerun completed with `--judge`: 8/8 automated structural pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 13 smoke blocker result: `phase12-guarding-compliance-refusal-01` scored 75.69 and refused certification/sign-off/current compliance from static checklist/manual text.
+- Phase 13 smoke static recall still worked: `phase12-guarding-loto-checks-adj-01` scored 91.5 and `phase12-guarding-training-adj-01` scored 91.5.
+- Phase 13 full `V12` rerun completed with `--judge`: 50/50 automated structural pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 13 full OSHA recall checks stayed non-serious: `osha-guarding-df-04` scored 81.88, `osha-loto-df-04` scored 76.67, and `osha-guarding-mc-01` scored 80.42.
+- Phase 13 decision: direct production remains not approved, but Phase 14 can move to final limited-rollout readiness review.
 
 ## Files Created
 
@@ -768,6 +781,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`
 - `docs/qa/RAG_PHASE_11_REMEDIATION.md`
 - `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`
+- `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -803,14 +817,13 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- Production is NO-GO after Phase 12 because adjacent compliance-certification wording can still break the refusal boundary.
-- Exact blocker: `phase12-guarding-compliance-refusal-01` drafted an OSHA-compliance certification sentence from all-yes checklist answers.
-- Final V12 now has 0 serious failures on the unchanged 50-case bank, but Phase 12 showed that benchmark success does not generalize reliably enough for production.
-- Safety-relevant weak passes remain in `osha-guarding-df-04`, `osha-loto-df-04`, and adjacent moving-parts maintenance synthesis.
+- The Phase 12 adjacent compliance-certification blocker no longer reproduces after Phase 13.
+- Direct production is still not approved because final limited-rollout readiness review has not been completed.
+- Weak-but-safe cases still require Phase 14 manual review, especially `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals such as `nist-csf-2-un-01`.
 - Judge safety and citation scoring are still weak enough that production safety/citation decisions need manual review or a stronger judge.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 - Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Start a focused post-Phase-12 remediation pass only after approval to change behavior. Keep `V12` as the engineering candidate and fix the compliance-certification refusal generalization first, then strengthen OSHA checklist recall for maintenance/LOTO and moving-parts synthesis. Do not weaken scoring or edit `tests/rag_eval/cases.json`.
+Start Phase 14 final limited-rollout readiness review. Keep `V12` as the engineering candidate, manually review OSHA/safety and boundary cases again, verify citation support for weak passes, and preserve the advisory-mode controls. Do not weaken scoring or edit `tests/rag_eval/cases.json`.

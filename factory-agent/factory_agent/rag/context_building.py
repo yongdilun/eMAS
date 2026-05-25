@@ -878,7 +878,7 @@ def _preserve_top_related_candidates(
     query: str,
     selected_chunks: list[Chunk],
     candidates: list[ScoredChunk],
-    max_rank: int = 3,
+    max_rank: int = 5,
 ) -> list[Chunk]:
     if not selected_chunks or not candidates or not _query_needs_related_sections(query):
         return selected_chunks

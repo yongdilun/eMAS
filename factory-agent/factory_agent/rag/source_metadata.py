@@ -31,7 +31,7 @@ _COMPLIANCE_PROOF_RE = re.compile(
     re.IGNORECASE,
 )
 _LIVE_STATUS_RE = re.compile(r"\b(live|current|today|right now|status)\b", re.IGNORECASE)
-_SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy)\b", re.IGNORECASE)
+_SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy|safety)\b", re.IGNORECASE)
 
 
 def sanitize_rag_answer_text(value: Any) -> str:
@@ -70,8 +70,9 @@ def _boundary_suffix_for_query(query: Any) -> str:
         _LIVE_STATUS_RE.search(text) and re.search(r"\b(compliance|approval|approved|secure|security)\b", text, re.IGNORECASE)
     ):
         return (
-            " Do not treat these sources as live approval, vendor, security, or compliance proof. "
-            "Check the current system of record or the responsible compliance owner."
+            " Do not treat these sources as live approval, vendor, security, compliance proof, or "
+            "certification. They cannot replace qualified safety/compliance review. Check the current "
+            "system of record or the responsible compliance owner."
         )
     return ""
 

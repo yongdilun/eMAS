@@ -213,6 +213,57 @@ def test_rse_preserves_top_retrieved_related_candidate_skipped_by_rerank():
     assert "cybersecurity incident" in text
 
 
+def test_rse_preserves_rank_four_related_candidate_for_checklist_review():
+    chunks = [
+        _chunk(
+            "guide",
+            1,
+            "Maintenance checklist items mention preparation before repairs.",
+            section="Maintenance and Repair",
+            page=2,
+        ),
+        _chunk(
+            "guide",
+            2,
+            "Checklist items mention equipment isolation before removal.",
+            section="Requirements",
+            page=1,
+        ),
+        _chunk(
+            "guide",
+            3,
+            "Checklist heading filler.",
+            section="Checklist",
+            page=1,
+        ),
+        _chunk(
+            "guide",
+            4,
+            "Training checklist items mention maintenance workers knowing how the controls work.",
+            section="Training",
+            page=2,
+        ),
+    ]
+    builder = RAGContextBuilder(FakeRetriever(chunks), rse_max_window=0)
+
+    result = builder.build(
+        query="For a maintenance review, which checklist areas should be checked?",
+        selected_chunks=[chunks[0], chunks[1], chunks[2]],
+        candidates=[
+            _scored(chunks[0]),
+            _scored(chunks[1]),
+            _scored(chunks[2]),
+            _scored(chunks[3]),
+        ],
+        context_builder="rse",
+        compression="none",
+    )
+
+    text = "\n".join(chunk.text for chunk in result.chunks)
+    assert "Training checklist items" in text
+    assert "maintenance workers" in text
+
+
 def test_rse_does_not_cross_doc_id():
     chunks = [
         _chunk("doc-a", 0, "same doc previous chunk."),

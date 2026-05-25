@@ -48,15 +48,72 @@ SOURCE_SUPPORT_STOPWORDS = {
     "who",
     "with",
 }
+EXTRACTIVE_RECALL_STOPWORDS = {
+    "according",
+    "answer",
+    "area",
+    "check",
+    "checked",
+    "checklist",
+    "document",
+    "evidence",
+    "information",
+    "item",
+    "list",
+    "listed",
+    "mention",
+    "pull",
+    "question",
+    "readiness",
+    "review",
+    "source",
+    "specific",
+    "static",
+}
 
 LIVE_SAFETY_BOUNDARY_RE = re.compile(
     r"\b(live|current|right now|today|safe to start|start now|operate now|energiz(?:e|ing)? now|"
     r"reenergiz(?:e|ing)?|locked[- ]out|permission|permit)\b",
     re.IGNORECASE,
 )
-SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy)\b", re.IGNORECASE)
+SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy|safety)\b", re.IGNORECASE)
 COMPLIANCE_BOUNDARY_RE = re.compile(
     r"\b(certif|compliant|compliance proof|approved|approval|secure|security proof|vendor|buy|purchase)\b",
+    re.IGNORECASE,
+)
+CERTIFICATION_ACTION_RE = re.compile(
+    r"\b(certif(?:y|ies|ied)|attest|approve|sign[- ]?off)\b",
+    re.IGNORECASE,
+)
+COMPLIANCE_VERDICT_ACTION_RE = re.compile(
+    r"\b(declare|confirm|prove)\b",
+    re.IGNORECASE,
+)
+COMPLIANCE_STATEMENT_ACTION_RE = re.compile(
+    r"\b(draft|write|produce|generate|say)\b",
+    re.IGNORECASE,
+)
+COMPLIANCE_DECISION_TARGET_RE = re.compile(
+    r"\b(compliant|compliance|meets? (?:osha|requirements?|standards?)|passed? (?:the )?"
+    r"(?:checklist|audit)|secure|security|safe|approved|sign[- ]?off)\b",
+    re.IGNORECASE,
+)
+COMPLIANCE_STATEMENT_OUTPUT_RE = re.compile(
+    r"\b(compliance statement|certification statement|certification sentence|attestation|"
+    r"declaration|sign[- ]?off(?: language| statement)?|approval (?:language|statement|sentence)|audit sign[- ]?off|"
+    r"(?:statement|sentence|language)\b.{0,60}\b(?:compliant|compliance|approved|"
+    r"passed?|meets?|secure|safe))\b",
+    re.IGNORECASE,
+)
+CURRENT_STATE_PROOF_RE = re.compile(
+    r"\b(today|current(?:ly)?|right now|live|this (?:machine|deployment|system|site|equipment)|"
+    r"our|we|audit|passed)\b",
+    re.IGNORECASE,
+)
+NEGATES_RETRIEVED_EVIDENCE_RE = re.compile(
+    r"\b(?:no|none|not|does(?:n['’]?t| not)|do(?:n['’]?t| not)|lacks?|without)\b.{0,120}"
+    r"\b(?:mention|listed?|questions?|items?|evidence|information|specific|support|prove)\b|"
+    r"\bthere (?:is|are) no\b",
     re.IGNORECASE,
 )
 
@@ -90,6 +147,7 @@ If the context does not prove the answer, respond exactly with:
 - For comparison questions, define each named concept separately before explaining the difference or relationship.
 - For safety procedures, answer from the retrieved procedure evidence when it exists, include every required procedural category the evidence states, and rely on the structured safety warning outside the answer.
 - For OSHA or other static safety checklist questions that ask what checks, areas, items, or training requirements are listed, treat the question as descriptive document recall. Answer from the checklist evidence with citations; do not refuse unless the user asks for live permission, live machine status, current compliance certification, or operational authorization.
+- If the user asks you to certify, attest, declare, approve, sign off, confirm compliance, write compliance/sign-off language, say the user passed, or prove a current compliant/secure/safe state from static retrieved text, refuse that certification boundary. You may summarize what the retrieved checklist/manual evidence says, but clearly state that the answer cannot certify current compliance or replace qualified safety/compliance review.
 
 ### Output Format
 For procedures:
@@ -135,6 +193,7 @@ The retrieved context has relevant evidence for the user's question, so do not o
 - For section summaries, list/group questions, comparisons, and procedures, include all supported dimensions and required categories.
 - If the user asks for a specific number of listed items, include that many supported items and preserve item labels or headings.
 - For OSHA or other static checklist questions, answer the listed checks descriptively from the document. Keep live-action permission, machine status, compliance certification, and unsupported current-state claims out of the answer.
+- If the user asks for certification, attestation, sign-off, approval, compliance language, or proof of a current compliant/secure/safe state, refuse that boundary instead of drafting the requested statement. It is acceptable to summarize retrieved evidence, but the final answer must say it cannot certify compliance or replace qualified review.
 
 ### Context
 {context}
@@ -238,6 +297,46 @@ class AnswerGenerator:
                     api_data=json.dumps(api_data, indent=2)
                 )
 
+            has_high_risk = any(c.metadata.get("risk_level") == "high" for c in chunks)
+            safety_text = None
+            if has_high_risk:
+                safety_text = "This topic involves high-risk industrial procedures. Always follow your site's approved SOP, obtain required permits, and consult your safety officer before proceeding."
+
+            if not api_data and _requires_certification_boundary(query):
+                answer_text = _certification_boundary_answer(query)
+                sources = self._build_sources_for_answer(
+                    query=query,
+                    answer=answer_text,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                return AnswerResult(
+                    answer=answer_text,
+                    sources=sources,
+                    safety_warning=has_high_risk,
+                    safety_content=safety_text,
+                    route_used=route,
+                    metadata={
+                        "citation_support": self._build_citation_support_metadata(
+                            doc_order=doc_order,
+                            doc_chunks=doc_chunks,
+                        ),
+                        "evidence_chunks": self._build_evidence_chunk_metadata(
+                            doc_order=doc_order,
+                            doc_chunks=doc_chunks,
+                        ),
+                        "generation_validation": {
+                            "initial_valid": True,
+                            "initial_reason": "certification_boundary_enforced",
+                            "initial_insufficient_context": True,
+                            "repair_attempted": False,
+                            "repair_reason": None,
+                            "repair_valid": False,
+                            "repair_failure_reason": None,
+                        },
+                    },
+                )
+
             # 3. Format prompt
             prompt = ANSWER_PROMPT.format(
                 context=context,
@@ -254,13 +353,6 @@ class AnswerGenerator:
             
             response = self.llm.invoke(messages)
             answer_text = sanitize_rag_answer_text(response.content)
-
-            # 5. Check for high risk
-            has_high_risk = any(c.metadata.get("risk_level") == "high" for c in chunks)
-            
-            safety_text = None
-            if has_high_risk:
-                safety_text = "This topic involves high-risk industrial procedures. Always follow your site's approved SOP, obtain required permits, and consult your safety officer before proceeding."
 
             # 6. Build citations (one per unique document)
             sources = self._build_sources_for_answer(
@@ -409,16 +501,14 @@ class AnswerGenerator:
             "repair_valid": False,
             "repair_failure_reason": None,
         }
+        completeness_reason = self._supported_answer_completeness_issue(
+            query=query,
+            answer=validation.answer or answer,
+            doc_chunks=doc_chunks,
+        )
         if validation.valid and not validation.insufficient_context:
-            completeness_reason = self._supported_answer_completeness_issue(
-                query=query,
-                answer=validation.answer,
-                doc_chunks=doc_chunks,
-            )
             if not completeness_reason:
                 return validation.answer, sources, metadata
-        else:
-            completeness_reason = None
 
         repair_reason = None
         if completeness_reason:
@@ -465,7 +555,49 @@ class AnswerGenerator:
             metadata["repair_valid"] = repaired_validation.valid and not repaired_validation.insufficient_context
             metadata["repair_failure_reason"] = repaired_validation.reason
             if repaired_validation.valid and not repaired_validation.insufficient_context:
-                return repaired_validation.answer, repaired_sources, metadata
+                repaired_completeness_reason = self._supported_answer_completeness_issue(
+                    query=query,
+                    answer=repaired_validation.answer,
+                    doc_chunks=doc_chunks,
+                )
+                if not repaired_completeness_reason:
+                    if repair_reason == "answer_negates_matching_retrieved_evidence":
+                        extractive_answer = _extractive_supported_recall_answer(
+                            query=query,
+                            doc_order=doc_order,
+                            doc_chunks=doc_chunks,
+                        )
+                        if extractive_answer:
+                            extractive_sources = self._build_sources_for_answer(
+                                query=query,
+                                answer=extractive_answer,
+                                doc_order=doc_order,
+                                doc_chunks=doc_chunks,
+                            )
+                            extractive_validation = validate_knowledge_answer(extractive_answer, extractive_sources)
+                            if extractive_validation.valid and not extractive_validation.insufficient_context:
+                                metadata["extractive_supported_answer"] = True
+                                return extractive_validation.answer, extractive_sources, metadata
+                    return repaired_validation.answer, repaired_sources, metadata
+                metadata["repair_valid"] = False
+                metadata["repair_failure_reason"] = repaired_completeness_reason
+
+        extractive_answer = _extractive_supported_recall_answer(
+            query=query,
+            doc_order=doc_order,
+            doc_chunks=doc_chunks,
+        )
+        if extractive_answer:
+            extractive_sources = self._build_sources_for_answer(
+                query=query,
+                answer=extractive_answer,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
+            extractive_validation = validate_knowledge_answer(extractive_answer, extractive_sources)
+            if extractive_validation.valid and not extractive_validation.insufficient_context:
+                metadata["extractive_supported_answer"] = True
+                return extractive_validation.answer, extractive_sources, metadata
 
         if validation.valid:
             return validation.answer, sources, metadata
@@ -478,6 +610,14 @@ class AnswerGenerator:
         answer: str,
         doc_chunks: dict[str, list[Chunk]],
     ) -> str | None:
+        negated_evidence_reason = _negates_available_evidence_issue(
+            query=query,
+            answer=answer,
+            doc_chunks=doc_chunks,
+        )
+        if negated_evidence_reason:
+            return negated_evidence_reason
+
         requested_count = _requested_item_count(query)
         if requested_count is None:
             return None
@@ -579,6 +719,11 @@ class AnswerGenerator:
             if not stripped:
                 repaired_lines.append(line)
                 continue
+            if default_marker and re.match(r"^\s*(?:[-*]\s+|\d+[\.)]\s+)", stripped):
+                if not has_valid_citation(stripped):
+                    repaired_lines.append(f"{stripped} {default_marker}")
+                    changed = True
+                    continue
             if has_valid_citation(stripped):
                 if has_uncited_tail(stripped):
                     repaired_lines.append(f"{stripped} {last_valid_marker(stripped) or default_marker or ''}".rstrip())
@@ -881,9 +1026,181 @@ class AnswerGenerator:
         return [self._chunk_evidence(chunk, source_number=source_number) for chunk in chunks]
 
 
+def _requires_certification_boundary(query: str) -> bool:
+    text = query or ""
+    lowered = text.lower()
+    has_target = bool(COMPLIANCE_DECISION_TARGET_RE.search(text))
+    has_current_state_target = bool(
+        CURRENT_STATE_PROOF_RE.search(text)
+        and re.search(
+            r"\b(osha|checklist|audit|safety|compliance|machine|deployment|system|site|equipment|secure|security)\b",
+            lowered,
+        )
+    )
+    has_statement_output = bool(COMPLIANCE_STATEMENT_OUTPUT_RE.search(text))
+    has_passed_claim = bool(
+        re.search(
+            r"\b(?:passed? (?:the )?(?:checklist|audit)|meets? (?:osha|requirements?|standards?)|"
+            r"(?:is|are) (?:compliant|approved|secure|safe))\b",
+            lowered,
+        )
+    )
+
+    if CERTIFICATION_ACTION_RE.search(text) and (
+        has_target
+        or has_current_state_target
+        or re.search(r"\b(osha|checklist|audit|safety|compliance|machine|deployment|system|site|equipment)\b", lowered)
+    ):
+        return True
+    if COMPLIANCE_VERDICT_ACTION_RE.search(text) and (has_target or has_current_state_target):
+        return True
+    if COMPLIANCE_STATEMENT_ACTION_RE.search(text) and (
+        (has_target and (has_statement_output or has_passed_claim))
+        or (has_current_state_target and (has_target or has_statement_output or has_passed_claim))
+    ):
+        return True
+    return bool(
+        re.search(r"\bsign[- ]?off\b", lowered)
+        and re.search(r"\b(osha|checklist|audit|safety|compliance|machine|secure|security)\b", lowered)
+    )
+
+
+def _certification_boundary_answer(query: str) -> str:
+    safety_domain = bool(SAFETY_DOMAIN_RE.search(query or ""))
+    review_owner = (
+        "a qualified safety or compliance reviewer"
+        if safety_domain
+        else "the responsible compliance owner or qualified reviewer"
+    )
+    current_record = (
+        "current site conditions, applicable requirements, and the site safety/compliance process"
+        if safety_domain
+        else "current system evidence, applicable requirements, and the responsible review process"
+    )
+    return (
+        "I cannot certify, attest, approve, sign off on, or confirm current compliance from retrieved "
+        "checklist or manual text. Do not use this document-only answer as a compliance statement, "
+        "audit sign-off, or proof that the current machine, system, or deployment is compliant, secure, "
+        "or safe. The retrieved evidence can support a checklist-style review, but it does not replace "
+        f"{review_owner} evaluating {current_record}."
+    )
+
+
+def _negates_available_evidence_issue(
+    *,
+    query: str,
+    answer: str,
+    doc_chunks: dict[str, list[Chunk]],
+) -> str | None:
+    if not NEGATES_RETRIEVED_EVIDENCE_RE.search(answer or ""):
+        return None
+    if not _has_matching_retrieved_evidence(query=query, doc_chunks=doc_chunks):
+        return None
+
+    query_terms = _support_tokens(query) - {
+        "answer",
+        "check",
+        "checked",
+        "checklist",
+        "evidence",
+        "information",
+        "item",
+        "listed",
+        "mention",
+        "question",
+        "specific",
+        "summarize",
+        "summary",
+    }
+    if not query_terms:
+        return None
+
+    evidence_terms = set()
+    for chunks in doc_chunks.values():
+        for chunk in chunks:
+            evidence_terms.update(_support_tokens(_chunk_text_with_metadata_for_support(chunk)))
+
+    overlap = query_terms & evidence_terms
+    if len(overlap) >= max(2, min(4, len(query_terms) // 2)):
+        return "answer_negates_matching_retrieved_evidence"
+    return None
+
+
+def _extractive_supported_recall_answer(
+    *,
+    query: str,
+    doc_order: list[str],
+    doc_chunks: dict[str, list[Chunk]],
+) -> str | None:
+    if not _is_extractive_recall_query(query):
+        return None
+
+    focus_terms = _support_tokens(query) - EXTRACTIVE_RECALL_STOPWORDS
+    if not focus_terms:
+        return None
+
+    selected: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    threshold = 1 if len(focus_terms) <= 3 else 2
+
+    for doc_id in doc_order:
+        marker = _source_marker_for_doc(doc_order, doc_id)
+        if not marker:
+            continue
+        for chunk in doc_chunks.get(doc_id, []):
+            for sentence in _evidence_sentences(chunk.text):
+                clean_sentence = _clean_extractive_sentence(sentence)
+                if len(re.findall(r"[A-Za-z0-9]+", clean_sentence)) < 4:
+                    continue
+                sentence_terms = _support_tokens(clean_sentence)
+                overlap = focus_terms & sentence_terms
+                if len(overlap) < threshold:
+                    continue
+                normalized = re.sub(r"\s+", " ", clean_sentence).lower()
+                if normalized in seen:
+                    continue
+                selected.append((clean_sentence, marker))
+                seen.add(normalized)
+                if len(selected) >= 6:
+                    break
+            if len(selected) >= 6:
+                break
+        if len(selected) >= 6:
+            break
+
+    if not selected:
+        return None
+    return "\n".join(f"- {sentence} {marker}" for sentence, marker in selected)
+
+
+def _is_extractive_recall_query(query: str) -> bool:
+    text = (query or "").lower()
+    if _requested_item_count(query) is not None:
+        return True
+    return bool(
+        re.search(r"\b(what|which|list|listed|name|identify|pull out|extract|show|summarize)\b", text)
+        and re.search(r"\b(check|checks|checklist|question|questions|item|items|requirements?|topics?|areas?)\b", text)
+    )
+
+
+def _clean_extractive_sentence(sentence: str) -> str:
+    text = re.sub(r"^\[Section:[^\]]+\]\s*", "", sentence or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" -;")
+
+
+def _source_marker_for_doc(doc_order: list[str], doc_id: str) -> str | None:
+    for index, current_doc_id in enumerate(doc_order, start=1):
+        if current_doc_id == doc_id:
+            return f"[^{index}]"
+    return None
+
+
 def _support_tokens(text: str) -> set[str]:
     tokens: set[str] = set()
-    for raw in re.findall(r"[a-z0-9]+", (text or "").lower()):
+    normalized = re.sub(r"\block\s+out\b", "lockout", (text or "").lower())
+    normalized = re.sub(r"\btag\s+out\b", "tagout", normalized)
+    for raw in re.findall(r"[a-z0-9]+", normalized):
         token = _support_stem(raw)
         if len(token) < 3 or token in SOURCE_SUPPORT_STOPWORDS:
             continue
@@ -911,13 +1228,7 @@ def _has_matching_retrieved_evidence(*, query: str, doc_chunks: dict[str, list[C
     best_coverage = 0.0
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        section_path = metadata.get("section_path")
-        if isinstance(section_path, list):
-            section_path = " > ".join(str(part) for part in section_path if part)
-        evidence_text = (
-            f"{chunk.text} {metadata.get('snippet', '')} {metadata.get('text_search', '')} "
-            f"{metadata.get('section_title', '')} {section_path or ''}"
-        )
+        evidence_text = _chunk_text_with_metadata_for_support(chunk)
         evidence_tokens = _support_tokens(evidence_text)
         overlap = len(query_tokens & evidence_tokens)
         best_overlap = max(best_overlap, overlap)
@@ -930,6 +1241,17 @@ def _has_matching_retrieved_evidence(*, query: str, doc_chunks: dict[str, list[C
             return True
 
     return best_overlap >= 1 and len(query_tokens) <= 2
+
+
+def _chunk_text_with_metadata_for_support(chunk: Chunk) -> str:
+    metadata = chunk.metadata or {}
+    section_path = metadata.get("section_path")
+    if isinstance(section_path, list):
+        section_path = " > ".join(str(part) for part in section_path if part)
+    return (
+        f"{chunk.text} {metadata.get('snippet', '')} {metadata.get('text_search', '')} "
+        f"{metadata.get('section_title', '')} {section_path or ''}"
+    )
 
 
 def _support_stem(token: str) -> str:
