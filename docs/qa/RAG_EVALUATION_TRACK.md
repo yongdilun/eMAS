@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 7 Benchmark Run 2 with Document Augmentation is complete. `V8` and `V13` were implemented with a separate augmented retrieval index and compared against same-day `V7`, `V12`, and `V10` anchors. `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md` records the latest Run 2 result. Document Augmentation improved some retrieval hit rates and citation-support flags, but did not improve answer accuracy or serious-failure count enough to become the production default.
+Phase 7 Benchmark Run 2 with Document Augmentation is complete, and the remaining `V12` serious failures have been manually reviewed before Phase 8. `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md` records the Run 2 comparison, and `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md` records the case-level serious-failure review. Document Augmentation improved some retrieval hit rates and citation-support flags, but did not improve answer accuracy or serious-failure count enough to become the production default.
 
 Important current decisions:
 
@@ -31,6 +31,10 @@ Important current decisions:
 - Phase 6.6 top-candidate result: `V7` remained champion at 81.05 average / 7 serious failures; `V12` remained co-lead at 80.80 / 8; `V10` remained the third Phase 7 carry-forward at 79.52 / 8.
 - Run 2 same-day result: `V12` is current champion at 80.74 average / 8 serious failures; `V7` is close at 79.87 / 9; `V8` is 79.17 / 9; `V10` is 78.90 / 9; `V13` is 78.13 / 10.
 - Document Augmentation should be kept as experimental eval plumbing, not as the production default.
+- Manual review found all 8 `V12` serious failures are real enough to keep the production gate closed; none are clear scoring false positives.
+- `V7` did not answer any of the 8 `V12` serious cases better.
+- Document Augmentation fixed one `V12` serious case, `nist-csf-2-ss-03`, but did not change the overall recommendation.
+- Final recommendation before Phase 8: do not ship yet. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -55,6 +59,7 @@ Important current decisions:
 | 6.5 | Fairness fix and corrected rerun | Done | Codex | Fixed/replaced reranker integration, added visible fallback tracing, improved citation/evidence artifacts and safety-boundary scoring, reran V1/V3/V5/V6/V7/V10/V11/V12 plus V0/V2/V4/V9 anchors. |
 | 6.6 | Scoring fairness audit and top-candidate rerun | Done | Codex | Fixed narrow scoring defects from manual review, then reran V7/V12/V10/V5/V2 before Phase 7. |
 | 7 | Benchmark Run 2 with Document Augmentation | Done | Codex | V8/V13 implemented and compared against V7/V12/V10. Run 2 champion: V12. Document Augmentation not recommended as production default. |
+| 7.5 | Manual serious-failure review | Done | Codex | Reviewed all 8 `V12` serious failures against V7/V8/V13/V10. All 8 are real; V7 did not improve any; Document Augmentation fixed only `nist-csf-2-ss-03`; recommendation is do not ship yet. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
 ## Phase 0 Checklist
@@ -695,6 +700,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 7 required live comparison completed with `--judge` for `V8`, `V13`, `V7`, `V12`, and `V10`. Every run produced 50 case artifacts, `summary.json`, and `judge_audit_sample.json`; every run had 50/50 automated structural pass and 0 judge errors.
 - Phase 7 rerank validation passed: all five required rerank variants recorded 50 enabled, 50 attempted, 50 succeeded, and 0 fallback.
 - Phase 7 artifact audit passed for augmented variants: V8 and V13 both recorded augmented retrieval in 50/50 cases, and no final evidence snippet contained synthetic augmentation text.
+- Manual serious-failure review completed for all 8 `V12` Run 2 serious cases. No benchmark rerun was performed.
 
 ## Files Created
 
@@ -718,6 +724,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
 - `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`
 - `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`
+- `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -751,12 +758,15 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- Corrected reranker integration is fixed for Phase 6.5/6.6 and Run 2 artifacts, but the Run 2 champion `V12` still has 8 automated serious failures out of 50 and is not production-ready.
-- Judge safety and citation scoring are weak enough that top Run 2 candidates require manual review.
+- Corrected reranker integration is fixed for Phase 6.5/6.6 and Run 2 artifacts, but the Run 2 champion `V12` still has 8 manually confirmed serious failures out of 50 and is not production-ready.
+- Manual review found no clear scoring false positives among the 8 `V12` serious failures.
+- `V12` has a systemic generation issue: several answerable cases returned the no-evidence fallback despite exact or near-exact evidence in retrieval/context.
+- `osha-loto-df-03` remains a safety-relevant production blocker because the exact OSHA procedure section was retrieved but not answered.
+- Judge safety and citation scoring are still weak enough that future safety/citation decisions need manual review or a stronger judge.
 - Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, and Run 2 did not surface a new unsafe-advice top-candidate issue, but safety cases still require manual review before production conclusions.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 - Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Do not start Phase 8 until the Run 2 result is accepted and the remaining serious failures are manually reviewed. Current recommendation: treat `V12` as the same-day Run 2 champion, keep `V7` as a close co-lead, and keep Document Augmentation as experimental eval plumbing rather than the production default.
+Do not start Phase 8 as a rollout step. Current recommendation: treat `V12` as the engineering candidate, keep `V7` as a close fallback/co-lead, keep Document Augmentation as experimental eval plumbing, and fix the reviewed serious-failure classes before any production ship decision.

@@ -2,20 +2,24 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-25 after Phase 7 Run 2 Document Augmentation comparison.
+Updated: 2026-05-25 after Phase 7 Run 2 Document Augmentation comparison and manual serious-failure review.
 
 ## Executive Decision
 
 - Run 2 champion: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank.
 - Close co-lead: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
 - Document Augmentation result: keep `V8`/`V13` as experimental eval plumbing only. Do not make Document Augmentation the production default.
-- Confidence level: medium for choosing `V12`/`V7` as the current top pair, low for production rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, and Phase 7 tested Document Augmentation. The top candidates still have serious failures and the judge remains triage-grade.
+- Manual serious-failure review: all 8 `V12` serious failures are real enough to keep the production gate closed. `V7` handled none of them better. Document Augmentation fixed one (`nist-csf-2-ss-03`) but not enough to change the champion.
+- Final production recommendation: **do not ship yet**. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
+- Confidence level: medium for choosing `V12`/`V7` as the current top pair, low for production rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, Phase 7 tested Document Augmentation, and manual review confirmed the remaining top-candidate serious failures are not scoring artifacts.
 
 Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Phase 6.5 resolved this for the corrected run artifacts: all required rerank variants recorded 50 attempted, 50 succeeded, and 0 fallback.
 
 Phase 6.6 note: manual review found that Phase 6.5 serious-failure counts were still inflated by scoring defects. No question bank, prompt, expected-answer, retrieval, reranking, context-building, compression, or generation behavior changed in Phase 6.6. The latest top-candidate result is recorded in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
 
 Phase 7 note: Document Augmentation `V8`/`V13` was implemented with separate augmented index paths and original-evidence generation/citation safeguards. Run 2 found modest retrieval gains but no accuracy or serious-failure improvement. Full details are in `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`.
+
+Manual review note: the case-level review of `V12` Run 2 serious failures is recorded in `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`. It did not rerun the benchmark or change the question bank/scoring. The review found that all 8 `V12` serious failures are real, mostly from generation failing to use retrieved evidence or incomplete section summaries. The final recommendation before Phase 8 is do not ship yet.
 
 ## Run 1 Scope
 
@@ -87,6 +91,28 @@ Decision update:
 - `V8` helped Small-to-Big more than `V13` helped RSE, but neither augmented variant beat `V12`.
 - Recommendation: keep Document Augmentation as experimental eval plumbing, not as the production default.
 - Production rollout remains blocked by 8 serious failures in the current champion.
+
+## Manual Serious-Failure Review
+
+The manual review inspected each `V12` serious case artifact and compared the matching `V7`, `V8`, `V13`, and `V10` artifacts. Full details are in `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`.
+
+| Case | Manual Classification | Decision | V7 Better? | Document Augmentation Helped? |
+| --- | --- | --- | --- | --- |
+| `nist-ams300-1-df-04` | `context_builder_missed_evidence` | `should_be_fixed_before_production` | No | No |
+| `nist-ams300-1-mc-02` | `generation_failed_to_use_evidence` | `production_blocker` | No | No |
+| `nist-ams300-11-df-02` | `generation_failed_to_use_evidence` | `production_blocker` | No | Partial retrieval help only |
+| `nist-ams300-11-mc-01` | `generation_failed_to_use_evidence` | `should_be_fixed_before_production` | No | No |
+| `nist-ams300-11-ss-03` | `retrieval_miss` | `should_be_fixed_before_production` | No | No |
+| `nist-csf-2-ss-01` | `incomplete_answer` | `production_blocker` | No | No |
+| `nist-csf-2-ss-03` | `citation_support_problem` | `should_be_fixed_before_production` | No | Yes |
+| `osha-loto-df-03` | `generation_failed_to_use_evidence` | `production_blocker` | No | No |
+
+Decision update:
+
+- `V12` remains the recommended engineering candidate because it still has the best Run 2 aggregate result.
+- `V7` remains the close co-lead/fallback, but it did not answer any reviewed `V12` serious failure better.
+- Document Augmentation should not become the production default. It fixed the CSF online-resources citation case, but it did not fix the broader evidence-use failures and lost overall.
+- The final recommendation is do not ship yet. The remaining blockers are real quality failures, not evaluation artifacts.
 
 ## Original Run 1 Score Summary
 
@@ -257,26 +283,28 @@ Variant/case serious-failure list, grouped by reason code:
 - Query rewrite plus RSE beat both augmented variants and the same-day `V7` anchor.
 - Retrieval remains strong: `doc_hit@5 = 1.00`, `section_or_page_hit@5 = 0.94`.
 
-The caveat is still substantial: `V12` has 8 serious failures, and `V7` remains close at 79.87 average / 9 serious failures. Treat `V12` and `V7` as the top pair. Neither is production-ready without manual serious-failure review and remediation.
+The caveat is still substantial: manual review confirmed `V12` has 8 real serious failures, and `V7` remains close at 79.87 average / 9 serious failures but did not improve any of those 8 cases. Treat `V12` and `V7` as the top pair for engineering work. Neither is production-ready without remediation.
 
 ## Phase 8 Guidance
 
-Do not start Phase 8 as a rollout step until the Run 2 result is accepted and the remaining serious failures are reviewed.
+Do not start Phase 8 as a rollout step. The Run 2 serious failures have now been reviewed and the recommendation is do not ship yet.
 
 Recommended next actions:
 
-- Keep `V12` as the provisional production candidate and `V7` as the fallback/co-lead.
+- Keep `V12` as the engineering candidate and `V7` as the fallback/co-lead.
 - Do not promote Document Augmentation to the production default.
+- Fix the reviewed failure classes before a ship decision: no-evidence fallback despite evidence, sibling/list evidence loss, section-summary retrieval misses, incomplete generation, and citation localization.
 - Keep the strict reranker fallback contract: rerank-enabled runs should fail loudly unless fallback is explicitly configured and recorded.
-- Manually review remaining serious failures, especially wrong/incomplete answers on A232 subactivities, AMS 300-11 scope/standards/interoperability, OSHA energy-control procedure completeness, and CSF summaries.
+- Use the manually reviewed serious failures as regression cases, especially A232 subactivities, AMS 300-11 scope/standards/interoperability, OSHA energy-control procedure completeness, and CSF summaries.
 - Improve judge setup. Prefer Qwen3 14B or stronger for future safety/citation triage; otherwise keep Qwen2.5 7B only with manual review.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
 
 ## Blockers Before Production
 
-- Even the Run 2 champion still has 8 automated serious failures out of 50.
-- Citation support improved, and augmented variants had no citation-related serious flags, but remaining citation-support failures in top anchors still need manual review.
-- Safety boundary answers improved for OSHA/live-status prompts, and the known `safeguard` unsafe-advice false positive was fixed for the top-candidate set. Safety cases still need manual review before production conclusions.
+- Even the Run 2 champion still has 8 manually confirmed serious failures out of 50.
+- Four reviewed failures are production blockers: `nist-ams300-1-mc-02`, `nist-ams300-11-df-02`, `nist-csf-2-ss-01`, and `osha-loto-df-03`.
+- Citation support improved, and augmented variants had no citation-related serious flags, but `V12` still has a real citation/localization failure on `nist-csf-2-ss-03`.
+- Safety boundary answers improved for OSHA/live-status prompts, and the known `safeguard` unsafe-advice false positive was fixed for the top-candidate set. However, `osha-loto-df-03` remains a safety-relevant answerable-procedure blocker because exact OSHA evidence was retrieved but not used.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has been tested and should not be the production default based on Run 2.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.
