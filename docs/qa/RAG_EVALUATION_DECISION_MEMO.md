@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-26 after Phase 13 boundary remediation.
+Updated: 2026-05-26 after Phase 14 limited-rollout readiness review.
 
 ## Executive Decision
 
@@ -14,8 +14,9 @@ Updated: 2026-05-26 after Phase 13 boundary remediation.
 - Phase 11 remediation: final `V12` has 0 serious failures, 0 judge-serious cases, and 0 unsafe-advice serious failures. Final `V7` has 2 serious failures and a higher average rule score.
 - Phase 12 production-readiness review: final `V12` remained the engineering candidate, but adjacent wording smoke testing found a real OSHA compliance-certification boundary failure.
 - Phase 13 boundary remediation: the Phase 12 blocker no longer reproduces. Smoke `V12` finished 8/8 with 0 serious failures, and full `V12` finished 50/50 with 0 serious failures.
-- Final production recommendation: direct production remains not approved, but Phase 14 can move to final limited-rollout readiness review. Keep `V12` as the engineering candidate and keep `V7` as the fallback/co-lead.
-- Confidence level: high for choosing `V12` as the current engineering candidate, medium for the `V12`/`V7` top pair, and medium-high for moving to final limited-rollout readiness review. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, Phase 7 tested Document Augmentation, Phase 11 cleared the benchmark serious-failure blocker, Phase 12 found the adjacent boundary blocker, and Phase 13 remediated that blocker without changing cases or scoring.
+- Phase 14 limited-rollout readiness review: final `V12` full and smoke reruns both finished with 0 serious failures, and manual review found no remaining rollout blocker for limited advisory mode.
+- Final production recommendation: **CONDITIONAL GO for limited advisory-mode rollout**. Direct full production remains not approved. Keep `V12` as the limited-rollout candidate and keep `V7` as the fallback/co-lead.
+- Confidence level: high for choosing `V12` as the current engineering candidate, medium for the `V12`/`V7` top pair, and medium-high for conditional limited advisory rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, Phase 7 tested Document Augmentation, Phase 11 cleared the benchmark serious-failure blocker, Phase 12 found the adjacent boundary blocker, Phase 13 remediated that blocker without changing cases or scoring, and Phase 14 completed the final manual readiness decision.
 
 Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Phase 6.5 resolved this for the corrected run artifacts: all required rerank variants recorded 50 attempted, 50 succeeded, and 0 fallback.
 
@@ -33,7 +34,9 @@ Phase 11 note: the remediation report is recorded in `docs/qa/RAG_PHASE_11_REMED
 
 Phase 12 note: the production-readiness review is recorded in `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`. Manual review found no direct unsafe operational advice in the unchanged final Phase 11 50-case `V12` artifacts, but adjacent wording smoke testing failed on `phase12-guarding-compliance-refusal-01`: `V12` drafted an OSHA-compliance certification sentence from all-yes guarding checklist answers. The Phase 12 smoke run finished with 8/8 structural pass, 1 serious failure, and 0 judge-serious cases. Production is NO-GO.
 
-Phase 13 note: the boundary remediation report is recorded in `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`. The fix added a generic certification/compliance boundary for requests to certify, attest, approve, sign off, declare, confirm, prove, or produce compliance/current-state language from static retrieved text. It also added generic citation/evidence-denial/extractive recall repairs. The Phase 13 smoke run finished with 8/8 structural pass, 0 warnings, 0 serious failures, and `phase12-guarding-compliance-refusal-01` scored 75.69. The full Phase 13 `V12` run finished with 50/50 structural pass, 0 warnings, average rule score 85.5598, and 0 serious failures. Direct production remains not approved until Phase 14 final limited-rollout readiness review.
+Phase 13 note: the boundary remediation report is recorded in `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`. The fix added a generic certification/compliance boundary for requests to certify, attest, approve, sign off, declare, confirm, prove, or produce compliance/current-state language from static retrieved text. It also added generic citation/evidence-denial/extractive recall repairs. The Phase 13 smoke run finished with 8/8 structural pass, 0 warnings, 0 serious failures, and `phase12-guarding-compliance-refusal-01` scored 75.69. The full Phase 13 `V12` run finished with 50/50 structural pass, 0 warnings, average rule score 85.5598, and 0 serious failures. Phase 14 supersedes the readiness-review gate with a conditional limited advisory-mode rollout decision.
+
+Phase 14 note: the limited-rollout readiness report is recorded in `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`. Final Phase 14 `V12` reruns repeated the Phase 13 result: full `V12` finished 50/50 with 0 warnings, average rule score 85.5598, 0 serious failures, 41/41 judge calls completed, 0 judge-serious cases, and 0 reranker fallback; the Phase 12 smoke set finished 8/8 with 0 warnings, average rule score 86.1513, 0 serious failures, 6/6 judge calls completed, and 0 reranker fallback. Manual weak-pass review found no limited-rollout blocker, but safety/compliance weak passes require monitoring and human review. Decision: **CONDITIONAL GO for limited advisory-mode rollout**, not full production GO.
 
 ## Run 1 Scope
 
@@ -412,42 +415,68 @@ The blocker `phase12-guarding-compliance-refusal-01` scored 75.69 and refused ce
 Decision update:
 
 - Keep `V12` as the engineering candidate because it now clears both the unchanged 50-case benchmark and the Phase 12 adjacent-wording smoke set with 0 serious failures.
-- Direct production remains not approved until final limited-rollout readiness review.
-- Phase 14 can proceed to final limited-rollout readiness review, with manual review focused on OSHA/safety, boundary wording, weak passes, and citation support.
+- At the end of Phase 13, direct production remained not approved until final limited-rollout readiness review.
+- Phase 14 was cleared to proceed with manual review focused on OSHA/safety, boundary wording, weak passes, and citation support. Phase 14 now supersedes this gate.
+
+## Phase 14 Limited-Rollout Readiness
+
+Phase 14 completed the final limited-rollout readiness review requested after Phase 13. Full details are in `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`.
+
+Phase 14 final full `V12` result:
+
+| Variant | Pipeline | Avg Rule | Serious | Borderline | Judge | Judge SF | Automated | Rerank fallback | doc@3/5 | section/page@3/5 |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | ---: | --- | --- |
+| `V12` | Query Rewrite + Hybrid Search + RSE + Rerank | 85.5598 | 0 | 41 | 41/41 | 0 | 50 pass / 0 fail | 0 | 0.98/1.00 | 0.86/0.94 |
+
+Phase 14 final smoke `V12` result:
+
+| Variant | Smoke set | Avg Rule | Serious | Borderline | Judge | Judge SF | Automated | Rerank fallback |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | ---: |
+| `V12` | 8 adjacent wording cases | 86.1513 | 0 | 6 | 6/6 | 0 | 8 pass / 0 fail | 0 |
+
+Manual review classified the remaining weak safety/compliance passes as acceptable only with monitoring, not as rollout blockers. The most important remaining weak passes are `nist-csf-2-un-01`, `phase12-loto-live-action-refusal-01`, `osha-loto-df-04`, `phase12-guarding-moving-parts-adj-01`, `osha-loto-un-01`, `osha-guarding-df-04`, and `osha-guarding-mc-01`.
+
+Decision update:
+
+- Approve `V12` as **CONDITIONAL GO for limited advisory-mode rollout**.
+- Do not approve full production GO or autonomous safety/compliance authority.
+- Require human review for safety/compliance answers, citations in answers, strict refusals for certification/sign-off/live-status/current-state claims, and rollback on unsafe advice or compliance-certification answers.
 
 ## Current Champion Rationale
 
-`V12` remains the current engineering champion after Phase 13 because it gives the best engineering posture after Document Augmentation was tested, the reviewed Phase 8 serious failures were fixed, the remaining Phase 10 blockers were remediated, the Phase 12 adjacent boundary blocker was fixed, and the final full-bank rerun cleared the serious-failure gate:
+`V12` remains the current engineering champion after Phase 14 because it gives the best engineering posture after Document Augmentation was tested, the reviewed Phase 8 serious failures were fixed, the remaining Phase 10 blockers were remediated, the Phase 12 adjacent boundary blocker was fixed, and the final Phase 14 full/smoke reruns cleared the serious-failure gate:
 
-- Final Phase 13 serious-failure count is 0, better than final Phase 11 `V7` at 2.
+- Final Phase 14 serious-failure count is 0, better than final Phase 11 `V7` at 2.
 - All 8 reviewed Phase 8 serious cases and all 6 confirmed Phase 10 blockers are no longer serious failures in final `V12`.
 - The Phase 12 adjacent certification smoke blocker no longer reproduces.
 - True reranking ran for all 50 cases with 0 fallback.
 - Query rewrite plus RSE remains the best target for the reviewed remediation classes after RSE context preservation improved high-value related-candidate retention.
 - Retrieval remains strong: `doc_hit@5 = 1.00`, `section_or_page_hit@5 = 0.94`.
 
-The caveat is now readiness review rather than a known serious-failure blocker. Final `V12` has 0 serious failures on the unchanged 50-case bank and Phase 12 adjacent smoke set, but direct production still needs final limited-rollout readiness review because weak safety/citation passes and judge limitations require human approval. Treat `V12` and `V7` as the top pair for continued validation, with `V12` as the main rollout candidate.
+The caveat is now rollout scope rather than a known serious-failure blocker. Final `V12` has 0 serious failures on the unchanged 50-case bank and Phase 12 adjacent smoke set, and Phase 14 approves limited advisory-mode rollout. Full production authority remains blocked because weak safety/citation passes and judge limitations require human approval. Treat `V12` and `V7` as the top pair for continued validation, with `V12` as the limited-rollout candidate.
 
 ## Phase 8 Guidance Superseded
 
-Phase 8 is complete as a production-readiness recommendation, not a rollout approval. Its remediation target list has been superseded by Phase 9, Phase 10, Phase 11, and Phase 13. Use `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` and `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md` as the current handoff for readiness gates.
+Phase 8 is complete as a production-readiness recommendation, not a rollout approval. Its remediation target list has been superseded by Phase 9, Phase 10, Phase 11, Phase 13, and Phase 14. Use `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` and `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md` as the current handoff for readiness gates.
 
-The original Phase 8 benchmark gate is now met by final `V12` for serious failures, unsafe-advice serious failures, and reranker fallback. Phase 13 supersedes the Phase 12 blocker: adjacent OSHA compliance-certification wording now refuses, and the next gate is final limited-rollout readiness review.
+The original Phase 8 benchmark gate is now met by final `V12` for serious failures, unsafe-advice serious failures, and reranker fallback. Phase 13 supersedes the Phase 12 blocker: adjacent OSHA compliance-certification wording now refuses. Phase 14 approves only a conditional limited advisory-mode rollout with monitoring and rollback controls.
 
 Recommended next actions:
 
-- Keep `V12` as the engineering candidate and `V7` as the fallback/co-lead.
+- Keep `V12` as the limited-rollout candidate and `V7` as the fallback/co-lead.
 - Do not promote Document Augmentation to the production default.
 - Keep the strict reranker fallback contract: rerank-enabled runs should fail loudly unless fallback is explicitly configured and recorded.
 - Use the manually reviewed serious failures as regression cases, including A232 subactivities, AMS 300-11 scope/standards/interoperability, OSHA energy-control and guarding checklist completeness, and CSF summaries/functions.
 - Improve judge setup if possible. Prefer Qwen3 14B or stronger for future safety/citation triage; otherwise keep Qwen2.5 7B only with manual review.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
+- Run Phase 15 as limited-rollout observation and hardening, with manual sampling of OSHA/procedure and compliance-boundary answers.
 
 ## Blockers Before Production
 
-- Direct production is still not approved because final limited-rollout readiness review has not been completed.
-- Safety-relevant weak passes remain in `osha-loto-df-04` and adjacent moving-parts maintenance synthesis.
-- Final Phase 13 `V12` has 41 borderline cases, so average quality and citation support still need human review even though no unchanged-bank case is serious.
+- Full production authority is still not approved because the rollout decision is limited to advisory mode with human review.
+- Safety-relevant weak passes remain in `osha-loto-df-04`, `osha-guarding-df-04`, `osha-guarding-mc-01`, and adjacent moving-parts maintenance synthesis.
+- Final Phase 14 `V12` has 41 borderline cases, so average quality and citation support still need human review even though no unchanged-bank case is serious.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has been tested and should not be the production default based on Run 2.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.
+- Rollback is required if any answer gives unsafe advice, compliance certification, sign-off language, or current-state safety/security/compliance approval from static retrieved text.

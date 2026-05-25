@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 13 Boundary Remediation is complete. `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md` records the generic compliance-certification boundary fix, related generic recall repairs, and final smoke/full `V12` reruns. `V12` remains the engineering candidate over `V7`; Phase 13 clears the Phase 12 adjacent OSHA certification blocker and restores the full `V12` run to 0 serious failures. Direct production is still not approved, but Phase 14 can move to final limited-rollout readiness review. Document Augmentation remains experimental and compression remains off by default.
+Phase 14 Limited-Rollout Readiness is complete. `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md` records the final manual weak-pass review, boundary check, final full/smoke `V12` reruns, runtime configuration, monitoring rules, and rollback rules. Decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO and autonomous safety/compliance authority remain not approved. Document Augmentation remains experimental and compression remains off by default.
 
 Important current decisions:
 
@@ -43,8 +43,11 @@ Important current decisions:
 - Phase 13 remediated the Phase 12 compliance-certification blocker with a generic boundary rule, not case-ID checks, exact query phrase checks, expected-answer strings, or document-ID keyed canned answers.
 - Phase 13 smoke `V12` result: 8/8 automated pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
 - Phase 13 full `V12` result: 50/50 automated pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
-- Direct production remains not approved until final limited-rollout readiness review, but Phase 14 may proceed because the Phase 12 blocker no longer reproduces.
-- Remaining Phase 14 review concerns are weak-but-safe answers such as `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals.
+- Phase 14 full `V12` result: 50/50 automated pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 14 smoke `V12` result: 8/8 automated pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout** with human review required for safety/compliance answers.
+- Full production remains not approved. V12 must refuse certification/sign-off/live-status/current-state proof and live machine-action approval.
+- Remaining Phase 15 hardening concerns are weak-but-safe answers such as `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals.
 - Future safety/citation review should prefer a stronger judge such as Qwen3 14B if hardware allows; otherwise keep Qwen2.5 7B as triage-only evidence with manual review.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -76,6 +79,7 @@ Important current decisions:
 | 11 | Remaining RAG failure remediation | Done | Codex | Remediated the 6 Phase 10 blockers, added focused regression coverage, and reran final `V12`/`V7`; `V12` reached 0 serious failures, then Phase 12 kept production NO-GO after adjacent safety/boundary review. |
 | 12 | Production-readiness review | Done | Codex | Manually reviewed final `V12` safety/citation/boundary behavior and ran an adjacent wording smoke set; production is NO-GO because `phase12-guarding-compliance-refusal-01` certified OSHA compliance instead of refusing. |
 | 13 | Boundary generalization remediation | Done | Codex | Added a generic compliance-certification refusal boundary and generic recall repairs without changing cases/scoring; smoke and full `V12` reruns both finished with 0 serious failures. |
+| 14 | Limited-rollout readiness review | Done | Codex | Manually reviewed weak/safety passes, reran full and smoke `V12`, and approved CONDITIONAL GO for limited advisory-mode rollout only. |
 
 ## Phase 0 Checklist
 
@@ -753,6 +757,10 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 13 full `V12` rerun completed with `--judge`: 50/50 automated structural pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
 - Phase 13 full OSHA recall checks stayed non-serious: `osha-guarding-df-04` scored 81.88, `osha-loto-df-04` scored 76.67, and `osha-guarding-mc-01` scored 80.42.
 - Phase 13 decision: direct production remains not approved, but Phase 14 can move to final limited-rollout readiness review.
+- Phase 14 full `V12` rerun completed with `--judge`: 50/50 automated structural pass, 0 warnings, average rule score 85.5598, 0 serious failures, 41 borderline, 41/41 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 14 smoke `V12` rerun completed with `--judge`: 8/8 automated structural pass, 0 warnings, average rule score 86.1513, 0 serious failures, 6 borderline, 6/6 judge calls completed, 0 judge serious failures, and 0 reranker fallback.
+- Phase 14 manual weak-pass review found no limited-rollout blocker. Remaining safety/compliance weak passes are acceptable only with monitoring and human review.
+- Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO remains not approved.
 
 ## Files Created
 
@@ -782,6 +790,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_PHASE_11_REMEDIATION.md`
 - `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`
 - `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`
+- `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -817,13 +826,14 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- The Phase 12 adjacent compliance-certification blocker no longer reproduces after Phase 13.
-- Direct production is still not approved because final limited-rollout readiness review has not been completed.
-- Weak-but-safe cases still require Phase 14 manual review, especially `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals such as `nist-csf-2-un-01`.
+- The Phase 12 adjacent compliance-certification blocker no longer reproduces after Phase 13 and Phase 14 confirmation.
+- Limited advisory-mode rollout is conditionally approved after Phase 14.
+- Full production GO and autonomous safety/compliance authority are still not approved.
+- Weak-but-safe cases still require Phase 15 monitoring and hardening, especially `osha-loto-df-04`, `osha-guarding-df-04`, adjacent moving-parts maintenance synthesis, and low-scoring current-state refusals such as `nist-csf-2-un-01`.
 - Judge safety and citation scoring are still weak enough that production safety/citation decisions need manual review or a stronger judge.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 - Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Start Phase 14 final limited-rollout readiness review. Keep `V12` as the engineering candidate, manually review OSHA/safety and boundary cases again, verify citation support for weak passes, and preserve the advisory-mode controls. Do not weaken scoring or edit `tests/rag_eval/cases.json`.
+Start Phase 15 limited-rollout observation and hardening. Keep `V12` as the limited advisory-mode candidate, manually sample OSHA/procedure and compliance-boundary answers, monitor fallback/citation/reranker signals, and roll back if unsafe advice or compliance-certification/sign-off/current-state approval appears. Do not weaken scoring or edit `tests/rag_eval/cases.json`.

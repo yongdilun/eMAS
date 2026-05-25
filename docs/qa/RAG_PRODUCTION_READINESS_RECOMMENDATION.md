@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Scope: production-readiness recommendation for the eMAS RAG evaluation track, updated through Phase 13. This document summarizes the current candidate, production gate decision, remediation roadmap, regression gate, and limited-mode monitoring plan. It does not change scoring, change the question bank, or implement new RAG behavior.
+Scope: production-readiness recommendation for the eMAS RAG evaluation track, updated through Phase 14. This document summarizes the current candidate, production gate decision, remediation roadmap, regression gate, and limited-mode monitoring plan. It does not change scoring, change the question bank, or implement new RAG behavior.
 
 Primary references:
 
@@ -15,6 +15,7 @@ Primary references:
 - `docs/qa/RAG_PHASE_11_REMEDIATION.md`
 - `docs/qa/RAG_PHASE_12_PRODUCTION_READINESS_REVIEW.md`
 - `docs/qa/RAG_PHASE_13_BOUNDARY_REMEDIATION.md`
+- `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`
 
 ## Phase 9 Status Update
 
@@ -129,11 +130,36 @@ Final Phase 13 full `V12` result:
 - `osha-loto-df-04`: 76.67.
 - `osha-guarding-mc-01`: 80.42.
 
+## Phase 14 Status Update
+
+Phase 14 made the final limited-rollout readiness decision after Phase 13 cleared the compliance-boundary blocker. Full details are in `docs/qa/RAG_PHASE_14_LIMITED_ROLLOUT_READINESS.md`.
+
+The local LLM server was available, so Phase 14 reran the final `V12` candidate and the Phase 12 smoke set:
+
+- Full run: `test-artifacts/rag-eval/phase14-20260526-v12`
+- 50/50 automated structural pass, 0 warnings.
+- Average rule score: 85.5598.
+- Serious failures: 0.
+- Borderline cases: 41.
+- Judge requested/completed: 41/41, 0 judge errors, 0 judge-serious cases.
+- Reranker fallback: 0.
+- Smoke run: `test-artifacts/rag-eval/phase14-20260526-smoke-v12`
+- 8/8 automated structural pass, 0 warnings.
+- Average rule score: 86.1513.
+- Serious failures: 0.
+- Borderline cases: 6.
+- Judge requested/completed: 6/6, 0 judge errors, 0 judge-serious cases.
+- Reranker fallback: 0.
+
+Manual review found no remaining limited-rollout blocker. Remaining weak safety/compliance passes are acceptable only with monitoring and human review, especially `nist-csf-2-un-01`, `phase12-loto-live-action-refusal-01`, `osha-loto-df-04`, `phase12-guarding-moving-parts-adj-01`, `osha-loto-un-01`, `osha-guarding-df-04`, and `osha-guarding-mc-01`.
+
+Phase 14 decision: **CONDITIONAL GO for limited advisory-mode rollout**. Full production GO remains explicitly not approved.
+
 ## Executive Decision
 
-Direct production shipment is not yet approved. Phase 13 clears the Phase 12 blocker, so Phase 14 can move to a final limited-rollout readiness review.
+Limited advisory-mode rollout is conditionally approved. Direct full production shipment is not approved.
 
-`V12` remains the engineering candidate after Phase 13 because Query Rewrite + Hybrid Search + RSE + Rerank cleared all 8 reviewed Phase 8 serious cases, remediated all 6 confirmed Phase 10 blockers, fixed the Phase 12 adjacent compliance-certification blocker, and finished the final Phase 13 full run with 0 serious failures.
+`V12` is the limited-rollout candidate after Phase 14 because Query Rewrite + Hybrid Search + RSE + Rerank cleared all 8 reviewed Phase 8 serious cases, remediated all 6 confirmed Phase 10 blockers, fixed the Phase 12 adjacent compliance-certification blocker, and finished the final Phase 14 full and smoke reruns with 0 serious failures.
 
 `V7` remains the close fallback/co-lead: Query Rewrite + Hybrid Search + Small-to-Big + Rerank scored higher on final Phase 11 average rule score at 87.7648, but it had 2 serious failures overall while `V12` had 0. It is not a safer ship candidate yet.
 
@@ -141,11 +167,11 @@ Document Augmentation remains experimental. `V8` and `V13` improved some retriev
 
 Compression is not a default. Light compression reduced context tokens but hurt quality in corrected runs, so it should stay off unless a future remediation phase proves it can preserve answer quality.
 
-The current Qwen2.5 7B judge is triage-grade only. Phase 12 confirmed it is too forgiving for safety/compliance and citation/claim support, so Phase 14 production readiness still requires manual review or a stronger judge.
+The current Qwen2.5 7B judge is triage-grade only. Phase 12 confirmed it is too forgiving for safety/compliance and citation/claim support, and Phase 14 keeps human review mandatory for limited advisory rollout.
 
 ## Final Selected Candidate Config
 
-The intended engineering candidate is `V12`.
+The approved limited-rollout candidate is `V12`.
 
 | Setting | Intended value |
 | --- | --- |
@@ -159,13 +185,13 @@ The intended engineering candidate is `V12`.
 | Safety behavior | Keep boundary/no-action behavior for live status, machine action, OSHA procedure, compliance, and unsupported current-state questions. |
 | Judge | Qwen2.5 7B is triage-grade only; do not use it as the production-quality gate. |
 
-This config should be treated as the current final-readiness-review candidate, not as a direct production rollout approval.
+This config is approved only for limited advisory mode. It is not approved for autonomous safety/compliance authority.
 
-## Why Not Ship Yet
+## Why Not Full Production GO
 
-Phase 13 fixed the known benchmark and adjacent-wording serious-failure blockers: final `V12` has 0 serious failures, 0 judge-serious cases, and 0 unsafe-advice serious failures on the unchanged 50-question bank and the Phase 12 adjacent smoke set.
+Phase 14 approves only limited advisory-mode rollout because the system still needs human oversight for safety/compliance and citation-sensitive answers.
 
-Direct production still should not ship before Phase 14 because the final limited-rollout readiness review has not yet been completed. The 50-question benchmark and smoke set are necessary but not sufficient. Phase 14 still needs manual safety/citation review of weak passes, especially `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, current-state refusals such as `nist-csf-2-un-01`, and any compliance-boundary examples sampled from realistic user wording.
+The known benchmark and adjacent-wording serious-failure blockers are fixed: final Phase 14 `V12` has 0 serious failures, 0 judge-serious cases, and 0 unsafe-advice serious failures on the unchanged 50-question bank and the Phase 12 adjacent smoke set. However, the 50-question benchmark and smoke set are necessary but not sufficient for full production authority. Weak passes remain in `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, current-state refusals such as `nist-csf-2-un-01`, and broad citation-support cases.
 
 The 6 Phase 10 blockers were:
 
@@ -198,7 +224,7 @@ The original four production blockers were:
 - `nist-csf-2-ss-01`
 - `osha-loto-df-03`
 
-Those original blockers are no longer serious failures in final Phase 9 V12, the full-bank serious-failure gate is met in final Phase 11 and Phase 13 V12, and the Phase 12 adjacent-wording safety/compliance blocker no longer reproduces. The remaining gate is final limited-rollout readiness review.
+Those original blockers are no longer serious failures in final Phase 9 V12, the full-bank serious-failure gate is met in final Phase 11, Phase 13, and Phase 14 V12, and the Phase 12 adjacent-wording safety/compliance blocker no longer reproduces. The remaining restriction is rollout scope: limited advisory mode only, with human review and rollback controls.
 
 ## Failure Pattern Analysis
 
@@ -286,7 +312,7 @@ Before production readiness can be reconsidered, the next candidate must meet al
 
 ## Monitoring Plan For Internal/Limited Mode
 
-If eMAS RAG is exposed internally before production, it should run in limited advisory mode with no unreviewed operational action authority.
+For the Phase 14 conditional rollout, eMAS RAG must run in limited advisory mode with no unreviewed operational action authority.
 
 Required logs and review signals:
 
@@ -297,12 +323,14 @@ Required logs and review signals:
 - Latency, retrieved chunk count, context token estimates, answer token estimates, and reranker fallback status.
 - Context builder metadata, including whether RSE found same-section/sibling-section evidence.
 - Sampled answers for manual review, with oversampling of OSHA/safety and procedure questions.
+- Compliance-certification, sign-off, live-status, current-state proof, and vendor-recommendation refusal attempts.
 
 Required limited-mode behavior:
 
 - Keep safety disclaimers and no-action boundaries for OSHA/live-status or operational-risk questions.
 - Do not authorize live machine actions, lockout removal, compliance certification, or current-state claims from static documents.
 - Route safety-critical or compliance-critical answers to a qualified human reviewer before operational use.
+- Roll back if any answer gives unsafe operational advice, compliance certification, sign-off language, or current-state safety/security/compliance approval from static retrieved text.
 
 ## What Not To Do
 
@@ -312,18 +340,19 @@ Required limited-mode behavior:
 - Do not relax scoring to hide failures.
 - Do not treat the benchmark as a production pass.
 - Do not change the question bank, scoring, or expected answers just to improve the readiness story.
-- Do not start an unrelated experiment before Phase 14 completes the final limited-rollout readiness review.
+- Do not promote advisory-mode rollout into autonomous safety/compliance authority.
 
 ## Next Implementation Phase Proposal
 
-Recommended follow-up phase: **Phase 14: Final Limited-Rollout Readiness Review**.
+Recommended follow-up phase: **Phase 15: Limited-Rollout Observation and Hardening**.
 
 Proposed substeps:
 
-1. Manually review all OSHA/safety, boundary, and low-scoring weak-pass artifacts from Phase 13.
-2. Verify that the compliance-certification boundary refuses realistic wording variants without over-refusing static checklist recall.
-3. Review citation support for `osha-loto-df-04`, adjacent moving-parts maintenance synthesis, and current-state refusal cases.
-4. Decide the limited-rollout gate, monitoring requirements, and escalation path for advisory-mode exposure.
-5. Keep Qwen2.5 7B as triage-only unless a stronger judge is introduced and manually audited.
+1. Review limited-rollout logs for no-evidence fallback rate, citation support failures, reranker fallback, and boundary refusals.
+2. Manually sample OSHA/procedure, machine-guarding, LOTO, and cybersecurity compliance answers.
+3. Red-team adjacent wording for certification, attestation, sign-off, live machine action, current-state proof, and unsupported vendor recommendation.
+4. Harden weak static safety recall, especially `osha-loto-df-04`, `osha-guarding-df-04`, and moving-parts maintenance synthesis.
+5. Improve citation localization for checklist sections and broad standards summaries.
+6. Keep Qwen2.5 7B as triage-only unless a stronger judge is introduced and manually audited.
 
-Phase 14 should keep `V12` as the main engineering candidate. Keep `V7` as the comparison fallback because it has a higher final Phase 11 average score, but it is weaker for readiness because it still had 2 serious failures while `V12` has 0 in the latest full run.
+Phase 15 should keep `V12` as the limited-rollout candidate. Keep `V7` as the comparison fallback because it has a higher final Phase 11 average score, but it is weaker for readiness because it still had 2 serious failures while `V12` has 0 in the latest full run.
