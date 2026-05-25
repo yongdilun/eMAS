@@ -703,6 +703,14 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 7 artifact audit passed for augmented variants: V8 and V13 both recorded augmented retrieval in 50/50 cases, and no final evidence snippet contained synthetic augmentation text.
 - Manual serious-failure review completed for all 8 `V12` Run 2 serious cases. No benchmark rerun was performed.
 - Phase 8 was documentation-only. No benchmark rerun, live judge call, scoring rerun, or test artifact generation was performed.
+- Phase 9 focused remediation tests passed: `python -m pytest factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_generation.py -q` returned 33 passed. Warnings were existing Swig/PyMuPDF-style import warnings and `pytest_asyncio` configuration warnings.
+- Phase 9 `python -m tests.rag_eval.run_eval --help` passed and showed the expected variant and judge options.
+- Phase 9 focused V12 spot checks passed after generalizing query rewrite: `nist-csf-2-ss-03` scored 80.56, `nist-ams300-11-ss-03` scored 87.85, and `nist-ams300-11-df-02` scored 84.72; all had judge OK and 0 warnings.
+- Phase 9 final full reruns completed with `--judge` for `V12` and `V7`. Both produced 50 case artifacts plus `summary.json` and `judge_audit_sample.json`.
+- Phase 9 final `V12` result: 50/50 automated pass, 0 warnings, average rule score 80.301, 6 serious failures, 39 borderline, 39/39 judge calls completed, 4 judge serious failures, and 0 reranker fallback. Retrieval was `doc_hit@3 = 0.98`, `doc_hit@5 = 1.00`, `section_or_page_hit@3 = 0.86`, and `section_or_page_hit@5 = 0.94`.
+- Phase 9 final `V7` result: 50/50 automated pass, 0 warnings, average rule score 81.961, 7 serious failures, 32 borderline, 32/32 judge calls completed, 2 judge serious failures, and 0 reranker fallback. Retrieval matched V12 on the reported aggregate hit rates.
+- Phase 9 final V12 cleared all 8 reviewed serious cases from Phase 8. The original production blockers `nist-ams300-1-mc-02`, `nist-ams300-11-df-02`, `nist-csf-2-ss-01`, and `osha-loto-df-03` were no longer serious failures in the final V12 full run.
+- Phase 9 did not meet the production gate because final V12 still had 6 serious failures across the 50-question bank: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
 
 ## Files Created
 
@@ -761,10 +769,9 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- Corrected reranker integration is fixed for Phase 6.5/6.6 and Run 2 artifacts, but the Run 2 champion `V12` still has 8 manually confirmed serious failures out of 50 and is not production-ready.
-- Manual review found no clear scoring false positives among the 8 `V12` serious failures.
-- `V12` has a systemic generation issue: several answerable cases returned the no-evidence fallback despite exact or near-exact evidence in retrieval/context.
-- `osha-loto-df-03` remains a safety-relevant production blocker because the exact OSHA procedure section was retrieved but not answered.
+- Phase 9 remediated the reviewed V12 serious-failure classes, but the final V12 full run still has 6 serious failures out of 50 and is not production-ready.
+- The 8 reviewed Phase 8 serious cases now pass in final V12, but the remaining V12 serious failures require manual review and likely follow-up remediation.
+- The remaining V12 serious failures include OSHA guarding cases, so the safety/manual-review gate remains closed.
 - Judge safety and citation scoring are still weak enough that future safety/citation decisions need manual review or a stronger judge.
 - Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, and Run 2 did not surface a new unsafe-advice top-candidate issue, but safety cases still require manual review before production conclusions.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
@@ -772,4 +779,4 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Next Action
 
-Start Phase 9: RAG Serious-Failure Remediation. Treat `V12` as the engineering candidate, keep `V7` as a close fallback/co-lead, keep Document Augmentation as experimental eval plumbing, keep compression off by default, and fix the reviewed serious-failure classes before any production ship decision.
+Start Phase 10: Remaining RAG Failure Review. Treat `V12` as the engineering candidate because it cleared the 8 reviewed failures and has fewer final serious failures than `V7`; keep `V7` as a close fallback/co-lead because it has the higher average rule score. Manually review the 6 remaining V12 serious failures, especially OSHA guarding cases, before reconsidering production readiness.

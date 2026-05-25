@@ -275,21 +275,53 @@ Variant/case serious-failure list, grouped by reason code:
 - `V3` (24): wrong answer: `nist-ams300-1-df-02`, `nist-ams300-1-df-04`, `nist-ams300-1-ss-01`, `nist-ams300-11-df-01`, `nist-ams300-11-df-02`, `nist-ams300-11-ss-03`, `nist-ams300-11-mc-02`, `osha-loto-df-01`, `osha-loto-df-03`, `osha-loto-ss-01`, `osha-loto-ss-02`, `osha-guarding-mc-02`, `nist-csf-2-mc-01`; citation support: `nist-ams300-1-df-03`, `nist-ams300-1-df-04`, `nist-ams300-1-ss-01`, `nist-ams300-11-df-01`, `nist-ams300-11-df-03`, `nist-ams300-11-df-04`, `nist-ams300-11-ss-02`, `nist-ams300-11-ss-03`, `nist-ams300-11-mc-01`, `nist-ams300-11-mc-02`, `osha-loto-df-01`, `osha-loto-df-02`, `osha-guarding-df-02`, `osha-guarding-mc-02`, `nist-csf-2-df-02`, `nist-csf-2-df-03`, `nist-csf-2-ss-01`, `nist-csf-2-mc-01`; wrong/missing citation: `nist-ams300-11-df-02`; unsafe advice: `osha-guarding-mc-01`.
 - Other variants: `V0` had 27, `V1` had 29, `V5` had 26, `V6` had 26, `V9` had 25, `V10` had 27, and `V11` had 26 serious failures. Their failure mix follows the same dominant pattern: wrong/incomplete answers and citation support failures, with occasional automated unsafe-advice flags on `osha-guarding-mc-01` or `osha-loto-df-01`.
 
+## Phase 9 Remediation Update
+
+Phase 9 remediated the reviewed serious-failure classes without changing the question bank, expected answers, scoring rules, judge behavior, Document Augmentation defaults, or compression defaults. Details are in `docs/qa/RAG_SERIOUS_FAILURE_REMEDIATION.md`.
+
+Final Phase 9 full-run results:
+
+| Variant | Pipeline | Avg Rule | Serious | Borderline | Judge | Judge SF | Automated | Rerank fallback | doc@3/5 | section/page@3/5 |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | ---: | --- | --- |
+| `V12` | Query Rewrite + Hybrid Search + RSE + Rerank | 80.301 | 6 | 39 | 39/39 | 4 | 50 pass / 0 fail | 0 | 0.98/1.00 | 0.86/0.94 |
+| `V7` | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | 81.961 | 7 | 32 | 32/32 | 2 | 50 pass / 0 fail | 0 | 0.98/1.00 | 0.86/0.94 |
+
+Phase 9 final `V12` cleared all 8 reviewed serious cases from Phase 8:
+
+- `nist-ams300-1-df-04`
+- `nist-ams300-1-mc-02`
+- `nist-ams300-11-df-02`
+- `nist-ams300-11-mc-01`
+- `nist-ams300-11-ss-03`
+- `nist-csf-2-ss-01`
+- `nist-csf-2-ss-03`
+- `osha-loto-df-03`
+
+The production blockers from Phase 8 are no longer serious failures in final `V12`, including the OSHA energy-control procedure case. However, final `V12` still has 6 full-bank serious failures: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
+
+Decision update:
+
+- Keep `V12` as the engineering candidate because it has fewer final serious failures than `V7` and cleared the 8 reviewed remediation targets.
+- Keep `V7` as the close fallback/co-lead because it has the higher final average rule score, but it still has a serious failure on `nist-ams300-1-df-04`.
+- Keep production as **NO-GO** because final `V12` still exceeds the Phase 8 regression gate of at most 2 serious failures out of 50 and includes unresolved OSHA guarding serious failures.
+
 ## Current Champion Rationale
 
-`V12` is the current Run 2 champion because it gives the best same-day balance after Document Augmentation was tested:
+`V12` remains the current engineering champion after Phase 9 because it gives the best remediation posture after Document Augmentation was tested and the reviewed serious failures were fixed:
 
-- Highest Run 2 average rule score: 80.74.
-- Lowest Run 2 serious-failure count in the required comparison set: 8.
+- Final Phase 9 serious-failure count is 6, lower than `V7` at 7.
+- All 8 reviewed Phase 8 serious cases are no longer serious failures in final `V12`.
 - True reranking ran for all 50 cases with 0 fallback.
-- Query rewrite plus RSE beat both augmented variants and the same-day `V7` anchor.
+- Query rewrite plus RSE remains the best target for the reviewed remediation classes.
 - Retrieval remains strong: `doc_hit@5 = 1.00`, `section_or_page_hit@5 = 0.94`.
 
-The caveat is still substantial: manual review confirmed `V12` has 8 real serious failures, and `V7` remains close at 79.87 average / 9 serious failures but did not improve any of those 8 cases. Treat `V12` and `V7` as the top pair for engineering work. Neither is production-ready without remediation.
+The caveat is still substantial: final `V12` has 6 serious failures, and several are OSHA guarding cases requiring manual review. Treat `V12` and `V7` as the top pair for continued engineering work. Neither is production-ready.
 
 ## Phase 8 Guidance
 
 Phase 8 is complete as a production-readiness recommendation, not a rollout approval. The final recommendation is production NO-GO; use `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` as the handoff for remediation and future readiness gates.
+
+Phase 9 supersedes the Phase 8 remediation target list for the 8 reviewed cases. The Phase 8 production gate remains in force: at most 2 serious failures out of 50, no unsafe advice, no evidence-present no-evidence fallbacks, reranker fallback 0, acceptable citation support, and manual review for OSHA/safety cases.
 
 Recommended next actions:
 
@@ -303,10 +335,9 @@ Recommended next actions:
 
 ## Blockers Before Production
 
-- Even the Run 2 champion still has 8 manually confirmed serious failures out of 50.
-- Four reviewed failures are production blockers: `nist-ams300-1-mc-02`, `nist-ams300-11-df-02`, `nist-csf-2-ss-01`, and `osha-loto-df-03`.
-- Citation support improved, and augmented variants had no citation-related serious flags, but `V12` still has a real citation/localization failure on `nist-csf-2-ss-03`.
-- Safety boundary answers improved for OSHA/live-status prompts, and the known `safeguard` unsafe-advice false positive was fixed for the top-candidate set. However, `osha-loto-df-03` remains a safety-relevant answerable-procedure blocker because exact OSHA evidence was retrieved but not used.
+- Final Phase 9 `V12` still has 6 serious failures out of 50.
+- Remaining `V12` serious cases are `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
+- The remaining OSHA guarding cases keep the safety/manual-review gate closed.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has been tested and should not be the production default based on Run 2.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.

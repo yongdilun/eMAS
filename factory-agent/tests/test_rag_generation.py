@@ -199,6 +199,9 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
     assert "cite the whole lead-in plus list as one grouped procedure block" in prompt
     assert "Do not scatter the same citation after every sentence" in prompt
     assert "If no supported answer remains, output exactly the insufficient-context sentence" in prompt
+    assert "If relevant evidence is split across multiple source chunks" in prompt
+    assert "For section summaries or multi-part questions" in prompt
+    assert "For safety procedures, answer from the retrieved procedure evidence" in prompt
     assert result.sources[0].source_number == 1
     assert result.sources[0].doc_id == "osha_3120_lockout_tagout"
 
@@ -257,19 +260,189 @@ def test_generate_answer_preserves_grouped_loto_procedure_with_long_intro(mock_b
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
-def test_generate_answer_uses_insufficient_context_when_first_answer_is_uncited(mock_build_llm, mock_settings, sample_chunks):
+def test_generate_answer_repairs_uncited_answer_when_evidence_is_present(mock_build_llm, mock_settings, sample_chunks):
     bad_response = MagicMock()
     bad_response.content = "Lock out the machine before maintenance."
+    repaired_response = MagicMock()
+    repaired_response.content = "The LOTO procedure requires locking out all energy sources before maintenance [^1]."
     mock_llm = MagicMock()
-    mock_llm.invoke.return_value = bad_response
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
     mock_build_llm.return_value = mock_llm
 
     generator = AnswerGenerator(mock_settings)
     result = generator.generate("How to do LOTO?", [sample_chunks[0]])
 
-    assert result.answer == insufficient_context_answer(has_sources=True)
-    assert mock_llm.invoke.call_count == 1
+    assert result.answer == repaired_response.content
+    assert mock_llm.invoke.call_count == 2
     assert result.sources[0].doc_id == "doc1"
+    assert result.metadata["generation_validation"]["repair_attempted"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_no_evidence_fallback_when_retrieved_context_matches_query(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="ams_c0100",
+        text=(
+            "Resource usage defines the amount or type of resources being consumed by an activity, "
+            "including equipment, materials, personnel, and time."
+        ),
+        metadata={
+            "doc_id": "nist_ams_300_1",
+            "title": "Smart Manufacturing Reference Architecture",
+            "organization": "NIST",
+            "authority_level": "official_public_guidance",
+            "domain": "smart_manufacturing",
+            "subdomain": "reference_architecture",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 71,
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "Resource usage is the amount or type of resources consumed by an activity, including equipment, "
+        "materials, personnel, and time [^1]."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("What does resource usage mean?", [chunk])
+
+    assert "amount or type of resources" in result.answer
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert mock_llm.invoke.call_count == 2
+    assert result.metadata["generation_validation"]["initial_insufficient_context"] is True
+    assert result.metadata["generation_validation"]["repair_attempted"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_keeps_repair_when_single_source_citation_is_missing(
+    mock_build_llm,
+    mock_settings,
+    sample_chunks,
+):
+    bad_response = MagicMock()
+    bad_response.content = "Lock out the machine before maintenance."
+    repaired_response = MagicMock()
+    repaired_response.content = "The LOTO procedure requires locking out all energy sources before maintenance."
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("How to do LOTO?", [sample_chunks[0]])
+
+    assert result.answer == "The LOTO procedure requires locking out all energy sources before maintenance. [^1]"
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_keeps_repair_when_cited_line_has_uncited_tail(
+    mock_build_llm,
+    mock_settings,
+    sample_chunks,
+):
+    bad_response = MagicMock()
+    bad_response.content = "Lock out the machine before maintenance."
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "The procedure requires locking out all energy sources [^1]. "
+        "Employees must do this before maintenance starts."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("How to do LOTO?", [sample_chunks[0]])
+
+    assert result.answer.endswith("Employees must do this before maintenance starts. [^1]")
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_does_not_repair_live_safety_boundary_fallback(mock_build_llm, mock_settings, sample_chunks):
+    query = "Is the locked-out press safe to start right now?"
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True, query=query)
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = refused_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(query, [sample_chunks[0]])
+
+    assert result.answer == insufficient_context_answer(has_sources=True, query=query)
+    assert mock_llm.invoke.call_count == 1
+    assert result.metadata["generation_validation"]["repair_attempted"] is False
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_osha_energy_control_procedure_repair_keeps_required_points_and_safety_caution(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0013",
+        text=(
+            "Energy-control procedures must clearly and specifically outline the scope, purpose, "
+            "authorization, rules, and techniques to be used for hazardous energy control. "
+            "They must include procedural steps for shutting down, isolating, blocking, and securing "
+            "machines or equipment; steps for placement, removal, and transfer of lockout or tagout devices "
+            "and responsibility for them; and requirements for testing a machine or equipment to determine "
+            "and verify the effectiveness of lockout devices, tagout devices, and other energy control measures."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 13,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "An energy-control procedure must clearly identify the scope, purpose, authorization, rules, "
+        "and techniques for hazardous energy control. It must also include steps for shutting down, "
+        "isolating, blocking, and securing equipment; steps for placing, removing, and transferring "
+        "lockout or tagout devices and assigning responsibility for them; and testing requirements to "
+        "determine and verify that lockout, tagout, and other energy-control measures are effective [^1]."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("What must an energy-control procedure include?", [chunk])
+
+    answer = result.answer.lower()
+    assert "scope, purpose, authorization" in answer
+    assert "shutting down, isolating, blocking, and securing" in answer
+    assert "placing, removing, and transferring" in answer
+    assert "determine and verify" in answer
+    assert result.safety_warning is True
+    assert result.safety_content
+    assert mock_llm.invoke.call_count == 2
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

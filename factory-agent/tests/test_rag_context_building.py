@@ -1,6 +1,7 @@
 from factory_agent.rag.context_building import (
     RAGContextBuilder,
     light_extractive_compress,
+    rewrite_query_for_retrieval,
 )
 from factory_agent.rag.schemas import Chunk, ScoredChunk
 
@@ -118,6 +119,54 @@ def test_rse_joins_same_doc_same_section_neighbors_with_plus_minus_two_limit():
     assert "other section neighbor excluded" not in text
 
 
+def test_rse_includes_sibling_sections_for_group_list_queries():
+    chunks = [
+        _chunk(
+            "doc",
+            1,
+            "A2321 identifies control requirements.",
+            section="A2321",
+            section_path=["Doc", "A232", "A2321"],
+        ),
+        _chunk(
+            "doc",
+            2,
+            "A2322 identifies instrumentation requirements.",
+            section="A2322",
+            section_path=["Doc", "A232", "A2322"],
+        ),
+        _chunk(
+            "doc",
+            3,
+            "A2323 identifies communications requirements.",
+            section="A2323",
+            section_path=["Doc", "A232", "A2323"],
+        ),
+        _chunk(
+            "doc",
+            4,
+            "A2324 integrates system specifications.",
+            section="A2324",
+            section_path=["Doc", "A232", "A2324"],
+        ),
+    ]
+    builder = RAGContextBuilder(FakeRetriever(chunks), rse_max_window=3)
+
+    result = builder.build(
+        query="What subactivities are listed under A2321-A2324?",
+        selected_chunks=[chunks[3]],
+        candidates=[_scored(chunks[3])],
+        context_builder="rse",
+        compression="none",
+    )
+
+    text = result.chunks[0].text
+    assert "A2321 identifies control requirements." in text
+    assert "A2322 identifies instrumentation requirements." in text
+    assert "A2323 identifies communications requirements." in text
+    assert "A2324 integrates system specifications." in text
+
+
 def test_rse_does_not_cross_doc_id():
     chunks = [
         _chunk("doc-a", 0, "same doc previous chunk."),
@@ -138,6 +187,46 @@ def test_rse_does_not_cross_doc_id():
     assert "same doc previous chunk" in text
     assert "same doc seed chunk" in text
     assert "different doc chunk must not join" not in text
+
+
+def test_rewrite_query_preserves_original_key_terms_when_adding_resource_cues():
+    rewritten = rewrite_query_for_retrieval(
+        "How do CSF web reference materials differ from a fixed PDF publication?"
+    )
+
+    focus = rewritten.split("Retrieval focus:", 1)[1].lower()
+    assert "cybersecurity framework" in focus
+    assert "web" in focus
+    assert "reference" in focus
+    assert "material" in focus
+    assert "fix" in focus
+    assert "pdf" in focus
+    assert "references" in focus
+    assert "implementation guides" in focus
+
+
+def test_rewrite_query_adds_resource_cues_for_adjacent_wording():
+    rewritten = rewrite_query_for_retrieval("What supporting web material supplements the CSF?")
+
+    focus = rewritten.split("Retrieval focus:", 1)[1].lower()
+    assert "support" in focus
+    assert "web" in focus
+    assert "material" in focus
+    assert "supplemental resources" in focus
+    assert "machine-readable" in focus
+
+
+def test_rewrite_query_adds_standards_and_scope_cues_from_intent_terms():
+    rewritten = rewrite_query_for_retrieval(
+        "Which manufacturing processes and data formats are included or excluded by the recommendations?"
+    )
+
+    focus = rewritten.split("Retrieval focus:", 1)[1].lower()
+    assert "process" in focus
+    assert "format" in focus
+    assert "recommendation" in focus
+    assert "in scope out of scope" in focus
+    assert "standards open consensus" in focus
 
 
 def test_light_compression_is_extractive_and_preserves_sentence_order():

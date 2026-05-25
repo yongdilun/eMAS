@@ -12,6 +12,7 @@ from factory_agent.rag.answer_contract import (
 from factory_agent.rag.schemas import Chunk, SourceCitation, AnswerResult
 from factory_agent.rag.source_metadata import (
     insufficient_context_answer,
+    is_insufficient_context_answer,
     normalize_source_locator,
     sanitize_rag_answer_text,
     snippet_from_text,
@@ -48,6 +49,17 @@ SOURCE_SUPPORT_STOPWORDS = {
     "with",
 }
 
+LIVE_SAFETY_BOUNDARY_RE = re.compile(
+    r"\b(live|current|right now|today|safe to start|start now|operate now|energiz(?:e|ing)? now|"
+    r"reenergiz(?:e|ing)?|locked[- ]out|permission|permit)\b",
+    re.IGNORECASE,
+)
+SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press|hazard|energy)\b", re.IGNORECASE)
+COMPLIANCE_BOUNDARY_RE = re.compile(
+    r"\b(certif|compliant|compliance proof|approved|approval|secure|security proof|vendor|buy|purchase)\b",
+    re.IGNORECASE,
+)
+
 ANSWER_PROMPT = """
 You are eMAS Assistant, an expert in industrial maintenance, safety, and operations.
 
@@ -69,6 +81,13 @@ If the context does not prove the answer, respond exactly with:
 - Do not scatter the same citation after every sentence when one grouped citation covers the paragraph or step group.
 - Do not output [SOURCE 1], source titles, footnote definitions, or a bibliography.
 - Do not include uncited introductions, summaries, conclusions, or safety warnings.
+
+### Evidence Use
+- If relevant evidence is split across multiple source chunks, synthesize the chunks into one cited answer instead of refusing.
+- If a source section title, page, or heading directly matches the question, treat that as strong evidence and answer from the supporting body text.
+- For section summaries or multi-part questions, cover every major dimension that the retrieved evidence supports, including purpose, scope, hierarchy, relationships, limitations, and named items.
+- For comparison questions, define each named concept separately before explaining the difference or relationship.
+- For safety procedures, answer from the retrieved procedure evidence when it exists, include every required procedural category the evidence states, and rely on the structured safety warning outside the answer.
 
 ### Output Format
 For procedures:
@@ -95,6 +114,36 @@ For non-procedures:
 - If no supported answer remains, output exactly the insufficient-context sentence.
 
 ### Answer
+"""
+
+ANSWER_REPAIR_PROMPT = """
+You are eMAS Assistant, an expert in industrial maintenance, safety, and operations.
+
+The previous draft could not be accepted.
+Validation reason: {validation_reason}
+
+Rewrite the answer using ONLY the provided context and source numbers.
+The retrieved context has relevant evidence for the user's question, so do not output the insufficient-context sentence unless no cited, supported answer can be produced.
+
+### Repair Rules
+- Preserve the citation contract: every factual paragraph or grouped procedure block must cite a valid marker like [^1].
+- Use only source numbers shown in the context.
+- Do not add uncited safety warnings, conclusions, source titles, footnote definitions, or bibliographies.
+- If evidence is split across chunks from the same source, synthesize it into a complete cited answer.
+- For section summaries, list/group questions, comparisons, and procedures, include all supported dimensions and required categories.
+
+### Context
+{context}
+
+{api_data_section}
+
+### User Question
+{query}
+
+### Previous Draft
+{answer}
+
+### Final Answer
 """
 
 API_DATA_SECTION_TEMPLATE = """
@@ -216,7 +265,7 @@ class AnswerGenerator:
                 doc_order=doc_order,
                 doc_chunks=doc_chunks,
             )
-            answer_text, sources = self._validate_answer(
+            answer_text, sources, generation_validation = self._validate_answer(
                 query=query,
                 context=context,
                 api_data_section=api_section,
@@ -245,6 +294,7 @@ class AnswerGenerator:
                         doc_order=doc_order,
                         doc_chunks=doc_chunks,
                     ),
+                    "generation_validation": generation_validation,
                 },
             )
 
@@ -284,6 +334,15 @@ class AnswerGenerator:
                         doc_order=doc_order,
                         doc_chunks=doc_chunks,
                     ),
+                    "generation_validation": {
+                        "initial_valid": False,
+                        "initial_reason": "generation_exception",
+                        "initial_insufficient_context": False,
+                        "repair_attempted": False,
+                        "repair_reason": None,
+                        "repair_valid": False,
+                        "repair_failure_reason": str(e),
+                    },
                 },
             )
 
@@ -324,14 +383,146 @@ class AnswerGenerator:
         sources: list[SourceCitation],
         doc_order: list[str],
         doc_chunks: dict[str, list[Chunk]],
-    ) -> tuple[str, list[SourceCitation]]:
+    ) -> tuple[str, list[SourceCitation], dict[str, Any]]:
         if api_data_section.strip():
             # Mixed live-data answers can contain operational facts that are not document source claims.
-            return sanitize_rag_answer_text(answer), sources
+            return sanitize_rag_answer_text(answer), sources, {
+                "initial_valid": True,
+                "initial_reason": "api_data_skip",
+                "initial_insufficient_context": False,
+                "repair_attempted": False,
+                "repair_reason": None,
+                "repair_valid": False,
+                "repair_failure_reason": None,
+            }
         validation = validate_knowledge_answer(answer, sources)
+        metadata = {
+            "initial_valid": validation.valid,
+            "initial_reason": validation.reason,
+            "initial_insufficient_context": validation.insufficient_context,
+            "repair_attempted": False,
+            "repair_reason": None,
+            "repair_valid": False,
+            "repair_failure_reason": None,
+        }
+        if validation.valid and not validation.insufficient_context:
+            return validation.answer, sources, metadata
+
+        repair_reason = None
+        if validation.insufficient_context:
+            if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
+                repair_reason = "insufficient_context_with_matching_evidence"
+        elif self._should_repair_generation(query=query, doc_chunks=doc_chunks):
+            repair_reason = validation.reason or "invalid_answer_with_matching_evidence"
+
+        if repair_reason:
+            metadata["repair_attempted"] = True
+            metadata["repair_reason"] = repair_reason
+            repaired_answer = self._repair_answer(
+                query=query,
+                context=context,
+                api_data_section=api_data_section,
+                answer=answer,
+                validation_reason=repair_reason,
+            )
+            repaired_sources = self._build_sources_for_answer(
+                query=query,
+                answer=repaired_answer,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
+            repaired_validation = validate_knowledge_answer(repaired_answer, repaired_sources)
+            if not repaired_validation.valid:
+                citation_repaired_answer = self._repair_single_source_citations(
+                    answer=repaired_answer,
+                    sources=repaired_sources,
+                )
+                if citation_repaired_answer != repaired_answer:
+                    repaired_answer = citation_repaired_answer
+                    repaired_sources = self._build_sources_for_answer(
+                        query=query,
+                        answer=repaired_answer,
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    )
+                    repaired_validation = validate_knowledge_answer(repaired_answer, repaired_sources)
+            metadata["repair_valid"] = repaired_validation.valid and not repaired_validation.insufficient_context
+            metadata["repair_failure_reason"] = repaired_validation.reason
+            if repaired_validation.valid and not repaired_validation.insufficient_context:
+                return repaired_validation.answer, repaired_sources, metadata
+
         if validation.valid:
-            return validation.answer, sources
-        return insufficient_context_answer(has_sources=bool(sources), query=query), sources
+            return validation.answer, sources, metadata
+        return insufficient_context_answer(has_sources=bool(sources), query=query), sources, metadata
+
+    def _repair_answer(
+        self,
+        *,
+        query: str,
+        context: str,
+        api_data_section: str,
+        answer: str,
+        validation_reason: str,
+    ) -> str:
+        prompt = ANSWER_REPAIR_PROMPT.format(
+            context=context,
+            api_data_section=api_data_section,
+            query=query,
+            answer=sanitize_rag_answer_text(answer),
+            validation_reason=validation_reason,
+        )
+        messages = [
+            SystemMessage(content="You are an industrial maintenance assistant."),
+            HumanMessage(content=prompt),
+        ]
+        response = self.llm.invoke(messages)
+        return sanitize_rag_answer_text(response.content)
+
+    def _should_repair_generation(self, *, query: str, doc_chunks: dict[str, list[Chunk]]) -> bool:
+        if _is_boundary_query(query):
+            return False
+        return _has_matching_retrieved_evidence(query=query, doc_chunks=doc_chunks)
+
+    def _repair_single_source_citations(self, *, answer: str, sources: list[SourceCitation]) -> str:
+        clean_answer = sanitize_rag_answer_text(answer)
+        if len(sources) != 1 or not clean_answer or is_insufficient_context_answer(clean_answer):
+            return clean_answer
+        source_number = sources[0].source_number or 1
+        marker = f"[^{source_number}]"
+        available_numbers = {str(source.source_number or index) for index, source in enumerate(sources, start=1)}
+
+        def has_valid_citation(line: str) -> bool:
+            cited = re.findall(r"\[\^?(\d+)\]", line)
+            return any(number in available_numbers for number in cited)
+
+        def has_uncited_tail(line: str) -> bool:
+            matches = list(re.finditer(r"\[\^?\d+\]", line))
+            if not matches:
+                return False
+            tail = line[matches[-1].end() :].strip()
+            tail = tail.lstrip(" \t\r\n.,;:!?")
+            return len(re.findall(r"[A-Za-z0-9]+", tail)) >= 4
+
+        repaired_lines: list[str] = []
+        changed = False
+        for line in clean_answer.splitlines():
+            stripped = line.rstrip()
+            if not stripped:
+                repaired_lines.append(line)
+                continue
+            if has_valid_citation(stripped):
+                if has_uncited_tail(stripped):
+                    repaired_lines.append(f"{stripped} {marker}")
+                    changed = True
+                else:
+                    repaired_lines.append(stripped)
+                continue
+            if len(re.findall(r"[A-Za-z0-9]+", stripped)) < 4:
+                repaired_lines.append(stripped)
+                continue
+            repaired_lines.append(f"{stripped} {marker}")
+            changed = True
+        return "\n".join(repaired_lines).strip() if changed else clean_answer
 
     def build_context(self, chunks: List[Chunk], source_numbers: Optional[List[int]] = None) -> str:
         """
@@ -425,7 +616,13 @@ class AnswerGenerator:
         )[1]
 
     def _source_support_score(self, *, query: str, answer: str, chunk: Chunk) -> float:
-        text = f"{chunk.text} {chunk.metadata.get('snippet', '')} {chunk.metadata.get('text_search', '')}".lower()
+        section_path = chunk.metadata.get("section_path")
+        if isinstance(section_path, list):
+            section_path = " > ".join(str(part) for part in section_path if part)
+        text = (
+            f"{chunk.text} {chunk.metadata.get('snippet', '')} {chunk.metadata.get('text_search', '')} "
+            f"{chunk.metadata.get('section_title', '')} {section_path or ''}"
+        ).lower()
         query_tokens = _support_tokens(query)
         answer_tokens = _support_tokens(answer)
         text_tokens = set(_support_tokens(text))
@@ -586,6 +783,47 @@ def _support_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _is_boundary_query(query: str) -> bool:
+    text = query or ""
+    if LIVE_SAFETY_BOUNDARY_RE.search(text) and SAFETY_DOMAIN_RE.search(text):
+        return True
+    return bool(COMPLIANCE_BOUNDARY_RE.search(text))
+
+
+def _has_matching_retrieved_evidence(*, query: str, doc_chunks: dict[str, list[Chunk]]) -> bool:
+    chunks = [chunk for chunks in doc_chunks.values() for chunk in chunks]
+    if not chunks:
+        return False
+
+    query_tokens = _support_tokens(query)
+    if not query_tokens:
+        return True
+
+    best_overlap = 0
+    best_coverage = 0.0
+    for chunk in chunks:
+        metadata = chunk.metadata or {}
+        section_path = metadata.get("section_path")
+        if isinstance(section_path, list):
+            section_path = " > ".join(str(part) for part in section_path if part)
+        evidence_text = (
+            f"{chunk.text} {metadata.get('snippet', '')} {metadata.get('text_search', '')} "
+            f"{metadata.get('section_title', '')} {section_path or ''}"
+        )
+        evidence_tokens = _support_tokens(evidence_text)
+        overlap = len(query_tokens & evidence_tokens)
+        best_overlap = max(best_overlap, overlap)
+        best_coverage = max(best_coverage, overlap / max(1, len(query_tokens)))
+        if overlap >= 2 or best_coverage >= 0.5:
+            return True
+
+        evidence_lower = evidence_text.lower()
+        if any(phrase in evidence_lower for phrase in _support_phrases(query)):
+            return True
+
+    return best_overlap >= 1 and len(query_tokens) <= 2
+
+
 def _support_stem(token: str) -> str:
     if token.startswith("reenerg"):
         return "reenerg"
@@ -593,6 +831,8 @@ def _support_stem(token: str) -> str:
         return "notif"
     if token.startswith("remov"):
         return "remov"
+    if token.endswith("ces") and len(token) > 4:
+        return token[:-1]
     if token.endswith("ing") and len(token) > 5:
         return token[:-3]
     if token.endswith("ed") and len(token) > 4:

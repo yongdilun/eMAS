@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Iterable
 
+from factory_agent.rag.document_registry import resolve_source_pdf_path
 from factory_agent.rag.schemas import Chunk, ScoredChunk
 
 
@@ -20,6 +22,58 @@ QUERY_REWRITE_EXPANSIONS = {
     "oee": "overall equipment effectiveness performance availability quality",
     "ppe": "personal protective equipment",
 }
+
+QUERY_REWRITE_INTENT_CUES = (
+    {
+        "min_matches": 2,
+        "trigger_terms": {
+            "example",
+            "guide",
+            "implementation",
+            "material",
+            "online",
+            "quick",
+            "readable",
+            "reference",
+            "resource",
+            "supplement",
+            "supplemental",
+            "updated",
+            "web",
+        },
+        "cue": "supplemental resources references examples implementation guides machine-readable web PDF publication",
+    },
+    {
+        "min_matches": 1,
+        "trigger_terms": {
+            "consensus",
+            "format",
+            "interoperability",
+            "international",
+            "model",
+            "open",
+            "protocol",
+            "standard",
+        },
+        "cue": "standards open consensus international data formats models interoperability inputs outputs scope",
+    },
+    {
+        "min_matches": 2,
+        "trigger_terms": {
+            "exclude",
+            "include",
+            "included",
+            "limitation",
+            "out",
+            "process",
+            "proprietary",
+            "recommendation",
+            "scope",
+            "within",
+        },
+        "cue": "in scope out of scope recommendations limitations processes data formats proprietary open consensus",
+    },
+)
 
 TOKEN_WORD_RE = re.compile(r"\b\w+(?:[-']\w+)?\b")
 WORD_RE = re.compile(r"[a-z0-9]+")
@@ -57,6 +111,41 @@ CONTEXT_STOPWORDS = {
     "which",
     "who",
     "with",
+}
+
+RELATED_SECTION_QUERY_TERMS = {
+    "compare",
+    "comparison",
+    "complete",
+    "difference",
+    "differences",
+    "differ",
+    "dimensions",
+    "elements",
+    "functions",
+    "group",
+    "include",
+    "includes",
+    "including",
+    "list",
+    "listed",
+    "multi",
+    "nearby",
+    "part",
+    "parts",
+    "procedure",
+    "procedures",
+    "relationship",
+    "related",
+    "resources",
+    "section",
+    "sections",
+    "scope",
+    "standards",
+    "subactivities",
+    "summary",
+    "summarize",
+    "under",
 }
 
 
@@ -258,7 +347,10 @@ class RAGContextBuilder:
             if not parent_chunks:
                 parent_chunks = child_chunks
             parent_chunks = _sort_chunks(parent_chunks)
-            section_text = _format_segment_text(parent_chunks)
+            section_text = _format_segment_text(
+                parent_chunks,
+                supplemental_text=self._source_page_text_for_segment(query=query, chunks=parent_chunks),
+            )
             before_tokens = sum(estimate_tokens(chunk.text) for chunk in child_chunks)
             after_tokens = estimate_tokens(section_text)
             if after_tokens > self.small_to_big_max_tokens:
@@ -307,13 +399,16 @@ class RAGContextBuilder:
             seed.metadata = _clean_metadata(seed.metadata)
             if seed.chunk_id in consumed_seed_ids:
                 continue
-            segment_chunks = self._rse_window_chunks(seed)
+            segment_chunks = self._rse_window_chunks(seed, query=query)
             if not segment_chunks:
                 segment_chunks = [seed]
             segment_chunks = _sort_chunks(segment_chunks)
             consumed_seed_ids.update(chunk.chunk_id for chunk in segment_chunks)
 
-            segment_text = _format_segment_text(segment_chunks)
+            segment_text = _format_segment_text(
+                segment_chunks,
+                supplemental_text=self._source_page_text_for_segment(query=query, chunks=segment_chunks),
+            )
             before_tokens = estimate_tokens(seed.text)
             after_tokens = estimate_tokens(segment_text)
             if after_tokens > self.rse_max_segment_tokens:
@@ -404,7 +499,7 @@ class RAGContextBuilder:
         ]
         return parent or [seed]
 
-    def _rse_window_chunks(self, seed: Chunk) -> list[Chunk]:
+    def _rse_window_chunks(self, seed: Chunk, *, query: str = "") -> list[Chunk]:
         doc_id = seed.metadata.get("doc_id")
         if not doc_id:
             return [seed]
@@ -423,6 +518,7 @@ class RAGContextBuilder:
         }
         by_index[seed_index] = seed
         seed_key = _section_key(seed.metadata)
+        include_related_sections = _query_needs_related_sections(query)
         selected: list[Chunk] = []
         running_tokens = 0
         for index in range(seed_index - self.rse_max_window, seed_index + self.rse_max_window + 1):
@@ -432,8 +528,13 @@ class RAGContextBuilder:
             chunk.metadata = _clean_metadata(chunk.metadata)
             if str(chunk.metadata.get("doc_id") or "") != str(doc_id):
                 continue
-            if seed_key and _section_key(chunk.metadata) and _section_key(chunk.metadata) != seed_key:
-                continue
+            chunk_key = _section_key(chunk.metadata)
+            if seed_key and chunk_key and chunk_key != seed_key:
+                if not (
+                    include_related_sections
+                    and _is_related_section_neighbor(seed.metadata, chunk.metadata)
+                ):
+                    continue
             candidate_tokens = estimate_tokens(_strip_section_prefix(chunk.text))
             if selected and running_tokens + candidate_tokens > self.rse_max_segment_tokens:
                 continue
@@ -443,6 +544,44 @@ class RAGContextBuilder:
             selected.append(chunk)
             running_tokens += candidate_tokens
         return selected or [seed]
+
+    def _source_page_text_for_segment(self, *, query: str, chunks: list[Chunk]) -> str:
+        if not chunks or not _query_needs_related_sections(query):
+            return ""
+
+        existing_text = " ".join(_strip_section_prefix(chunk.text) for chunk in chunks)
+        query_terms = _support_tokens(query)
+        pages_by_doc: dict[str, list[int]] = {}
+        for chunk in chunks:
+            metadata = _clean_metadata(chunk.metadata)
+            doc_id = str(metadata.get("doc_id") or "").strip()
+            if not doc_id:
+                continue
+            page_values = [
+                _metadata_int(metadata, "page"),
+                _metadata_int(metadata, "page_start"),
+                _metadata_int(metadata, "page_end"),
+            ]
+            pages = [page for page in page_values if page is not None]
+            if not pages:
+                continue
+            pages_by_doc.setdefault(doc_id, [])
+            for page in pages:
+                if page not in pages_by_doc[doc_id]:
+                    pages_by_doc[doc_id].append(page)
+
+        supplemental: list[str] = []
+        for doc_id, pages in pages_by_doc.items():
+            for page in sorted(pages)[:3]:
+                page_text = _pdf_page_text(doc_id, page)
+                if not page_text:
+                    continue
+                if _page_text_is_redundant(existing_text, page_text):
+                    continue
+                if query_terms and not (_support_tokens(page_text) & query_terms):
+                    continue
+                supplemental.append(f"[Source page {page} text]\n{page_text}")
+        return "\n\n".join(supplemental)
 
     def _document_chunks(self, doc_id: str) -> list[Chunk]:
         if hasattr(self.retriever, "get_chunks_for_doc"):
@@ -519,9 +658,26 @@ def rewrite_query_for_retrieval(query: str) -> str:
     for trigger, expansion in QUERY_REWRITE_EXPANSIONS.items():
         if trigger in lower and expansion not in lower:
             additions.append(expansion)
+    additions.extend(_intent_cues_for_query(normalized))
     key_terms = " ".join(sorted(_support_tokens(normalized)))[:240]
-    retrieval_focus = "; ".join(additions) if additions else key_terms
+    focus_parts = [*additions]
+    if key_terms:
+        focus_parts.append(key_terms)
+    retrieval_focus = "; ".join(dict.fromkeys(part for part in focus_parts if part))
     return f"{normalized}\nRetrieval focus: {retrieval_focus or normalized}"
+
+
+def _intent_cues_for_query(query: str) -> list[str]:
+    query_terms = _support_tokens(query)
+    cues: list[str] = []
+    for rule in QUERY_REWRITE_INTENT_CUES:
+        trigger_terms = set(rule["trigger_terms"])
+        if len(query_terms & trigger_terms) < int(rule["min_matches"]):
+            continue
+        cue = str(rule["cue"])
+        if cue.lower() not in (query or "").lower():
+            cues.append(cue)
+    return cues
 
 
 def estimate_tokens(text: str) -> int:
@@ -738,12 +894,14 @@ def _score_segment(
     return max_child_score + coverage_bonus + metadata_bonus
 
 
-def _format_segment_text(chunks: list[Chunk]) -> str:
+def _format_segment_text(chunks: list[Chunk], *, supplemental_text: str = "") -> str:
     if not chunks:
         return ""
     first_meta = chunks[0].metadata
     heading = _format_section_heading(first_meta)
     body = "\n\n".join(_strip_section_prefix(chunk.text).strip() for chunk in chunks if chunk.text)
+    if supplemental_text:
+        body = f"{body}\n\n{supplemental_text}" if body else supplemental_text
     return _combine_heading_body(heading, body)
 
 
@@ -847,6 +1005,8 @@ def _stem(token: str) -> str:
         return "notif"
     if token.startswith("remov"):
         return "remov"
+    if token.endswith("ces") and len(token) > 4:
+        return token[:-1]
     if token.endswith("ing") and len(token) > 5:
         return token[:-3]
     if token.endswith("ed") and len(token) > 4:
@@ -904,6 +1064,41 @@ def _section_key(metadata: dict[str, Any]) -> str | None:
     if section_title:
         return f"title:{str(section_title).strip().lower()}"
     return None
+
+
+def _parent_section_key(metadata: dict[str, Any]) -> str | None:
+    clean = _clean_metadata(metadata)
+    section_path = _jsonable_section_path(clean.get("section_path"))
+    if isinstance(section_path, list) and len(section_path) > 1:
+        return " > ".join(str(part).strip().lower() for part in section_path[:-1] if str(part).strip())
+    if isinstance(section_path, str) and ">" in section_path:
+        parts = [part.strip().lower() for part in section_path.split(">") if part.strip()]
+        if len(parts) > 1:
+            return " > ".join(parts[:-1])
+    return None
+
+
+def _is_related_section_neighbor(seed_metadata: dict[str, Any], chunk_metadata: dict[str, Any]) -> bool:
+    seed_parent = _parent_section_key(seed_metadata)
+    chunk_parent = _parent_section_key(chunk_metadata)
+    if seed_parent and chunk_parent and seed_parent == chunk_parent:
+        return True
+
+    seed_page = _metadata_int(seed_metadata, "page")
+    chunk_page = _metadata_int(chunk_metadata, "page")
+    if seed_page is not None and chunk_page is not None and abs(seed_page - chunk_page) <= 1:
+        return True
+    return False
+
+
+def _query_needs_related_sections(query: str) -> bool:
+    lower = (query or "").lower()
+    if re.search(r"\b[A-Z]?\d{2,}[A-Z]?(?:\s*[-–]\s*[A-Z]?\d{2,}[A-Z]?)\b", query or ""):
+        return True
+    tokens = _support_tokens(lower)
+    if tokens & RELATED_SECTION_QUERY_TERMS:
+        return True
+    return bool(re.search(r"\b(?:multi[- ]?chunk|section[- ]?summary|multi[- ]?part)\b", lower))
 
 
 def _section_path_label(value: Any) -> str:
@@ -972,6 +1167,43 @@ def _metadata_int(metadata: dict[str, Any], key: str) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+@lru_cache(maxsize=128)
+def _pdf_page_text(doc_id: str, page: int) -> str:
+    if page <= 0:
+        return ""
+    pdf_path = resolve_source_pdf_path(doc_id)
+    if pdf_path is None:
+        return ""
+    try:
+        import fitz  # type: ignore
+
+        with fitz.open(pdf_path) as document:
+            page_index = page - 1
+            if page_index < 0 or page_index >= len(document):
+                return ""
+            text = document[page_index].get_text("text") or ""
+    except Exception:
+        return ""
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    return _cap_words(text, 900)
+
+
+def _page_text_is_redundant(existing_text: str, page_text: str) -> bool:
+    existing = re.sub(r"\s+", " ", existing_text or "").strip().lower()
+    page = re.sub(r"\s+", " ", page_text or "").strip().lower()
+    if not existing or not page:
+        return False
+    if page in existing:
+        return True
+    existing_terms = _support_tokens(existing)
+    page_terms = _support_tokens(page)
+    if not page_terms:
+        return True
+    return len(page_terms - existing_terms) <= 3
 
 
 def _segment_id(prefix: str, doc_id: Any, index: int, child_chunks: list[Chunk]) -> str:

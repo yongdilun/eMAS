@@ -10,14 +10,30 @@ Primary references:
 - `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`
 - `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`
 - `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`
+- `docs/qa/RAG_SERIOUS_FAILURE_REMEDIATION.md`
+
+## Phase 9 Status Update
+
+Phase 9 remediated the reviewed serious-failure classes and supersedes the Phase 8 case-level remediation target for the original 8 serious cases.
+
+Final Phase 9 `V12` result:
+
+- 50/50 automated structural pass, 0 warnings.
+- Average rule score: 80.301.
+- Serious failures: 6.
+- Reranker fallback: 0.
+- All 8 reviewed Phase 8 serious cases are no longer serious failures.
+- The four Phase 8 production blockers are no longer serious failures in final `V12`.
+
+Production readiness remains **NO-GO**. Final `V12` still exceeds the regression gate of at most 2 serious failures out of 50 and still has unresolved OSHA guarding serious failures requiring manual review. Continue to use this document's production gate and monitoring requirements, but use `docs/qa/RAG_SERIOUS_FAILURE_REMEDIATION.md` for the latest Phase 9 remediation results.
 
 ## Executive Decision
 
 Production shipment is a **NO-GO**.
 
-`V12` remains the engineering candidate because it won the same-day Run 2 comparison: Query Rewrite + Hybrid Search + RSE + Rerank scored 80.74 average with 8 serious failures. It is the best current starting point for remediation, not a production-ready configuration.
+`V12` remains the engineering candidate after Phase 9 because Query Rewrite + Hybrid Search + RSE + Rerank cleared all 8 reviewed Phase 8 serious cases and finished the final Phase 9 full run with 80.301 average rule score and 6 serious failures. It is the best current starting point for remaining remediation, not a production-ready configuration.
 
-`V7` remains the close fallback/co-lead: Query Rewrite + Hybrid Search + Small-to-Big + Rerank scored 79.87 average with 9 serious failures. Manual review found that `V7` did not answer any of the 8 reviewed `V12` serious failures better, so it is not a safer ship candidate.
+`V7` remains the close fallback/co-lead: Query Rewrite + Hybrid Search + Small-to-Big + Rerank scored higher on final Phase 9 average rule score at 81.961, but had 7 serious failures and still failed `nist-ams300-1-df-04` from the reviewed set. It is not a safer ship candidate yet.
 
 Document Augmentation remains experimental. `V8` and `V13` improved some retrieval/citation signals and fixed `nist-csf-2-ss-03`, but they did not improve overall answer accuracy or serious-failure count enough to become production defaults.
 
@@ -41,11 +57,24 @@ The intended engineering candidate is `V12`.
 | Safety behavior | Keep boundary/no-action behavior for live status, machine action, OSHA procedure, compliance, and unsupported current-state questions. |
 | Judge | Qwen2.5 7B is triage-grade only; do not use it as the production-quality gate. |
 
-This config should be treated as a remediation target, not as a production rollout plan.
+This config should be treated as the current remediation target, not as a production rollout plan.
 
 ## Why Not Ship Yet
 
-The final manual review confirmed all 8 `V12` serious failures are real enough to keep the production gate closed.
+Phase 9 fixed the 8 reviewed V12 serious cases from Phase 8, including the four original production blockers. The production gate is still closed because the final V12 full run has 6 serious failures across the 50-question bank.
+
+Remaining final V12 serious failures:
+
+- `nist-ams300-1-mc-01`
+- `nist-ams300-11-df-04`
+- `osha-guarding-df-04`
+- `osha-guarding-ss-03`
+- `osha-guarding-mc-01`
+- `nist-csf-2-mc-02`
+
+The OSHA guarding failures are safety-adjacent and require manual review before any readiness upgrade. The final result does not meet the Phase 8 acceptance target of at most 2 serious failures out of 50.
+
+The original reviewed serious cases were:
 
 | Case | Manual classification | Decision | Why it matters |
 | --- | --- | --- | --- |
@@ -58,14 +87,14 @@ The final manual review confirmed all 8 `V12` serious failures are real enough t
 | `nist-csf-2-ss-03` | `citation_support_problem` | Fix before production | The answer cited a broad overview page instead of the online-resources section. |
 | `osha-loto-df-03` | `generation_failed_to_use_evidence` | Production blocker | The exact OSHA energy-control procedure section was retrieved at rank 1, but the answer returned the no-evidence fallback. |
 
-The four production blockers are:
+The original four production blockers were:
 
 - `nist-ams300-1-mc-02`
 - `nist-ams300-11-df-02`
 - `nist-csf-2-ss-01`
 - `osha-loto-df-03`
 
-These failures are not benchmark bookkeeping issues. They include answerable questions where evidence was present in retrieval/context, plus one safety-relevant OSHA procedure failure.
+Those original blockers are no longer serious failures in final Phase 9 V12, but the full-bank production gate remains unmet.
 
 ## Failure Pattern Analysis
 
@@ -100,7 +129,7 @@ The largest systemic issue is the no-evidence fallback firing when answer eviden
 
 ## Required Remediation Roadmap
 
-Convert the serious-failure review into Phase 9 engineering tasks:
+Phase 9 completed the original reviewed-case remediation tasks below. Keep them as regression requirements for future changes:
 
 1. Fix no-evidence fallback when evidence is present.
    - Add a generation/context contract that distinguishes true boundary questions from answerable questions with retrieved evidence.
@@ -176,19 +205,20 @@ Required limited-mode behavior:
 - Do not relax scoring to hide failures.
 - Do not treat the benchmark as a production pass.
 - Do not change the question bank, scoring, or expected answers just to improve the readiness story.
-- Do not start another experiment before the serious-failure remediation phase is defined and implemented.
+- Do not start another experiment before the remaining serious failures are manually reviewed and classified.
 
 ## Next Implementation Phase Proposal
 
-Recommended follow-up phase: **Phase 9: RAG Serious-Failure Remediation**.
+Recommended follow-up phase: **Phase 10: Remaining RAG Failure Review**.
 
 Proposed substeps:
 
-1. Diagnose the 8 reviewed serious cases at artifact and prompt/context level.
-2. Patch generation and context behavior for evidence-present fallback, completeness, sibling-section expansion, citation localization, and safety/procedure coverage.
-3. Add regression tests for the 8 reviewed serious cases.
-4. Rerun `V12` and `V7` on the unchanged 50-question bank.
-5. Re-run manual review for the 8 serious cases, all OSHA/safety cases, and any remaining serious/citation failures.
-6. Only then reconsider production readiness.
+1. Manually review the 6 final V12 serious failures.
+2. Separate true product failures from scoring/judge artifacts.
+3. Prioritize OSHA guarding failures for safety review.
+4. Patch generic behavior only where the review confirms real failure classes.
+5. Add focused regression tests for confirmed remaining failures.
+6. Rerun `V12` and `V7` on the unchanged 50-question bank.
+7. Only then reconsider production readiness.
 
-Phase 9 should keep `V12` as the main engineering candidate and `V7` as the fallback/co-lead until evidence shows one is clearly safer.
+Phase 10 should keep `V12` as the main engineering candidate and `V7` as the fallback/co-lead until evidence shows one is clearly safer.
