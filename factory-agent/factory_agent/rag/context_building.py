@@ -120,13 +120,21 @@ RELATED_SECTION_QUERY_TERMS = {
     "difference",
     "differences",
     "differ",
+    "check",
+    "checklist",
+    "detect",
     "dimensions",
+    "dimension",
     "elements",
+    "element",
+    "fit",
     "functions",
+    "function",
     "group",
     "include",
     "includes",
     "including",
+    "incident",
     "list",
     "listed",
     "multi",
@@ -135,14 +143,20 @@ RELATED_SECTION_QUERY_TERMS = {
     "parts",
     "procedure",
     "procedures",
+    "recover",
+    "recovery",
+    "respond",
     "relationship",
     "related",
+    "resource",
     "resources",
     "section",
     "sections",
     "scope",
+    "standard",
     "standards",
     "subactivities",
+    "subactivity",
     "summary",
     "summarize",
     "under",
@@ -277,6 +291,11 @@ class RAGContextBuilder:
                 candidate_info=candidate_info,
             )
         elif builder == "rse":
+            selected_chunks = _preserve_top_related_candidates(
+                query=query,
+                selected_chunks=selected_chunks,
+                candidates=candidates,
+            )
             drafts = self._build_rse_segments(
                 query=query,
                 selected_chunks=selected_chunks,
@@ -852,6 +871,57 @@ def _candidate_info(candidates: Iterable[ScoredChunk]) -> dict[str, _CandidateIn
             rank=rank,
         )
     return info
+
+
+def _preserve_top_related_candidates(
+    *,
+    query: str,
+    selected_chunks: list[Chunk],
+    candidates: list[ScoredChunk],
+    max_rank: int = 3,
+) -> list[Chunk]:
+    if not selected_chunks or not candidates or not _query_needs_related_sections(query):
+        return selected_chunks
+
+    query_terms = _support_tokens(query)
+    if not query_terms:
+        return selected_chunks
+
+    preserved = list(selected_chunks)
+    preserved_ids = {chunk.chunk_id for chunk in preserved}
+    selected_terms = _support_tokens(" ".join(_chunk_text_with_metadata(chunk) for chunk in selected_chunks))
+
+    for rank, scored in enumerate(candidates, start=1):
+        if rank > max_rank:
+            break
+        chunk = scored.chunk
+        if chunk.chunk_id in preserved_ids:
+            continue
+        candidate_terms = _support_tokens(_chunk_text_with_metadata(chunk))
+        overlap = query_terms & candidate_terms
+        if len(overlap) < 2:
+            continue
+        if overlap - selected_terms or rank <= max_rank:
+            chunk.metadata = {
+                **_clean_metadata(chunk.metadata),
+                "context_candidate_supplement": True,
+                "context_candidate_rank": rank,
+            }
+            preserved.append(chunk)
+            preserved_ids.add(chunk.chunk_id)
+
+    return preserved
+
+
+def _chunk_text_with_metadata(chunk: Chunk) -> str:
+    metadata = _clean_metadata(chunk.metadata)
+    section_path = metadata.get("section_path")
+    if isinstance(section_path, list):
+        section_path = " > ".join(str(part) for part in section_path if part)
+    return (
+        f"{chunk.text} {metadata.get('section_title', '')} {section_path or ''} "
+        f"{metadata.get('snippet', '')} {metadata.get('text_search', '')}"
+    )
 
 
 def _best_score(scored: ScoredChunk) -> float | None:

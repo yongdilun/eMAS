@@ -167,6 +167,52 @@ def test_rse_includes_sibling_sections_for_group_list_queries():
     assert "A2324 integrates system specifications." in text
 
 
+def test_rse_preserves_top_retrieved_related_candidate_skipped_by_rerank():
+    chunks = [
+        _chunk(
+            "csf",
+            10,
+            "DETECT finds and analyzes adverse cybersecurity events and supports response and recovery.",
+            section="DE",
+            page=9,
+        ),
+        _chunk(
+            "csf",
+            11,
+            "The Functions should be addressed concurrently; RESPOND and RECOVER should be ready at all times.",
+            section="Functions",
+            page=10,
+        ),
+        _chunk(
+            "csf",
+            40,
+            "RECOVER restores assets and operations affected by a cybersecurity incident and communicates recovery progress.",
+            section="RC",
+            page=27,
+        ),
+        _chunk(
+            "csf",
+            50,
+            "There are six CSF Functions: Govern, Identify, Protect, Detect, Respond, and Recover.",
+            section="Glossary",
+            page=31,
+        ),
+    ]
+    builder = RAGContextBuilder(FakeRetriever(chunks), rse_max_window=0)
+
+    result = builder.build(
+        query="How do the CSF Functions DETECT, RESPOND, and RECOVER fit together during cybersecurity incidents?",
+        selected_chunks=[chunks[0], chunks[1], chunks[3]],
+        candidates=[_scored(chunks[0]), _scored(chunks[2]), _scored(chunks[1]), _scored(chunks[3])],
+        context_builder="rse",
+        compression="none",
+    )
+
+    text = "\n".join(chunk.text for chunk in result.chunks)
+    assert "RECOVER restores assets and operations" in text
+    assert "cybersecurity incident" in text
+
+
 def test_rse_does_not_cross_doc_id():
     chunks = [
         _chunk("doc-a", 0, "same doc previous chunk."),

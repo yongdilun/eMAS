@@ -325,6 +325,164 @@ def test_generate_answer_repairs_no_evidence_fallback_when_retrieved_context_mat
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_single_source_unknown_citation_for_multichunk_relationship(
+    mock_build_llm,
+    mock_settings,
+):
+    chunks = [
+        Chunk(
+            chunk_id="ams_c0024",
+            text=(
+                "A23 designs new or modified production facilities and production systems, including "
+                "equipment, material storage and delivery, instrumentation, control, support systems, "
+                "physical plant, networks, and information systems."
+            ),
+            metadata={
+                "doc_id": "nist_ams_300_1",
+                "title": "Smart Manufacturing Reference Architecture",
+                "organization": "NIST",
+                "authority_level": "official_public_guidance",
+                "domain": "smart_manufacturing",
+                "subdomain": "reference_architecture",
+                "risk_level": "low",
+                "license": "public",
+                "version": "1.0",
+                "retrieved_date": "2026-05-25",
+                "page": 21,
+            },
+        ),
+        Chunk(
+            chunk_id="ams_c0026",
+            text=(
+                "A232 specifies instrumentation and control systems, including controllers, data acquisition "
+                "instruments, communications, and integrated system specifications."
+            ),
+            metadata={
+                "doc_id": "nist_ams_300_1",
+                "title": "Smart Manufacturing Reference Architecture",
+                "organization": "NIST",
+                "authority_level": "official_public_guidance",
+                "domain": "smart_manufacturing",
+                "subdomain": "reference_architecture",
+                "risk_level": "low",
+                "license": "public",
+                "version": "1.0",
+                "retrieved_date": "2026-05-25",
+                "page": 24,
+            },
+        ),
+    ]
+    bad_response = MagicMock()
+    bad_response.content = "A23 sets the production-system design scope, and A232 narrows it to instrumentation, control, data acquisition, communications, and integrated specifications [^24]."
+    repaired_response = MagicMock()
+    repaired_response.content = bad_response.content
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "Explain how production system design relates to instrumentation and control specifications.",
+        chunks,
+    )
+
+    assert "[^1]" in result.answer
+    assert "[^24]" not in result.answer
+    assert "production-system design scope" in result.answer
+    assert "instrumentation, control" in result.answer
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_single_source_unknown_citation_for_static_model_list(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="ams11_c0021",
+        text="MTConnect defines information models for Devices, Streams, Assets, and Interfaces.",
+        metadata={
+            "doc_id": "nist_ams_300_11",
+            "title": "Data standards for smart manufacturing",
+            "organization": "NIST",
+            "authority_level": "official_public_guidance",
+            "domain": "smart_manufacturing",
+            "subdomain": "data_standards",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 16,
+        },
+    )
+    bad_response = MagicMock()
+    bad_response.content = "The four MTConnect information models are Devices, Streams, Assets, and Interfaces [^16]."
+    repaired_response = MagicMock()
+    repaired_response.content = bad_response.content
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [bad_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("List the MTConnect information-model names from the standard.", [chunk])
+
+    assert result.answer == "The four MTConnect information models are Devices, Streams, Assets, and Interfaces [^1]."
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_valid_but_short_requested_item_list(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="ams_c0026",
+        text=(
+            "A232 has four subactivities: A2321 Identify Control Requirements; "
+            "A2322 Identify Instrumentation Requirements; A2323 Identify Communications Requirements; "
+            "A2324 Integrate System Specifications."
+        ),
+        metadata={
+            "doc_id": "nist_ams_300_1",
+            "title": "Smart Manufacturing Reference Architecture",
+            "organization": "NIST",
+            "authority_level": "official_public_guidance",
+            "domain": "smart_manufacturing",
+            "subdomain": "reference_architecture",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 24,
+        },
+    )
+    short_response = MagicMock()
+    short_response.content = (
+        "1. A2321 Identify Control Requirements.\n"
+        "2. A2322 Identify Instrumentation Requirements.\n"
+        "3. A2323 Identify Communications Requirements.[^1]"
+    )
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "1. A2321 Identify Control Requirements.\n"
+        "2. A2322 Identify Instrumentation Requirements.\n"
+        "3. A2323 Identify Communications Requirements.\n"
+        "4. A2324 Integrate System Specifications.[^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [short_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Name the four subactivities under A232.", [chunk])
+
+    assert "A2324 Integrate System Specifications" in result.answer
+    assert mock_llm.invoke.call_count == 2
+    assert result.metadata["generation_validation"]["repair_reason"] == "listed_answer_has_3_of_4_requested_items"
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_answer_keeps_repair_when_single_source_citation_is_missing(
     mock_build_llm,
     mock_settings,
@@ -369,6 +527,197 @@ def test_generate_answer_keeps_repair_when_cited_line_has_uncited_tail(
     assert result.answer.endswith("Employees must do this before maintenance starts. [^1]")
     assert result.answer != insufficient_context_answer(has_sources=True)
     assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_osha_static_checklist_lockout_checks_after_initial_fallback(
+    mock_build_llm,
+    mock_settings,
+):
+    loto_context = Chunk(
+        chunk_id="loto_c0010",
+        text="The OSHA lockout/tagout booklet gives general hazardous-energy control background.",
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 9,
+        },
+    )
+    checklist_chunk = Chunk(
+        chunk_id="guarding_c0008",
+        text=(
+            "Machinery Maintenance and Repair checklist items ask whether maintenance workers lock out "
+            "machines from power sources before repairs, whether multiple lockout devices are used when "
+            "several maintenance persons work on the same machine, whether workers are trained in 29 CFR "
+            "1910.147, and whether lockout/tagout procedures exist before maintenance tasks."
+        ),
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "- Check that maintenance workers lock out machines from power sources before repairs.\n"
+        "- Check that multiple lockout devices are used when several people work on the same machine.\n"
+        "- Check that workers are trained in 29 CFR 1910.147 and that lockout/tagout procedures exist before tasks."
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "Which static machine-guarding checklist checks mention lockout/tagout readiness?",
+        [loto_context, checklist_chunk],
+    )
+
+    assert "lock out machines from power sources" in result.answer
+    assert "multiple lockout devices" in result.answer
+    assert "29 CFR 1910.147" in result.answer
+    assert "[^2]" in result.answer
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.safety_warning is True
+    assert result.safety_content
+    assert result.metadata["generation_validation"]["repair_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_osha_static_training_summary_accepts_grouped_bullet_citation(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="guarding_c0005",
+        text=(
+            "Training checklist items ask whether operators and maintenance workers know how to use safeguards, "
+            "where safeguards are located, what hazards they protect against, when guards may be removed, "
+            "what to do when guards are damaged or missing, and whether maintenance workers know lockout/tagout "
+            "requirements and procedures."
+        ),
+        metadata={
+            "doc_id": "osha_machine_guarding_checklist",
+            "title": "Machine Guarding Checklist",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "machine_guarding",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    bad_response = MagicMock()
+    bad_response.content = (
+        "- Workers should know how to use safeguards, where they are, and what hazards they protect against.\n"
+        "- Workers should know when guards may be removed and what to do when guards are damaged, missing, or inadequate.\n"
+        "- Maintenance workers should know machine-specific instructions and lockout/tagout requirements and procedures.[^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = bad_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Summarize worker training readiness checks from the checklist.", [chunk])
+
+    assert mock_llm.invoke.call_count == 1
+    assert "how to use safeguards" in result.answer
+    assert "lockout/tagout requirements" in result.answer
+    assert result.metadata["generation_validation"]["initial_valid"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_osha_static_multichunk_maintenance_review_keeps_safety_boundary(
+    mock_build_llm,
+    mock_settings,
+):
+    chunks = [
+        Chunk(
+            chunk_id="guarding_c0001",
+            text=(
+                "Requirements for safeguards ask whether safeguards prevent contact with moving parts, "
+                "whether safeguards are secure, and whether machinery is shut down before safeguards are removed."
+            ),
+            metadata={
+                "doc_id": "osha_machine_guarding_checklist",
+                "title": "Machine Guarding Checklist",
+                "organization": "OSHA",
+                "authority_level": "official_public_guidance",
+                "domain": "safety_maintenance",
+                "subdomain": "machine_guarding",
+                "risk_level": "high",
+                "license": "public",
+                "version": "1.0",
+                "retrieved_date": "2026-05-25",
+                "page": 1,
+            },
+        ),
+        Chunk(
+            chunk_id="guarding_c0008",
+            text=(
+                "Machinery Maintenance and Repair checklist items ask whether maintenance workers have "
+                "up-to-date instruction, lock out machines before repairs, use multiple lockout devices, "
+                "use guarded maintenance equipment, and know 29 CFR 1910.147 procedures."
+            ),
+            metadata={
+                "doc_id": "osha_machine_guarding_checklist",
+                "title": "Machine Guarding Checklist",
+                "organization": "OSHA",
+                "authority_level": "official_public_guidance",
+                "domain": "safety_maintenance",
+                "subdomain": "machine_guarding",
+                "risk_level": "high",
+                "license": "public",
+                "version": "1.0",
+                "retrieved_date": "2026-05-25",
+                "page": 2,
+            },
+        ),
+    ]
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "- Review safeguards for moving parts and shutdown before safeguard removal.\n"
+        "- Review maintenance instruction, lockout before repairs, multiple lockout devices, guarded maintenance equipment, and 29 CFR 1910.147 procedures.[^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "For a maintenance planning review near moving parts, which checklist categories should be checked?",
+        chunks,
+    )
+
+    assert "shutdown before safeguard removal" in result.answer
+    assert "lockout before repairs" in result.answer
+    assert "29 CFR 1910.147" in result.answer
+    assert "safe to start" not in result.answer.lower()
+    assert "permission" not in result.answer.lower()
+    assert result.safety_warning is True
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

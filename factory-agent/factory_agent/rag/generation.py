@@ -86,8 +86,10 @@ If the context does not prove the answer, respond exactly with:
 - If relevant evidence is split across multiple source chunks, synthesize the chunks into one cited answer instead of refusing.
 - If a source section title, page, or heading directly matches the question, treat that as strong evidence and answer from the supporting body text.
 - For section summaries or multi-part questions, cover every major dimension that the retrieved evidence supports, including purpose, scope, hierarchy, relationships, limitations, and named items.
+- For list questions that ask for a specific number of items, include all supported items and preserve visible item labels or headings when the context provides them.
 - For comparison questions, define each named concept separately before explaining the difference or relationship.
 - For safety procedures, answer from the retrieved procedure evidence when it exists, include every required procedural category the evidence states, and rely on the structured safety warning outside the answer.
+- For OSHA or other static safety checklist questions that ask what checks, areas, items, or training requirements are listed, treat the question as descriptive document recall. Answer from the checklist evidence with citations; do not refuse unless the user asks for live permission, live machine status, current compliance certification, or operational authorization.
 
 ### Output Format
 For procedures:
@@ -131,6 +133,8 @@ The retrieved context has relevant evidence for the user's question, so do not o
 - Do not add uncited safety warnings, conclusions, source titles, footnote definitions, or bibliographies.
 - If evidence is split across chunks from the same source, synthesize it into a complete cited answer.
 - For section summaries, list/group questions, comparisons, and procedures, include all supported dimensions and required categories.
+- If the user asks for a specific number of listed items, include that many supported items and preserve item labels or headings.
+- For OSHA or other static checklist questions, answer the listed checks descriptively from the document. Keep live-action permission, machine status, compliance certification, and unsupported current-state claims out of the answer.
 
 ### Context
 {context}
@@ -406,10 +410,21 @@ class AnswerGenerator:
             "repair_failure_reason": None,
         }
         if validation.valid and not validation.insufficient_context:
-            return validation.answer, sources, metadata
+            completeness_reason = self._supported_answer_completeness_issue(
+                query=query,
+                answer=validation.answer,
+                doc_chunks=doc_chunks,
+            )
+            if not completeness_reason:
+                return validation.answer, sources, metadata
+        else:
+            completeness_reason = None
 
         repair_reason = None
-        if validation.insufficient_context:
+        if completeness_reason:
+            if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
+                repair_reason = completeness_reason
+        elif validation.insufficient_context:
             if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
                 repair_reason = "insufficient_context_with_matching_evidence"
         elif self._should_repair_generation(query=query, doc_chunks=doc_chunks):
@@ -433,7 +448,8 @@ class AnswerGenerator:
             )
             repaired_validation = validate_knowledge_answer(repaired_answer, repaired_sources)
             if not repaired_validation.valid:
-                citation_repaired_answer = self._repair_single_source_citations(
+                citation_repaired_answer = self._repair_citations(
+                    query=query,
                     answer=repaired_answer,
                     sources=repaired_sources,
                 )
@@ -454,6 +470,23 @@ class AnswerGenerator:
         if validation.valid:
             return validation.answer, sources, metadata
         return insufficient_context_answer(has_sources=bool(sources), query=query), sources, metadata
+
+    def _supported_answer_completeness_issue(
+        self,
+        *,
+        query: str,
+        answer: str,
+        doc_chunks: dict[str, list[Chunk]],
+    ) -> str | None:
+        requested_count = _requested_item_count(query)
+        if requested_count is None:
+            return None
+        observed_count = _enumerated_answer_item_count(answer)
+        if observed_count is None or observed_count >= requested_count:
+            return None
+        if not _has_matching_retrieved_evidence(query=query, doc_chunks=doc_chunks):
+            return None
+        return f"listed_answer_has_{observed_count}_of_{requested_count}_requested_items"
 
     def _repair_answer(
         self,
@@ -483,17 +516,54 @@ class AnswerGenerator:
             return False
         return _has_matching_retrieved_evidence(query=query, doc_chunks=doc_chunks)
 
-    def _repair_single_source_citations(self, *, answer: str, sources: list[SourceCitation]) -> str:
+    def _repair_citations(self, *, query: str, answer: str, sources: list[SourceCitation]) -> str:
         clean_answer = sanitize_rag_answer_text(answer)
-        if len(sources) != 1 or not clean_answer or is_insufficient_context_answer(clean_answer):
+        if not sources or not clean_answer or is_insufficient_context_answer(clean_answer):
             return clean_answer
-        source_number = sources[0].source_number or 1
-        marker = f"[^{source_number}]"
         available_numbers = {str(source.source_number or index) for index, source in enumerate(sources, start=1)}
+
+        def marker_for(number: str) -> str:
+            return f"[^{number}]"
+
+        def normalize_marker(match: re.Match[str]) -> str:
+            number = match.group(1)
+            if len(sources) == 1:
+                return marker_for(next(iter(available_numbers)))
+            if number in available_numbers:
+                return marker_for(number)
+            return match.group(0)
+
+        normalized_answer = re.sub(r"\[\^?(\d+)\]", normalize_marker, clean_answer)
+        changed = normalized_answer != clean_answer
+        clean_answer = normalized_answer
+        cited_numbers = [
+            match.group(1)
+            for match in re.finditer(r"\[\^?(\d+)\]", clean_answer)
+            if match.group(1) in available_numbers
+        ]
+        default_marker = None
+        if len(sources) == 1:
+            default_marker = marker_for(next(iter(available_numbers)))
+        elif len(set(cited_numbers)) == 1:
+            default_marker = marker_for(cited_numbers[0])
+        elif not cited_numbers:
+            best_number = self._best_source_number_for_uncited_answer(
+                query=query,
+                answer=clean_answer,
+                sources=sources,
+            )
+            if best_number is not None:
+                default_marker = marker_for(str(best_number))
 
         def has_valid_citation(line: str) -> bool:
             cited = re.findall(r"\[\^?(\d+)\]", line)
             return any(number in available_numbers for number in cited)
+
+        def last_valid_marker(line: str) -> str | None:
+            for number in reversed(re.findall(r"\[\^?(\d+)\]", line)):
+                if number in available_numbers:
+                    return marker_for(number)
+            return None
 
         def has_uncited_tail(line: str) -> bool:
             matches = list(re.finditer(r"\[\^?\d+\]", line))
@@ -504,7 +574,6 @@ class AnswerGenerator:
             return len(re.findall(r"[A-Za-z0-9]+", tail)) >= 4
 
         repaired_lines: list[str] = []
-        changed = False
         for line in clean_answer.splitlines():
             stripped = line.rstrip()
             if not stripped:
@@ -512,7 +581,7 @@ class AnswerGenerator:
                 continue
             if has_valid_citation(stripped):
                 if has_uncited_tail(stripped):
-                    repaired_lines.append(f"{stripped} {marker}")
+                    repaired_lines.append(f"{stripped} {last_valid_marker(stripped) or default_marker or ''}".rstrip())
                     changed = True
                 else:
                     repaired_lines.append(stripped)
@@ -520,9 +589,48 @@ class AnswerGenerator:
             if len(re.findall(r"[A-Za-z0-9]+", stripped)) < 4:
                 repaired_lines.append(stripped)
                 continue
-            repaired_lines.append(f"{stripped} {marker}")
-            changed = True
+            if default_marker:
+                repaired_lines.append(f"{stripped} {default_marker}")
+                changed = True
+                continue
+            repaired_lines.append(stripped)
         return "\n".join(repaired_lines).strip() if changed else clean_answer
+
+    def _best_source_number_for_uncited_answer(
+        self,
+        *,
+        query: str,
+        answer: str,
+        sources: list[SourceCitation],
+    ) -> int | None:
+        answer_terms = _support_tokens(f"{query} {answer}")
+        if not answer_terms:
+            return None
+
+        best_number: int | None = None
+        best_score = 0.0
+        for index, source in enumerate(sources, start=1):
+            source_number = source.source_number or index
+            source_text_parts = [
+                source.doc_id,
+                source.title,
+                source.snippet,
+                source.section_title,
+                " ".join(source.supporting_sections or []),
+            ]
+            for evidence in source.evidence_snippets or []:
+                if isinstance(evidence, dict):
+                    source_text_parts.append(str(evidence.get("snippet") or ""))
+                    source_text_parts.append(str(evidence.get("section_title") or ""))
+            source_terms = _support_tokens(" ".join(str(part or "") for part in source_text_parts))
+            if not source_terms:
+                continue
+            score = len(answer_terms & source_terms) / max(1, len(answer_terms))
+            if score > best_score:
+                best_score = score
+                best_number = source_number
+
+        return best_number if best_score >= 0.12 else None
 
     def build_context(self, chunks: List[Chunk], source_numbers: Optional[List[int]] = None) -> str:
         """
@@ -855,6 +963,42 @@ def _support_phrases(text: str) -> set[str]:
         for index in range(0, max(0, len(words) - size + 1)):
             phrases.add(" ".join(words[index : index + size]))
     return phrases
+
+
+def _requested_item_count(query: str) -> int | None:
+    text = (query or "").lower()
+    if not re.search(r"\b(name|list|which|what|identify|enumerate)\b", text):
+        return None
+    word_counts = {
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    for word, count in word_counts.items():
+        if re.search(rf"\b{word}\b", text):
+            return count
+    match = re.search(r"\b([2-9]|10)\b", text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _enumerated_answer_item_count(answer: str) -> int | None:
+    lines = [line.strip() for line in re.split(r"[\r\n]+", answer or "") if line.strip()]
+    if not lines:
+        return None
+    item_lines = [
+        line
+        for line in lines
+        if re.match(r"^(?:[-*]\s+|\d+[\.)]\s+)", line)
+    ]
+    return len(item_lines) if item_lines else None
 
 
 def _evidence_sentences(text: str) -> list[str]:

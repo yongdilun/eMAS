@@ -37,6 +37,8 @@ _SAFETY_DOMAIN_RE = re.compile(r"\b(osha|lockout|tagout|loto|guard|machine|press
 def sanitize_rag_answer_text(value: Any) -> str:
     text = str(value or "")
     text = SAFETY_ADMONITION_RE.sub("\n", text)
+    text = _FOOTNOTE_DEFINITION_RE.sub("", text)
+    text = re.sub(r"(?m)^[ \t]*\[\^[^\]\n]+\][ \t]*$", "", text)
     text = re.sub(r"(?im)^[ \t]*:::\s*safety\b[ \t]*$", "", text)
     text = re.sub(r"(?im)^[ \t]*:::[ \t]*$", "", text)
     return text.strip()

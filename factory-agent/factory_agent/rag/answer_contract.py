@@ -14,6 +14,7 @@ from factory_agent.rag.source_metadata import (
 _CITATION_MARKER_RE = re.compile(r"\[(?:\^)?(\d+)\]")
 _NUMBERED_PROCEDURE_LINE_RE = re.compile(r"^\s*(?:\d+[\.)]|[-*]\s*\d+[\.)])\s+")
 _NUMBERED_PROCEDURE_STEP_RE = re.compile(r"(?<!\w)(?:[-*]\s*)?\d+[\.)]\s+")
+_BULLET_OR_NUMBERED_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\d+[\.)]\s+)")
 _INCOMPLETE_NUMBERED_ITEM_RE = re.compile(r"^\s*(?:[-*]\s*)?\d+[\.)]?\s*$")
 _INCOMPLETE_NUMBERED_AFTER_CITATION_TAIL_RE = re.compile(r"\[(?:\^)?\d+\][\s;]+(?:[-*]\s*)?\d+[\.)]?\s*$")
 _PROCEDURE_INTRO_RE = re.compile(
@@ -125,11 +126,11 @@ def _has_uncited_claim_line(answer: str) -> bool:
     if not lines:
         return False
     has_cited_line = any(_CITATION_MARKER_RE.search(line) for line in lines)
-    grouped_procedure_lines = _grouped_cited_procedure_line_indexes(lines)
+    grouped_list_lines = _grouped_cited_list_line_indexes(lines)
     for index, line in enumerate(lines):
         if _CITATION_MARKER_RE.search(line):
             continue
-        if index in grouped_procedure_lines:
+        if index in grouped_list_lines:
             continue
         if _is_citation_framing_line(line, index=index, has_cited_line=has_cited_line):
             continue
@@ -188,6 +189,30 @@ def _procedure_line_runs(lines: list[str]) -> list[tuple[int, int]]:
 def _grouped_cited_procedure_line_indexes(lines: list[str]) -> set[int]:
     indexes: set[int] = set()
     for start, end in _procedure_line_runs(lines):
+        block = "\n".join(lines[start:end])
+        if _CITATION_MARKER_RE.search(block):
+            indexes.update(range(start, end))
+    return indexes
+
+
+def _list_line_runs(lines: list[str]) -> list[tuple[int, int]]:
+    runs: list[tuple[int, int]] = []
+    index = 0
+    while index < len(lines):
+        if not _BULLET_OR_NUMBERED_LINE_RE.search(lines[index]):
+            index += 1
+            continue
+        start = index
+        index += 1
+        while index < len(lines) and _BULLET_OR_NUMBERED_LINE_RE.search(lines[index]):
+            index += 1
+        runs.append((start, index))
+    return runs
+
+
+def _grouped_cited_list_line_indexes(lines: list[str]) -> set[int]:
+    indexes: set[int] = _grouped_cited_procedure_line_indexes(lines)
+    for start, end in _list_line_runs(lines):
         block = "\n".join(lines[start:end])
         if _CITATION_MARKER_RE.search(block):
             indexes.update(range(start, end))

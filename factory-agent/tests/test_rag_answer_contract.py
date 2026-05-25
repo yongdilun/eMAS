@@ -55,6 +55,20 @@ def test_validate_knowledge_answer_accepts_grouped_multiline_step_citation():
     assert result.cited_source_numbers == (1,)
 
 
+def test_validate_knowledge_answer_accepts_grouped_bullet_checklist_citation():
+    result = validate_knowledge_answer(
+        (
+            "- Verify workers know where safeguards are and what hazards they address.\n"
+            "- Verify workers know what to do when guards are missing or damaged.\n"
+            "- Verify maintenance workers know lockout/tagout procedures before work starts.[^1]"
+        ),
+        [_source(1)],
+    )
+
+    assert result.valid
+    assert result.cited_source_numbers == (1,)
+
+
 def test_validate_knowledge_answer_accepts_long_procedure_intro_with_grouped_step_citation():
     result = validate_knowledge_answer(
         (

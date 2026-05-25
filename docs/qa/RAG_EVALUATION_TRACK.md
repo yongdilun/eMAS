@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 10 Remaining RAG Failure Review is complete as a manual classification pass, not as remediation. `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md` records the review of the 6 remaining final Phase 9 `V12` serious failures. All 6 are real production blockers, none are scoring false positives, and the 3 OSHA guarding failures are safety-relevant omissions without direct unsafe advice. `V12` remains the engineering candidate, `V7` remains the fallback/co-lead, Document Augmentation remains experimental, compression remains off by default, and the production gate stays closed.
+Phase 11 Remaining RAG Failure Remediation is complete. `docs/qa/RAG_PHASE_11_REMEDIATION.md` records the generic fixes for evidence-present fallback behavior, citation repair, OSHA static checklist answering, and RSE context preservation. Final Phase 11 `V12` has 0 serious failures, 0 judge-serious failures, and 0 unsafe-advice serious failures on the unchanged 50-question bank. Final Phase 11 `V7` has 2 serious failures while retaining a higher average rule score. `V12` remains the engineering candidate, `V7` remains the fallback/co-lead, Document Augmentation remains experimental, compression remains off by default, and production stays NO-GO pending Phase 12 manual safety/citation readiness review.
 
 Important current decisions:
 
@@ -37,9 +37,10 @@ Important current decisions:
 - Phase 8 final recommendation: production shipment is a NO-GO. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
 - Phase 9 remediated the 8 manually reviewed Phase 8 `V12` serious failures and reran `V12`/`V7` on the unchanged 50-question bank.
 - Phase 10 manually reviewed the 6 remaining final Phase 9 `V12` serious failures; all 6 are real production blockers and none are scoring false positives.
-- `V7` handled 3 of the 6 remaining `V12` serious failures better, but it still has 7 final serious failures overall versus `V12` at 6.
-- The next remediation phase should fix generic evidence-present fallback, citation-validation repair, OSHA descriptive checklist answering, context selection for multi-chunk incident/function questions, and section/page metadata handling.
-- Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
+- Phase 11 remediated all 6 confirmed Phase 10 blockers for `V12` without changing the question bank or weakening scoring.
+- Final Phase 11 `V12` beats `V7` on readiness because it has 0 serious failures versus `V7` at 2, even though `V7` has the higher average rule score.
+- Phase 12 should manually review final `V12` safety, citation, boundary, and low-scoring borderline behavior before any production rollout decision.
+- Future safety/citation review should prefer a stronger judge such as Qwen3 14B if hardware allows; otherwise keep Qwen2.5 7B as triage-only evidence with manual review.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
 - Phase 5 ran the benchmark only. It did not change the question bank, scoring, RSE, Small-to-Big, compression, or Document Augmentation.
@@ -67,6 +68,7 @@ Important current decisions:
 | 8 | Production rollout recommendation | Done | Codex | Added production-readiness NO-GO recommendation, froze `V12` as the engineering candidate config, documented remediation roadmap, regression gate, limited-mode monitoring, and Phase 9 proposal. |
 | 9 | Serious-failure remediation | Done | Codex | Remediated the 8 reviewed Phase 8 serious cases, added focused regression coverage, and reran final `V12`/`V7`; production stayed NO-GO because `V12` still had 6 serious failures. |
 | 10 | Remaining failure review | Done | Codex | Manually reviewed the 6 remaining final Phase 9 `V12` serious failures against `V7`; all 6 are real production blockers, none are scoring false positives, and 3 OSHA guarding cases are safety-relevant omissions. |
+| 11 | Remaining RAG failure remediation | Done | Codex | Remediated the 6 Phase 10 blockers, added focused regression coverage, and reran final `V12`/`V7`; `V12` now has 0 serious failures and production remains NO-GO pending Phase 12 manual readiness review. |
 
 ## Phase 0 Checklist
 
@@ -718,6 +720,14 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 9 did not meet the production gate because final V12 still had 6 serious failures across the 50-question bank: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
 - Phase 10 manually reviewed those 6 final `V12` serious failures against matching `V7` artifacts. No benchmark rerun, live judge call, scoring change, question-bank change, code change, or test artifact generation was performed.
 - Phase 10 found all 6 remaining `V12` serious failures are real production blockers, none are scoring false positives, and the 3 OSHA guarding failures are safety-relevant omissions without direct unsafe advice.
+- Phase 11 focused regression tests passed: `python -m pytest -q factory-agent/tests/test_rag_context_building.py factory-agent/tests/test_rag_generation.py tests/rag_eval` returned 69 passed. Additional answer-contract coverage passed with `python -m pytest -q factory-agent/tests/test_rag_answer_contract.py` returning 15 passed.
+- Phase 11 `python -m tests.rag_eval.run_eval --help` passed and showed the expected variant and judge options.
+- Phase 11 `git diff --check` passed with LF-to-CRLF normalization warnings only.
+- Phase 11 final full reruns completed with `--judge` for `V12` and `V7`. Both produced 50 case artifacts plus `summary.json` and `judge_audit_sample.json`.
+- Phase 11 final `V12` result: 50/50 automated pass, 0 warnings, average rule score 85.1308, 0 serious failures, 40 borderline, 40/40 judge calls completed, 0 judge serious failures, and 0 reranker fallback. Retrieval was `doc_hit@3 = 0.98`, `doc_hit@5 = 1.00`, `section_or_page_hit@3 = 0.86`, and `section_or_page_hit@5 = 0.94`.
+- Phase 11 final `V7` result: 50/50 automated pass, 0 warnings, average rule score 87.7648, 2 serious failures, 36 borderline, 36/36 judge calls completed, 2 judge serious failures, and 0 reranker fallback. Retrieval matched V12 on the reported aggregate hit rates.
+- Phase 11 final V12 fixed all 6 confirmed Phase 10 blockers: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
+- Phase 11 final V12 had no new serious failures and no unsafe-advice serious failures. Production remains NO-GO as a formal rollout decision pending Phase 12 manual safety/citation readiness review.
 
 ## Files Created
 
@@ -744,6 +754,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`
 - `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`
 - `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`
+- `docs/qa/RAG_PHASE_11_REMEDIATION.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -752,6 +763,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `tests/rag_eval/cases.json`
 - `factory-agent/factory_agent/rag/pipeline.py`
 - `factory-agent/factory_agent/rag/retrieval.py`
+- `factory-agent/factory_agent/rag/answer_contract.py`
 - `factory-agent/factory_agent/rag/generation.py`
 - `factory-agent/factory_agent/rag/schemas.py`
 - `factory-agent/factory_agent/rag/reranking.py`
@@ -778,14 +790,13 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- Phase 10 confirmed final V12 still has 6 real serious failures out of 50 and is not production-ready.
-- The 8 reviewed Phase 8 serious cases now pass in final V12, but the remaining 6 V12 serious failures are all production blockers needing follow-up remediation.
-- The remaining V12 serious failures include 3 OSHA guarding safety-relevant omissions, so the safety gate remains closed even though no direct unsafe advice was found.
-- Judge safety and citation scoring are still weak enough that future safety/citation decisions need manual review or a stronger judge.
-- Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, and Run 2 did not surface a new unsafe-advice top-candidate issue, but safety cases still require manual review before production conclusions.
+- Phase 12 must manually review final V12 OSHA/safety, boundary, citation, and low-scoring borderline cases before production approval.
+- Final V12 now has 0 serious failures, but it still has 40 borderline cases, so production readiness needs human quality review rather than automatic benchmark promotion.
+- Judge safety and citation scoring are still weak enough that production safety/citation decisions need manual review or a stronger judge.
+- Phase 11 did not surface an unsafe-advice serious failure, but safety-sensitive OSHA checklist behavior still requires manual approval before rollout.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 - Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Start Phase 11: Remaining RAG Failure Remediation. Treat `V12` as the engineering candidate because it cleared the 8 reviewed failures and has fewer final serious failures than `V7`; keep `V7` as a close fallback/co-lead because it has the higher average rule score and handled 3 remaining V12 failures better. Patch generic behavior only, preserve the 50-question bank and scoring, add focused regression coverage for the 6 confirmed blockers, then rerun `V12` and `V7` before reconsidering production readiness.
+Start Phase 12: Production-Readiness Review. Treat `V12` as the main review target because it cleared the benchmark serious-failure gate; keep `V7` as the fallback/co-lead because it has the higher average rule score but still has 2 serious failures. Manually review final `V12` safety, boundary, citation, and low-scoring borderline behavior, confirm adjacent-wording smoke checks for the Phase 10 blocker patterns, and decide whether a limited advisory-mode rollout is acceptable.
