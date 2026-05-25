@@ -1,4 +1,4 @@
-"""Run 1 RAG evaluation variant registry.
+"""RAG evaluation variant registry.
 
 The registry is intentionally eval-scoped. It translates named benchmark
 variants into :class:`factory_agent.rag.pipeline.RAGPipelineConfig` without
@@ -17,6 +17,12 @@ FACTORY_AGENT_DIR = REPO_ROOT / "factory-agent"
 if str(FACTORY_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(FACTORY_AGENT_DIR))
 
+from factory_agent.rag.document_augmentation import (  # noqa: E402
+    AUGMENTED_BM25_PATH,
+    AUGMENTED_VECTOR_DB_PATH,
+    DEFAULT_BM25_PATH,
+    DEFAULT_VECTOR_DB_PATH,
+)
 from factory_agent.rag.pipeline import RAGPipelineConfig  # noqa: E402
 
 DEFAULT_VARIANT_ID = "V3"
@@ -29,10 +35,12 @@ RUN_1_VARIANT_IDS = (
     "V5",
     "V6",
     "V7",
+    "V8",
     "V9",
     "V10",
     "V11",
     "V12",
+    "V13",
 )
 
 
@@ -46,6 +54,7 @@ class RAGVariantConfig:
     query_rewrite: bool = False
     context_builder: str = "none"
     compression: str = "none"
+    document_augmentation: bool = False
     vector_top_k: int = 10
     keyword_top_k: int = 10
     fusion_top_k: int = 10
@@ -71,7 +80,19 @@ class RAGVariantConfig:
             query_rewrite=self.query_rewrite,
             context_builder=self.context_builder,
             compression=self.compression,
+            document_augmentation=self.document_augmentation,
         )
+
+    def index_paths(self) -> dict[str, str]:
+        if self.document_augmentation:
+            return {
+                "vector_db_path": AUGMENTED_VECTOR_DB_PATH,
+                "bm25_path": AUGMENTED_BM25_PATH,
+            }
+        return {
+            "vector_db_path": DEFAULT_VECTOR_DB_PATH,
+            "bm25_path": DEFAULT_BM25_PATH,
+        }
 
     def retrieval_settings(self) -> dict[str, Any]:
         config = self.to_pipeline_config()
@@ -85,6 +106,8 @@ class RAGVariantConfig:
             "context_builder": config.context_builder,
             "compression": config.compression,
             "allow_rerank_fallback": config.allow_rerank_fallback,
+            "document_augmentation": config.document_augmentation,
+            "index_paths": self.index_paths(),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -165,6 +188,16 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         context_builder="small_to_big",
         notes="Deterministic retrieval query rewrite, chunk rerank, and Small-to-Big expansion.",
     ),
+    "V8": RAGVariantConfig(
+        variant_id="V8",
+        name="Document Augmentation + Hybrid Search + Small-to-Big + Rerank",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        context_builder="small_to_big",
+        document_augmentation=True,
+        notes="Document-augmented retrieval index, chunk rerank, and Small-to-Big expansion.",
+    ),
     "V9": RAGVariantConfig(
         variant_id="V9",
         name="Hybrid Search + RSE",
@@ -202,6 +235,16 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         query_rewrite=True,
         context_builder="rse",
         notes="Deterministic retrieval query rewrite, chunk rerank, and RSE segment building.",
+    ),
+    "V13": RAGVariantConfig(
+        variant_id="V13",
+        name="Document Augmentation + Hybrid Search + RSE + Rerank",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        context_builder="rse",
+        document_augmentation=True,
+        notes="Document-augmented retrieval index, chunk rerank, and RSE segment building.",
     ),
 }
 

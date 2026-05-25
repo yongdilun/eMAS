@@ -17,6 +17,7 @@ pytest-cache-files-*/
 
 # Test artifacts
 test-artifacts/
+failed_ingestion.log
 
 # System / Go Build Caches
 .cache/
@@ -41,3 +42,7 @@ factory-agent/factory_agent/rag/chroma/
 factory-agent/factory_agent/rag/chroma_db/
 factory-agent/factory_agent/rag/vector_db/
 factory-agent/factory_agent/rag/indexes/
+factory_agent/rag/vector_db_augmented/
+factory_agent/rag/bm25_index_augmented.pkl
+factory-agent/factory_agent/rag/vector_db_augmented/
+factory-agent/factory_agent/rag/bm25_index_augmented.pkl

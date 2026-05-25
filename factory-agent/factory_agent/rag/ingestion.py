@@ -14,6 +14,15 @@ from rank_bm25 import BM25Okapi
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 import fitz  # PyMuPDF
 
+from factory_agent.rag.document_augmentation import (
+    AUGMENTED_BM25_PATH,
+    AUGMENTED_VECTOR_DB_PATH,
+    DEFAULT_BM25_PATH,
+    DEFAULT_VECTOR_DB_PATH,
+    DOCUMENT_AUGMENTATION_STRATEGY_VERSION,
+    augmentation_metadata,
+    build_document_augmentation,
+)
 from factory_agent.rag.document_registry import source_pdf_url
 from factory_agent.rag.schemas import DocumentEntry, SourceRegister, Chunk
 from factory_agent.rag.source_metadata import snippet_from_text
@@ -81,9 +90,16 @@ class IngestionEngine:
     PDF_MAX_TOKENS = 650
     PDF_MIN_TOKENS = 80
     
-    def __init__(self, db_path: str = "factory_agent/rag/vector_db", bm25_path: str = "factory_agent/rag/bm25_index.pkl"):
+    def __init__(
+        self,
+        db_path: str = DEFAULT_VECTOR_DB_PATH,
+        bm25_path: str = DEFAULT_BM25_PATH,
+        *,
+        document_augmentation: bool = False,
+    ):
         self.db_path = db_path
         self.bm25_path = bm25_path
+        self.document_augmentation = document_augmentation
         
         # Initialize ChromaDB
         self.client = chromadb.PersistentClient(path=db_path)
@@ -98,6 +114,66 @@ class IngestionEngine:
         # BM25 Index (loaded on demand or during full ingestion)
         self.bm25_index = None
         self.bm25_chunks = [] # Store Chunk objects for BM25
+
+    @classmethod
+    def augmented_index_paths(cls) -> dict[str, str]:
+        return {
+            "vector_db_path": AUGMENTED_VECTOR_DB_PATH,
+            "bm25_path": AUGMENTED_BM25_PATH,
+        }
+
+    def _prepare_chunks_for_index(self, chunks: list[Chunk]) -> tuple[list[Chunk], list[Chunk]]:
+        """Return (vector_store_chunks, bm25_evidence_chunks).
+
+        Augmented vector-store chunks use synthetic text for retrieval, while
+        BM25/result chunks keep original evidence text and store retrieval text
+        in metadata only.
+        """
+
+        if not self.document_augmentation:
+            return chunks, chunks
+
+        store_chunks: list[Chunk] = []
+        evidence_chunks: list[Chunk] = []
+        for chunk in chunks:
+            augmentation = build_document_augmentation(chunk)
+            augmented_metadata = {
+                **chunk.metadata,
+                **augmentation_metadata(augmentation),
+            }
+            store_chunks.append(
+                Chunk(
+                    chunk_id=chunk.chunk_id,
+                    text=augmentation.retrieval_text,
+                    metadata=augmented_metadata,
+                )
+            )
+            evidence_chunks.append(
+                Chunk(
+                    chunk_id=chunk.chunk_id,
+                    text=augmentation.original_text,
+                    metadata={
+                        **augmented_metadata,
+                        "document_augmentation_retrieval_text": augmentation.retrieval_text,
+                    },
+                )
+            )
+        return store_chunks, evidence_chunks
+
+    def _evidence_chunk_from_stored(self, chunk_id: str, text: str, metadata: dict[str, Any]) -> Chunk:
+        clean_metadata = dict(metadata or {})
+        original_text = clean_metadata.get("original_evidence_text")
+        if clean_metadata.get("document_augmentation_enabled") and original_text:
+            clean_metadata["document_augmentation_retrieval_text"] = text
+            return Chunk(chunk_id=chunk_id, text=str(original_text), metadata=clean_metadata)
+        return Chunk(chunk_id=chunk_id, text=text, metadata=clean_metadata)
+
+    def _bm25_text(self, chunk: Chunk) -> str:
+        if self.document_augmentation:
+            retrieval_text = chunk.metadata.get("document_augmentation_retrieval_text")
+            if retrieval_text:
+                return str(retrieval_text)
+        return chunk.text
 
     def _estimate_tokens(self, text: str) -> int:
         """Deterministic token estimate for chunk budgeting without a tokenizer dependency."""
@@ -649,33 +725,46 @@ class IngestionEngine:
             if not chunks:
                 logger.warning(f"No text extracted from {doc.doc_id}")
                 return False
+
+            store_chunks, evidence_chunks = self._prepare_chunks_for_index(chunks)
                 
             # Check version and skip if unchanged
             existing = self.collection.get(where={"doc_id": doc.doc_id}, limit=1)
             if existing and existing['ids']:
                 stored_version = existing['metadatas'][0].get('version')
                 stored_strategy = existing['metadatas'][0].get("chunk_strategy_version")
-                current_strategy = chunks[0].metadata.get("chunk_strategy_version")
+                stored_augmentation_strategy = existing["metadatas"][0].get(
+                    "document_augmentation_strategy_version"
+                )
+                current_strategy = store_chunks[0].metadata.get("chunk_strategy_version")
+                current_augmentation_strategy = store_chunks[0].metadata.get(
+                    "document_augmentation_strategy_version"
+                )
                 strategy_unchanged = not current_strategy or stored_strategy == current_strategy
-                if stored_version == doc.version and strategy_unchanged:
+                augmentation_unchanged = (
+                    stored_augmentation_strategy == current_augmentation_strategy
+                )
+                if stored_version == doc.version and strategy_unchanged and augmentation_unchanged:
                     logger.info(f"Skipping {doc.doc_id} (version {doc.version} already ingested)")
                     return True
                 else:
                     logger.info(
-                        "Updating %s from version=%s strategy=%s to version=%s strategy=%s",
+                        "Updating %s from version=%s strategy=%s augmentation=%s to version=%s strategy=%s augmentation=%s",
                         doc.doc_id,
                         stored_version,
                         stored_strategy,
+                        stored_augmentation_strategy,
                         doc.version,
                         current_strategy,
+                        current_augmentation_strategy,
                     )
                     self.collection.delete(where={"doc_id": doc.doc_id})
             
             # Prepare for ChromaDB
-            ids = [c.chunk_id for c in chunks]
-            texts = [c.text for c in chunks]
+            ids = [c.chunk_id for c in store_chunks]
+            texts = [c.text for c in store_chunks]
             metadatas = []
-            for c in chunks:
+            for c in store_chunks:
                 # ChromaDB only supports str, int, float, bool. 
                 # Serialize lists/dicts to JSON strings.
                 clean_meta = {}
@@ -694,7 +783,7 @@ class IngestionEngine:
             )
             
             # Add to local list for BM25 (will be indexed at the end)
-            self.bm25_chunks.extend(chunks)
+            self.bm25_chunks.extend(evidence_chunks)
             
             logger.info(f"Successfully ingested {doc.doc_id} ({len(chunks)} chunks)")
             return True
@@ -715,12 +804,12 @@ class IngestionEngine:
                 return
             
             self.bm25_chunks = [
-                Chunk(chunk_id=id, text=text, metadata=meta)
+                self._evidence_chunk_from_stored(id, text, meta)
                 for id, text, meta in zip(all_stored['ids'], all_stored['documents'], all_stored['metadatas'])
             ]
             
         # Tokenize for BM25
-        tokenized_corpus = [c.text.lower().split() for c in self.bm25_chunks]
+        tokenized_corpus = [self._bm25_text(c).lower().split() for c in self.bm25_chunks]
         self.bm25_index = BM25Okapi(tokenized_corpus)
         
         # Save to disk
@@ -765,7 +854,19 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Ingest documents into the RAG system.")
     parser.add_argument("--register", type=str, default="rag_sources/00_metadata_templates/source_register.json", help="Path to the source register JSON file.")
+    parser.add_argument(
+        "--document-augmentation",
+        action="store_true",
+        help="Build the separate document-augmented retrieval index.",
+    )
     args = parser.parse_args()
     
-    engine = IngestionEngine()
+    if args.document_augmentation:
+        engine = IngestionEngine(
+            db_path=AUGMENTED_VECTOR_DB_PATH,
+            bm25_path=AUGMENTED_BM25_PATH,
+            document_augmentation=True,
+        )
+    else:
+        engine = IngestionEngine()
     engine.run_full_ingestion(args.register)

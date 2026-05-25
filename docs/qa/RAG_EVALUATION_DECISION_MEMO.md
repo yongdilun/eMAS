@@ -2,18 +2,20 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-25 after Phase 6.6 scoring-fairness top-candidate rerun.
+Updated: 2026-05-25 after Phase 7 Run 2 Document Augmentation comparison.
 
 ## Executive Decision
 
-- Corrected provisional champion: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
-- Corrected co-lead: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank. After Phase 6.6, `V7` leads `V12` by 0.2458 average rule points and one fewer serious failure.
-- Top corrected variants to carry into Phase 7: `V7`, `V12`, and `V10`. If budget allows, keep `V5` as a close alternate and `V2` as a clean non-rerank control.
-- Confidence level: medium for selecting a Phase 7 candidate set, low for production rollout. Phase 6.5 fixed the unfair reranker comparison; Phase 6.6 fixed narrow scoring fairness defects. The top candidates still have serious failures and the judge remains triage-grade.
+- Run 2 champion: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank.
+- Close co-lead: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
+- Document Augmentation result: keep `V8`/`V13` as experimental eval plumbing only. Do not make Document Augmentation the production default.
+- Confidence level: medium for choosing `V12`/`V7` as the current top pair, low for production rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, and Phase 7 tested Document Augmentation. The top candidates still have serious failures and the judge remains triage-grade.
 
 Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Phase 6.5 resolved this for the corrected run artifacts: all required rerank variants recorded 50 attempted, 50 succeeded, and 0 fallback.
 
 Phase 6.6 note: manual review found that Phase 6.5 serious-failure counts were still inflated by scoring defects. No question bank, prompt, expected-answer, retrieval, reranking, context-building, compression, or generation behavior changed in Phase 6.6. The latest top-candidate result is recorded in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
+
+Phase 7 note: Document Augmentation `V8`/`V13` was implemented with separate augmented index paths and original-evidence generation/citation safeguards. Run 2 found modest retrieval gains but no accuracy or serious-failure improvement. Full details are in `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`.
 
 ## Run 1 Scope
 
@@ -65,6 +67,26 @@ Decision update:
 - Rerank-enabled top candidates still beat the non-rerank `V2` anchor after the fairness fix.
 - No Phase 6.6 top-candidate run has an `unsafe_advice` serious flag.
 - Remaining serious failures are mostly real wrong/incomplete answers, not the known Phase 6.5 citation-section or `safeguard` scoring defects.
+
+## Phase 7 Run 2 Update
+
+Phase 7 implemented and evaluated Document Augmentation variants `V8` and `V13` against same-day `V7`, `V12`, and `V10` anchors. Full details are in `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`.
+
+| Variant | Pipeline | Avg Rule | Serious | Borderline | Retrieval | Avg Sec | Context Tokens |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |
+| `V12` | Query Rewrite + Hybrid Search + RSE + Rerank | 80.74 | 8 | 36 | doc@3/5/10 0.94/1.00/1.00; sec/page@3/5/10 0.86/0.94/0.96 | 10.48 | 1053 |
+| `V7` | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | 79.87 | 9 | 35 | doc@3/5/10 0.94/1.00/1.00; sec/page@3/5/10 0.86/0.94/0.96 | 6.25 | 1022 |
+| `V8` | Document Augmentation + Hybrid Search + Small-to-Big + Rerank | 79.17 | 9 | 34 | doc@3/5/10 0.96/0.98/1.00; sec/page@3/5/10 0.86/0.94/0.98 | 6.21 | 991 |
+| `V10` | Hybrid Search + RSE + Rerank | 78.90 | 9 | 33 | doc@3/5/10 0.94/0.96/1.00; sec/page@3/5/10 0.86/0.90/0.96 | 6.29 | 1085 |
+| `V13` | Document Augmentation + Hybrid Search + RSE + Rerank | 78.13 | 10 | 34 | doc@3/5/10 0.96/0.98/1.00; sec/page@3/5/10 0.86/0.94/0.98 | 6.06 | 991 |
+
+Decision update:
+
+- The same-day Run 2 champion is `V12`, with `V7` as the close co-lead.
+- Document Augmentation improved some retrieval hit rates and removed citation-related serious flags in `V8`/`V13`, but it did not improve answer accuracy or serious-failure count.
+- `V8` helped Small-to-Big more than `V13` helped RSE, but neither augmented variant beat `V12`.
+- Recommendation: keep Document Augmentation as experimental eval plumbing, not as the production default.
+- Production rollout remains blocked by 8 serious failures in the current champion.
 
 ## Original Run 1 Score Summary
 
@@ -225,44 +247,36 @@ Variant/case serious-failure list, grouped by reason code:
 - `V3` (24): wrong answer: `nist-ams300-1-df-02`, `nist-ams300-1-df-04`, `nist-ams300-1-ss-01`, `nist-ams300-11-df-01`, `nist-ams300-11-df-02`, `nist-ams300-11-ss-03`, `nist-ams300-11-mc-02`, `osha-loto-df-01`, `osha-loto-df-03`, `osha-loto-ss-01`, `osha-loto-ss-02`, `osha-guarding-mc-02`, `nist-csf-2-mc-01`; citation support: `nist-ams300-1-df-03`, `nist-ams300-1-df-04`, `nist-ams300-1-ss-01`, `nist-ams300-11-df-01`, `nist-ams300-11-df-03`, `nist-ams300-11-df-04`, `nist-ams300-11-ss-02`, `nist-ams300-11-ss-03`, `nist-ams300-11-mc-01`, `nist-ams300-11-mc-02`, `osha-loto-df-01`, `osha-loto-df-02`, `osha-guarding-df-02`, `osha-guarding-mc-02`, `nist-csf-2-df-02`, `nist-csf-2-df-03`, `nist-csf-2-ss-01`, `nist-csf-2-mc-01`; wrong/missing citation: `nist-ams300-11-df-02`; unsafe advice: `osha-guarding-mc-01`.
 - Other variants: `V0` had 27, `V1` had 29, `V5` had 26, `V6` had 26, `V9` had 25, `V10` had 27, and `V11` had 26 serious failures. Their failure mix follows the same dominant pattern: wrong/incomplete answers and citation support failures, with occasional automated unsafe-advice flags on `osha-guarding-mc-01` or `osha-loto-df-01`.
 
-## Provisional Champion Rationale
+## Current Champion Rationale
 
-`V7` is the corrected provisional champion because it gives the best overall Phase 6.6 balance:
+`V12` is the current Run 2 champion because it gives the best same-day balance after Document Augmentation was tested:
 
-- Highest corrected average rule score: 81.05.
-- Lowest corrected automated serious-failure count in the top-candidate set: 7.
+- Highest Run 2 average rule score: 80.74.
+- Lowest Run 2 serious-failure count in the required comparison set: 8.
 - True reranking ran for all 50 cases with 0 fallback.
-- Query rewrite plus Small-to-Big slightly beat query rewrite plus RSE in the corrected run.
-- Runtime and context cost are acceptable for a rerank-enabled variant: 6.35s average and about 1022 context tokens after compression stage.
+- Query rewrite plus RSE beat both augmented variants and the same-day `V7` anchor.
+- Retrieval remains strong: `doc_hit@5 = 1.00`, `section_or_page_hit@5 = 0.94`.
 
-The caveat is substantial: `V7` still has 7 serious failures, and `V12` remains close at 80.80 average / 8 serious failures. Treat them as co-leads. Neither is production-ready without Phase 7 and manual serious-failure review.
+The caveat is still substantial: `V12` has 8 serious failures, and `V7` remains close at 79.87 average / 9 serious failures. Treat `V12` and `V7` as the top pair. Neither is production-ready without manual serious-failure review and remediation.
 
-## Phase 7 Recommendation
+## Phase 8 Guidance
 
-Phase 7 should test:
+Do not start Phase 8 as a rollout step until the Run 2 result is accepted and the remaining serious failures are reviewed.
 
-- `V7` as the corrected Small-to-Big/query-rewrite champion.
-- `V12` as the corrected RSE/query-rewrite co-lead.
-- `V10` as the corrected RSE + true-rerank candidate without query rewrite.
-- `V5` as a close alternate to `V10` if budget permits.
-- `V2` as the clean hybrid non-rerank control, only if budget permits.
-- `V8` Document Augmentation + Hybrid Search + Small-to-Big + Rerank.
-- `V13` Document Augmentation + Hybrid Search + RSE + Rerank.
+Recommended next actions:
 
-Before Phase 7:
-
+- Keep `V12` as the provisional production candidate and `V7` as the fallback/co-lead.
+- Do not promote Document Augmentation to the production default.
 - Keep the strict reranker fallback contract: rerank-enabled runs should fail loudly unless fallback is explicitly configured and recorded.
-- Manually review corrected top-variant serious failures, especially automated `unsafe_advice` flags and remaining citation support failures.
-- Improve judge setup. Prefer Qwen3 14B for Run 2 judge triage; otherwise keep Qwen2.5 7B only with manual review for top variants, safety cases, and citation failures.
+- Manually review remaining serious failures, especially wrong/incomplete answers on A232 subactivities, AMS 300-11 scope/standards/interoperability, OSHA energy-control procedure completeness, and CSF summaries.
+- Improve judge setup. Prefer Qwen3 14B or stronger for future safety/citation triage; otherwise keep Qwen2.5 7B only with manual review.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
-
-Do not start Document Augmentation from the original Run 1 baseline. Use the corrected Phase 6.6 baseline.
 
 ## Blockers Before Production
 
-- Even the corrected provisional champion still has 7 automated serious failures out of 50.
-- Citation support improved, but remaining citation-support failures still need manual review.
+- Even the Run 2 champion still has 8 automated serious failures out of 50.
+- Citation support improved, and augmented variants had no citation-related serious flags, but remaining citation-support failures in top anchors still need manual review.
 - Safety boundary answers improved for OSHA/live-status prompts, and the known `safeguard` unsafe-advice false positive was fixed for the top-candidate set. Safety cases still need manual review before production conclusions.
 - Judge safety scoring is too blunt to be a production gate.
-- Document Augmentation has not been tested.
+- Document Augmentation has been tested and should not be the production default based on Run 2.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.

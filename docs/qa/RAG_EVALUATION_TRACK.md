@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 6.6 Scoring Fairness Audit and Top-Candidate Rerun is complete. Phase 6.5 fixed the reranker comparison, and Phase 6.6 corrected narrow scoring defects that inflated automated serious failures: noisy PDF section labels were treated as hard citation failures even when page/evidence support was present, and checklist text using `safeguard` triggered an unsafe-advice false positive. `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md` records the latest top-candidate baseline. Document Augmentation V8/V13 has not been implemented or run.
+Phase 7 Benchmark Run 2 with Document Augmentation is complete. `V8` and `V13` were implemented with a separate augmented retrieval index and compared against same-day `V7`, `V12`, and `V10` anchors. `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md` records the latest Run 2 result. Document Augmentation improved some retrieval hit rates and citation-support flags, but did not improve answer accuracy or serious-failure count enough to become the production default.
 
 Important current decisions:
 
@@ -28,9 +28,11 @@ Important current decisions:
 - Phase 6.5 fixed the unfair reranker fallback, improved citation/evidence audit artifacts and safety-boundary checks, then reran the affected variants plus anchors.
 - Corrected Phase 6.5 provisional champion: `V7`. Co-lead: `V12`. Recommended top 3 for Phase 7: `V7`, `V12`, and `V10`; `V5` is a close alternate and `V2` remains an optional clean control.
 - Phase 6.6 did not change the question bank, prompts, expected answers, retrieval, reranking, context building, compression, or generation.
-- Phase 6.6 top-candidate result: `V7` remains champion at 81.05 average / 7 serious failures; `V12` remains co-lead at 80.80 / 8; `V10` remains the third Phase 7 carry-forward at 79.52 / 8.
+- Phase 6.6 top-candidate result: `V7` remained champion at 81.05 average / 7 serious failures; `V12` remained co-lead at 80.80 / 8; `V10` remained the third Phase 7 carry-forward at 79.52 / 8.
+- Run 2 same-day result: `V12` is current champion at 80.74 average / 8 serious failures; `V7` is close at 79.87 / 9; `V8` is 79.17 / 9; `V10` is 78.90 / 9; `V13` is 78.13 / 10.
+- Document Augmentation should be kept as experimental eval plumbing, not as the production default.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
-- Document Augmentation variants V8 and V13 are deferred to Run 2.
+- Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
 - Phase 5 ran the benchmark only. It did not change the question bank, scoring, RSE, Small-to-Big, compression, or Document Augmentation.
 - Run 1 judge calls completed without runtime errors, but judge output remains triage evidence only after the Phase 6 manual audit.
@@ -52,7 +54,7 @@ Important current decisions:
 | 6 | Review and decision memo | Done | Codex | Decision memo added. Provisional champion: V12. Runner-up: V7. Run 2 carry-forward set: V12, V7, and V2 if budget permits. |
 | 6.5 | Fairness fix and corrected rerun | Done | Codex | Fixed/replaced reranker integration, added visible fallback tracing, improved citation/evidence artifacts and safety-boundary scoring, reran V1/V3/V5/V6/V7/V10/V11/V12 plus V0/V2/V4/V9 anchors. |
 | 6.6 | Scoring fairness audit and top-candidate rerun | Done | Codex | Fixed narrow scoring defects from manual review, then reran V7/V12/V10/V5/V2 before Phase 7. |
-| 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
+| 7 | Benchmark Run 2 with Document Augmentation | Done | Codex | V8/V13 implemented and compared against V7/V12/V10. Run 2 champion: V12. Document Augmentation not recommended as production default. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
 ## Phase 0 Checklist
@@ -449,6 +451,54 @@ Decision update:
 
 Full details are in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
 
+## Phase 7 Findings
+
+Date: 2026-05-25
+
+Phase 7 implemented and evaluated Document Augmentation variants:
+
+- `V8`: Document Augmentation + Hybrid Search + Small-to-Big + Rerank.
+- `V13`: Document Augmentation + Hybrid Search + RSE + Rerank.
+
+Implementation guardrails:
+
+- Augmentation is deterministic and generated at indexing time from source chunk text and source metadata only.
+- Augmentation does not read `tests/rag_eval/cases.json`, `docs/qa/rag_eval_question_bank.md`, gold answers, expected answer points, or evaluation question IDs.
+- Augmented retrieval uses separate generated paths: `factory_agent/rag/vector_db_augmented` and `factory_agent/rag/bm25_index_augmented.pkl`.
+- Synthetic retrieval text is stored separately from original evidence text. Retrieval can use augmented text, but rerank/context/generation/citations use original source text.
+- Artifacts record augmented retrieval use, and an artifact audit found augmented top chunks in 50/50 V8 and 50/50 V13 cases with no synthetic text in final evidence snippets.
+
+Run 2 scope:
+
+- `V8`: `run2-20260525-v08`
+- `V13`: `run2-20260525-v13`
+- `V7`: `run2-20260525-v07`
+- `V12`: `run2-20260525-v12`
+- `V10`: `run2-20260525-v10`
+
+All required Run 2 runs used `--judge`. Artifact validation passed for every run: 50 case artifacts, `summary.json`, `judge_audit_sample.json`, 50/50 automated structural pass, and 0 judge errors. Rerank variants recorded 50 rerank successes and 0 fallback.
+
+Run 2 result:
+
+| Variant | Avg Rule | Serious | Borderline | Warnings | doc@3/5/10 | section/page@3/5/10 | Avg Sec | Context Tokens | Rerank Succeeded/Fallback |
+| --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | --- |
+| `V12` | 80.74 | 8 | 36 | 0 | 0.94 / 1.00 / 1.00 | 0.86 / 0.94 / 0.96 | 10.48 | 1053 | 50/0 |
+| `V7` | 79.87 | 9 | 35 | 0 | 0.94 / 1.00 / 1.00 | 0.86 / 0.94 / 0.96 | 6.25 | 1022 | 50/0 |
+| `V8` | 79.17 | 9 | 34 | 0 | 0.96 / 0.98 / 1.00 | 0.86 / 0.94 / 0.98 | 6.21 | 991 | 50/0 |
+| `V10` | 78.90 | 9 | 33 | 1 | 0.94 / 0.96 / 1.00 | 0.86 / 0.90 / 0.96 | 6.29 | 1085 | 50/0 |
+| `V13` | 78.13 | 10 | 34 | 0 | 0.96 / 0.98 / 1.00 | 0.86 / 0.94 / 0.98 | 6.06 | 991 | 50/0 |
+
+Decision update:
+
+- Run 2 does not support keeping Document Augmentation as the production default.
+- Document Augmentation improved some retrieval hit rates: V8/V13 reached `doc_hit@3 = 0.96` and `section_or_page_hit@10 = 0.98`.
+- The retrieval gains did not improve answer accuracy or serious-failure count.
+- V8 helped Small-to-Big more than V13 helped RSE, but V8 still did not beat V7 or V12.
+- Same-day Run 2 ranking moves the current champion back to `V12`, with `V7` still a close co-lead.
+- Production rollout remains blocked by serious failures.
+
+Full details are in `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -470,8 +520,8 @@ Full details are in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
 
 | ID | Pipeline | Status |
 | --- | --- | --- |
-| V8 | Document Augmentation + Hybrid Search + Small-to-Big + Rerank | Deferred |
-| V13 | Document Augmentation + Hybrid Search + RSE + Rerank | Deferred |
+| V8 | Document Augmentation + Hybrid Search + Small-to-Big + Rerank | Phase 7 Executable and Evaluated |
+| V13 | Document Augmentation + Hybrid Search + RSE + Rerank | Phase 7 Executable and Evaluated |
 
 ## Judge Reliability Audit Requirements
 
@@ -638,6 +688,13 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 6.5 corrected live reruns completed with `--judge` for `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, `V12`, and anchor variants `V0`, `V2`, `V4`, and `V9`.
 - Phase 6.5 artifact validation passed for all corrected run folders: every folder has 50 case artifacts plus `summary.json` and `judge_audit_sample.json`; all judge-requested cases completed with 0 judge errors.
 - Phase 6.5 rerank validation passed: all required rerank variants recorded 50 enabled, 50 attempted, 50 succeeded, and 0 fallback.
+- Phase 7 focused tests passed: `python -m pytest -q factory-agent/tests/test_rag_document_augmentation.py factory-agent/tests/test_rag_ingestion.py factory-agent/tests/test_rag_retrieval.py factory-agent/tests/test_rag_pipeline_config.py factory-agent/tests/test_rag_context_building.py tests/rag_eval/test_variants.py tests/rag_eval/test_run_eval_variants.py tests/rag_eval/test_artifact_schema.py` returned 44 passed. Warnings were existing Swig/PyMuPDF-style import warnings, `pytest_asyncio`, and telemetry `datetime.utcnow()` deprecation warnings.
+- `python -m tests.rag_eval.run_eval --help` passed and showed `V8` and `V13` as executable variant choices.
+- `git diff --check` passed with LF-to-CRLF normalization warnings only.
+- Phase 7 smoke tests passed with `--judge`: `smoke-v8-aug` and `smoke-v13-aug` each ran `nist-csf-2-df-01` successfully with score 100.0 and no judge errors.
+- Phase 7 required live comparison completed with `--judge` for `V8`, `V13`, `V7`, `V12`, and `V10`. Every run produced 50 case artifacts, `summary.json`, and `judge_audit_sample.json`; every run had 50/50 automated structural pass and 0 judge errors.
+- Phase 7 rerank validation passed: all five required rerank variants recorded 50 enabled, 50 attempted, 50 succeeded, and 0 fallback.
+- Phase 7 artifact audit passed for augmented variants: V8 and V13 both recorded augmented retrieval in 50/50 cases, and no final evidence snippet contained synthetic augmentation text.
 
 ## Files Created
 
@@ -660,6 +717,9 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `tests/rag_eval/test_run_eval_judge.py`
 - `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
 - `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`
+- `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`
+- `factory-agent/factory_agent/rag/document_augmentation.py`
+- `factory-agent/tests/test_rag_document_augmentation.py`
 
 ## Files Updated
 
@@ -687,14 +747,16 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `tests/rag_eval/variants.py`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
 - `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
+- `.gitignore`
 
 ## Current Blockers
 
-- Corrected reranker integration is fixed for Phase 6.5/6.6 artifacts, but the Phase 6.6 champion `V7` still has 7 automated serious failures out of 50 and is not production-ready.
+- Corrected reranker integration is fixed for Phase 6.5/6.6 and Run 2 artifacts, but the Run 2 champion `V12` still has 8 automated serious failures out of 50 and is not production-ready.
 - Judge safety and citation scoring are weak enough that top Run 2 candidates require manual review.
-- Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, but safety cases still require manual review before production conclusions.
+- Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, and Run 2 did not surface a new unsafe-advice top-candidate issue, but safety cases still require manual review before production conclusions.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
+- Document Augmentation improved some retrieval hit rates but did not improve answer accuracy or serious-failure count enough to be the production default.
 
 ## Next Action
 
-Start Phase 7 only after accepting the Phase 6.6 fairness baseline: compare Document Augmentation `V8` and `V13` against the corrected top candidates, preferably `V7`, `V12`, and `V10`, with `V5` as a close alternate and `V2` only as an optional clean control.
+Do not start Phase 8 until the Run 2 result is accepted and the remaining serious failures are manually reviewed. Current recommendation: treat `V12` as the same-day Run 2 champion, keep `V7` as a close co-lead, and keep Document Augmentation as experimental eval plumbing rather than the production default.

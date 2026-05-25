@@ -37,6 +37,7 @@ class RAGPipelineConfig:
     query_rewrite: bool = False
     context_builder: str = "none"
     compression: str = "none"
+    document_augmentation: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "context_builder", normalize_context_builder(self.context_builder))
@@ -192,6 +193,14 @@ class RAGPipeline:
             },
             "rerank": rerank_trace,
             "context_building": context_result.metadata,
+            "document_augmentation": {
+                "enabled": config.document_augmentation,
+                "retriever_db_path": getattr(self._retriever, "db_path", None),
+                "retriever_bm25_path": getattr(self._retriever, "bm25_path", None),
+                "retriever_document_augmentation": bool(
+                    getattr(self._retriever, "document_augmentation", False)
+                ),
+            },
         }
         return result
 

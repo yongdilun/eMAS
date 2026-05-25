@@ -258,6 +258,7 @@ def serialize_retrieval_debug(
                 "fusion": getattr(sc, "fusion_score", None),
                 "boosted": getattr(sc, "boosted_score", None),
             }
+            augmentation = _document_augmentation_metadata(metadata)
             top.append(
                 {
                     "rank": rank,
@@ -278,6 +279,7 @@ def serialize_retrieval_debug(
                     "keyword_score": scores["keyword"],
                     "fusion_score": scores["fusion"],
                     "boosted_score": scores["boosted"],
+                    "document_augmentation": augmentation,
                     "snippet": text[:snippet_chars],
                 }
             )
@@ -436,6 +438,20 @@ def _serialize_source(source: Any) -> dict[str, Any]:
     if isinstance(source, dict):
         return _ensure_jsonable(source)
     return {"raw": str(source)}
+
+
+def _document_augmentation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(metadata.get("document_augmentation_enabled"))
+    fields = metadata.get("document_augmentation_fields") or {}
+    return {
+        "enabled": enabled,
+        "strategy_version": metadata.get("document_augmentation_strategy_version"),
+        "synthetic_text_available": bool(metadata.get("synthetic_augmentation_text")),
+        "synthetic_snippet": str(metadata.get("synthetic_augmentation_text") or "")[:360],
+        "original_evidence_preserved": bool(metadata.get("original_evidence_text")),
+        "key_terms": _ensure_jsonable((fields or {}).get("key_terms") or []),
+        "generated_question_count": len((fields or {}).get("generated_retrieval_questions") or []),
+    }
 
 
 def _build_scoring_aggregate(case_results: list[dict[str, Any]]) -> dict[str, Any]:

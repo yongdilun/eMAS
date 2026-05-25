@@ -9,6 +9,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 
+from factory_agent.rag.document_augmentation import DEFAULT_BM25_PATH, DEFAULT_VECTOR_DB_PATH
 from factory_agent.rag.schemas import Chunk, ScoredChunk
 
 # Configure logging
@@ -59,11 +60,14 @@ class HybridRetriever:
 
     def __init__(
         self, 
-        db_path: str = "factory_agent/rag/vector_db", 
-        bm25_path: str = "factory_agent/rag/bm25_index.pkl"
+        db_path: str = DEFAULT_VECTOR_DB_PATH,
+        bm25_path: str = DEFAULT_BM25_PATH,
+        *,
+        document_augmentation: bool = False,
     ):
         self.db_path = db_path
         self.bm25_path = bm25_path
+        self.document_augmentation = document_augmentation
         
         # Initialize ChromaDB
         if not os.path.exists(db_path):
@@ -89,6 +93,29 @@ class HybridRetriever:
         else:
             logger.warning(f"BM25 index path not found: {bm25_path}")
 
+    def _chunk_from_stored(
+        self,
+        *,
+        chunk_id: str,
+        document: str,
+        metadata: Dict[str, Any],
+    ) -> Chunk:
+        """Return a retrieval chunk with original evidence text.
+
+        Augmented vector indexes store synthetic retrieval text as the Chroma
+        document, but downstream rerank/context/generation must see only the
+        original source evidence.
+        """
+
+        clean_metadata = self._clean_metadata(metadata or {})
+        original_text = clean_metadata.get("original_evidence_text")
+        if clean_metadata.get("document_augmentation_enabled") and original_text:
+            clean_metadata["document_augmentation_retrieval_text_snippet"] = (
+                str(document or "")[:360]
+            )
+            return Chunk(chunk_id=chunk_id, text=str(original_text), metadata=clean_metadata)
+        return Chunk(chunk_id=chunk_id, text=document or "", metadata=clean_metadata)
+
     def vector_search(self, query: str, top_k: int = 8) -> List[ScoredChunk]:
         """Performs semantic search using ChromaDB."""
         try:
@@ -101,10 +128,10 @@ class HybridRetriever:
             scored_chunks = []
             if results['ids'] and results['ids'][0]:
                 for i in range(len(results['ids'][0])):
-                    chunk = Chunk(
+                    chunk = self._chunk_from_stored(
                         chunk_id=results['ids'][0][i],
-                        text=results['documents'][0][i],
-                        metadata=self._clean_metadata(results['metadatas'][0][i])
+                        document=results['documents'][0][i],
+                        metadata=results['metadatas'][0][i],
                     )
                     # Convert distance to a similarity score (approximate)
                     # ChromaDB cosine distance is 1 - similarity, so 1 - distance = similarity
@@ -141,8 +168,13 @@ class HybridRetriever:
             scored_chunks = []
             for chunk, score in top_results:
                 if score <= 0: continue
+                result_chunk = Chunk(
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    metadata=self._clean_metadata(chunk.metadata),
+                )
                 scored_chunks.append(ScoredChunk(
-                    chunk=chunk,
+                    chunk=result_chunk,
                     keyword_score=score / max_score
                 ))
             return scored_chunks
@@ -208,10 +240,10 @@ class HybridRetriever:
             result = self.collection.get(ids=[neighbor_id], include=["documents", "metadatas"])
             
             if result['ids'] and len(result['ids']) > 0:
-                return Chunk(
+                return self._chunk_from_stored(
                     chunk_id=result['ids'][0],
-                    text=result['documents'][0],
-                    metadata=self._clean_metadata(result['metadatas'][0])
+                    document=result['documents'][0],
+                    metadata=result['metadatas'][0],
                 )
             return None
         except Exception as e:
@@ -240,10 +272,10 @@ class HybridRetriever:
                     include=["documents", "metadatas"],
                 )
                 chunks = [
-                    Chunk(
+                    self._chunk_from_stored(
                         chunk_id=chunk_id,
-                        text=document or "",
-                        metadata=self._clean_metadata(metadata or {}),
+                        document=document or "",
+                        metadata=metadata or {},
                     )
                     for chunk_id, document, metadata in zip(
                         result.get("ids") or [],

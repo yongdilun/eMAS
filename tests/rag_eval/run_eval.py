@@ -21,7 +21,7 @@ This module exposes :func:`run_eval` so the pytest wrapper in
 The harness:
 
 1. Loads cases from ``tests/rag_eval/cases.json``.
-2. Resolves a Run 1 variant config (default: V3).
+2. Resolves a RAG eval variant config (default: V3).
 3. Builds a real :class:`factory_agent.rag.pipeline.RAGPipeline` with the
    selected variant's retrieval/rerank settings.
 4. Runs each case directly through the current RAG pipeline. The retired
@@ -60,6 +60,8 @@ if str(FACTORY_AGENT_DIR) not in sys.path:
 # Imports below need ``factory-agent`` on sys.path, hence the insert above.
 from factory_agent.config import get_settings  # noqa: E402
 from factory_agent.rag.context_building import rewrite_query_for_retrieval  # noqa: E402
+from factory_agent.rag.document_registry import default_source_register_path  # noqa: E402
+from factory_agent.rag.ingestion import IngestionEngine  # noqa: E402
 from factory_agent.rag.pipeline import RAGPipeline  # noqa: E402
 from factory_agent.rag.retrieval import HybridRetriever  # noqa: E402
 
@@ -400,7 +402,23 @@ def _maybe_judge_case(
     return True, result, None
 
 
-def _build_retriever() -> HybridRetriever | None:
+def _ensure_augmented_index_ready(variant: RAGVariantConfig) -> None:
+    if not variant.document_augmentation:
+        return
+    paths = variant.index_paths()
+    print(
+        "[rag-eval] ensuring augmented retrieval index "
+        f"vector_db={paths['vector_db_path']} bm25={paths['bm25_path']}"
+    )
+    engine = IngestionEngine(
+        db_path=paths["vector_db_path"],
+        bm25_path=paths["bm25_path"],
+        document_augmentation=True,
+    )
+    engine.run_full_ingestion(str(default_source_register_path()))
+
+
+def _build_retriever(variant: RAGVariantConfig) -> HybridRetriever | None:
     """Instantiate ``HybridRetriever`` if the persisted indexes look usable.
 
     The retriever's ``__init__`` only logs warnings when the vector_db / bm25
@@ -410,7 +428,12 @@ def _build_retriever() -> HybridRetriever | None:
     """
 
     try:
-        return HybridRetriever()
+        paths = variant.index_paths()
+        return HybridRetriever(
+            db_path=paths["vector_db_path"],
+            bm25_path=paths["bm25_path"],
+            document_augmentation=variant.document_augmentation,
+        )
     except Exception:
         return None
 
@@ -447,8 +470,11 @@ async def _run_async(opts: RunnerOptions) -> dict[str, Any]:
 
     env = build_env_fingerprint(settings)
 
-    rag_pipeline = RAGPipeline()
-    retriever = _build_retriever()
+    _ensure_augmented_index_ready(variant)
+    retriever = _build_retriever(variant)
+    if retriever is None and variant.document_augmentation:
+        raise SystemExit("Document augmentation variant could not initialize the augmented retriever")
+    rag_pipeline = RAGPipeline(retriever=retriever) if retriever is not None else RAGPipeline()
 
     started_at = now_iso()
     case_results: list[dict[str, Any]] = []
@@ -615,7 +641,7 @@ def _parse_args(argv: list[str] | None = None) -> RunnerOptions:
         "--variant",
         default=DEFAULT_VARIANT_ID,
         choices=RUN_1_VARIANT_IDS,
-        help="Run 1 RAG variant ID to execute.",
+        help="RAG eval variant ID to execute.",
     )
     parser.add_argument(
         "--judge",
