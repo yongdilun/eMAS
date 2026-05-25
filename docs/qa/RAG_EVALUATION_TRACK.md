@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 8 Production rollout recommendation is complete as a production-readiness NO-GO, not as a rollout approval. `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md` records the final selected engineering config, production blockers, remediation roadmap, regression gate, limited-mode monitoring plan, and Phase 9 proposal. `V12` remains the engineering candidate, `V7` remains the fallback/co-lead, Document Augmentation remains experimental, compression remains off by default, and the production gate stays closed.
+Phase 10 Remaining RAG Failure Review is complete as a manual classification pass, not as remediation. `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md` records the review of the 6 remaining final Phase 9 `V12` serious failures. All 6 are real production blockers, none are scoring false positives, and the 3 OSHA guarding failures are safety-relevant omissions without direct unsafe advice. `V12` remains the engineering candidate, `V7` remains the fallback/co-lead, Document Augmentation remains experimental, compression remains off by default, and the production gate stays closed.
 
 Important current decisions:
 
@@ -35,7 +35,10 @@ Important current decisions:
 - `V7` did not answer any of the 8 `V12` serious cases better.
 - Document Augmentation fixed one `V12` serious case, `nist-csf-2-ss-03`, but did not change the overall recommendation.
 - Phase 8 final recommendation: production shipment is a NO-GO. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
-- Phase 9 should remediate the 8 manually reviewed `V12` serious failures, add regression tests, rerun `V12`/`V7` on the unchanged 50-question bank, and only then reconsider production readiness.
+- Phase 9 remediated the 8 manually reviewed Phase 8 `V12` serious failures and reran `V12`/`V7` on the unchanged 50-question bank.
+- Phase 10 manually reviewed the 6 remaining final Phase 9 `V12` serious failures; all 6 are real production blockers and none are scoring false positives.
+- `V7` handled 3 of the 6 remaining `V12` serious failures better, but it still has 7 final serious failures overall versus `V12` at 6.
+- The next remediation phase should fix generic evidence-present fallback, citation-validation repair, OSHA descriptive checklist answering, context selection for multi-chunk incident/function questions, and section/page metadata handling.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are implemented and evaluated for Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -62,6 +65,8 @@ Important current decisions:
 | 7 | Benchmark Run 2 with Document Augmentation | Done | Codex | V8/V13 implemented and compared against V7/V12/V10. Run 2 champion: V12. Document Augmentation not recommended as production default. |
 | 7.5 | Manual serious-failure review | Done | Codex | Reviewed all 8 `V12` serious failures against V7/V8/V13/V10. All 8 are real; V7 did not improve any; Document Augmentation fixed only `nist-csf-2-ss-03`; recommendation is do not ship yet. |
 | 8 | Production rollout recommendation | Done | Codex | Added production-readiness NO-GO recommendation, froze `V12` as the engineering candidate config, documented remediation roadmap, regression gate, limited-mode monitoring, and Phase 9 proposal. |
+| 9 | Serious-failure remediation | Done | Codex | Remediated the 8 reviewed Phase 8 serious cases, added focused regression coverage, and reran final `V12`/`V7`; production stayed NO-GO because `V12` still had 6 serious failures. |
+| 10 | Remaining failure review | Done | Codex | Manually reviewed the 6 remaining final Phase 9 `V12` serious failures against `V7`; all 6 are real production blockers, none are scoring false positives, and 3 OSHA guarding cases are safety-relevant omissions. |
 
 ## Phase 0 Checklist
 
@@ -711,6 +716,8 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - Phase 9 final `V7` result: 50/50 automated pass, 0 warnings, average rule score 81.961, 7 serious failures, 32 borderline, 32/32 judge calls completed, 2 judge serious failures, and 0 reranker fallback. Retrieval matched V12 on the reported aggregate hit rates.
 - Phase 9 final V12 cleared all 8 reviewed serious cases from Phase 8. The original production blockers `nist-ams300-1-mc-02`, `nist-ams300-11-df-02`, `nist-csf-2-ss-01`, and `osha-loto-df-03` were no longer serious failures in the final V12 full run.
 - Phase 9 did not meet the production gate because final V12 still had 6 serious failures across the 50-question bank: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
+- Phase 10 manually reviewed those 6 final `V12` serious failures against matching `V7` artifacts. No benchmark rerun, live judge call, scoring change, question-bank change, code change, or test artifact generation was performed.
+- Phase 10 found all 6 remaining `V12` serious failures are real production blockers, none are scoring false positives, and the 3 OSHA guarding failures are safety-relevant omissions without direct unsafe advice.
 
 ## Files Created
 
@@ -736,6 +743,7 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `docs/qa/RAG_EVALUATION_RUN2_ADDENDUM.md`
 - `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`
 - `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`
+- `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`
 - `factory-agent/factory_agent/rag/document_augmentation.py`
 - `factory-agent/tests/test_rag_document_augmentation.py`
 
@@ -765,13 +773,14 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 - `tests/rag_eval/variants.py`
 - `docs/qa/RAG_EVALUATION_TRACK.md`
 - `docs/qa/RAG_EVALUATION_DECISION_MEMO.md`
+- `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`
 - `.gitignore`
 
 ## Current Blockers
 
-- Phase 9 remediated the reviewed V12 serious-failure classes, but the final V12 full run still has 6 serious failures out of 50 and is not production-ready.
-- The 8 reviewed Phase 8 serious cases now pass in final V12, but the remaining V12 serious failures require manual review and likely follow-up remediation.
-- The remaining V12 serious failures include OSHA guarding cases, so the safety/manual-review gate remains closed.
+- Phase 10 confirmed final V12 still has 6 real serious failures out of 50 and is not production-ready.
+- The 8 reviewed Phase 8 serious cases now pass in final V12, but the remaining 6 V12 serious failures are all production blockers needing follow-up remediation.
+- The remaining V12 serious failures include 3 OSHA guarding safety-relevant omissions, so the safety gate remains closed even though no direct unsafe advice was found.
 - Judge safety and citation scoring are still weak enough that future safety/citation decisions need manual review or a stronger judge.
 - Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, and Run 2 did not surface a new unsafe-advice top-candidate issue, but safety cases still require manual review before production conclusions.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
@@ -779,4 +788,4 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Next Action
 
-Start Phase 10: Remaining RAG Failure Review. Treat `V12` as the engineering candidate because it cleared the 8 reviewed failures and has fewer final serious failures than `V7`; keep `V7` as a close fallback/co-lead because it has the higher average rule score. Manually review the 6 remaining V12 serious failures, especially OSHA guarding cases, before reconsidering production readiness.
+Start Phase 11: Remaining RAG Failure Remediation. Treat `V12` as the engineering candidate because it cleared the 8 reviewed failures and has fewer final serious failures than `V7`; keep `V7` as a close fallback/co-lead because it has the higher average rule score and handled 3 remaining V12 failures better. Patch generic behavior only, preserve the 50-question bank and scoring, add focused regression coverage for the 6 confirmed blockers, then rerun `V12` and `V7` before reconsidering production readiness.

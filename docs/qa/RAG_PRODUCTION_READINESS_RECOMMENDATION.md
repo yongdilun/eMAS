@@ -27,13 +27,28 @@ Final Phase 9 `V12` result:
 
 Production readiness remains **NO-GO**. Final `V12` still exceeds the regression gate of at most 2 serious failures out of 50 and still has unresolved OSHA guarding serious failures requiring manual review. Continue to use this document's production gate and monitoring requirements, but use `docs/qa/RAG_SERIOUS_FAILURE_REMEDIATION.md` for the latest Phase 9 remediation results.
 
+## Phase 10 Status Update
+
+Phase 10 manually reviewed the 6 remaining final Phase 9 `V12` serious failures. Full details are in `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`.
+
+Manual review found:
+
+- All 6 remaining `V12` serious failures are real answer failures.
+- None are scoring false positives or ambiguous eval cases.
+- All 6 are production blockers under the current gate because answerable evidence was retrieved and/or available in context but the final answer returned the no-evidence fallback.
+- The 3 OSHA guarding failures are safety-relevant omissions, but none gives direct unsafe advice.
+- `V7` handled 3 of the 6 better: `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, and `osha-guarding-ss-03`.
+- `V7` tied on `osha-guarding-df-04`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
+
+Production readiness remains **NO-GO** after Phase 10. Keep `V12` as the engineering candidate, keep `V7` as the fallback/co-lead, and do not remediate by changing scoring or the question bank.
+
 ## Executive Decision
 
 Production shipment is a **NO-GO**.
 
-`V12` remains the engineering candidate after Phase 9 because Query Rewrite + Hybrid Search + RSE + Rerank cleared all 8 reviewed Phase 8 serious cases and finished the final Phase 9 full run with 80.301 average rule score and 6 serious failures. It is the best current starting point for remaining remediation, not a production-ready configuration.
+`V12` remains the engineering candidate after Phase 10 because Query Rewrite + Hybrid Search + RSE + Rerank cleared all 8 reviewed Phase 8 serious cases and finished the final Phase 9 full run with fewer serious failures than `V7`, 6 versus 7. Phase 10 confirmed that the remaining `V12` failures are real production blockers, so `V12` is the best current remediation target, not a production-ready configuration.
 
-`V7` remains the close fallback/co-lead: Query Rewrite + Hybrid Search + Small-to-Big + Rerank scored higher on final Phase 9 average rule score at 81.961, but had 7 serious failures and still failed `nist-ams300-1-df-04` from the reviewed set. It is not a safer ship candidate yet.
+`V7` remains the close fallback/co-lead: Query Rewrite + Hybrid Search + Small-to-Big + Rerank scored higher on final Phase 9 average rule score at 81.961 and handled 3 of the 6 remaining `V12` failures better, but it had 7 serious failures overall and still failed `nist-ams300-1-df-04` from the reviewed set. It is not a safer ship candidate yet.
 
 Document Augmentation remains experimental. `V8` and `V13` improved some retrieval/citation signals and fixed `nist-csf-2-ss-03`, but they did not improve overall answer accuracy or serious-failure count enough to become production defaults.
 
@@ -72,7 +87,7 @@ Remaining final V12 serious failures:
 - `osha-guarding-mc-01`
 - `nist-csf-2-mc-02`
 
-The OSHA guarding failures are safety-adjacent and require manual review before any readiness upgrade. The final result does not meet the Phase 8 acceptance target of at most 2 serious failures out of 50.
+Phase 10 manual review confirmed all 6 remaining failures are real production blockers. The OSHA guarding failures are safety-relevant omissions, though they do not provide direct unsafe advice. The final result does not meet the Phase 8 acceptance target of at most 2 serious failures out of 50 and no safety-relevant unresolved serious failures.
 
 The original reviewed serious cases were:
 
@@ -169,6 +184,7 @@ Phase 9 completed the original reviewed-case remediation tasks below. Keep them 
 Before production readiness can be reconsidered, the next candidate must meet all of these gates:
 
 - 0 production-blocker failures on the 8 reviewed serious cases.
+- 0 production-blocker failures on the 6 Phase 10 remaining-failure cases.
 - 0 unsafe-advice failures.
 - 0 no-evidence fallback answers when expected evidence is present in retrieval/context for an answerable case.
 - At most 2 serious failures out of the 50-question bank, and none may be safety-relevant, boundary-breaking, or production-blocker failures.
@@ -205,20 +221,20 @@ Required limited-mode behavior:
 - Do not relax scoring to hide failures.
 - Do not treat the benchmark as a production pass.
 - Do not change the question bank, scoring, or expected answers just to improve the readiness story.
-- Do not start another experiment before the remaining serious failures are manually reviewed and classified.
+- Do not start an unrelated experiment before the Phase 10 confirmed failure classes are remediated or explicitly accepted by a future readiness decision.
 
 ## Next Implementation Phase Proposal
 
-Recommended follow-up phase: **Phase 10: Remaining RAG Failure Review**.
+Recommended follow-up phase: **Phase 11: Remaining RAG Failure Remediation**.
 
 Proposed substeps:
 
-1. Manually review the 6 final V12 serious failures.
-2. Separate true product failures from scoring/judge artifacts.
-3. Prioritize OSHA guarding failures for safety review.
-4. Patch generic behavior only where the review confirms real failure classes.
-5. Add focused regression tests for confirmed remaining failures.
+1. Patch generic behavior only for the confirmed Phase 10 failure classes.
+2. Prioritize evidence-present fallback repair and citation-validation repair.
+3. Preserve safety boundaries while allowing descriptive OSHA checklist answers.
+4. Improve context selection for CSF DETECT/RESPOND/RECOVER and similar multi-chunk questions.
+5. Add focused regression tests for the 6 confirmed remaining failures.
 6. Rerun `V12` and `V7` on the unchanged 50-question bank.
 7. Only then reconsider production readiness.
 
-Phase 10 should keep `V12` as the main engineering candidate and `V7` as the fallback/co-lead until evidence shows one is clearly safer.
+Phase 11 should keep `V12` as the main engineering candidate and `V7` as the fallback/co-lead until evidence shows one is clearly safer.

@@ -2,7 +2,7 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-25 after Phase 8 production-readiness recommendation.
+Updated: 2026-05-25 after Phase 10 remaining-failure review.
 
 ## Executive Decision
 
@@ -10,6 +10,7 @@ Updated: 2026-05-25 after Phase 8 production-readiness recommendation.
 - Close co-lead: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
 - Document Augmentation result: keep `V8`/`V13` as experimental eval plumbing only. Do not make Document Augmentation the production default.
 - Manual serious-failure review: all 8 `V12` serious failures are real enough to keep the production gate closed. `V7` handled none of them better. Document Augmentation fixed one (`nist-csf-2-ss-03`) but not enough to change the champion.
+- Phase 10 remaining-failure review: all 6 final Phase 9 `V12` serious failures are real production blockers. None are scoring false positives. The OSHA guarding failures are safety-relevant omissions, but none gives direct unsafe advice. `V7` handled 3 of the 6 better, but still has 7 serious failures overall.
 - Final production recommendation: **do not ship yet**. Keep `V12` as the engineering candidate and `V7` as the close fallback/co-lead.
 - Confidence level: medium for choosing `V12`/`V7` as the current top pair, low for production rollout. Phase 6.5 fixed the unfair reranker comparison, Phase 6.6 fixed narrow scoring fairness defects, Phase 7 tested Document Augmentation, and manual review confirmed the remaining top-candidate serious failures are not scoring artifacts.
 
@@ -22,6 +23,8 @@ Phase 7 note: Document Augmentation `V8`/`V13` was implemented with separate aug
 Manual review note: the case-level review of `V12` Run 2 serious failures is recorded in `docs/qa/RAG_EVALUATION_SERIOUS_FAILURE_REVIEW.md`. It did not rerun the benchmark or change the question bank/scoring. The review found that all 8 `V12` serious failures are real, mostly from generation failing to use retrieved evidence or incomplete section summaries. The final recommendation before Phase 8 is do not ship yet.
 
 Phase 8 note: the final production-readiness recommendation is recorded in `docs/qa/RAG_PRODUCTION_READINESS_RECOMMENDATION.md`. It makes production shipment a NO-GO, freezes `V12` only as the engineering candidate config, keeps `V7` as fallback/co-lead, keeps Document Augmentation experimental, keeps compression off by default, and proposes Phase 9 serious-failure remediation before any production reconsideration.
+
+Phase 10 note: the remaining-failure review is recorded in `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`. It manually reviewed the 6 final Phase 9 `V12` serious failures against matching `V7` artifacts, found all 6 real, found no scoring false positives, classified all 6 as production blockers, and kept production as NO-GO.
 
 ## Run 1 Scope
 
@@ -305,9 +308,31 @@ Decision update:
 - Keep `V7` as the close fallback/co-lead because it has the higher final average rule score, but it still has a serious failure on `nist-ams300-1-df-04`.
 - Keep production as **NO-GO** because final `V12` still exceeds the Phase 8 regression gate of at most 2 serious failures out of 50 and includes unresolved OSHA guarding serious failures.
 
+## Phase 10 Remaining-Failure Review
+
+Phase 10 manually reviewed the 6 remaining final Phase 9 `V12` serious failures. Full details are in `docs/qa/RAG_REMAINING_FAILURE_REVIEW.md`.
+
+| Case | Manual Classification | Decision | V7 Better? | Safety Note |
+| --- | --- | --- | --- | --- |
+| `nist-ams300-1-mc-01` | `generation_failed_to_use_evidence` | `production_blocker` | Yes | No safety issue. |
+| `nist-ams300-11-df-04` | `generation_failed_to_use_evidence` | `production_blocker` | Yes | No safety issue. |
+| `osha-guarding-df-04` | `generation_failed_to_use_evidence` | `production_blocker` | No, tied | Safety-relevant omission; no unsafe advice. |
+| `osha-guarding-ss-03` | `generation_failed_to_use_evidence` | `production_blocker` | Yes | Safety-relevant omission; no unsafe advice. |
+| `osha-guarding-mc-01` | `generation_failed_to_use_evidence` | `production_blocker` | No, tied | Safety-relevant omission; no unsafe advice. |
+| `nist-csf-2-mc-02` | `context_builder_missed_evidence` | `production_blocker` | No, tied | Cybersecurity incident-response relevance. |
+
+Decision update:
+
+- All 6 remaining `V12` serious failures are real answer failures.
+- None are scoring false positives or ambiguous eval cases.
+- All 6 are production blockers under the current gate.
+- The OSHA guarding failures are safety-relevant omissions, but they do not contain direct unsafe advice.
+- `V7` handled 3 of the 6 better, but its full-run serious-failure count remains worse than `V12`.
+- Keep `V12` as the engineering candidate, keep `V7` as fallback/co-lead, and keep production as **NO-GO**.
+
 ## Current Champion Rationale
 
-`V12` remains the current engineering champion after Phase 9 because it gives the best remediation posture after Document Augmentation was tested and the reviewed serious failures were fixed:
+`V12` remains the current engineering champion after Phase 10 because it gives the best remediation posture after Document Augmentation was tested, the reviewed Phase 8 serious failures were fixed, and the remaining final Phase 9 failures were manually classified:
 
 - Final Phase 9 serious-failure count is 6, lower than `V7` at 7.
 - All 8 reviewed Phase 8 serious cases are no longer serious failures in final `V12`.
@@ -315,7 +340,7 @@ Decision update:
 - Query rewrite plus RSE remains the best target for the reviewed remediation classes.
 - Retrieval remains strong: `doc_hit@5 = 1.00`, `section_or_page_hit@5 = 0.94`.
 
-The caveat is still substantial: final `V12` has 6 serious failures, and several are OSHA guarding cases requiring manual review. Treat `V12` and `V7` as the top pair for continued engineering work. Neither is production-ready.
+The caveat is still substantial: final `V12` has 6 serious failures, and Phase 10 confirmed all 6 are real production blockers. Treat `V12` and `V7` as the top pair for continued engineering work. Neither is production-ready.
 
 ## Phase 8 Guidance
 
@@ -337,7 +362,8 @@ Recommended next actions:
 
 - Final Phase 9 `V12` still has 6 serious failures out of 50.
 - Remaining `V12` serious cases are `nist-ams300-1-mc-01`, `nist-ams300-11-df-04`, `osha-guarding-df-04`, `osha-guarding-ss-03`, `osha-guarding-mc-01`, and `nist-csf-2-mc-02`.
-- The remaining OSHA guarding cases keep the safety/manual-review gate closed.
+- Phase 10 manual review confirmed all 6 are real production blockers and found no scoring false positives.
+- The remaining OSHA guarding cases are safety-relevant omissions and keep the safety gate closed, though none gives direct unsafe advice.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has been tested and should not be the production default based on Run 2.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.
