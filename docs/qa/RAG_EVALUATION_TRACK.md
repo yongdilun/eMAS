@@ -17,7 +17,7 @@ Plan: `docs/qa/RAG_EVALUATION_PLAN.md`
 
 ## Current Status
 
-Phase 6.5 Fairness Fix and Corrected Rerun is complete. The fresh 50-question bank now has the original Run 1 artifacts plus a corrected comparison set for the 8 rerank-enabled variants and 4 anchor variants. `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md` records the corrected baseline. The corrected provisional champion is `V7`, with `V12` effectively tied as co-lead and `V10` as the third carry-forward candidate for Phase 7. Document Augmentation V8/V13 has not been implemented or run.
+Phase 6.6 Scoring Fairness Audit and Top-Candidate Rerun is complete. Phase 6.5 fixed the reranker comparison, and Phase 6.6 corrected narrow scoring defects that inflated automated serious failures: noisy PDF section labels were treated as hard citation failures even when page/evidence support was present, and checklist text using `safeguard` triggered an unsafe-advice false positive. `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md` records the latest top-candidate baseline. Document Augmentation V8/V13 has not been implemented or run.
 
 Important current decisions:
 
@@ -27,6 +27,8 @@ Important current decisions:
 - Phase 6 manually audited judge samples and found Qwen2.5 7B reliable enough for rough triage only, weak for safety and citation adjudication.
 - Phase 6.5 fixed the unfair reranker fallback, improved citation/evidence audit artifacts and safety-boundary checks, then reran the affected variants plus anchors.
 - Corrected Phase 6.5 provisional champion: `V7`. Co-lead: `V12`. Recommended top 3 for Phase 7: `V7`, `V12`, and `V10`; `V5` is a close alternate and `V2` remains an optional clean control.
+- Phase 6.6 did not change the question bank, prompts, expected answers, retrieval, reranking, context building, compression, or generation.
+- Phase 6.6 top-candidate result: `V7` remains champion at 81.05 average / 7 serious failures; `V12` remains co-lead at 80.80 / 8; `V10` remains the third Phase 7 carry-forward at 79.52 / 8.
 - Run 2 should prefer a stronger judge such as Qwen3 14B if hardware allows.
 - Document Augmentation variants V8 and V13 are deferred to Run 2.
 - Work continues directly on `main`; do not create a feature branch unless the user changes this instruction.
@@ -49,6 +51,7 @@ Important current decisions:
 | 5 | Run Benchmark 1 | Done | Codex | Run 1 completed across 12 variants in fixed randomized order. Artifacts validated: 600 case artifacts, 12 summaries, and 12 judge audit samples. |
 | 6 | Review and decision memo | Done | Codex | Decision memo added. Provisional champion: V12. Runner-up: V7. Run 2 carry-forward set: V12, V7, and V2 if budget permits. |
 | 6.5 | Fairness fix and corrected rerun | Done | Codex | Fixed/replaced reranker integration, added visible fallback tracing, improved citation/evidence artifacts and safety-boundary scoring, reran V1/V3/V5/V6/V7/V10/V11/V12 plus V0/V2/V4/V9 anchors. |
+| 6.6 | Scoring fairness audit and top-candidate rerun | Done | Codex | Fixed narrow scoring defects from manual review, then reran V7/V12/V10/V5/V2 before Phase 7. |
 | 7 | Benchmark Run 2 with Document Augmentation | Not Started | TBD | Compare top 2-3 Run 1 variants against V8 and V13. |
 | 8 | Production rollout recommendation | Not Started | TBD | Freeze winning pipeline config and define production monitoring/regression tasks. |
 
@@ -391,6 +394,61 @@ Important interpretation:
 
 Full details are in `docs/qa/RAG_EVALUATION_CORRECTED_RUN_ADDENDUM.md`.
 
+## Phase 6.6 Findings
+
+Date: 2026-05-25
+
+Phase 6.6 corrected scoring fairness defects found during manual review of the Phase 6.5 top candidates:
+
+- Citation support now follows the planned page-or-section strictness. A noisy extracted PDF section label no longer creates `citation_does_not_support_answer` when expected page/evidence support is present.
+- Citation hard failures remain strict when the expected document is cited but neither expected page nor expected section support is hit.
+- Unsafe-advice regex matching no longer spans across unrelated checklist lines, so `safeguard` checklist language is not treated as permission to bypass or remove a guard.
+- Focused tests cover the page-supported section-mismatch case, true unsupported citation case, `safeguard` false positive, and true "without lockout/tagout" unsafe-advice case.
+- The 50-question bank, prompts, expected answers, retrieval, reranking, context building, compression, generation, and Document Augmentation remained unchanged.
+
+Phase 6.6 rerun scope:
+
+- `V7`: `run1-phase66-20260525-v07`
+- `V12`: `run1-phase66-20260525-v12`
+- `V10`: `run1-phase66-20260525-v10`
+- `V5`: `run1-phase66-20260525-v05`
+- `V2`: `run1-phase66-20260525-v02`
+
+All Phase 6.6 runs used `--judge`. Artifact validation passed for every folder: 50 case artifacts, `summary.json`, and `judge_audit_sample.json`. All runs had 50/50 automated structural pass and 0 judge errors. Rerank variants recorded 50 rerank successes and 0 fallback; `V2` recorded 0 rerank enabled.
+
+Phase 6.6 result:
+
+| Variant | Avg Rule | Serious | Borderline | Warnings | Avg Sec | Rerank Succeeded/Fallback |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `V7` | 81.05 | 7 | 36 | 0 | 6.35 | 50/0 |
+| `V12` | 80.80 | 8 | 35 | 0 | 6.23 | 50/0 |
+| `V10` | 79.52 | 8 | 34 | 1 | 6.12 | 50/0 |
+| `V5` | 78.81 | 9 | 35 | 1 | 6.03 | 50/0 |
+| `V2` | 75.63 | 13 | 29 | 0 | 3.28 | 0/0 |
+
+Delta from Phase 6.5:
+
+| Variant | Avg Rule Delta | Serious Delta |
+| --- | ---: | ---: |
+| `V7` | +4.47 | -10 |
+| `V12` | +4.24 | -9 |
+| `V10` | +3.97 | -9 |
+| `V5` | +3.49 | -8 |
+| `V2` | +1.23 | -4 |
+
+Decision update:
+
+- Phase 6.6 does not change the Phase 7 candidate set.
+- `V7` remains the corrected provisional champion.
+- `V12` remains a close co-lead.
+- `V10` remains the third carry-forward candidate.
+- `V5` remains a close alternate.
+- `V2` remains a useful non-rerank control, but top rerank variants now beat it by both average score and serious-failure count.
+- No Phase 6.6 top-candidate run has an `unsafe_advice` serious flag.
+- Remaining top-candidate serious failures are mostly real wrong/incomplete answers, so production rollout remains blocked.
+
+Full details are in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
+
 ## Run 1 Variant Set
 
 | ID | Pipeline | Status |
@@ -632,11 +690,11 @@ Get-Content -Raw -LiteralPath 'docs/qa/rag_eval_question_bank.md'
 
 ## Current Blockers
 
-- Corrected reranker integration is fixed for Phase 6.5 artifacts, but the corrected champion `V7` still has 17 automated serious failures out of 50 and is not production-ready.
+- Corrected reranker integration is fixed for Phase 6.5/6.6 artifacts, but the Phase 6.6 champion `V7` still has 7 automated serious failures out of 50 and is not production-ready.
 - Judge safety and citation scoring are weak enough that top Run 2 candidates require manual review.
-- Automated `unsafe_advice` flags increased slightly in the corrected comparison and need manual review before production conclusions.
+- Phase 6.6 removed the known `safeguard` unsafe-advice false positive from the top-candidate set, but safety cases still require manual review before production conclusions.
 - Compression remains quality-negative despite focused evidence-preservation fixes.
 
 ## Next Action
 
-Start Phase 7 only after accepting the corrected Phase 6.5 baseline: compare Document Augmentation `V8` and `V13` against the corrected top candidates, preferably `V7`, `V12`, and `V10`, with `V2` only as an optional clean control.
+Start Phase 7 only after accepting the Phase 6.6 fairness baseline: compare Document Augmentation `V8` and `V13` against the corrected top candidates, preferably `V7`, `V12`, and `V10`, with `V5` as a close alternate and `V2` only as an optional clean control.

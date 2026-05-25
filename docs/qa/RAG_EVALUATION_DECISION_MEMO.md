@@ -2,16 +2,18 @@
 
 Created: 2026-05-25
 
-Updated: 2026-05-25 after Phase 6.5 corrected reranker/citation/safety rerun.
+Updated: 2026-05-25 after Phase 6.6 scoring-fairness top-candidate rerun.
 
 ## Executive Decision
 
 - Corrected provisional champion: `V7` - Query Rewrite + Hybrid Search + Small-to-Big + Rerank.
-- Corrected co-lead: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank. The corrected `V7` margin over `V12` is only 0.0194 average rule points, with both at 17 serious failures.
+- Corrected co-lead: `V12` - Query Rewrite + Hybrid Search + RSE + Rerank. After Phase 6.6, `V7` leads `V12` by 0.2458 average rule points and one fewer serious failure.
 - Top corrected variants to carry into Phase 7: `V7`, `V12`, and `V10`. If budget allows, keep `V5` as a close alternate and `V2` as a clean non-rerank control.
-- Confidence level: medium for selecting a Phase 7 candidate set, low for production rollout. The corrected run fixes the unfair reranker comparison, but the top candidates still have too many serious failures and the judge remains triage-grade.
+- Confidence level: medium for selecting a Phase 7 candidate set, low for production rollout. Phase 6.5 fixed the unfair reranker comparison; Phase 6.6 fixed narrow scoring fairness defects. The top candidates still have serious failures and the judge remains triage-grade.
 
 Original Run 1 caveat: rerank-enabled variants logged `BGE Reranker failed: XLMRobertaTokenizer has no attribute prepare_for_model. Falling back to initial boosted scores.` Affected variants were `V1`, `V3`, `V5`, `V6`, `V7`, `V10`, `V11`, and `V12`. Phase 6.5 resolved this for the corrected run artifacts: all required rerank variants recorded 50 attempted, 50 succeeded, and 0 fallback.
+
+Phase 6.6 note: manual review found that Phase 6.5 serious-failure counts were still inflated by scoring defects. No question bank, prompt, expected-answer, retrieval, reranking, context-building, compression, or generation behavior changed in Phase 6.6. The latest top-candidate result is recorded in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
 
 ## Run 1 Scope
 
@@ -43,6 +45,26 @@ Decision update:
 - The reranker fix changed the ranking: true-rerank `V10` and `V5` moved into the top cluster above the non-rerank `V2` control.
 - Citation-related serious-failure flags dropped sharply after preserving chunk/page/section support in artifacts.
 - Compression remains harmful after focused evidence-preservation tests, so `V6` and `V11` should not be production defaults or primary Phase 7 carry-forwards.
+
+## Phase 6.6 Scoring-Fairness Update
+
+Phase 6.6 supersedes the Phase 6.5 top-candidate serious-failure counts for Phase 7 planning. Full details are in `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
+
+| Variant | Pipeline | Avg Rule | Serious | Borderline | Rerank | Judge |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `V7` | Query Rewrite + Hybrid Search + Small-to-Big + Rerank | 81.05 | 7 | 36 | 50 succeeded / 0 fallback | 36/36, 0 errors |
+| `V12` | Query Rewrite + Hybrid Search + RSE + Rerank | 80.80 | 8 | 35 | 50 succeeded / 0 fallback | 35/35, 0 errors |
+| `V10` | Hybrid Search + RSE + Rerank | 79.52 | 8 | 34 | 50 succeeded / 0 fallback | 34/34, 0 errors |
+| `V5` | Hybrid Search + Small-to-Big + Rerank | 78.81 | 9 | 35 | 50 succeeded / 0 fallback | 35/35, 0 errors |
+| `V2` | Hybrid Search | 75.63 | 13 | 29 | 0/0 | 29/29, 0 errors |
+
+Decision update:
+
+- The Phase 7 candidate set does not change: carry `V7`, `V12`, and `V10`; keep `V5` as a close alternate and `V2` as an optional non-rerank control.
+- `V7` remains champion and now has the best average score plus the fewest serious failures in the corrected top set.
+- Rerank-enabled top candidates still beat the non-rerank `V2` anchor after the fairness fix.
+- No Phase 6.6 top-candidate run has an `unsafe_advice` serious flag.
+- Remaining serious failures are mostly real wrong/incomplete answers, not the known Phase 6.5 citation-section or `safeguard` scoring defects.
 
 ## Original Run 1 Score Summary
 
@@ -141,7 +163,8 @@ Small-to-Big vs RSE:
 
 - Original Run 1, without true reranking: `V4` Small-to-Big beat `V9` RSE: 69.21 average / 23 serious versus 67.03 / 25.
 - Corrected Phase 6.5, with true reranking: `V7` Small-to-Big plus query rewrite narrowly beat `V12` RSE plus query rewrite: 76.58 / 17 versus 76.56 / 17.
-- The corrected result is too close to declare a decisive Small-to-Big win over RSE. Carry both `V7` and `V12` forward.
+- Phase 6.6: `V7` remains ahead of `V12`: 81.05 / 7 versus 80.80 / 8.
+- The corrected result is still close enough to carry both `V7` and `V12` forward.
 
 Compression effect:
 
@@ -152,18 +175,20 @@ Compression effect:
 
 Query rewrite effect:
 
-- Corrected `V7` versus `V5`: average score improved 75.32 to 76.58 with the same 17 serious failures.
-- Corrected `V12` versus `V10`: average score improved 75.55 to 76.56 with the same 17 serious failures.
-- Recommendation: deterministic retrieval query rewrite remains worth carrying into Phase 7, but the corrected effect is smaller than the original fallback-rerank comparison suggested.
+- Phase 6.6 `V7` versus `V5`: average score improved 78.81 to 81.05 and serious failures improved 9 to 7.
+- Phase 6.6 `V12` versus `V10`: average score improved 79.52 to 80.80 with both at 8 serious failures.
+- Recommendation: deterministic retrieval query rewrite remains worth carrying into Phase 7, but the corrected effect is modest rather than decisive.
 
 Baseline comparison:
 
-- Corrected `V2` Hybrid Search remains the strongest clean non-rerank baseline: 74.40 average and 17 serious failures.
-- Corrected true-rerank variants `V7`, `V12`, `V10`, and `V5` rank above `V2` by average rule score, though all still have 17 serious failures.
+- Phase 6.6 `V2` Hybrid Search remains the strongest clean non-rerank baseline in the top-candidate audit: 75.63 average and 13 serious failures.
+- Phase 6.6 true-rerank variants `V7`, `V12`, `V10`, and `V5` rank above `V2` by average rule score and serious-failure count.
 - `V0` vector-only still has weaker page/section localization than hybrid/context variants.
 - The corrected run supports carrying true rerank into Phase 7, with `V2` as an optional control rather than a top-three candidate.
 
 ## Serious Failures
+
+This section preserves the original Run 1 failure analysis. For current top-candidate serious failures after the scoring-fairness fix, use the Phase 6.6 table above and `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md`.
 
 Automated serious failures were high across all variants. Counts by failure code across Run 1:
 
@@ -202,15 +227,15 @@ Variant/case serious-failure list, grouped by reason code:
 
 ## Provisional Champion Rationale
 
-`V7` is the corrected provisional champion because it gives the best overall Phase 6.5 balance:
+`V7` is the corrected provisional champion because it gives the best overall Phase 6.6 balance:
 
-- Highest corrected average rule score: 76.58.
-- Tied-lowest corrected automated serious-failure count: 17.
+- Highest corrected average rule score: 81.05.
+- Lowest corrected automated serious-failure count in the top-candidate set: 7.
 - True reranking ran for all 50 cases with 0 fallback.
 - Query rewrite plus Small-to-Big slightly beat query rewrite plus RSE in the corrected run.
-- Runtime and context cost are acceptable for a rerank-enabled variant: 6.40s average and about 1022 context tokens after compression stage.
+- Runtime and context cost are acceptable for a rerank-enabled variant: 6.35s average and about 1022 context tokens after compression stage.
 
-The caveat is substantial: `V7` only beats `V12` by 0.0194 average rule points, and both have 17 serious failures. Treat them as co-leads. Neither is production-ready without Phase 7 and manual serious-failure review.
+The caveat is substantial: `V7` still has 7 serious failures, and `V12` remains close at 80.80 average / 8 serious failures. Treat them as co-leads. Neither is production-ready without Phase 7 and manual serious-failure review.
 
 ## Phase 7 Recommendation
 
@@ -231,13 +256,13 @@ Before Phase 7:
 - Improve judge setup. Prefer Qwen3 14B for Run 2 judge triage; otherwise keep Qwen2.5 7B only with manual review for top variants, safety cases, and citation failures.
 - Keep the 50-question bank unchanged unless a clear artifact interpretation bug is found.
 
-Do not start Document Augmentation from the original Run 1 baseline. Use the corrected Phase 6.5 baseline.
+Do not start Document Augmentation from the original Run 1 baseline. Use the corrected Phase 6.6 baseline.
 
 ## Blockers Before Production
 
-- Even the corrected provisional champion still has 17 automated serious failures out of 50.
+- Even the corrected provisional champion still has 7 automated serious failures out of 50.
 - Citation support improved, but remaining citation-support failures still need manual review.
-- Safety boundary answers improved for OSHA/live-status prompts, but automated `unsafe_advice` flags need manual review before production conclusions.
+- Safety boundary answers improved for OSHA/live-status prompts, and the known `safeguard` unsafe-advice false positive was fixed for the top-candidate set. Safety cases still need manual review before production conclusions.
 - Judge safety scoring is too blunt to be a production gate.
 - Document Augmentation has not been tested.
 - Compression reduced cost but hurt quality, so it should not be the production default yet.

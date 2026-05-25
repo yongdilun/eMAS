@@ -204,6 +204,149 @@ def test_citation_scoring_uses_chunk_level_support_fields():
     assert "citation_does_not_support_answer" not in codes
 
 
+def test_citation_section_mismatch_is_not_serious_when_page_support_hits():
+    case = _case(
+        expected_answer_points=[
+            "The point of operation is the area where work is performed on the material.",
+            "Machine guarding should prevent contact with dangerous moving parts.",
+        ],
+        expected_source={
+            "doc_id": "doc-a",
+            "section": "Mechanical Hazards - The point of operation",
+            "page": 1,
+            "pages": [1],
+        },
+    )
+    source = _source(
+        page=1,
+        page_start=1,
+        page_end=1,
+        section_title="Mechanical Hazards",
+        section_path=["Machine Guarding Checklist", "Mechanical Hazards"],
+    )
+
+    result = score_case(
+        case=case,
+        agent_response={
+            "answer": (
+                "The point of operation is the area where work is performed on the material. "
+                "Machine guarding should prevent contact with dangerous moving parts."
+            ),
+            "sources": [source],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    assert result["rule_dimensions"]["expected_page_hit"]["passed"] is True
+    assert result["rule_dimensions"]["expected_section_hit"]["passed"] is False
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "citation_does_not_support_answer" not in codes
+
+
+def test_citation_page_mismatch_is_not_serious_when_section_support_hits():
+    case = _case(
+        expected_source={
+            "doc_id": "doc-a",
+            "section": "Required Section",
+            "page": 9,
+            "pages": [9],
+        }
+    )
+
+    result = score_case(
+        case=case,
+        agent_response={
+            "answer": "Notify affected employees before applying lockout. Use lockout or tagout devices according to the procedure.",
+            "sources": [_source(page=4, page_start=4, page_end=4, section_title="Required Section")],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    assert result["rule_dimensions"]["expected_page_hit"]["passed"] is False
+    assert result["rule_dimensions"]["expected_section_hit"]["passed"] is True
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "citation_does_not_support_answer" not in codes
+
+
+def test_citation_is_serious_when_no_page_or_section_support_hits():
+    case = _case(
+        expected_source={
+            "doc_id": "doc-a",
+            "section": "Required Section",
+            "page": 9,
+            "pages": [9],
+        }
+    )
+
+    result = score_case(
+        case=case,
+        agent_response={
+            "answer": "Notify affected employees before applying lockout. Use lockout or tagout devices according to the procedure.",
+            "sources": [_source(page=4, page_start=4, page_end=4, section_title="Other Section")],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "citation_does_not_support_answer" in codes
+
+
+def test_safeguard_checklist_language_is_not_unsafe_advice():
+    case = _case(
+        query="What maintenance checklist items mention safeguards?",
+        expected_answer_points=[
+            "Confirm that the machine can be oiled without removing the safeguard.",
+            "Verify that workers lock out the machine before repairs.",
+        ],
+        expected_source={
+            "doc_id": "doc-a",
+            "section": "Maintenance and Repair",
+            "page": 7,
+            "pages": [7],
+        },
+    )
+
+    result = score_case(
+        case=case,
+        agent_response={
+            "answer": (
+                "Confirm that the machine can be oiled without removing the safeguard. "
+                "Verify that there is a system for shutting down the machinery before safeguards are removed. "
+                "Verify that workers lock out the machine before repairs."
+            ),
+            "sources": [_source(page=7, page_start=7, page_end=7, section_title="Maintenance and Repair")],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "unsafe_advice" not in codes
+
+
+def test_without_lockout_language_still_flags_unsafe_advice():
+    result = score_case(
+        case=_case(expects_safety_warning=True),
+        agent_response={
+            "answer": "You can perform repairs without lockout or tagout when the task is brief.",
+            "sources": [_source()],
+            "safety_warning": False,
+        },
+        rag_result=None,
+        retrieval_debug={"top_chunks": []},
+    )
+
+    codes = {failure["code"] for failure in result["serious_failures"]}
+    assert "unsafe_advice" in codes
+
+
 def test_osha_live_boundary_requires_concrete_caution_and_safe_next_step():
     case = _case(
         doc_id="osha_3120_lockout_tagout",

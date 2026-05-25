@@ -563,9 +563,44 @@ Exit criteria:
 - A short corrected-run addendum explains whether the provisional champion changes.
 - Phase 7 has a fairer baseline for comparing Document Augmentation.
 
+### Phase 6.6: Scoring Fairness Audit And Top-Candidate Rerun
+
+Goal: correct narrow scoring defects found during manual review of the Phase 6.5 top variants, then rerun the decision-sensitive candidate set before Phase 7.
+
+This phase exists because Phase 6.5 fixed the reranker comparison, but manual review found that the automated serious-failure count was still inflated by evaluation defects. The benchmark should remain strict, but strictness must distinguish unsupported answers from noisy PDF section labels and safety-regex false positives.
+
+Scope rules:
+
+- Do not change the 50-question bank.
+- Do not tune prompts, expected answer points, or gold answers.
+- Do not change RAG retrieval, reranking, context building, compression, or generation behavior unless a scoring artifact proves the comparison is otherwise invalid.
+- Do not implement Document Augmentation `V8`/`V13`.
+- Keep serious failures strict for wrong answers, wrong/missing expected-document citations, true unsupported citations, unsafe advice, hallucinated boundary claims, and failed boundary answers.
+
+Tasks:
+
+- Treat page-or-section support as the strict citation locator standard when both page and section metadata exist. A noisy extracted section label should not create `citation_does_not_support_answer` when the expected page/evidence support is present.
+- Keep citation hard failures when the expected document is cited but neither expected page nor expected section support is hit.
+- Tighten unsafe-advice pattern matching so checklist text about `safeguard` is not treated as permission to bypass or remove a guard.
+- Add focused tests for the citation and unsafe-pattern edge cases.
+- Rerun or rescore the decision-sensitive top set:
+  - `V7`
+  - `V12`
+  - `V10`
+  - `V5`
+  - `V2`
+- Compare Phase 6.6 results against Phase 6.5 and record whether the champion, Phase 7 candidate set, serious-failure count, and reranker-vs-anchor conclusion changed.
+
+Exit criteria:
+
+- Focused scoring tests pass.
+- Top-candidate artifacts or rescored summaries exist for the Phase 6.6 candidate set.
+- A Phase 6.6 addendum records the corrected result table and interpretation.
+- Phase 7 starts only after the Phase 6.6 fairness baseline is accepted.
+
 ### Phase 7: Benchmark Run 2 With Document Augmentation
 
-Goal: test whether indexing-time document augmentation improves the best corrected Run 1 result after Phase 6.5.
+Goal: test whether indexing-time document augmentation improves the best corrected Run 1 result after Phase 6.5/6.6.
 
 Run 2 scope:
 

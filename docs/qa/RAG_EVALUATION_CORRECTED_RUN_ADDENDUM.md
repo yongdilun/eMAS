@@ -2,6 +2,8 @@
 
 Created: 2026-05-25
 
+Note: Phase 6.6 later corrected narrow scoring fairness defects for the decision-sensitive top-candidate set. Use `docs/qa/RAG_EVALUATION_PHASE_6_6_ADDENDUM.md` for the latest top-candidate serious-failure counts and Phase 7 planning baseline.
+
 ## Scope
 
 Phase 6.5 corrected unfair Run 1 comparison defects, then reran the affected comparison set. This phase did not implement Document Augmentation `V8`/`V13`, did not change the 50-question bank, did not tune prompts or expected answers, and kept serious-failure scoring strict.
