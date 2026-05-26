@@ -4,13 +4,14 @@ import { FACTORY_AGENT_STATUS, factoryAgentApi } from '../../../../services/fact
 import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../turns/turnAssembler'
 import {
   buildActivityStepsFromSnapshot,
+  coalesceActivitySteps,
   finalizeHistoricalActivityStates,
   stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
 import { useActivityStream } from './useActivityStream.js'
-import { useFactoryAgentClientProgress } from './useFactoryAgentClientProgress.js'
+import { stripClientActivitySteps, useFactoryAgentClientProgress } from './useFactoryAgentClientProgress.js'
 import { useSessionEvents } from './useSessionEvents.js'
 import {
   applyResponseDocumentSnapshotUpdate,
@@ -28,6 +29,13 @@ const DEFAULT_MESSAGE_MODE = 'normal'
 
 const hasStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
+const isSnapshotFallbackActivityStep = (step) => String(step?.id || '').startsWith('snapshot_activity_')
+const hasAuthoritativeActivityRows = (steps) => (
+  Array.isArray(steps) && steps.some((step) => step?.id && !isSnapshotFallbackActivityStep(step))
+)
+const stripSnapshotFallbackActivitySteps = (steps) => (
+  Array.isArray(steps) ? steps.filter((step) => !isSnapshotFallbackActivityStep(step)) : []
+)
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -226,12 +234,9 @@ export function useFactoryAgentChat() {
 
     if (ACTIVITY_TIMELINE_ENABLED) {
       setActivitySteps((prev) => {
-        const clientOnly = (Array.isArray(prev) ? prev : []).filter((s) =>
-          String(s?.id || '').startsWith('client_activity_'),
-        )
-        const withoutClient = (Array.isArray(prev) ? prev : []).filter(
-          (s) => !String(s?.id || '').startsWith('client_activity_'),
-        )
+        const prevRows = Array.isArray(prev) ? prev : []
+        const clientOnly = prevRows.filter((s) => String(s?.id || '').startsWith('client_activity_'))
+        const withoutClient = stripClientActivitySteps(prevRows)
         const serverSteps = Array.isArray(snapshot?.activity_steps)
           ? snapshot.activity_steps
           : Array.isArray(snapshot?.activitySteps)
@@ -249,12 +254,13 @@ export function useFactoryAgentChat() {
 
         let result
         if (visibleServerSteps.length) {
+          const priorAuthoritativeRows = stripSnapshotFallbackActivitySteps(visibleWithoutClient)
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be
             // ahead on some ids - only updating `withoutClient` in place drops rows
             // that exist only on the server (looks like "first and last" only).
             const byId = new Map()
-            for (const s of visibleWithoutClient) {
+            for (const s of priorAuthoritativeRows) {
               if (s?.id) byId.set(s.id, { ...s })
             }
             for (const s of visibleServerSteps) {
@@ -265,9 +271,7 @@ export function useFactoryAgentChat() {
             const merged = Array.from(byId.values()).sort(
               (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
             )
-            result = [...clientOnly, ...merged].sort(
-              (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-            )
+            result = coalesceActivitySteps(merged)
           } else {
             // Session no longer in an active stream: drop client placeholder rows so a
             // stale `client_activity_pending` "Reviewing results..." cannot sit after
@@ -284,16 +288,40 @@ export function useFactoryAgentChat() {
             presentation: snapshot?.presentation || null,
           })
           if (built.length) {
-            result = finalizeHistoricalActivityStates(built)
+            if (isStreamActive) {
+              // Snapshot-derived rows are a fallback when the backend omits
+              // activity_steps. During an active run they must not replace
+              // rows already delivered by /events/activity; otherwise the
+              // visible timeline flickers between SSE and stale snapshot views.
+              const hasAuthoritativePrior = hasAuthoritativeActivityRows(visibleWithoutClient)
+              const priorRows = hasAuthoritativePrior
+                ? stripSnapshotFallbackActivitySteps(visibleWithoutClient)
+                : visibleWithoutClient
+              const byId = new Map()
+              for (const s of priorRows) {
+                if (s?.id) byId.set(s.id, { ...s })
+              }
+              for (const s of built) {
+                if (hasAuthoritativePrior && isSnapshotFallbackActivityStep(s)) continue
+                if (!s?.id || byId.has(s.id)) continue
+                byId.set(s.id, { ...s })
+              }
+              const merged = Array.from(byId.values()).sort(
+                (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+              )
+              result = coalesceActivitySteps(merged)
+            } else {
+              result = finalizeHistoricalActivityStates(built)
+            }
           } else if (switchedSession) {
             // New session snapshot: do not carry over activity rows from the previous session.
             result = clientOnly
           } else if (isStreamActive) {
             // IDLE and similar snapshots often omit activity_steps; built can still be empty
             // while the UI already showed rows during the run - keep them.
-            result = [...clientOnly, ...visibleWithoutClient].sort(
-              (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-            )
+            result = visibleWithoutClient.length
+              ? visibleWithoutClient
+              : clientOnly
           } else {
             result = finalizeHistoricalActivityStates(withoutClient)
           }
@@ -380,18 +408,26 @@ export function useFactoryAgentChat() {
 
   const applyStreamActivityStep = useCallback((incoming) => {
     if (!ACTIVITY_TIMELINE_ENABLED || !incoming?.id) return
+    const terminalActivity = incoming?.state === 'complete' || incoming?.state === 'error'
+    const currentSessionId = session?.session_id || null
+    const currentSessionStatus = session?.status || null
     setActivitySteps((prev) => {
-      const base = Array.isArray(prev) ? prev : []
-      const clientOnly = base.filter((s) => String(s?.id || '').startsWith('client_activity_'))
-      const withoutClient = base.filter((s) => !String(s?.id || '').startsWith('client_activity_'))
+      const withoutClient = stripClientActivitySteps(prev)
       const idx = withoutClient.findIndex((s) => s.id === incoming.id)
       const next = [...withoutClient]
       if (idx >= 0) next[idx] = { ...next[idx], ...incoming }
       else next.push(incoming)
       next.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-      return [...clientOnly, ...next].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      return coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus))
     })
-  }, [])
+    if (terminalActivity && currentSessionId) {
+      window.setTimeout(() => {
+        safelyRefreshSnapshot(currentSessionId, { transport: 'activity-terminal' }).catch((err) => {
+          setError(normalizeFactoryAgentError(err, 'Failed to refresh completed session'))
+        })
+      }, 0)
+    }
+  }, [safelyRefreshSnapshot, session?.session_id, session?.status])
 
   const updateStreamDiagnostic = useCallback((diagnostic) => {
     if (!diagnostic?.source) return

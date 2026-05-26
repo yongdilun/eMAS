@@ -21,7 +21,7 @@ export function assistantAnswerAllowed({
   if (!activityTimelineEnabled || !isLatestTurn) return true
 
   const stu = String(sessionStatus || '').toUpperCase()
-  const steps = Array.isArray(activitySteps) ? activitySteps : []
+  const steps = truncateActivityAfterTerminal(Array.isArray(activitySteps) ? activitySteps : [])
   const hasActivity = steps.length > 0
   const last = hasActivity ? steps[steps.length - 1] : null
   const activityEnded = Boolean(last && (last.state === 'complete' || last.state === 'error'))
@@ -36,6 +36,7 @@ export function assistantAnswerAllowed({
     stu === 'BLOCKED'
 
   if (skipActivityRowTerminal) return true
+  if (ACTIVE_SESSION_STATUSES.has(stu) && !turnEnded) return false
   if (hasActivity) return activityEnded
   return Boolean(turnEnded)
 }
@@ -61,7 +62,84 @@ export function mergeActivityStep(steps, step) {
   if (!normalized) return Array.isArray(steps) ? steps : []
   const existing = Array.isArray(steps) ? steps : []
   const without = existing.filter((item) => item.id !== normalized.id)
-  return [...without, normalized].sort((a, b) => {
+  return coalesceActivitySteps([...without, normalized].sort((a, b) => {
+    const ts = Number(a.timestamp || 0) - Number(b.timestamp || 0)
+    if (ts !== 0) return ts
+    return String(a.id || '').localeCompare(String(b.id || ''))
+  }))
+}
+
+export function truncateActivityAfterTerminal(steps = []) {
+  const rows = Array.isArray(steps) ? steps.filter(Boolean) : []
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const state = rows[i]?.state
+    if (state === 'complete' || state === 'error') return rows.slice(0, i + 1)
+  }
+  return rows
+}
+
+const ACTIVITY_STATE_MERGE_RANK = {
+  running: 0,
+  retry: 0,
+  waiting: 0,
+  success: 1,
+  complete: 2,
+  error: 2,
+}
+
+function activityMeaningKey(step) {
+  if (!step) return ''
+  return [
+    String(step.group || '').trim().toLowerCase(),
+    String(step.label || '').trim().toLowerCase(),
+    String(step.detail || '').trim().toLowerCase(),
+  ].join('::')
+}
+
+function preferActivityId(a, b) {
+  const aid = String(a?.id || '')
+  const bid = String(b?.id || '')
+  const aGraph = aid.startsWith('graph:')
+  const bGraph = bid.startsWith('graph:')
+  if (aGraph && !bGraph) return aid
+  if (bGraph && !aGraph) return bid
+  const aClient = aid.startsWith('client_activity_')
+  const bClient = bid.startsWith('client_activity_')
+  if (aClient && !bClient) return bid
+  if (bClient && !aClient) return aid
+  return aid || bid
+}
+
+function mergeDuplicateActivityStep(existing, incoming) {
+  const existingRank = ACTIVITY_STATE_MERGE_RANK[existing?.state] ?? 0
+  const incomingRank = ACTIVITY_STATE_MERGE_RANK[incoming?.state] ?? 0
+  const preferredState = incomingRank > existingRank ? incoming.state : existing.state
+  return {
+    ...existing,
+    ...incoming,
+    id: preferActivityId(existing, incoming),
+    timestamp: Math.min(Number(existing?.timestamp || 0), Number(incoming?.timestamp || 0)) || incoming.timestamp || existing.timestamp,
+    state: preferredState,
+  }
+}
+
+export function coalesceActivitySteps(steps = []) {
+  const rows = Array.isArray(steps) ? steps : []
+  const out = []
+  const indexByMeaning = new Map()
+  for (const raw of rows) {
+    const step = normalizeActivityStep(raw)
+    if (!step) continue
+    const key = activityMeaningKey(step)
+    if (key && indexByMeaning.has(key)) {
+      const index = indexByMeaning.get(key)
+      out[index] = mergeDuplicateActivityStep(out[index], step)
+      continue
+    }
+    indexByMeaning.set(key, out.length)
+    out.push(step)
+  }
+  return out.sort((a, b) => {
     const ts = Number(a.timestamp || 0) - Number(b.timestamp || 0)
     if (ts !== 0) return ts
     return String(a.id || '').localeCompare(String(b.id || ''))
@@ -83,7 +161,13 @@ export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = 
   const status = String(sessionStatus || '').toUpperCase()
   const rows = Array.isArray(steps) ? steps : []
   if (!ACTIVE_SESSION_STATUSES.has(status)) return rows
-  const withoutTerminal = rows.filter((step) => {
+  const firstTerminal = rows.findIndex((step) => {
+    const label = String(step?.label || '').toLowerCase()
+    const group = String(step?.group || '').toLowerCase()
+    return (step?.state === 'complete' && group === 'response') || label === 'run complete'
+  })
+  const candidateRows = firstTerminal >= 0 ? rows.slice(0, firstTerminal) : rows
+  const withoutTerminal = candidateRows.filter((step) => {
     const label = String(step?.label || '').toLowerCase()
     const group = String(step?.group || '').toLowerCase()
     return !(step?.state === 'complete' && group === 'response') && label !== 'run complete'
@@ -144,18 +228,33 @@ function safeDomainLabel(event) {
   return match ? match[1] : 'relevant records'
 }
 
+function isRagActivityEvent(event) {
+  const text = [
+    event?.tool_name,
+    event?.toolName,
+    event?.details?.tool_name,
+    event?.step_context?.tool_name,
+    event?.stepContext?.toolName,
+  ].filter(Boolean).join(' ').toLowerCase()
+  const sources = event?.details?.sources
+  return text.includes('rag') || text.includes('search_documents') || text.includes('knowledge') || (Array.isArray(sources) && sources.length > 0)
+}
+
 function activityBaseForEvent(event) {
   const typedStep = typedActivityStepForEvent(event)
   if (typedStep) return [typedStep.group, typedStep.label, typedStep.state]
   const type = event?.event_type || event?.eventType
   const status = String(event?.status || '').toUpperCase()
-  if (type === 'plan_created') return ['planning', 'Understanding your request', 'success']
-  if (type === 'execution_started') return ['planning', 'Preparing the next step', 'running']
-  if (type === 'tool_started') return ['research', 'Gathering information', 'running']
+  if (type === 'plan_created') return ['planning', 'Understood request', 'success']
+  if (type === 'execution_started') return ['planning', 'Preparing next action', 'running']
+  if (type === 'tool_started') {
+    if (isRagActivityEvent(event)) return ['research', 'Searching knowledge sources', 'running']
+    return ['research', `Reading ${safeDomainLabel(event)}`, 'running']
+  }
   if (type === 'tool_result') {
-    return status === 'FAILED' || status === 'AMBIGUOUS'
-      ? ['research', 'Could not complete that check', 'error']
-      : ['research', 'Information checked', 'success']
+    if (status === 'FAILED' || status === 'AMBIGUOUS') return ['research', 'Could not complete that check', 'error']
+    if (isRagActivityEvent(event)) return ['research', 'Building cited answer', 'success']
+    return ['research', `Checked ${safeDomainLabel(event)}`, 'success']
   }
   if (type === 'approval_required') {
     if (status && status !== 'PENDING') return null
@@ -180,8 +279,12 @@ function detailForEvent(event, label) {
   const domain = safeDomainLabel(event)
   if (type === 'plan_created') return 'Reviewing your request and recent context'
   if (type === 'execution_started') return 'Preparing the next safe action'
-  if (type === 'tool_started') return `Checking ${domain}`
-  if (type === 'tool_result') return label === 'Could not complete that check' ? 'A check could not be completed' : `Checked ${domain}`
+  if (type === 'tool_started') return isRagActivityEvent(event) ? 'Searching retrieved documents' : `Checking ${domain}`
+  if (type === 'tool_result') {
+    if (label === 'Could not complete that check') return 'A check could not be completed'
+    if (isRagActivityEvent(event)) return 'Checking citation support'
+    return `Checked ${domain}`
+  }
   if (type === 'approval_required') return null
   if (type === 'approval_decided') {
     if (String(event?.status || '').toUpperCase() === 'APPROVED') return 'Continuing with your approved changes'
@@ -490,7 +593,7 @@ function buildStepsFromEventsOperational(events) {
 
     if (t === 'plan_created') {
       if (!seenUnderstanding) {
-        push('planning', 'Understanding your request', 'success', 'Reviewing your request and recent context', ts)
+        push('planning', 'Understood request', 'success', 'Reviewing your request and recent context', ts)
         seenUnderstanding = true
       }
       continue
@@ -716,6 +819,10 @@ function timelineHasExecutionActivity(steps) {
       || label === 'Updating job records'
       || label === 'Verifying result'
       || label === 'Applying approved changes'
+      || label === 'Searching knowledge sources'
+      || label === 'Building cited answer'
+      || label.startsWith('Reading ')
+      || label.startsWith('Checked ')
     )
   })
 }
@@ -800,14 +907,16 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
   const now = Date.now() / 1000
 
   if (status === 'PLANNING') {
-    steps = appendStep(steps, {
-      id: `snapshot_activity_${steps.length + 1}`,
-      timestamp: now,
-      group: 'planning',
-      label: 'Understanding your request',
-      detail: 'Reviewing your request and recent context',
-      state: 'running',
-    })
+    if (!steps.length) {
+      steps = appendStep(steps, {
+        id: `snapshot_activity_${steps.length + 1}`,
+        timestamp: now,
+        group: 'planning',
+        label: 'Understanding your request',
+        detail: 'Reviewing your request and recent context',
+        state: 'running',
+      })
+    }
   }
 
   if (status === 'EXECUTING') {

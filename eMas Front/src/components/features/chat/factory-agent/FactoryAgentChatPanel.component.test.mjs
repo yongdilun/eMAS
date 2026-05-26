@@ -1543,6 +1543,96 @@ test('FactoryAgentChatPanel keeps repeated source-chip hover to one tooltip', as
   await waitFor(() => assert.equal(document.querySelectorAll('[data-source-chip-hover]').length, 0))
 })
 
+test('FactoryAgentChatPanel highlights only the selected claim citation when steps share a source', async () => {
+  const baseSource = {
+    contract: 'source_citation_v1',
+    source_id: 'LOTO-M-CNC-01#chunk-1',
+    source_number: 1,
+    title: 'Machine LOTO Procedure',
+    doc_id: 'LOTO-M-CNC-01',
+    chunk_id: 'chunk-1',
+    organization: 'Factory Safety',
+    snippet: 'Prepare, shut down, and isolate energy before service.',
+    pdf_url: '/documents/LOTO-M-CNC-01/pdf',
+    page: 14,
+  }
+  const citations = [1, 2, 3].map((index) => ({
+    ...baseSource,
+    citation_id: `citation:LOTO-M-CNC-01#chunk-1:claim-${index}`,
+    text_search: index === 2 ? 'Shut down the machine' : undefined,
+    evidence: index === 2
+      ? [{
+        evidence_id: 'citation:LOTO-M-CNC-01#chunk-1:claim-2:evidence-1',
+        source_id: 'LOTO-M-CNC-01#chunk-1:evidence-1',
+        source_number: 1,
+        title: 'Machine LOTO Procedure',
+        doc_id: 'LOTO-M-CNC-01',
+        chunk_id: 'chunk-1',
+        organization: 'Factory Safety',
+        snippet: 'Shut down the machine.',
+        pdf_url: '/documents/LOTO-M-CNC-01/pdf',
+        page: 14,
+        text_search: 'Shut down the machine',
+        locator_confidence: 'exact',
+      }]
+      : [],
+  }))
+  const rd = baseResponseDocument({
+    message: 'I found a source-backed answer.',
+    blocks: [
+      { id: 'message:knowledge', type: 'short_message', message: 'I found a source-backed answer.', status: 'completed' },
+      {
+        id: 'knowledge:claim-level',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: '1. Prepare for shutdown. 2. Shut down the machine. 3. Disconnect energy sources.',
+        segments: [
+          { text: '1. Prepare for shutdown.', citation_ids: [citations[0].citation_id] },
+          { text: '2. Shut down the machine.', citation_ids: [citations[1].citation_id] },
+          { text: '3. Disconnect energy sources.', citation_ids: [citations[2].citation_id] },
+        ],
+        citations,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-claim-highlight', name: 'RD claim highlight', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-claim-highlight', name: 'RD claim highlight', status: 'COMPLETED' }],
+    activeSessionName: 'RD claim highlight',
+    turns: [responseDocumentTurn(rd)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.equal(view.container.querySelectorAll('[data-source-chip]').length, 3))
+  const renderedSegments = Array.from(view.container.querySelectorAll('[data-knowledge-answer-segment]'))
+  assert.equal(renderedSegments.length, 3)
+  assert.ok(renderedSegments.every((segment) => segment.tagName === 'DIV'))
+  const chips = Array.from(view.container.querySelectorAll('[data-source-chip]'))
+  await click(chips[1])
+  await waitFor(() => assert.equal(view.container.querySelectorAll('[data-cited-answer-text]').length, 1))
+  const highlighted = view.container.querySelector('[data-cited-answer-text]')
+  assert.equal(highlighted?.getAttribute('data-citation-id'), 'citation:LOTO-M-CNC-01#chunk-1:claim-2')
+  assert.match(highlighted?.textContent || '', /2\. Shut down the machine\./)
+  assert.doesNotMatch(highlighted?.textContent || '', /Prepare for shutdown|Disconnect energy sources/)
+  const evidenceLink = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-evidence-item] [data-source-pdf-link]')
+    assert.ok(node)
+    return node
+  })
+  assert.equal(view.container.querySelectorAll('[data-source-pdf-link]').length, 1)
+  assert.match(evidenceLink.textContent || '', /View matching text on page 14/)
+  await click(evidenceLink)
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-pdf-frame]')))
+  assert.equal(view.container.querySelectorAll('[data-cited-answer-text]').length, 1)
+  const highlightedAfterPdf = view.container.querySelector('[data-cited-answer-text]')
+  assert.equal(highlightedAfterPdf?.getAttribute('data-citation-id'), 'citation:LOTO-M-CNC-01#chunk-1:claim-2')
+  assert.match(highlightedAfterPdf?.textContent || '', /2\. Shut down the machine\./)
+  assert.doesNotMatch(highlightedAfterPdf?.textContent || '', /Prepare for shutdown|Disconnect energy sources/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel strips legacy raw safety markdown from response_document answers', async () => {
   const document = baseResponseDocument({
     message: 'I found a source-backed answer.',
@@ -1571,7 +1661,7 @@ test('FactoryAgentChatPanel strips legacy raw safety markdown from response_docu
   await view.unmount()
 })
 
-test('FactoryAgentChatPanel offers PDF page search link when source locator includes pdf_url, page, and snippet', async () => {
+test('FactoryAgentChatPanel uses page-only PDF fallback when source locator lacks explicit text_search', async () => {
   const answer = 'Use page-specific LOTO notification guidance.'
   const document = baseResponseDocument({
     blocks: [
@@ -1595,6 +1685,8 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
             snippet: 'Page 9 covers notification timing.',
             pdf_url: '/documents/PDF-LOTO/pdf',
             page: 9,
+            page_count: 45,
+            text_search: 'Broad source-list text that should not become the selected claim highlight.',
           },
         ],
       },
@@ -1614,6 +1706,7 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
             snippet: 'Page 9 covers notification timing.',
             pdf_url: '/documents/PDF-LOTO/pdf',
             page: 9,
+            page_count: 45,
           },
         ],
       },
@@ -1647,8 +1740,8 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
     return node
   })
   assert.equal(link.tagName, 'BUTTON')
-  assert.match(link.textContent, /Open PDF search on page 9/)
-  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
+  assert.match(link.textContent, /View page 9/)
+  assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9$/)
   const drawer = view.container.querySelector('[data-source-drawer]')
   assert.ok(drawer?.closest('[data-chatbot-workspace]'))
   assert.equal(drawer.closest('[data-assistant-response-card]'), null)
@@ -1659,10 +1752,345 @@ test('FactoryAgentChatPanel offers PDF page search link when source locator incl
     return node
   })
   assert.equal(frame.getAttribute('data-source-pdf-renderer'), 'pdfjs')
-  assert.match(frame.getAttribute('data-source-pdf-src'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9&search=Page\+9\+covers\+notification\+timing\.$/)
-  assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Exact highlight unavailable/)
+  assert.match(frame.getAttribute('data-source-pdf-src'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9$/)
+  assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Showing page 9 with source excerpt/)
+  assert.equal(view.container.querySelector('[data-source-pdf-evidence-excerpt]'), null)
+  assert.match(view.container.querySelector('[data-source-pdf-status]')?.textContent || '', /Rendered page 9 of 45/)
+  const nextPage = view.container.querySelector('[data-source-pdf-next-page]')
+  assert.ok(nextPage)
+  await click(nextPage)
+  await waitFor(() => assert.match(view.container.querySelector('[data-source-pdf-status]')?.textContent || '', /Rendered page 10 of 45/))
+  assert.match(frame.getAttribute('data-source-pdf-src'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=10$/)
+  const previousPage = view.container.querySelector('[data-source-pdf-previous-page]')
+  assert.ok(previousPage)
+  await click(previousPage)
+  await waitFor(() => assert.match(view.container.querySelector('[data-source-pdf-status]')?.textContent || '', /Rendered page 9 of 45/))
+  assert.match(frame.getAttribute('data-source-pdf-src'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=9$/)
   await click(view.container.querySelector('[data-source-pdf-back]'))
   await waitFor(() => assert.equal(view.container.querySelector('[data-source-drawer]')?.getAttribute('data-source-drawer-view'), 'list'))
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel opens source-list PDFs as general references without claim search', async () => {
+  const sourceContext = 'Before beginning service or maintenance, the following steps must be accomplished in sequence and according to the specific provisions of the employer’s energy-control procedure: (1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine from the energy source(s).'
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'sources:source-context',
+        type: 'source_list',
+        contract: 'source_list_v1',
+        sources: [
+          {
+            contract: 'source_locator_v1',
+            source_id: 'PDF-LOTO#rse-parent',
+            source_number: 1,
+            title: 'PDF LOTO Procedure',
+            doc_id: 'PDF-LOTO',
+            chunk_id: 'rse:PDF-LOTO:01:chunk-15',
+            organization: 'Factory Safety',
+            snippet: 'Prepare for shutdown.',
+            pdf_url: '/documents/PDF-LOTO/pdf',
+            page: 13,
+            page_count: 45,
+            text_search: 'Prepare for shutdown',
+            evidence_snippets: [
+              {
+                chunk_id: 'rse:PDF-LOTO:01:chunk-15',
+                doc_id: 'PDF-LOTO',
+                title: 'PDF LOTO Procedure',
+                organization: 'Factory Safety',
+                snippet: 'What must an energy-control procedure include?',
+                pdf_url: '/documents/PDF-LOTO/pdf',
+                page: 13,
+                page_count: 45,
+                source_chunk_evidence: [
+                  {
+                    chunk_id: 'chunk-15',
+                    doc_id: 'PDF-LOTO',
+                    title: 'PDF LOTO Procedure',
+                    organization: 'Factory Safety',
+                    snippet: sourceContext,
+                    pdf_url: '/documents/PDF-LOTO/pdf',
+                    page: 14,
+                    page_count: 45,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-source-context', name: 'RD source context', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-source-context', name: 'RD source context', status: 'COMPLETED' }],
+    activeSessionName: 'RD source context',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const sourceCard = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-list-open]')
+    assert.ok(node)
+    return node
+  })
+  assert.match(sourceCard.textContent || '', /Chunk ID: rse:PDF-LOTO:01:chunk-15/)
+  assert.match(sourceCard.textContent || '', /Page: 13/)
+  await click(sourceCard)
+  const drawer = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-drawer]')
+    assert.ok(node)
+    return node
+  })
+  assert.match(drawer.textContent || '', /General reference 1/)
+  assert.equal(drawer.querySelectorAll('[data-source-evidence-item]').length, 0)
+  const links = Array.from(drawer.querySelectorAll('[data-source-pdf-link]'))
+  assert.equal(links.length, 1)
+  assert.match(links[0].textContent || '', /View page 13/)
+  assert.match(links[0].getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=13$/)
+  assert.doesNotMatch(links[0].getAttribute('data-source-pdf-href') || '', /search=/)
+  await click(links[0])
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-pdf-frame]')))
+  assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Showing page 13/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel renders multiple evidence locators for one citation', async () => {
+  const citation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:PDF-LOTO#compound:claim-1',
+    source_id: 'PDF-LOTO#compound',
+    source_number: 1,
+    title: 'PDF LOTO Procedure',
+    doc_id: 'PDF-LOTO',
+    chunk_id: 'compound-parent',
+    organization: 'Factory Safety',
+    snippet: 'Procedure evidence spans multiple verified steps.',
+    pdf_url: '/documents/PDF-LOTO/pdf',
+    page: 14,
+    page_count: 45,
+    evidence: [
+      {
+        evidence_id: 'citation:PDF-LOTO#compound:claim-1:evidence-1',
+        source_id: 'PDF-LOTO#compound:evidence-1',
+        source_number: 1,
+        title: 'PDF LOTO Procedure',
+        doc_id: 'PDF-LOTO',
+        chunk_id: 'step-prepare',
+        organization: 'Factory Safety',
+        snippet: 'Prepare for shutdown.',
+        pdf_url: '/documents/PDF-LOTO/pdf',
+        page: 14,
+        page_count: 45,
+        text_search: 'Prepare for shutdown',
+        locator_confidence: 'exact',
+      },
+      {
+        evidence_id: 'citation:PDF-LOTO#compound:claim-1:evidence-2',
+        source_id: 'PDF-LOTO#compound:evidence-2',
+        source_number: 1,
+        title: 'PDF LOTO Procedure',
+        doc_id: 'PDF-LOTO',
+        chunk_id: 'step-shutdown',
+        organization: 'Factory Safety',
+        snippet: 'Shut down the machine.',
+        pdf_url: '/documents/PDF-LOTO/pdf',
+        page: 14,
+        page_count: 45,
+        text_search: 'Shut down the machine',
+        locator_confidence: 'exact',
+      },
+    ],
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      { id: 'message:knowledge', type: 'short_message', message: 'I found a source-backed answer.', status: 'completed' },
+      {
+        id: 'knowledge:multi-evidence',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: 'Workers must prepare for shutdown and shut down the machine.',
+        segments: [{ text: 'Workers must prepare for shutdown and shut down the machine.', citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-multi-evidence', name: 'RD multi evidence', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-multi-evidence', name: 'RD multi evidence', status: 'COMPLETED' }],
+    activeSessionName: 'RD multi evidence',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-chip]')))
+  await click(view.container.querySelector('[data-source-chip]'))
+  await waitFor(() => assert.equal(view.container.querySelectorAll('[data-source-evidence-item]').length, 2))
+  const evidenceItems = Array.from(view.container.querySelectorAll('[data-source-evidence-item]'))
+  assert.match(evidenceItems[0].textContent || '', /Prepare for shutdown/)
+  assert.match(evidenceItems[1].textContent || '', /Shut down the machine/)
+  const evidenceLinks = Array.from(view.container.querySelectorAll('[data-source-evidence-item] [data-source-pdf-link]'))
+  assert.equal(evidenceLinks.length, 2)
+  assert.match(evidenceLinks[1].getAttribute('data-source-pdf-href'), /#page=14&search=Shut\+down\+the\+machine$/)
+  await click(evidenceLinks[1])
+  const frame = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-pdf-frame]')
+    assert.ok(node)
+    return node
+  })
+  assert.match(frame.getAttribute('data-source-pdf-src'), /#page=14&search=Shut\+down\+the\+machine$/)
+  assert.equal(view.container.querySelector('[data-source-pdf-evidence-excerpt]'), null)
+  assert.match(view.container.querySelector('[data-source-pdf-evidence]')?.textContent || '', /Matching text on page 14/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel does not expand nested RSE children as citation evidence spam', async () => {
+  const nestedChildren = Array.from({ length: 8 }, (_, index) => ({
+    chunk_id: `nested-child-${index + 1}`,
+    doc_id: 'PDF-LOTO',
+    title: 'PDF LOTO Procedure',
+    organization: 'Factory Safety',
+    snippet: `Nested child evidence ${index + 1}`,
+    pdf_url: '/documents/PDF-LOTO/pdf',
+    page: 10 + index,
+    page_count: 45,
+  }))
+  const citation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:PDF-LOTO#rse-parent:claim-1',
+    source_id: 'PDF-LOTO#rse-parent',
+    source_number: 1,
+    title: 'PDF LOTO Procedure',
+    doc_id: 'PDF-LOTO',
+    chunk_id: 'rse:PDF-LOTO:01:chunk-15',
+    organization: 'Factory Safety',
+    snippet: 'Prepare for shutdown.',
+    text_search: 'Prepare for shutdown',
+    pdf_url: '/documents/PDF-LOTO/pdf',
+    page: 14,
+    page_count: 45,
+    evidence_snippets: [
+      {
+        chunk_id: 'rse:PDF-LOTO:01:chunk-15',
+        doc_id: 'PDF-LOTO',
+        title: 'PDF LOTO Procedure',
+        organization: 'Factory Safety',
+        snippet: 'RSE parent evidence should not expand in the citation drawer.',
+        pdf_url: '/documents/PDF-LOTO/pdf',
+        page: 13,
+        page_count: 45,
+        source_chunk_evidence: nestedChildren,
+      },
+    ],
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'knowledge:rse-no-spam',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: '1. Prepare for shutdown.',
+        segments: [{ text: '1. Prepare for shutdown.', citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-rse-no-spam', name: 'RD RSE no spam', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-rse-no-spam', name: 'RD RSE no spam', status: 'COMPLETED' }],
+    activeSessionName: 'RD RSE no spam',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-chip]')))
+  await click(view.container.querySelector('[data-source-chip]'))
+  const drawer = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-drawer]')
+    assert.ok(node)
+    return node
+  })
+  assert.equal(drawer.querySelectorAll('[data-source-evidence-item]').length, 0)
+  assert.equal(drawer.querySelectorAll('[data-source-pdf-link]').length, 1)
+  assert.doesNotMatch(drawer.textContent || '', /Nested child evidence 8/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel does not inherit parent text search onto page-only evidence rows', async () => {
+  const citation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:PDF-LOTO#claim-1',
+    source_id: 'PDF-LOTO#claim-1',
+    source_number: 1,
+    title: 'PDF LOTO Procedure',
+    doc_id: 'PDF-LOTO',
+    chunk_id: 'rse-parent',
+    organization: 'Factory Safety',
+    snippet: 'Prepare for shutdown.',
+    text_search: 'Prepare for shutdown',
+    pdf_url: '/documents/PDF-LOTO/pdf',
+    page: 14,
+    page_count: 45,
+    evidence: [
+      {
+        evidence_id: 'citation:PDF-LOTO#claim-1:evidence-1',
+        source_id: 'PDF-LOTO#claim-1:evidence-1',
+        source_number: 1,
+        title: 'PDF LOTO Procedure',
+        doc_id: 'PDF-LOTO',
+        chunk_id: 'unrelated-page',
+        organization: 'Factory Safety',
+        snippet: 'Shutdown of the system is impractical for hot-tap operations.',
+        pdf_url: '/documents/PDF-LOTO/pdf',
+        page: 10,
+        page_count: 45,
+        locator_confidence: 'page_only',
+      },
+    ],
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'knowledge:page-only-evidence',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: '1. Prepare for shutdown.',
+        segments: [{ text: '1. Prepare for shutdown.', citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-evidence-no-inherit', name: 'RD evidence no inherit', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-evidence-no-inherit', name: 'RD evidence no inherit', status: 'COMPLETED' }],
+    activeSessionName: 'RD evidence no inherit',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-chip]')))
+  await click(view.container.querySelector('[data-source-chip]'))
+  const evidenceItem = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-evidence-item]')
+    assert.ok(node)
+    return node
+  })
+  assert.equal(evidenceItem.getAttribute('data-source-page'), '10')
+  assert.equal(evidenceItem.getAttribute('data-source-open-mode'), 'page')
+  assert.match(evidenceItem.querySelector('[data-source-evidence-summary]')?.textContent || '', /Showing page 10/)
+  assert.doesNotMatch(evidenceItem.querySelector('[data-source-evidence-summary]')?.textContent || '', /Prepare for shutdown/)
+  const evidenceLink = evidenceItem.querySelector('[data-source-pdf-link]')
+  assert.ok(evidenceLink)
+  assert.match(evidenceLink.getAttribute('data-source-pdf-href'), /#page=10$/)
 
   await view.unmount()
 })
@@ -1689,6 +2117,7 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
       chunk_id: 'text-search',
       organization: 'Factory Safety',
       snippet: 'Searchable notification fallback text.',
+      text_search: 'Searchable notification fallback text.',
       pdf_url: '/documents/PDF-LOTO/pdf',
       page: 5,
     },
@@ -1783,6 +2212,7 @@ test('FactoryAgentChatPanel chooses deterministic source PDF highlight fallback 
   assert.ok(link)
   assert.equal(link.getAttribute('data-source-highlight-kind'), 'text_search')
   assert.match(link.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/PDF-LOTO\/pdf#page=5&search=Searchable\+notification\+fallback\+text\.$/)
+  assert.match(view.container.querySelector('[data-source-pdf-evidence-summary]')?.textContent || '', /Matching text on page 5/)
 
   drawer = await clickSource('PDF-LOTO#page-only', 'page')
   link = drawer.querySelector('[data-source-pdf-link]')
@@ -1908,6 +2338,208 @@ test('FactoryAgentChatPanel preserves completed response_document evidence while
   assert.match(view.text(), /JOB-SEED-002/)
   assert.doesNotMatch(view.text(), /All requested changes completed/)
   assert.doesNotMatch(view.text(), /Run complete/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel shows live SSE activity for active response_document turns', async () => {
+  const document = baseResponseDocument({
+    state: 'running',
+    status: 'running',
+    run_steps: [
+      {
+        step_id: 'analysis-1',
+        kind: 'analysis',
+        state: 'completed',
+        title: 'Understood request',
+        summary: 'Request parsed.',
+      },
+    ],
+    blocks: [
+      {
+        id: 'activity:rd-active',
+        type: 'run_activity',
+        step_ids: ['analysis-1'],
+      },
+      {
+        id: 'message:rd-active',
+        type: 'short_message',
+        message: 'Working on request.',
+        status: 'running',
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-active', name: 'RD active stream', status: 'EXECUTING' },
+    sessionList: [{ session_id: 'session-rd-active', name: 'RD active stream', status: 'EXECUTING' }],
+    activeSessionName: 'RD active stream',
+    turns: [responseDocumentTurn(document, { summary: 'Working on request.' })],
+    activitySteps: [
+      {
+        id: 'act:understood',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Request parsed.',
+        state: 'success',
+      },
+      {
+        id: 'act:gathering',
+        timestamp: 2,
+        group: 'research',
+        label: 'Gathering information',
+        detail: 'Checking relevant records',
+        state: 'running',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.match(view.container.querySelector('[data-chatbot-topbar]')?.textContent || '', /Gathering information/)
+  assert.doesNotMatch(view.container.querySelector('[data-chatbot-topbar]')?.textContent || '', /Understanding/)
+  assert.match(view.text(), /Gathering information/)
+  assert.match(view.text(), /Checking relevant records/)
+  assert.match(view.text(), /Current/)
+  assert.doesNotMatch(view.text(), /Run complete/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel hides premature live Run complete until terminal snapshot arrives', async () => {
+  const document = baseResponseDocument({
+    state: 'running',
+    status: 'running',
+    message: "I'm working on the request and waiting for the next backend update.",
+    run_steps: [
+      {
+        step_id: 'analysis-1',
+        kind: 'analysis',
+        state: 'completed',
+        title: 'Understood request',
+        summary: 'Request parsed.',
+      },
+    ],
+    blocks: [
+      {
+        id: 'activity:rd-active-terminal-race',
+        type: 'run_activity',
+        step_ids: ['analysis-1'],
+      },
+      {
+        id: 'message:rd-active-terminal-race',
+        type: 'short_message',
+        message: "I'm working on the request and waiting for the next backend update.",
+        status: 'running',
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-terminal-race', name: 'RD terminal race', status: 'EXECUTING' },
+    sessionList: [{ session_id: 'session-rd-terminal-race', name: 'RD terminal race', status: 'EXECUTING' }],
+    activeSessionName: 'RD terminal race',
+    turns: [responseDocumentTurn(document, { summary: "I'm working on the request and waiting for the next backend update." })],
+    activitySteps: [
+      {
+        id: 'act:understood',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Request parsed.',
+        state: 'success',
+      },
+      {
+        id: 'act:checking',
+        timestamp: 2,
+        group: 'response',
+        label: 'Checking citations',
+        detail: 'Checking evidence support',
+        state: 'running',
+      },
+      {
+        id: 'act:complete',
+        timestamp: 3,
+        group: 'response',
+        label: 'Run complete',
+        detail: 'All steps finished. See the thread below.',
+        state: 'complete',
+      },
+      {
+        id: 'act:stale-understanding',
+        timestamp: 4,
+        group: 'planning',
+        label: 'Understanding your request',
+        detail: 'Reviewing your request and recent context',
+        state: 'running',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.match(view.text(), /Checking citations/)
+  assert.doesNotMatch(view.text(), /Run complete/)
+  assert.doesNotMatch(view.text(), /Understanding your request/)
+
+  await view.unmount()
+})
+
+test('FactoryAgent client progress uses one neutral fallback row while waiting for server activity', async () => {
+  const { useFactoryAgentClientProgress } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/useFactoryAgentClientProgress.js')
+
+  function ClientProgressHarness() {
+    const [steps, setSteps] = React.useState([])
+    const { startClientProgress, clearClientProgress } = useFactoryAgentClientProgress({
+      activityTimelineEnabled: true,
+      setActivitySteps: setSteps,
+    })
+    return React.createElement(
+      'div',
+      null,
+      React.createElement('button', {
+        type: 'button',
+        onClick: () => startClientProgress('session-client-progress', 'Check a machine'),
+      }, 'Start progress'),
+      React.createElement('button', {
+        type: 'button',
+        onClick: () => clearClientProgress(),
+      }, 'Clear progress'),
+      React.createElement(
+        'ol',
+        { 'data-testid': 'activity-steps' },
+        steps.map((step) =>
+          React.createElement(
+            'li',
+            {
+              key: step.id,
+              'data-step-id': step.id,
+            },
+            `${step.label}${step.detail ? ` ${step.detail}` : ''}`,
+          ),
+        ),
+      ),
+    )
+  }
+
+  const view = await render(React.createElement(ClientProgressHarness))
+  await click(Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent === 'Start progress'))
+
+  await waitFor(() => assert.match(view.text(), /Starting request/))
+  const startedAt = Date.now()
+  await waitFor(() => {
+    assert.ok(Date.now() - startedAt >= 950)
+    const rows = Array.from(view.container.querySelectorAll('[data-step-id^="client_activity_"]'))
+    assert.equal(rows.length, 1)
+    assert.match(rows[0].textContent || '', /Starting request/)
+    assert.doesNotMatch(view.text(), /Understanding\.\.\./)
+    assert.doesNotMatch(view.text(), /Checking information/)
+    assert.doesNotMatch(view.text(), /This updates as the session progresses/)
+  }, { timeoutMs: 1600 })
+
+  await click(Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent === 'Clear progress'))
+  assert.equal(view.container.querySelectorAll('[data-step-id^="client_activity_"]').length, 0)
 
   await view.unmount()
 })

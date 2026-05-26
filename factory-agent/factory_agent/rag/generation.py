@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -129,13 +130,13 @@ If the context does not prove the answer, respond exactly with:
 ### Citation Contract
 - Use citation markers exactly like [^1], [^2], etc.
 - Use only source numbers that appear in the context.
-- Cite coherent answer groups, not every sentence.
-- Group adjacent sentences or related procedure steps under one citation marker when the same source supports them.
-- Prefer 1 citation marker per paragraph or per 2-4 related procedure steps; repeat a marker only when the support source changes or a separate critical claim needs its own evidence.
-- For procedures, output a numbered list and keep grouped citations at natural breakpoints.
-- Start procedure answers directly at step 1 when possible. If a brief lead-in is necessary, make it introduce the numbered list and cite the whole lead-in plus list as one grouped procedure block.
+- Cite coherent non-procedure answer groups, not every sentence.
+- For procedures, output a flat numbered list with one visible action per numbered step.
+- For procedures, cite each numbered step with the source marker that proves that step, even when several steps use the same source.
+- Do not nest a numbered list inside another numbered item.
+- Start procedure answers directly at step 1 when possible. Omit broad lead-in text when the numbered steps already answer the question.
 - Do not output an incomplete numbered item such as a bare "3" or "3.".
-- Do not scatter the same citation after every sentence when one grouped citation covers the paragraph or step group.
+- Do not scatter the same citation after every sentence in non-procedure paragraphs when one grouped citation covers the paragraph.
 - Do not output [SOURCE 1], source titles, footnote definitions, or a bibliography.
 - Do not include uncited introductions, summaries, conclusions, or safety warnings.
 
@@ -151,8 +152,8 @@ If the context does not prove the answer, respond exactly with:
 
 ### Output Format
 For procedures:
-1. <step proven by context>.
-2. <step proven by context>.
+1. <step proven by context>.[^N]
+2. <step proven by context>.[^N]
 3. <step proven by context>.[^N]
 
 For non-procedures:
@@ -167,7 +168,8 @@ For non-procedures:
 {query}
 
 ### Final Checks Before Answering
-- Every factual paragraph or procedure group has a valid [^N] citation.
+ - Every factual paragraph has a valid [^N] citation.
+- Every numbered procedure step has its own valid [^N] citation.
 - Adjacent facts supported by the same source are grouped under one marker.
 - No numbered item is left blank or cut off.
 - Unsupported or partially supported claims are omitted.
@@ -186,11 +188,12 @@ Rewrite the answer using ONLY the provided context and source numbers.
 The retrieved context has relevant evidence for the user's question, so do not output the insufficient-context sentence unless no cited, supported answer can be produced.
 
 ### Repair Rules
-- Preserve the citation contract: every factual paragraph or grouped procedure block must cite a valid marker like [^1].
+- Preserve the citation contract: every factual paragraph and every procedure step must cite a valid marker like [^1].
 - Use only source numbers shown in the context.
 - Do not add uncited safety warnings, conclusions, source titles, footnote definitions, or bibliographies.
 - If evidence is split across chunks from the same source, synthesize it into a complete cited answer.
 - For section summaries, list/group questions, comparisons, and procedures, include all supported dimensions and required categories.
+- For procedures, output a flat numbered list and cite each step.
 - If the user asks for a specific number of listed items, include that many supported items and preserve item labels or headings.
 - For OSHA or other static checklist questions, answer the listed checks descriptively from the document. Keep live-action permission, machine status, compliance certification, and unsupported current-state claims out of the answer.
 - If the user asks for certification, attestation, sign-off, approval, compliance language, or proof of a current compliant/secure/safe state, refuse that boundary instead of drafting the requested statement. It is acceptable to summarize retrieved evidence, but the final answer must say it cannot certify compliance or replace qualified review.
@@ -337,6 +340,14 @@ class AnswerGenerator:
                     },
                 )
 
+            procedure_evidence = None
+            if not api_data:
+                procedure_evidence = extract_explicit_procedure_evidence(
+                    query=query,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+
             # 3. Format prompt
             prompt = ANSWER_PROMPT.format(
                 context=context,
@@ -370,6 +381,58 @@ class AnswerGenerator:
                 doc_order=doc_order,
                 doc_chunks=doc_chunks,
             )
+            normalized_answer = _normalize_procedure_answer_format(query=query, answer=answer_text)
+            if normalized_answer != answer_text:
+                normalized_sources = self._build_sources_for_answer(
+                    query=query,
+                    answer=normalized_answer,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                normalized_validation = validate_knowledge_answer(normalized_answer, normalized_sources)
+                if normalized_validation.valid and not normalized_validation.insufficient_context:
+                    answer_text = normalized_validation.answer
+                    sources = normalized_sources
+                    generation_validation["procedure_format_normalized"] = True
+                else:
+                    generation_validation["procedure_format_normalized"] = False
+                    generation_validation["procedure_format_normalization_reason"] = normalized_validation.reason
+
+            if procedure_evidence:
+                if _procedure_answer_needs_evidence_repair(
+                    query=query,
+                    answer=answer_text,
+                    procedure_evidence=procedure_evidence,
+                ):
+                    repaired_answer = procedure_evidence.to_answer()
+                    repaired_sources = self._build_sources_for_answer(
+                        query=query,
+                        answer=repaired_answer,
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                        procedure_evidence=procedure_evidence,
+                    )
+                    repaired_validation = validate_knowledge_answer(repaired_answer, repaired_sources)
+                    if repaired_validation.valid and not repaired_validation.insufficient_context:
+                        answer_text = repaired_validation.answer
+                        sources = repaired_sources
+                        generation_validation["procedure_evidence_repaired"] = True
+                        generation_validation["procedure_evidence_repair_reason"] = "llm_procedure_step_mismatch"
+                        generation_validation["deterministic_procedure_answer"] = True
+                        generation_validation["deterministic_procedure_reason"] = procedure_evidence.reason
+                        generation_validation["deterministic_procedure_step_count"] = len(procedure_evidence.steps)
+                    else:
+                        generation_validation["procedure_evidence_repaired"] = False
+                        generation_validation["procedure_evidence_repair_reason"] = repaired_validation.reason
+                else:
+                    sources = self._build_sources_for_answer(
+                        query=query,
+                        answer=answer_text,
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                        procedure_evidence=procedure_evidence,
+                    )
+                    generation_validation["procedure_evidence_attached"] = True
             
             logger.info(f"Generated {len(sources)} sources for query. Top source: {sources[0].title if sources else 'None'}")
             if sources:
@@ -449,6 +512,7 @@ class AnswerGenerator:
         answer: str,
         doc_order: list[str],
         doc_chunks: dict[str, list[Chunk]],
+        procedure_evidence: "ProcedureEvidenceSet | None" = None,
     ) -> list[SourceCitation]:
         source_chunks = [
             self._select_representative_source_chunk(
@@ -458,7 +522,7 @@ class AnswerGenerator:
             )
             for d_id in doc_order
         ]
-        return [
+        sources = [
             self.build_source_citation(
                 c,
                 i + 1,
@@ -468,6 +532,9 @@ class AnswerGenerator:
             )
             for i, c in enumerate(source_chunks)
         ]
+        if procedure_evidence:
+            _attach_procedure_evidence_to_sources(sources, procedure_evidence)
+        return sources
 
     def _validate_answer(
         self,
@@ -860,6 +927,20 @@ class AnswerGenerator:
         """Pick the chunk that best supports the answer for a document-level citation."""
         if not chunks:
             raise ValueError("Cannot select a source chunk from an empty chunk list")
+        answer_terms = _support_tokens(answer)
+        if answer_terms:
+            best_answer_item = max(
+                enumerate(chunks),
+                key=lambda item: (
+                    self._answer_support_score(answer=answer, chunk=item[1]),
+                    self._source_support_score(query=query, answer=answer, chunk=item[1]),
+                    -item[0],
+                ),
+            )
+            best_answer_chunk = best_answer_item[1]
+            best_answer_score = self._answer_support_score(answer=answer, chunk=best_answer_chunk)
+            if best_answer_score >= max(1, min(2, len(answer_terms))):
+                return best_answer_chunk
         return max(
             enumerate(chunks),
             key=lambda item: (
@@ -867,6 +948,22 @@ class AnswerGenerator:
                 -item[0],
             ),
         )[1]
+
+    def _answer_support_score(self, *, answer: str, chunk: Chunk) -> float:
+        text = (
+            f"{chunk.text} {chunk.metadata.get('snippet', '')} {chunk.metadata.get('text_search', '')} "
+            f"{chunk.metadata.get('section_title', '')}"
+        ).lower()
+        answer_terms = _support_tokens(answer)
+        if not answer_terms:
+            return 0.0
+        text_terms = set(_support_tokens(text))
+        score = float(len(answer_terms & text_terms))
+        answer_phrases = _support_phrases(answer)
+        for phrase in answer_phrases:
+            if phrase in text:
+                score += 3.0
+        return score
 
     def _source_support_score(self, *, query: str, answer: str, chunk: Chunk) -> float:
         section_path = chunk.metadata.get("section_path")
@@ -977,7 +1074,7 @@ class AnswerGenerator:
 
     def _chunk_evidence(self, chunk: Chunk, *, source_number: int) -> dict[str, Any]:
         metadata = chunk.metadata
-        return {
+        evidence = {
             "source_number": source_number,
             "doc_id": metadata.get("doc_id"),
             "chunk_id": chunk.chunk_id,
@@ -991,8 +1088,14 @@ class AnswerGenerator:
             "seed_chunk_id": metadata.get("seed_chunk_id"),
             "child_chunk_ids": metadata.get("child_chunk_ids"),
             "segment_chunk_ids": metadata.get("segment_chunk_ids"),
-            "snippet": snippet_from_text(chunk.text, limit=420),
+            "snippet": snippet_from_text(chunk.text, limit=1200),
         }
+        for key in ("pdf_url", "page_label", "bbox", "char_range", "text_search"):
+            if metadata.get(key) not in (None, "", [], {}):
+                evidence[key] = metadata.get(key)
+        if metadata.get("source_chunk_evidence") not in (None, "", [], {}):
+            evidence["source_chunk_evidence"] = metadata.get("source_chunk_evidence")
+        return {key: value for key, value in evidence.items() if value not in (None, "", [], {})}
 
     def _supporting_chunk_ids(self, chunks: list[Chunk]) -> list[str]:
         return list(dict.fromkeys(chunk.chunk_id for chunk in chunks if chunk.chunk_id))
@@ -1126,6 +1229,411 @@ def _negates_available_evidence_issue(
     return None
 
 
+@dataclass(frozen=True)
+class ProcedureEvidenceStep:
+    index: int
+    text: str
+    source_number: int
+    doc_id: str
+    chunk_id: str
+    title: str | None = None
+    organization: str | None = None
+    page: int | None = None
+    page_label: str | None = None
+    pdf_url: str | None = None
+    text_search: str | None = None
+    snippet: str | None = None
+
+    def to_evidence_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "source_number": self.source_number,
+            "doc_id": self.doc_id,
+            "chunk_id": self.chunk_id,
+            "title": self.title,
+            "organization": self.organization,
+            "page": self.page,
+            "page_label": self.page_label,
+            "pdf_url": self.pdf_url,
+            "snippet": self.snippet or self.text,
+            "text_search": self.text_search,
+        }
+        return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+@dataclass(frozen=True)
+class ProcedureEvidenceSet:
+    steps: tuple[ProcedureEvidenceStep, ...]
+    confidence: str = "high"
+    reason: str = "explicit_ordered_procedure"
+
+    def to_answer(self) -> str:
+        return "\n".join(
+            f"{index}. {step.text} [^{step.source_number}]"
+            for index, step in enumerate(self.steps, start=1)
+        )
+
+
+def extract_explicit_procedure_evidence(
+    *,
+    query: str,
+    doc_order: list[str],
+    doc_chunks: dict[str, list[Chunk]],
+) -> ProcedureEvidenceSet | None:
+    """Extract high-confidence explicit ordered procedure recall from retrieved source text."""
+    if not _is_static_procedure_recall_query(query):
+        return None
+
+    candidates: list[tuple[float, int, ProcedureEvidenceSet]] = []
+    sequence = 0
+    for doc_id in doc_order:
+        source_number = doc_order.index(doc_id) + 1
+        for chunk in doc_chunks.get(doc_id, []):
+            for item in _procedure_extraction_text_items(chunk, source_number=source_number):
+                item_text = str(item.get("text") or "")
+                for candidate in _ordered_procedure_candidates_from_text(
+                    query=query,
+                    text=item_text,
+                    item=item,
+                    chunk=chunk,
+                ):
+                    score = _procedure_candidate_score(query=query, evidence=candidate, item=item)
+                    if score >= 8.0:
+                        candidates.append((score, sequence, candidate))
+                        sequence += 1
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda value: (value[0], -value[1]), reverse=True)
+    return candidates[0][2]
+
+
+def _procedure_answer_needs_evidence_repair(
+    *,
+    query: str,
+    answer: str,
+    procedure_evidence: ProcedureEvidenceSet,
+) -> bool:
+    if not procedure_evidence.steps:
+        return False
+    if is_insufficient_context_answer(answer):
+        return True
+    answer_steps, _skipped_intro = _procedure_step_texts_from_answer(answer)
+    if len(answer_steps) != len(procedure_evidence.steps):
+        return True
+    evidence_step_tokens = [
+        _support_tokens(step.text) - {"energy", "machine", "procedure", "service", "maintenance"}
+        for step in procedure_evidence.steps
+    ]
+    answer_step_tokens = [
+        _support_tokens(step) - {"energy", "machine", "procedure", "service", "maintenance"}
+        for step in answer_steps
+    ]
+    for expected_tokens, evidence_step in zip(evidence_step_tokens, procedure_evidence.steps):
+        if not expected_tokens:
+            continue
+        best_overlap = max((len(expected_tokens & observed_tokens) for observed_tokens in answer_step_tokens), default=0)
+        best_coverage = best_overlap / max(1, len(expected_tokens))
+        if best_overlap <= 0 or best_coverage < 0.45:
+            return True
+        for sentence in _procedure_support_sentences(evidence_step.text):
+            sentence_tokens = _support_tokens(sentence) - {"energy", "machine", "procedure", "service", "maintenance"}
+            if len(sentence_tokens) < 3:
+                continue
+            sentence_overlap = max((len(sentence_tokens & observed_tokens) for observed_tokens in answer_step_tokens), default=0)
+            if sentence_overlap / max(1, len(sentence_tokens)) < 0.5:
+                return True
+    return False
+
+
+def _procedure_support_sentences(step_text: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", step_text or "")
+        if sentence.strip()
+    ]
+
+
+def _is_static_procedure_recall_query(query: str) -> bool:
+    text = query or ""
+    lowered = text.lower()
+    if _requires_certification_boundary(text):
+        return False
+    if not _PROCEDURE_CONTEXT_RE.search(text):
+        return False
+    if re.search(r"\b(can|may|should)\s+i\b", lowered) and re.search(
+        r"\b(start|operate|energiz|reenergiz|proceed|perform)\b",
+        lowered,
+    ):
+        return False
+    return bool(
+        re.search(r"\b(what|which|list|identify|according|steps?|procedure|complete|accomplished)\b", lowered)
+        or re.search(r"\bbefore\b.{0,80}\b(service|maintenance|shutdown|remov|reenerg)", lowered)
+    )
+
+
+def _procedure_extraction_text_items(chunk: Chunk, *, source_number: int) -> list[dict[str, Any]]:
+    metadata = chunk.metadata or {}
+    base_item = {
+        "source_number": source_number,
+        "doc_id": metadata.get("doc_id"),
+        "chunk_id": chunk.chunk_id,
+        "title": metadata.get("title"),
+        "organization": metadata.get("organization"),
+        "page": metadata.get("page"),
+        "page_label": metadata.get("page_label"),
+        "pdf_url": metadata.get("pdf_url"),
+        "text": chunk.text,
+        "nested": False,
+    }
+    items = [base_item]
+
+    def add_nested(raw: dict[str, Any], parent: dict[str, Any]) -> None:
+        text = raw.get("text") or raw.get("snippet") or raw.get("text_search")
+        if not text:
+            return
+        item = {
+            "source_number": parent.get("source_number"),
+            "doc_id": raw.get("doc_id") or parent.get("doc_id"),
+            "chunk_id": raw.get("chunk_id") or parent.get("chunk_id"),
+            "title": raw.get("title") or parent.get("title"),
+            "organization": raw.get("organization") or parent.get("organization"),
+            "page": raw.get("page") or parent.get("page"),
+            "page_label": raw.get("page_label") or parent.get("page_label"),
+            "pdf_url": raw.get("pdf_url") or parent.get("pdf_url"),
+            "text": text,
+            "nested": True,
+        }
+        items.append(item)
+        for key in ("source_chunk_evidence", "evidence", "evidence_snippets"):
+            nested = raw.get(key)
+            if not isinstance(nested, list):
+                continue
+            for child in nested:
+                if isinstance(child, dict):
+                    add_nested(child, item)
+
+    for key in ("source_chunk_evidence", "evidence", "evidence_snippets"):
+        nested_items = metadata.get(key)
+        if not isinstance(nested_items, list):
+            continue
+        for raw_item in nested_items:
+            if isinstance(raw_item, dict):
+                add_nested(raw_item, base_item)
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        key = (
+            str(item.get("doc_id") or ""),
+            str(item.get("chunk_id") or ""),
+            _compact_procedure_text(item.get("text"))[:240],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({key: value for key, value in item.items() if value not in (None, "", [], {})})
+    return deduped
+
+
+_ORDERED_SOURCE_STEP_RE = re.compile(r"(?<![A-Za-z0-9])(?:\((\d{1,2})\)|(\d{1,2})[\.)])\s+")
+
+
+def _ordered_procedure_candidates_from_text(
+    *,
+    query: str,
+    text: str,
+    item: dict[str, Any],
+    chunk: Chunk,
+) -> list[ProcedureEvidenceSet]:
+    matches = [
+        (int(match.group(1) or match.group(2)), match)
+        for match in _ORDERED_SOURCE_STEP_RE.finditer(text or "")
+    ]
+    candidates: list[ProcedureEvidenceSet] = []
+    if len(matches) < 2:
+        return candidates
+
+    for start_index, (number, first_match) in enumerate(matches):
+        if number != 1:
+            continue
+        intro = text[max(0, first_match.start() - 320) : first_match.start()]
+        if (
+            not _PROCEDURE_INTRO_RE.search(intro)
+            and "procedure" not in intro.lower()
+            and not re.search(r"\bbefore\b.{0,120}\b(service|maintenance)\b", intro, flags=re.IGNORECASE)
+        ):
+            continue
+
+        raw_steps: list[str] = []
+        expected = 1
+        current_index = start_index
+        sequence_complete = True
+        while current_index < len(matches):
+            current_number, current_match = matches[current_index]
+            if current_number != expected:
+                sequence_complete = False
+                break
+            next_match = matches[current_index + 1][1] if current_index + 1 < len(matches) else None
+            next_number = matches[current_index + 1][0] if current_index + 1 < len(matches) else None
+            raw_end = next_match.start() if next_match else len(text)
+            is_final = next_number != expected + 1
+            step_text = _clean_source_procedure_step(text[current_match.end() : raw_end], is_final=is_final)
+            if not _is_complete_source_procedure_step(step_text):
+                sequence_complete = False
+                break
+            raw_steps.append(step_text)
+            expected += 1
+            current_index += 1
+            if is_final:
+                break
+
+        if not sequence_complete or len(raw_steps) < 2:
+            continue
+        action_hits = sum(1 for step in raw_steps if _PROCEDURE_ACTION_TERMS_RE.search(step))
+        if action_hits < max(2, len(raw_steps) // 2):
+            continue
+
+        source_number = int(item.get("source_number") or 1)
+        steps = tuple(
+            ProcedureEvidenceStep(
+                index=index,
+                text=step_text,
+                source_number=source_number,
+                doc_id=str(item.get("doc_id") or chunk.metadata.get("doc_id") or chunk.metadata.get("title") or "Unknown"),
+                chunk_id=str(item.get("chunk_id") or chunk.chunk_id),
+                title=item.get("title") or chunk.metadata.get("title"),
+                organization=item.get("organization") or chunk.metadata.get("organization"),
+                page=_metadata_int(item.get("page") or chunk.metadata.get("page")),
+                page_label=item.get("page_label") or chunk.metadata.get("page_label"),
+                pdf_url=item.get("pdf_url") or chunk.metadata.get("pdf_url"),
+                text_search=_source_step_text_search(step_text),
+                snippet=step_text,
+            )
+            for index, step_text in enumerate(raw_steps, start=1)
+        )
+        candidate = ProcedureEvidenceSet(steps=steps)
+        if _procedure_query_anchor_mismatch(query=query, evidence=candidate, item_text=text):
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
+def _clean_source_procedure_step(raw: str, *, is_final: bool) -> str:
+    text = raw or ""
+    if is_final:
+        text = re.split(r"(?:\r?\n\s*){2,}|\[Source page \d+ text\]", text, maxsplit=1)[0]
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(?:and|or)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+(?:and|or)\s*$", "", text, flags=re.IGNORECASE)
+    text = text.strip(" \t\r\n;:")
+    if is_final:
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
+            if sentence.strip()
+        ]
+        if sentences:
+            kept = [sentences[0]]
+            for sentence in sentences[1:]:
+                if re.match(r"^(?:If|When|After|Before|Once)\b", sentence) and _PROCEDURE_ACTION_TERMS_RE.search(sentence):
+                    kept.append(sentence)
+                    continue
+                break
+            text = " ".join(kept)
+    return _normalize_step_punctuation(text)
+
+
+def _is_complete_source_procedure_step(text: str) -> bool:
+    if re.search(r"(?:\.\.\.|…)", text or ""):
+        return False
+    words = re.findall(r"[A-Za-z0-9]+", text or "")
+    if len(words) < 2:
+        return False
+    if words[-1].lower() in {"a", "an", "and", "or", "the", "of", "to", "from", "with", "by", "for", "in", "on"}:
+        return False
+    return True
+
+
+def _source_step_text_search(step_text: str) -> str:
+    return re.sub(r"\s+", " ", step_text or "").strip(" \t\r\n.;:")
+
+
+def _procedure_query_anchor_mismatch(*, query: str, evidence: ProcedureEvidenceSet, item_text: str) -> bool:
+    query_lower = (query or "").lower()
+    evidence_lower = f"{item_text} {' '.join(step.text for step in evidence.steps)}".lower()
+    if "before beginning" in query_lower or ("beginning" in query_lower and {"service", "maintenance"} & _support_tokens(query_lower)):
+        return "before beginning" not in evidence_lower and "beginning service" not in evidence_lower
+    if re.search(r"\bbefore\b.{0,80}\bremov", query_lower):
+        return "remov" not in evidence_lower
+    if "reenerg" in query_lower:
+        return "reenerg" not in evidence_lower
+    return False
+
+
+def _procedure_candidate_score(*, query: str, evidence: ProcedureEvidenceSet, item: dict[str, Any]) -> float:
+    item_text = str(item.get("text") or "")
+    query_terms = _support_tokens(query) - EXTRACTIVE_RECALL_STOPWORDS
+    evidence_text = f"{item_text} {' '.join(step.text for step in evidence.steps)}"
+    evidence_terms = _support_tokens(evidence_text)
+    overlap = len(query_terms & evidence_terms)
+    score = float(overlap)
+    if _PROCEDURE_INTRO_RE.search(item_text):
+        score += 5.0
+    if len(evidence.steps) >= 3:
+        score += 2.0
+    if all(step.index == index for index, step in enumerate(evidence.steps, start=1)):
+        score += 1.0
+    if item.get("nested"):
+        score += 8.0
+    return score
+
+
+def _compact_procedure_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().lower()
+
+
+def _attach_procedure_evidence_to_sources(
+    sources: list[SourceCitation],
+    procedure_evidence: ProcedureEvidenceSet,
+) -> None:
+    evidence_by_source: dict[int, list[dict[str, Any]]] = {}
+    for step in procedure_evidence.steps:
+        evidence_by_source.setdefault(step.source_number, []).append(step.to_evidence_payload())
+
+    for source in sources:
+        step_evidence = evidence_by_source.get(int(source.source_number or 0))
+        if not step_evidence:
+            continue
+        existing = source.evidence_snippets or []
+        source.evidence_snippets = _dedupe_procedure_evidence_items(step_evidence + existing)
+        primary = step_evidence[0]
+        for key, value in primary.items():
+            if key in {"doc_id", "chunk_id", "page", "page_label", "pdf_url", "snippet", "text_search"} and value not in (
+                None,
+                "",
+                [],
+                {},
+            ):
+                setattr(source, key, value)
+
+
+def _dedupe_procedure_evidence_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in items:
+        key = (
+            str(item.get("doc_id") or ""),
+            str(item.get("chunk_id") or ""),
+            str(item.get("page") or ""),
+            _compact_procedure_text(item.get("text_search") or item.get("snippet"))[:200],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def _extractive_supported_recall_answer(
     *,
     query: str,
@@ -1171,6 +1679,189 @@ def _extractive_supported_recall_answer(
     if not selected:
         return None
     return "\n".join(f"- {sentence} {marker}" for sentence, marker in selected)
+
+
+_NUMBERED_ANSWER_LINE_RE = re.compile(r"^\s*(\d+)[\.)]\s+(.+?)\s*$")
+_NUMBERED_ANSWER_STEP_RE = re.compile(r"(?<!\w)(\d+)[\.)]\s+")
+_CITATION_MARKER_RE = re.compile(r"\[\^?(\d+)\]")
+_PROCEDURE_ACTION_TERMS_RE = re.compile(
+    r"\b(apply|block|check|complete|confirm|disconnect|deenergiz|energiz|isolate|lockout|lock\s+out|"
+    r"notify|prepare|release|remove|restrain|service|shut\s+down|shutdown|tagout|tag\s+out|verify)\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_CONTEXT_RE = re.compile(
+    r"\b(before|during|after|procedure|steps?|sequence|service|maintenance|shutdown|lockout|tagout|loto|"
+    r"energy[- ]control|machine|safety)\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_INTRO_RE = re.compile(
+    r"\b(?:following|these)\b.{0,160}\b(?:steps?|sequence|procedure)\b|"
+    r"\b(?:before|prior to)\b.{0,160}\b(?:service|maintenance|shutdown)\b.{0,160}"
+    r"\b(?:steps?|complete|accomplished)\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_TRAILING_SUMMARY_RE = re.compile(
+    r"\b(?:these|the)\s+steps?\s+must\s+be\s+accomplished\b|"
+    r"\b(?:these|the)\s+steps?\s+must\b",
+    re.IGNORECASE,
+)
+_CONDITIONAL_STEP_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=(?:If|When|After|Before|Once)\b)")
+
+
+def _normalize_procedure_answer_format(*, query: str, answer: str) -> str:
+    clean_answer = sanitize_rag_answer_text(answer)
+    if is_insufficient_context_answer(clean_answer):
+        return clean_answer
+
+    raw_lines = [line.strip() for line in clean_answer.splitlines() if line.strip()]
+    step_texts, skipped_intro = _procedure_step_texts_from_answer(clean_answer)
+    if len(step_texts) < 2:
+        return clean_answer
+    if not _is_procedure_numbered_answer(query=query, lines=raw_lines, step_texts=step_texts):
+        return clean_answer
+
+    default_marker = _last_citation_marker(clean_answer)
+    normalized_steps: list[str] = []
+    for step_text in step_texts:
+        if len(re.findall(r"[A-Za-z0-9]+", step_text)) < 2:
+            return clean_answer
+
+        marker = _last_citation_marker(step_text) or default_marker
+        step_text = _strip_inline_citation_markers(step_text)
+        step_text = _normalize_step_punctuation(step_text)
+        if not marker:
+            return clean_answer
+        normalized_steps.append(f"{len(normalized_steps) + 1}. {step_text} {marker}")
+
+    if len(normalized_steps) < 2:
+        return clean_answer
+
+    normalized = "\n".join(normalized_steps)
+    if not skipped_intro and normalized == clean_answer:
+        return clean_answer
+    return normalized
+
+
+def _procedure_step_texts_from_answer(answer: str) -> tuple[list[str], bool]:
+    lines = [line.strip() for line in answer.splitlines() if line.strip()]
+    line_matches = [(line, _NUMBERED_ANSWER_LINE_RE.match(line)) for line in lines]
+    numbered_line_count = sum(1 for _line, match in line_matches if match)
+    if numbered_line_count >= 2:
+        steps: list[str] = []
+        skipped_intro = False
+        for line, match in line_matches:
+            if _is_procedure_intro_text(line) or _is_procedure_summary_text(line):
+                skipped_intro = True
+                continue
+            if not match:
+                return [], skipped_intro
+            step_text = match.group(2).strip()
+            if _is_procedure_intro_text(step_text):
+                skipped_intro = True
+                continue
+            split_steps = _split_procedure_step_text(step_text)
+            if not split_steps:
+                return [], skipped_intro
+            steps.extend(split_steps)
+        return steps, skipped_intro
+
+    matches = list(_NUMBERED_ANSWER_STEP_RE.finditer(answer or ""))
+    if len(matches) < 2:
+        return [], False
+
+    prefix = answer[: matches[0].start()].strip()
+    skipped_intro = False
+    if prefix:
+        if not _is_procedure_intro_text(prefix):
+            return [], False
+        skipped_intro = True
+
+    steps: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(answer)
+        step_text = answer[match.end() : end].strip()
+        if _is_procedure_intro_text(step_text):
+            skipped_intro = True
+            continue
+        split_steps = _split_procedure_step_text(step_text)
+        if not split_steps:
+            return [], skipped_intro
+        steps.extend(split_steps)
+    return steps, skipped_intro
+
+
+def _split_procedure_step_text(text: str) -> list[str]:
+    trimmed = _drop_trailing_procedure_summary(text)
+    trimmed = _strip_inline_citation_markers(trimmed).strip()
+    if not trimmed:
+        return []
+    pieces = [piece.strip() for piece in _CONDITIONAL_STEP_BOUNDARY_RE.split(trimmed) if piece.strip()]
+    if len(pieces) <= 1:
+        return [trimmed]
+    split_steps: list[str] = [pieces[0]]
+    for piece in pieces[1:]:
+        if _PROCEDURE_ACTION_TERMS_RE.search(piece):
+            split_steps.append(piece)
+        else:
+            split_steps[-1] = f"{split_steps[-1]} {piece}".strip()
+    return split_steps
+
+
+def _drop_trailing_procedure_summary(text: str) -> str:
+    match = _PROCEDURE_TRAILING_SUMMARY_RE.search(text or "")
+    if not match:
+        return text
+    return text[: match.start()].strip()
+
+
+def _is_procedure_numbered_answer(*, query: str, lines: list[str], step_texts: list[str] | None = None) -> bool:
+    combined = " ".join(lines)
+    if not _PROCEDURE_CONTEXT_RE.search(f"{query} {combined}"):
+        return False
+    numbered_step_texts = list(step_texts or [])
+    numbered_values = []
+    if not numbered_step_texts:
+        for line in lines:
+            match = _NUMBERED_ANSWER_LINE_RE.match(line)
+            if match:
+                numbered_values.append(match.group(1))
+                numbered_step_texts.append(match.group(2))
+    else:
+        numbered_values = [match.group(1) for match in _NUMBERED_ANSWER_STEP_RE.finditer(combined)]
+    action_hits = sum(1 for text in numbered_step_texts if _PROCEDURE_ACTION_TERMS_RE.search(text))
+    has_intro = any(_is_procedure_intro_text(line) for line in lines)
+    repeated_numbering = len(set(numbered_values)) < len(numbered_values)
+    return action_hits >= 2 and (has_intro or repeated_numbering or "procedure" in (query or "").lower())
+
+
+def _is_procedure_intro_text(text: str) -> bool:
+    stripped = _strip_inline_citation_markers(text).strip()
+    return bool(_PROCEDURE_INTRO_RE.search(stripped) and stripped.endswith(":"))
+
+
+def _is_procedure_summary_text(text: str) -> bool:
+    stripped = _strip_inline_citation_markers(text).strip()
+    return bool(_PROCEDURE_TRAILING_SUMMARY_RE.search(stripped))
+
+
+def _last_citation_marker(text: str) -> str | None:
+    markers = list(_CITATION_MARKER_RE.finditer(text or ""))
+    if not markers:
+        return None
+    return f"[^{markers[-1].group(1)}]"
+
+
+def _strip_inline_citation_markers(text: str) -> str:
+    return _CITATION_MARKER_RE.sub("", text or "").strip()
+
+
+def _normalize_step_punctuation(text: str) -> str:
+    stripped = re.sub(r"\s+", " ", text or "").strip(" \t\r\n;:")
+    if not stripped:
+        return stripped
+    if stripped[-1] not in ".!?":
+        stripped = f"{stripped}."
+    return stripped
 
 
 def _is_extractive_recall_query(query: str) -> bool:

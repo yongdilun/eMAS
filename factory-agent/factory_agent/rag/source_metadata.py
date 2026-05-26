@@ -197,9 +197,18 @@ def normalize_source_locator(
         "retrieved_date",
         "source_index",
         "policy_id",
+        "page_start",
+        "page_end",
+        "page_count",
+        "section_title",
+        "section_path",
+        "supporting_chunk_ids",
+        "supporting_pages",
+        "supporting_sections",
+        "evidence_snippets",
     )
     for key in passthrough_keys:
-        if key in data and data[key] not in (None, ""):
+        if key in data and data[key] not in (None, "", [], {}):
             normalized[key] = data[key]
 
     if policy_id and "policy_id" not in normalized:
@@ -212,9 +221,6 @@ def normalize_source_locator(
         value = _first_locator_value(data, key)
         if value not in (None, "", [], {}):
             normalized[key] = value
-
-    if "text_search" not in normalized and normalized.get("page") and snippet:
-        normalized["text_search"] = snippet_from_text(snippet, limit=240)
 
     return normalized
 

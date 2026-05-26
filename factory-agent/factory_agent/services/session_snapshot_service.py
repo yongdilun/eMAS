@@ -348,6 +348,31 @@ _SEMANTIC_EVENT_MAP: dict[str, str] = {
 _ACTIVITY_MAX_VISIBLE_STEPS = 12
 _ACTIVITY_FINALIZE_STATES = {"running", "retry", "waiting"}
 _ACTIVITY_MERGEABLE_STATES = {"running", "success"}
+_ACTIVITY_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
+_LIVE_ACTIVITY_ALLOWED_GROUPS = {"planning", "research", "approval", "response", "system"}
+_LIVE_ACTIVITY_ALLOWED_STATES = {"running", "success", "retry", "waiting", "error", "complete"}
+_LIVE_ACTIVITY_ALLOWED_LABELS = {
+    "Understood request",
+    "Preparing next action",
+    "Searching knowledge sources",
+    "Building cited answer",
+    "Checking citations",
+    "Running selected tool",
+    "Checking result",
+    "Waiting for approval",
+    "Applying approved changes",
+    "Preparing response",
+}
+_LIVE_ACTIVITY_UNSAFE_TEXT_FRAGMENTS = {
+    "__",
+    "{id}",
+    "tool_name",
+    "args",
+    "checkpoint",
+    "planner_reentered",
+    "validator_failed",
+    "tool_rerun",
+}
 _ACTIVITY_ALLOWED_DOMAIN_TOKENS = {
     "approval": "approval requests",
     "approvals": "approval requests",
@@ -393,6 +418,20 @@ def _safe_activity_domain_label(ev: TimelineEventResponse) -> str:
     return "relevant records"
 
 
+def _is_rag_activity_event(ev: TimelineEventResponse) -> bool:
+    details = ev.details if isinstance(ev.details, dict) else {}
+    tool_name = " ".join(
+        [
+            ev.tool_name or "",
+            str((ev.step_context or {}).get("tool_name") or ""),
+            str(details.get("tool_name") or ""),
+        ]
+    ).lower()
+    if "rag" in tool_name or "search_documents" in tool_name or "knowledge" in tool_name:
+        return True
+    return isinstance(details.get("sources"), list) and bool(details.get("sources"))
+
+
 def _activity_detail_for_event(ev: TimelineEventResponse, *, label: str) -> str | None:
     domain = _safe_activity_domain_label(ev)
     if ev.event_type == "session_failed" and isinstance(ev.details, dict):
@@ -403,10 +442,14 @@ def _activity_detail_for_event(ev: TimelineEventResponse, *, label: str) -> str 
     if ev.event_type == "execution_started":
         return "Preparing the next safe action"
     if ev.event_type == "tool_started":
+        if _is_rag_activity_event(ev):
+            return "Searching retrieved documents"
         return f"Checking {domain}"
     if ev.event_type == "tool_result":
         if label == "Could not complete that check":
             return "A check could not be completed"
+        if _is_rag_activity_event(ev):
+            return "Checking citation support"
         return f"Checked {domain}"
     if ev.event_type == "approval_required":
         return "Reviewing approval requirements"
@@ -429,15 +472,19 @@ def _activity_base_for_timeline_event(ev: TimelineEventResponse) -> dict[str, st
     if event_type == "user_message":
         return None
     if event_type == "plan_created":
-        return {"group": "planning", "label": "Understanding your request", "state": "success"}
+        return {"group": "planning", "label": "Understood request", "state": "success"}
     if event_type == "execution_started":
-        return {"group": "planning", "label": "Preparing the next step", "state": "running"}
+        return {"group": "planning", "label": "Preparing next action", "state": "running"}
     if event_type == "tool_started":
-        return {"group": "research", "label": "Gathering information", "state": "running"}
+        if _is_rag_activity_event(ev):
+            return {"group": "research", "label": "Searching knowledge sources", "state": "running"}
+        return {"group": "research", "label": f"Reading {_safe_activity_domain_label(ev)}", "state": "running"}
     if event_type == "tool_result":
         if status in {"FAILED", "AMBIGUOUS"}:
             return {"group": "research", "label": "Could not complete that check", "state": "error"}
-        return {"group": "research", "label": "Information checked", "state": "success"}
+        if _is_rag_activity_event(ev):
+            return {"group": "research", "label": "Building cited answer", "state": "success"}
+        return {"group": "research", "label": f"Checked {_safe_activity_domain_label(ev)}", "state": "success"}
     if event_type == "approval_required":
         if status not in {"", "PENDING"}:
             return None
@@ -482,6 +529,68 @@ def _activity_merge_signature(
     return (base["group"], base["label"], detail or "", base["state"], plan_key)
 
 
+def _live_activity_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(fragment.lower() in lowered for fragment in _LIVE_ACTIVITY_UNSAFE_TEXT_FRAGMENTS):
+        return ""
+    return text
+
+
+def _live_activity_steps_for_snapshot(
+    snapshot: SessionSnapshotResponse,
+    *,
+    session_status: str,
+) -> list[dict[str, Any]]:
+    """Expose server-authored in-flight graph activity without trusting arbitrary context text."""
+    if session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES:
+        return []
+    context = snapshot.session.replan_context if isinstance(snapshot.session.replan_context, dict) else {}
+    rows = context.get("live_activity_steps")
+    if not isinstance(rows, list):
+        return []
+
+    fallback_ts = int(snapshot.session.updated_at.timestamp())
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        label = _live_activity_text(row.get("label"))
+        if label not in _LIVE_ACTIVITY_ALLOWED_LABELS:
+            continue
+        step_id = _live_activity_text(row.get("id")) or f"graph:live:{idx}"
+        if not step_id.startswith("graph:"):
+            step_id = f"graph:{step_id}"
+        if step_id in seen_ids:
+            continue
+        seen_ids.add(step_id)
+        group = str(row.get("group") or "").strip()
+        if group not in _LIVE_ACTIVITY_ALLOWED_GROUPS:
+            group = "system"
+        state = str(row.get("state") or "").strip()
+        if state not in _LIVE_ACTIVITY_ALLOWED_STATES:
+            state = "running"
+        try:
+            timestamp = int(row.get("timestamp") or fallback_ts + idx)
+        except (TypeError, ValueError):
+            timestamp = fallback_ts + idx
+        detail = _live_activity_text(row.get("detail")) or None
+        out.append(
+            {
+                "id": step_id,
+                "timestamp": timestamp,
+                "group": group,
+                "label": label,
+                "detail": detail,
+                "state": state,
+            }
+        )
+    return sorted(out, key=lambda step: (int(step["timestamp"]), str(step["id"])))
+
+
 def _snapshot_plan_scoped_steps(
     plan_steps: list[PlanStepResponse], plan: PlanResponse | None
 ) -> list[PlanStepResponse]:
@@ -497,7 +606,12 @@ def _snapshot_plan_scoped_steps(
 
 def _activity_raw_rows_show_tool_execution(rows: list[dict[str, Any]]) -> bool:
     toolish = {"Information checked", "Gathering information", "Could not complete that check"}
-    return any(r.get("label") in toolish for r in rows)
+    return any(
+        r.get("label") in toolish
+        or str(r.get("label") or "").startswith(("Reading ", "Checked "))
+        or r.get("label") in {"Searching knowledge sources", "Building cited answer"}
+        for r in rows
+    )
 
 
 def _activity_domain_label_for_tool_name(tool_name: str) -> str:
@@ -559,12 +673,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
 
     has_pending_approval = snapshot.pending_approval is not None
     session_status = str(getattr(snapshot.session, "status", "") or "").upper()
-    suppress_completion = has_pending_approval or session_status in {
-        "PLANNING",
-        "EXECUTING",
-        "WAITING_APPROVAL",
-        "WAITING_CONFIRMATION",
-    }
+    suppress_completion = has_pending_approval or session_status in _ACTIVITY_ACTIVE_SESSION_STATUSES
     for ev in snapshot.timeline:
         base = _activity_base_for_timeline_event(ev)
         if base is None:
@@ -595,6 +704,26 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
                 "state": base["state"],
             }
         )
+
+    live_steps = _live_activity_steps_for_snapshot(snapshot, session_status=session_status)
+    if live_steps:
+        existing_label_groups = {
+            (str(step.get("group") or ""), str(step.get("label") or ""))
+            for step in raw_steps
+        }
+        filtered_live_steps: list[dict[str, Any]] = []
+        for step in live_steps:
+            label_group = (str(step.get("group") or ""), str(step.get("label") or ""))
+            if label_group in existing_label_groups:
+                continue
+            existing_label_groups.add(label_group)
+            filtered_live_steps.append(step)
+        live_steps = filtered_live_steps
+    if live_steps:
+        live_ids = {str(step["id"]) for step in live_steps}
+        raw_steps = [step for step in raw_steps if str(step.get("id") or "") not in live_ids]
+        raw_steps.extend(live_steps)
+        raw_steps.sort(key=lambda step: (int(step["timestamp"]), str(step["id"])))
 
     if session_status == "WAITING_APPROVAL":
         latest_waiting_approval_index = -1

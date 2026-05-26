@@ -7,16 +7,18 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 
 from factory_agent.config import Settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedGraphResult
+from factory_agent.persistence.models import Session
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_contracts import CapabilityNeed, EvidenceLedgerEntry, RequirementLedgerEntry
 from factory_agent.planning.v2_agent_state import build_initial_planner_owned_agent_graph_state
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.schemas import PlanResponse, ToolInfo
 from factory_agent.services.plan_creation_service import PlanCreationService
-from factory_agent.services.planner_owned_graph_runtime import PlannerOwnedGraphRuntimeAdapter
+from factory_agent.services.planner_owned_graph_runtime import LiveGraphActivityRecorder, PlannerOwnedGraphRuntimeAdapter
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -213,6 +215,62 @@ async def test_phase10_behavior_normal_v2_plan_creation_enters_graph_path(monkey
             "mode": "normal",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_phase10_graph_runtime_records_live_activity_for_activity_sse(sessionmaker_override, db_session):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Answer from LOTO sources",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "semantic_intake_node",
+            "ledger_revision": 1,
+        }
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "tool_execution_node",
+            "ledger_revision": 1,
+            "source_types": ["rag_tool"],
+            "tool_names": ["rag_search_documents"],
+        }
+    )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity")
+            )
+        ).scalar_one()
+
+    live_steps = row.replan_context["live_activity_steps"]
+    assert [step["label"] for step in live_steps] == [
+        "Understood request",
+        "Searching knowledge sources",
+    ]
+    assert live_steps[1]["detail"] == "Searching retrieved documents"
+    assert row.event_seq > 3
 
 
 def test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume():

@@ -431,6 +431,57 @@ _FOOTNOTE_DEFINITION_RE = re.compile(
 _FOOTNOTE_MARKER_RE = re.compile(r"\[\^([^\]\n]+)\]|\[(\d+)\]")
 _FOOTNOTE_MARKER_CLUSTER_RE = re.compile(r"((?:\s*(?:\[\^[^\]\n]+\]|\[\d+\]))+)")
 _NUMBERED_SEGMENT_START_RE = re.compile(r"^\s*(?:[-*]\s*)?\d+[\.)]\s+")
+_NUMBERED_INLINE_STEP_RE = re.compile(r"(?<!\w)(\d+)[\.)]\s+")
+_PROCEDURE_INTRO_SEGMENT_RE = re.compile(
+    r"\b(?:following|these)\b.{0,160}\b(?:steps?|sequence|procedure)\b|"
+    r"\b(?:before|prior to)\b.{0,160}\b(?:service|maintenance|shutdown)\b.{0,160}"
+    r"\b(?:steps?|complete|accomplished)\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_TRAILING_SUMMARY_RE = re.compile(
+    r"\b(?:these|the)\s+steps?\s+must\s+be\s+accomplished\b|"
+    r"\b(?:these|the)\s+steps?\s+must\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_ACTION_TERMS_RE = re.compile(
+    r"\b(apply|block|check|complete|confirm|disconnect|deenergiz|energiz|isolate|lockout|lock\s+out|"
+    r"notify|prepare|release|remove|restrain|service|shut\s+down|shutdown|tagout|tag\s+out|verify)\b",
+    re.IGNORECASE,
+)
+_CONDITIONAL_STEP_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=(?:If|When|After|Before|Once)\b)")
+_SOURCE_PAGE_TEXT_RE = re.compile(
+    r"\[Source page\s+(\d+)\s+text\]\s*(.*?)(?=\n\s*\[Source page\s+\d+\s+text\]|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_CLAIM_TOKEN_STOPWORDS = {
+    "according",
+    "after",
+    "all",
+    "and",
+    "are",
+    "before",
+    "be",
+    "been",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "into",
+    "is",
+    "it",
+    "must",
+    "of",
+    "or",
+    "s",
+    "that",
+    "the",
+    "these",
+    "this",
+    "to",
+    "with",
+    "workers",
+}
 
 
 def _strip_footnote_markup(value: Any) -> str:
@@ -483,6 +534,520 @@ def _should_join_knowledge_segments_with_newline(previous: str, current: str) ->
     )
 
 
+def _expand_procedure_knowledge_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    changed = False
+    for segment in segments:
+        split_steps = _procedure_step_segments_from_text(
+            str(segment.get("text") or ""),
+            [
+                str(citation_id)
+                for citation_id in segment.get("citation_ids") or []
+                if str(citation_id or "").strip()
+            ],
+        )
+        if split_steps:
+            expanded.extend(split_steps)
+            changed = True
+        else:
+            expanded.append(segment)
+    return expanded if changed else segments
+
+
+def _procedure_step_segments_from_text(text: str, citation_ids: list[str]) -> list[dict[str, Any]] | None:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not citation_ids:
+        return None
+    steps: list[str] = []
+    skipped_intro = False
+
+    numbered_line_count = sum(1 for line in lines if _NUMBERED_SEGMENT_START_RE.match(line))
+    if numbered_line_count >= 2:
+        for line in lines:
+            if _is_procedure_intro_segment(line) or _is_procedure_summary_segment(line):
+                skipped_intro = True
+                continue
+            match = _NUMBERED_SEGMENT_START_RE.match(line)
+            if not match:
+                return None
+            step_texts = _split_procedure_segment_text(line[match.end() :])
+            if not step_texts:
+                return None
+            steps.extend(step_texts)
+    else:
+        matches = list(_NUMBERED_INLINE_STEP_RE.finditer(str(text or "")))
+        if len(matches) < 2:
+            return None
+        prefix = str(text or "")[: matches[0].start()].strip()
+        if prefix:
+            if not _is_procedure_intro_segment(prefix):
+                return None
+            skipped_intro = True
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(str(text or ""))
+            step_texts = _split_procedure_segment_text(str(text or "")[match.end() : end])
+            if not step_texts:
+                return None
+            steps.extend(step_texts)
+
+    if len(steps) < 2:
+        return None
+    return [
+        {
+            "text": f"{index}. {step_text}",
+            "citation_ids": citation_ids,
+        }
+        for index, step_text in enumerate(steps, start=1)
+    ]
+
+
+def _is_procedure_intro_segment(text: str) -> bool:
+    stripped = str(text or "").strip()
+    return bool(stripped.endswith(":") and _PROCEDURE_INTRO_SEGMENT_RE.search(stripped))
+
+
+def _is_procedure_summary_segment(text: str) -> bool:
+    stripped = _strip_footnote_markup(text)
+    return bool(_PROCEDURE_TRAILING_SUMMARY_RE.search(stripped))
+
+
+def _split_procedure_segment_text(text: str) -> list[str]:
+    stripped = _strip_footnote_markup(_drop_trailing_procedure_summary(text))
+    stripped = re.sub(r"\s+", " ", stripped).strip(" \t\r\n;:")
+    if not stripped:
+        return []
+    pieces = [piece.strip() for piece in _CONDITIONAL_STEP_BOUNDARY_RE.split(stripped) if piece.strip()]
+    if len(pieces) <= 1:
+        return [_normalize_procedure_step_text(stripped)]
+    split_steps: list[str] = [_normalize_procedure_step_text(pieces[0])]
+    for piece in pieces[1:]:
+        if _PROCEDURE_ACTION_TERMS_RE.search(piece):
+            split_steps.append(_normalize_procedure_step_text(piece))
+        else:
+            split_steps[-1] = _normalize_procedure_step_text(f"{split_steps[-1]} {piece}")
+    return [step for step in split_steps if step]
+
+
+def _drop_trailing_procedure_summary(text: str) -> str:
+    match = _PROCEDURE_TRAILING_SUMMARY_RE.search(text or "")
+    if not match:
+        return text
+    return text[: match.start()].strip()
+
+
+def _normalize_procedure_step_text(text: str) -> str:
+    stripped = _strip_footnote_markup(text)
+    stripped = re.sub(r"\s+", " ", stripped).strip(" \t\r\n;:")
+    if not stripped:
+        return ""
+    if stripped[-1] not in ".!?":
+        stripped = f"{stripped}."
+    return stripped
+
+
+def _segments_are_procedure_steps(segments: list[dict[str, Any]]) -> bool:
+    if len(segments) < 1:
+        return False
+    return all(_NUMBERED_SEGMENT_START_RE.match(str(segment.get("text") or "")) for segment in segments)
+
+
+def _claim_text_for_support(text: Any) -> str:
+    stripped = _strip_footnote_markup(text)
+    stripped = _NUMBERED_SEGMENT_START_RE.sub("", stripped).strip()
+    return _normalize_procedure_step_text(stripped)
+
+
+def _claim_support_stem(token: str) -> str:
+    if token.startswith("deenerg"):
+        return "deenerg"
+    if token.startswith("energ"):
+        return "energ"
+    if token.startswith("notif"):
+        return "notif"
+    if token.startswith("reaccumul"):
+        return "reaccumul"
+    if token.startswith("reenerg"):
+        return "reenerg"
+    if token.startswith("verif"):
+        return "verif"
+    if token.endswith("ces") and len(token) > 4:
+        return token[:-1]
+    if token.endswith("ing") and len(token) > 5:
+        return token[:-3]
+    if token.endswith("ed") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("es") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and len(token) > 4:
+        return token[:-1]
+    return token
+
+
+def _claim_support_tokens(text: Any) -> set[str]:
+    normalized = re.sub(r"\block\s+out\b", "lockout", str(text or "").lower())
+    normalized = re.sub(r"\btag\s+out\b", "tagout", normalized)
+    tokens: set[str] = set()
+    for raw in re.findall(r"[a-z0-9]+", normalized):
+        token = _claim_support_stem(raw)
+        if len(token) < 3 or token in _CLAIM_TOKEN_STOPWORDS:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _compact_evidence_text(text: Any) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def _evidence_text(evidence: dict[str, Any]) -> str:
+    parts = [
+        evidence.get("snippet"),
+        evidence.get("text"),
+        evidence.get("text_search"),
+        evidence.get("section_title"),
+    ]
+    section_path = evidence.get("section_path")
+    if isinstance(section_path, list):
+        parts.append(" ".join(str(part) for part in section_path if part))
+    else:
+        parts.append(section_path)
+    return " ".join(str(part or "") for part in parts)
+
+
+def _inherit_evidence_fields(
+    child: dict[str, Any],
+    parent: dict[str, Any],
+    citation: dict[str, Any],
+) -> dict[str, Any]:
+    inherited = dict(child)
+    for key in (
+        "source_number",
+        "source_id",
+        "doc_id",
+        "title",
+        "organization",
+        "pdf_url",
+        "page_count",
+    ):
+        if inherited.get(key) in (None, "", [], {}):
+            inherited[key] = parent.get(key) if parent.get(key) not in (None, "", [], {}) else citation.get(key)
+    return {key: value for key, value in inherited.items() if value not in (None, "", [], {})}
+
+
+def _page_text_evidence_items(evidence: dict[str, Any], citation: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    text = str(evidence.get("text") or evidence.get("snippet") or "")
+    for match in _SOURCE_PAGE_TEXT_RE.finditer(text):
+        page = int(match.group(1))
+        snippet = re.sub(r"\s+", " ", match.group(2)).strip()
+        if not snippet:
+            continue
+        items.append(
+            _inherit_evidence_fields(
+                {
+                    "chunk_id": f"{evidence.get('chunk_id') or citation.get('chunk_id')}:page:{page}",
+                    "page": page,
+                    "snippet": snippet,
+                },
+                evidence,
+                citation,
+            )
+        )
+    return items
+
+
+def _flatten_claim_evidence_items(citation: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items = [item for item in citation.get("evidence_snippets") or [] if isinstance(item, dict) and item]
+    flattened: list[dict[str, Any]] = []
+
+    def add_item(item: dict[str, Any], parent: dict[str, Any] | None = None) -> None:
+        base_parent = parent or citation
+        normalized = _inherit_evidence_fields(item, base_parent, citation)
+        for page_item in _page_text_evidence_items(normalized, citation):
+            flattened.append(page_item)
+        nested_found = False
+        for key in ("source_chunk_evidence", "evidence", "evidence_snippets"):
+            nested = normalized.get(key)
+            if not isinstance(nested, list):
+                continue
+            for child in nested:
+                if isinstance(child, dict) and child:
+                    nested_found = True
+                    add_item(child, normalized)
+        if normalized.get("snippet") or normalized.get("text") or normalized.get("text_search"):
+            flattened.append(normalized)
+
+    for item in raw_items:
+        add_item(item)
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in flattened:
+        key = (
+            str(item.get("doc_id") or ""),
+            str(item.get("chunk_id") or ""),
+            str(item.get("page") or ""),
+            _compact_evidence_text(item.get("text_search") or item.get("snippet") or item.get("text"))[:160],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _strip_support_text(value: Any) -> str:
+    text = _strip_footnote_markup(value)
+    text = re.sub(r"^\s*\(?\d+\)?[\.)]?\s*", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n;:,.")
+    return text
+
+
+def _support_text_from_evidence_snippet(claim: str, evidence: dict[str, Any]) -> str | None:
+    evidence_text = _evidence_text(evidence)
+    evidence_snippet = _strip_support_text(evidence.get("text_search") or evidence.get("snippet") or evidence.get("text"))
+    claim_tokens = _claim_support_tokens(claim)
+    evidence_tokens = _claim_support_tokens(evidence_snippet)
+    if evidence_snippet and evidence_tokens and evidence_tokens <= claim_tokens:
+        return evidence_snippet
+
+    claim_words = re.findall(r"[A-Za-z0-9()/-]+", claim)
+    if len(claim_words) >= 2:
+        pattern = r"\b" + r"\W+".join(re.escape(word) for word in claim_words) + r"\b"
+        match = re.search(pattern, evidence_text, flags=re.IGNORECASE)
+        if match:
+            return _strip_support_text(match.group(0))
+
+    compact_claim = _compact_evidence_text(_strip_support_text(claim))
+    if compact_claim and compact_claim in _compact_evidence_text(evidence_text):
+        return _strip_support_text(claim)
+    return None
+
+
+def _claim_evidence_payload(
+    *,
+    claim_text: Any,
+    evidence: dict[str, Any],
+    citation: dict[str, Any],
+    evidence_index: int,
+) -> dict[str, Any]:
+    support_text = _support_text_from_evidence_snippet(_claim_text_for_support(claim_text), evidence)
+    payload: dict[str, Any] = {
+        "contract": "source_evidence_v1",
+        "evidence_id": f"{citation.get('citation_id')}:evidence-{evidence_index}",
+        "locator_confidence": "exact" if support_text else "page_only",
+        "source_id": evidence.get("source_id") or citation.get("source_id"),
+        "source_number": evidence.get("source_number") or citation.get("source_number"),
+        "doc_id": evidence.get("doc_id") or citation.get("doc_id"),
+        "chunk_id": evidence.get("chunk_id") or citation.get("chunk_id"),
+        "title": evidence.get("title") or citation.get("title"),
+        "organization": evidence.get("organization") or citation.get("organization"),
+        "snippet": support_text or evidence.get("snippet") or evidence.get("text") or evidence.get("text_search"),
+        "page": evidence.get("page") or citation.get("page"),
+        "page_label": evidence.get("page_label") or citation.get("page_label"),
+        "pdf_url": evidence.get("pdf_url") or citation.get("pdf_url"),
+        "page_count": evidence.get("page_count") or citation.get("page_count"),
+    }
+    for key in ("bbox", "char_range"):
+        if evidence.get(key) not in (None, "", [], {}):
+            payload[key] = evidence.get(key)
+            payload["locator_confidence"] = "exact"
+    if support_text:
+        payload["text_search"] = support_text
+    return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence_items = _flatten_claim_evidence_items(citation)
+    if not evidence_items:
+        return []
+    claim = _claim_text_for_support(claim_text)
+    claim_tokens = _claim_support_tokens(claim)
+    if not claim_tokens:
+        return []
+
+    scored: list[tuple[float, int, dict[str, Any]]] = []
+    for evidence in evidence_items:
+        evidence_tokens = _claim_support_tokens(_evidence_text(evidence))
+        overlap = len(claim_tokens & evidence_tokens)
+        if overlap <= 0:
+            continue
+        support_text = _support_text_from_evidence_snippet(claim, evidence)
+        coverage = overlap / max(1, len(claim_tokens))
+        locator = 1 if any(evidence.get(key) not in (None, "", [], {}) for key in ("char_range", "bbox", "text_search")) else 0
+        score = (100.0 if support_text else 0.0) + 10.0 * locator + 5.0 * overlap + coverage
+        scored.append((score, overlap, evidence))
+
+    if not scored:
+        return []
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    payloads: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for _score, _overlap, evidence in scored:
+        payload = _claim_evidence_payload(
+            claim_text=claim_text,
+            evidence=evidence,
+            citation=citation,
+            evidence_index=len(payloads) + 1,
+        )
+        key = (
+            str(payload.get("doc_id") or ""),
+            str(payload.get("chunk_id") or ""),
+            str(payload.get("text_search") or payload.get("snippet") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        payloads.append(payload)
+        if len(payloads) >= 5:
+            break
+    payloads = _filter_claim_evidence_payloads(payloads)
+    return payloads
+
+
+def _filter_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    exact_payloads = [
+        payload
+        for payload in payloads
+        if payload.get("locator_confidence") == "exact"
+        or payload.get("text_search") not in (None, "", [], {})
+        or payload.get("bbox") not in (None, "", [], {})
+        or payload.get("char_range") not in (None, "", [], {})
+    ]
+    if not exact_payloads:
+        return payloads
+
+    non_rse_exact = [payload for payload in exact_payloads if not _is_rse_parent_payload(payload)]
+    if non_rse_exact:
+        return _dedupe_claim_evidence_payloads(non_rse_exact)
+    return _dedupe_claim_evidence_payloads(exact_payloads)
+
+
+def _is_rse_parent_payload(payload: dict[str, Any]) -> bool:
+    chunk_id = str(payload.get("chunk_id") or "")
+    return chunk_id.startswith("rse:")
+
+
+def _dedupe_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for payload in payloads:
+        key = (
+            str(payload.get("doc_id") or ""),
+            str(payload.get("chunk_id") or ""),
+            str(payload.get("page") or ""),
+            _compact_evidence_text(payload.get("text_search") or payload.get("snippet"))[:160],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(payload)
+    return deduped
+
+
+def _best_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> dict[str, Any] | None:
+    ranked = _ranked_evidence_for_claim(claim_text, citation)
+    return ranked[0] if ranked else None
+
+
+def _apply_evidence_payload_to_claim(claim: dict[str, Any], evidence: dict[str, Any]) -> None:
+    for key in (
+        "doc_id",
+        "chunk_id",
+        "page",
+        "page_label",
+        "pdf_url",
+        "page_count",
+        "section_title",
+        "section_path",
+        "snippet",
+        "bbox",
+        "char_range",
+        "text_search",
+    ):
+        if evidence.get(key) not in (None, "", [], {}):
+            claim[key] = evidence.get(key)
+
+
+def _claim_specific_text_search(claim_text: Any, evidence: dict[str, Any]) -> str | None:
+    claim = _claim_text_for_support(claim_text)
+    if not claim:
+        return None
+    compact_claim = _compact_evidence_text(claim)
+    evidence_text = _evidence_text(evidence)
+    if compact_claim and compact_claim in _compact_evidence_text(evidence_text):
+        return claim
+
+    explicit = str(evidence.get("text_search") or "").strip()
+    if not explicit:
+        return None
+    claim_tokens = _claim_support_tokens(claim)
+    explicit_tokens = _claim_support_tokens(explicit)
+    overlap = len(claim_tokens & explicit_tokens)
+    if overlap >= 2 or overlap / max(1, len(claim_tokens)) >= 0.5:
+        return explicit
+    return None
+
+
+def _apply_claim_evidence_locator(claim: dict[str, Any], evidence: dict[str, Any], claim_text: Any) -> None:
+    for key in ("bbox", "char_range", "text_search"):
+        claim.pop(key, None)
+    for key in (
+        "doc_id",
+        "chunk_id",
+        "page",
+        "page_label",
+        "pdf_url",
+        "page_start",
+        "page_end",
+        "section_title",
+        "section_path",
+        "snippet",
+        "bbox",
+        "char_range",
+    ):
+        if evidence.get(key) not in (None, "", [], {}):
+            claim[key] = evidence.get(key)
+    text_search = _claim_specific_text_search(claim_text, evidence)
+    if text_search:
+        claim["text_search"] = text_search
+
+
+def _with_claim_level_citations(
+    segments: list[dict[str, Any]],
+    citations_by_id: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    claim_citations_by_id: dict[str, dict[str, Any]] = {}
+    claim_segments: list[dict[str, Any]] = []
+    for segment_index, segment in enumerate(segments, start=1):
+        claim_ids: list[str] = []
+        for citation_id in segment.get("citation_ids") or []:
+            base = citations_by_id.get(str(citation_id))
+            if not base:
+                continue
+            claim = dict(base)
+            claim_id = f"{base.get('citation_id')}:claim-{segment_index}"
+            claim["citation_id"] = claim_id
+            for key in ("bbox", "char_range", "text_search"):
+                claim.pop(key, None)
+            evidence_items = _ranked_evidence_for_claim(segment.get("text"), claim)
+            if evidence_items:
+                claim["evidence"] = evidence_items
+                _apply_evidence_payload_to_claim(claim, evidence_items[0])
+            else:
+                text_search = _claim_specific_text_search(segment.get("text"), base)
+                if text_search:
+                    claim["text_search"] = text_search
+                    for key in ("bbox", "char_range"):
+                        if base.get(key) not in (None, "", [], {}):
+                            claim[key] = base.get(key)
+            claim_citations_by_id[claim_id] = claim
+            claim_ids.append(claim_id)
+        if claim_ids:
+            claim_segments.append({"text": segment.get("text"), "citation_ids": claim_ids})
+    return claim_segments, claim_citations_by_id
+
+
 def _source_key(value: Any) -> str:
     return str(value or "").strip()
 
@@ -501,11 +1066,20 @@ def _citation_payload(source: dict[str, Any]) -> dict[str, Any]:
     }
     for key in (
         "page",
+        "page_start",
+        "page_end",
+        "page_count",
         "page_label",
         "pdf_url",
         "bbox",
         "char_range",
         "text_search",
+        "section_title",
+        "section_path",
+        "supporting_chunk_ids",
+        "supporting_pages",
+        "supporting_sections",
+        "evidence_snippets",
         "policy_only",
         "source_kind",
     ):
@@ -574,8 +1148,25 @@ def _knowledge_answer_payload(answer: Any, sources: list[dict[str, Any]]) -> tup
         else:
             cited_segments = [segment for segment in segments if segment.get("citation_ids")]
             if cited_segments:
-                segments = _merge_adjacent_knowledge_segments(cited_segments)
-                clean_answer = "\n\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
+                cited_segments = _expand_procedure_knowledge_segments(cited_segments)
+                if _segments_are_procedure_steps(cited_segments):
+                    claim_segments, claim_citations_by_id = _with_claim_level_citations(cited_segments, citations_by_id)
+                    if claim_segments:
+                        segments = claim_segments
+                        citations_by_id = claim_citations_by_id
+                        clean_answer = "\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
+                    else:
+                        segments = cited_segments
+                        clean_answer = "\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
+                else:
+                    merged_segments = _merge_adjacent_knowledge_segments(cited_segments)
+                    claim_segments, claim_citations_by_id = _with_claim_level_citations(merged_segments, citations_by_id)
+                    if claim_segments:
+                        segments = claim_segments
+                        citations_by_id = claim_citations_by_id
+                    else:
+                        segments = merged_segments
+                    clean_answer = "\n\n".join(str(segment.get("text") or "").strip() for segment in segments).strip()
             else:
                 clean_answer = insufficient_context_answer(has_sources=True)
                 citations_by_id = {}
@@ -3439,7 +4030,7 @@ def _compose_run_steps(
             read_rows = [row for item in read_evidence for row in item.rows]
             completion_summary = _mixed_read_summary(read_evidence, session=session) or _read_policy_summary(read_rows, read_policy, presentation.summary)
         elif sources:
-            completion_summary = _strip_footnote_markup(knowledge_answer_text) or "Source-backed answer is ready."
+            completion_summary = "Source-backed answer is ready."
         else:
             completion_summary = _trimmed(presentation.summary) or None
         run_steps.append(

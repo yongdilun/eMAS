@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 
 from factory_agent.config import Settings
 from factory_agent.graph.v2_agent_graph import (
+    LocalPlannerOwnedGraphTracer,
     PlannerOwnedAgentGraph,
     PlannerOwnedAgentGraphAdapters,
     PlannerOwnedGraphResult,
 )
 from factory_agent.observability.metrics import metrics
 from factory_agent.persistence.models import Approval as ApprovalRow
+from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
 from factory_agent.planning.v2_rag_tool import ensure_v2_rag_tool
 from factory_agent.schemas import PlanDraft, PlanResponse, PlanStepDraft, ToolInfo
@@ -22,6 +27,161 @@ from factory_agent.services.session_revision import bump_session_revision
 PersistPlan = Callable[..., Awaitable[PlanResponse]]
 SessionLookup = Callable[..., Awaitable[Any]]
 UuidFactory = Callable[[], str]
+
+_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
+_LIVE_GRAPH_MAX_STEPS = 8
+
+
+def _graph_event_is_rag(event: Mapping[str, Any]) -> bool:
+    tool_names = [str(item or "").lower() for item in event.get("tool_names") or []]
+    source_types = [str(item or "").lower() for item in event.get("source_types") or []]
+    return any("rag" in item or "search_documents" in item for item in [*tool_names, *source_types])
+
+
+def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    if event.get("event") != "planner_owned_agent_graph_node":
+        return None
+    node = str(event.get("node") or "").strip()
+    if not node:
+        return None
+    rag = _graph_event_is_rag(event)
+    mapping: dict[str, tuple[str, str, str]] = {
+        "semantic_intake_node": (
+            "planning",
+            "Understood request",
+            "Reviewing your request and recent context",
+        ),
+        "requirement_ledger_node": (
+            "planning",
+            "Preparing next action",
+            "Structuring the request",
+        ),
+        "planner_decision_node": (
+            "planning",
+            "Preparing next action",
+            "Choosing the next backend action",
+        ),
+        "tool_retrieval_node": (
+            "planning",
+            "Preparing next action",
+            "Finding the right information path",
+        ),
+        "planner_choose_tool_node": (
+            "planning",
+            "Preparing next action",
+            "Selecting a safe action",
+        ),
+        "tool_execution_node": (
+            "research",
+            "Searching knowledge sources" if rag else "Running selected tool",
+            "Searching retrieved documents" if rag else "Checking relevant records",
+        ),
+        "evidence_observation_node": (
+            "response",
+            "Checking citations" if rag else "Checking result",
+            "Checking evidence support" if rag else "Checking tool evidence",
+        ),
+        "satisfaction_node": (
+            "response",
+            "Checking result",
+            "Verifying the result",
+        ),
+        "approval_node": (
+            "planning",
+            "Preparing next action",
+            "Checking approval requirements",
+        ),
+        "finalize_node": (
+            "response",
+            "Preparing response",
+            "Finalizing the answer",
+        ),
+        "response_document_node": (
+            "response",
+            "Preparing response",
+            "Rendering the response",
+        ),
+    }
+    spec = mapping.get(node)
+    if spec is None:
+        return None
+    group, label, detail = spec
+    return {
+        "id": f"graph:{node}",
+        "timestamp": int(datetime.utcnow().timestamp()),
+        "group": group,
+        "label": label,
+        "detail": detail,
+        "state": "running",
+    }
+
+
+class LiveGraphActivityRecorder:
+    """Persists in-flight graph node progress so activity SSE can stream real stages."""
+
+    def __init__(
+        self,
+        *,
+        session_factory: Callable[[], AsyncSession],
+        session_id: str,
+    ) -> None:
+        self._session_factory = session_factory
+        self._session_id = session_id
+        self._pending: list[dict[str, Any]] = []
+        self._drain_task: asyncio.Task[None] | None = None
+
+    def record_graph_event(self, event: Mapping[str, Any]) -> None:
+        step = _live_activity_step_for_graph_event(event)
+        if step is None:
+            return
+        self._pending.append(step)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._drain_task is None or self._drain_task.done():
+            self._drain_task = loop.create_task(self._drain())
+
+    async def flush(self) -> None:
+        while True:
+            task = self._drain_task
+            if task is None:
+                return
+            await task
+            if not self._pending and self._drain_task is task:
+                return
+
+    async def _drain(self) -> None:
+        while self._pending:
+            batch = self._pending
+            self._pending = []
+            await self._persist_batch(batch)
+
+    async def _persist_batch(self, batch: list[dict[str, Any]]) -> None:
+        async with self._session_factory() as db:
+            row = (
+                await db.execute(select(SessionRow).where(SessionRow.session_id == self._session_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            if str(row.status or "").upper() not in _ACTIVE_SESSION_STATUSES:
+                return
+            context = dict(row.replan_context or {})
+            existing_rows = context.get("live_activity_steps")
+            existing = [dict(item) for item in existing_rows if isinstance(item, dict)] if isinstance(existing_rows, list) else []
+            by_id = {str(item.get("id") or ""): item for item in existing if item.get("id")}
+            for step in batch:
+                by_id[str(step["id"])] = dict(step)
+            live_steps = sorted(
+                by_id.values(),
+                key=lambda item: (int(item.get("timestamp") or 0), str(item.get("id") or "")),
+            )[-_LIVE_GRAPH_MAX_STEPS:]
+            context["live_activity_steps"] = live_steps
+            context["live_activity_revision"] = int(context.get("live_activity_revision") or 0) + 1
+            row.replan_context = context
+            row.updated_at = datetime.utcnow()
+            bump_session_revision(row)
+            await db.commit()
 
 
 class PlannerOwnedGraphRuntimeAdapter:
@@ -54,12 +214,23 @@ class PlannerOwnedGraphRuntimeAdapter:
         mode: str,
     ) -> PlanResponse:
         tools_by_name = ensure_v2_rag_tool(tools_by_name)
-        graph = self._build_graph(db=db, sess=sess, tools_by_name=tools_by_name, mode=mode)
-        result = await graph.run(
-            intent,
-            session_context=sess,
-            options={"thread_id": sess.session_id},
+        live_activity = self._live_activity_recorder(db=db, sess=sess)
+        graph = self._build_graph(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            mode=mode,
+            live_activity=live_activity,
         )
+        try:
+            result = await graph.run(
+                intent,
+                session_context=sess,
+                options={"thread_id": sess.session_id},
+            )
+        finally:
+            if live_activity is not None:
+                await live_activity.flush()
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return await self.persist_result(
             db=db,
@@ -85,18 +256,29 @@ class PlannerOwnedGraphRuntimeAdapter:
         mode: str = "normal",
     ) -> PlannerOwnedGraphResult:
         tools_by_name = ensure_v2_rag_tool(tools_by_name)
-        graph = self._build_graph(db=db, sess=sess, tools_by_name=tools_by_name, mode=mode)
-        result = await graph.resume_from_approval(
-            sess,
-            {
-                "approval_id": approval_id,
-                "approved": approved,
-                "ledger_revision": ledger_revision,
-                "checkpoint_id": checkpoint_id,
-                "decided_by": decided_by,
-            },
-            options={"thread_id": sess.session_id},
+        live_activity = self._live_activity_recorder(db=db, sess=sess)
+        graph = self._build_graph(
+            db=db,
+            sess=sess,
+            tools_by_name=tools_by_name,
+            mode=mode,
+            live_activity=live_activity,
         )
+        try:
+            result = await graph.resume_from_approval(
+                sess,
+                {
+                    "approval_id": approval_id,
+                    "approved": approved,
+                    "ledger_revision": ledger_revision,
+                    "checkpoint_id": checkpoint_id,
+                    "decided_by": decided_by,
+                },
+                options={"thread_id": sess.session_id},
+            )
+        finally:
+            if live_activity is not None:
+                await live_activity.flush()
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return result
 
@@ -152,6 +334,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         sess: Any,
         tools_by_name: dict[str, ToolInfo],
         mode: str,
+        live_activity: LiveGraphActivityRecorder | None = None,
     ) -> PlannerOwnedAgentGraph:
         async def _approval_persister(*, state: Any, payload: dict[str, Any]) -> dict[str, Any]:
             return await self._persist_approval_row(
@@ -173,7 +356,20 @@ class PlannerOwnedGraphRuntimeAdapter:
                 rag_pipeline=self._rag_pipeline,
                 approval_persister=_approval_persister,
             ),
+            tracer=(
+                LocalPlannerOwnedGraphTracer(on_node_recorded=live_activity.record_graph_event)
+                if live_activity is not None
+                else None
+            ),
         )
+
+    def _live_activity_recorder(self, *, db: AsyncSession, sess: Any) -> LiveGraphActivityRecorder | None:
+        bind = getattr(db, "bind", None)
+        session_id = str(getattr(sess, "session_id", "") or "").strip()
+        if bind is None or not session_id:
+            return None
+        factory = sessionmaker(bind, class_=AsyncSession, expire_on_commit=False)
+        return LiveGraphActivityRecorder(session_factory=factory, session_id=session_id)
 
     async def _persist_approval_row(
         self,
@@ -351,6 +547,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         loop_state = state.as_loop_compat_state()
         graph_state = state.model_dump(mode="json")
         context = dict(base_context or {})
+        context.pop("live_activity_steps", None)
+        context.pop("live_activity_revision", None)
         context["intent_contract"] = {
             "intent": intent,
             "engine_version": "v2",

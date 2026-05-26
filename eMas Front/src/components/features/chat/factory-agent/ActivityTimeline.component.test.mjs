@@ -91,6 +91,50 @@ test('ActivityTimeline renders completed runs as a collapsed latest-step summary
   await view.unmount()
 })
 
+test('ActivityTimeline ignores stale rows that arrive after a terminal row', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'response',
+          label: 'Checking citations',
+          detail: 'Checking evidence support',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'response',
+          label: 'Run complete',
+          detail: 'All steps finished. See the thread below.',
+          state: 'complete',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Understanding your request',
+          detail: 'Reviewing your request and recent context',
+          state: 'running',
+        },
+      ],
+    }),
+  )
+
+  assert.match(view.text(), /Run complete/)
+  assert.doesNotMatch(view.text(), /Understanding your request/)
+  assert.doesNotMatch(view.text(), /Current/)
+
+  await click(view.container.querySelector('button'))
+  assert.match(view.text(), /Checking citations/)
+  assert.doesNotMatch(view.text(), /Understanding your request/)
+
+  await view.unmount()
+})
+
 test('ActivityTimeline keeps the latest successful action spinning until the run completes', async () => {
   const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
   const view = await render(

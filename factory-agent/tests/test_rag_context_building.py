@@ -378,6 +378,40 @@ def test_context_builder_metadata_preserves_source_chunk_evidence_for_audit():
     assert segment["source_chunk_evidence"][0]["chunk_id"] == "doc_c0001"
     assert segment["source_chunk_evidence"][1]["page"] == 8
     assert "Verification support" in segment["source_chunk_evidence"][1]["snippet"]
+    assert result.chunks[0].metadata["source_chunk_evidence"][1]["page"] == 8
+    assert "Verification support" in result.chunks[0].metadata["source_chunk_evidence"][1]["snippet"]
+
+
+def test_context_builder_source_chunk_evidence_keeps_long_procedure_support():
+    procedure_text = (
+        "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+        "and according to the specific provisions of the employer's energy-control procedure: "
+        "(1) Prepare for shutdown; "
+        "(2) Shut down the machine; "
+        "(3) Disconnect or isolate the machine from the energy source(s); "
+        "(4) Apply the lockout or tagout device(s) to the energy-isolating device(s); "
+        "(5) Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+        "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels; and "
+        "(6) Verify the isolation and deenergization of the machine."
+    )
+    chunks = [
+        _chunk("doc", 15, procedure_text, section="What must workers do before they begin service?", page=14),
+    ]
+    builder = RAGContextBuilder(FakeRetriever(chunks))
+
+    result = builder.build(
+        query="what steps before service maintenance",
+        selected_chunks=[chunks[0]],
+        candidates=[_scored(chunks[0])],
+        context_builder="rse",
+        compression="none",
+    )
+
+    child_evidence = result.chunks[0].metadata["source_chunk_evidence"][0]
+    assert child_evidence["page"] == 14
+    assert "Apply the lockout or tagout device(s)" in child_evidence["snippet"]
+    assert "Verify the isolation and deenergization of the machine" in child_evidence["snippet"]
 
 
 def test_light_compression_preserves_required_child_evidence_from_extra_text():

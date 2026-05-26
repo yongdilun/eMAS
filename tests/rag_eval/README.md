@@ -8,6 +8,7 @@ metrics, and optional borderline-only LLM judge triage.
 - Cases: [`tests/rag_eval/cases.json`](cases.json)
 - Schema helpers: [`tests/rag_eval/artifact_schema.py`](artifact_schema.py)
 - Runner: [`tests/rag_eval/run_eval.py`](run_eval.py)
+- Single-query debugger: [`tests/rag_eval/run_query_debug.py`](run_query_debug.py)
 - Variant registry: [`tests/rag_eval/variants.py`](variants.py)
 - PowerShell wrapper: [`tests/rag_eval/run_rag_eval.ps1`](run_rag_eval.ps1)
 - Pytest wrapper: [`factory-agent/tests/test_rag_live_llm.py`](../../factory-agent/tests/test_rag_live_llm.py)
@@ -87,6 +88,31 @@ python -m tests.rag_eval.run_eval --run-id 2026-05-10-baseline
 python -m tests.rag_eval.run_eval --variant V3 --judge
 ```
 
+### Single-Query Citation Debug
+
+Use this when one advisory RAG answer has a citation or PDF evidence problem and
+you need a compact, reproducible artifact. It runs the real RAG pipeline and also
+projects the output into the response-document contracts used by the UI.
+
+```powershell
+$env:FACTORY_AGENT_LIVE_RAG = "1"
+$env:OPENAI_BASE_URL = "http://127.0.0.1:900/v1"
+$env:OPENAI_API_KEY = "local"
+
+python -m tests.rag_eval.run_query_debug `
+  --variant V12 `
+  --case-id loto-before-service-debug `
+  --query "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?"
+```
+
+Artifacts are written under `test-artifacts/rag-query-debug/<run_id>/` and include:
+
+- raw RAG answer and sources
+- retrieval debug chunks
+- projected `knowledge_answer_v1` segments/citations
+- projected `source_list_v1` references
+- per-step citation diagnostics for LOTO-style procedure answers
+
 ### Pytest
 
 ```powershell
@@ -94,6 +120,9 @@ python -m pytest factory-agent/tests/test_rag_live_llm.py -v
 # optional case filter:
 $env:FACTORY_AGENT_RAG_EVAL_FILTER = "loto-"
 python -m pytest factory-agent/tests/test_rag_live_llm.py -v
+
+# one-query citation projection debug:
+python -m pytest factory-agent/tests/test_rag_live_query_debug.py -v
 ```
 
 When the env flag is unset the test is `SKIPPED`, so it is safe to leave in the suite.

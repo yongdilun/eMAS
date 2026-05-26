@@ -30,6 +30,15 @@ export const activitySsePrompt = 'Validate ordered activity SSE steps for M-CNC-
 export const activitySseAnswer =
   'Activity SSE completed in order before the final M-CNC-01 response was shown.'
 
+export const activitySseResponseDocumentPrompt =
+  'Validate response document uses live activity SSE steps for M-CNC-01'
+
+export const activitySseDelayedFallbackPrompt =
+  'Validate delayed server activity replaces client fallback for M-CNC-01'
+
+export const activitySseGraphDuplicatePrompt =
+  'Validate graph activity does not duplicate understood request rows for M-CNC-01'
+
 export const malformedSsePrompt = 'Validate malformed SSE recovery for M-CNC-01'
 
 export const malformedSseAnswer =

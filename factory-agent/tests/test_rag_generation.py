@@ -2,8 +2,8 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from factory_agent.rag.schemas import Chunk, ScoredChunk, AnswerResult
-from factory_agent.rag.generation import AnswerGenerator, SAFETY_WARNING_BLOCK
-from factory_agent.rag.source_metadata import insufficient_context_answer, normalize_source_locators
+from factory_agent.rag.generation import AnswerGenerator, SAFETY_WARNING_BLOCK, extract_explicit_procedure_evidence
+from factory_agent.rag.source_metadata import insufficient_context_answer, normalize_source_locator, normalize_source_locators
 
 @pytest.fixture
 def mock_settings():
@@ -156,9 +156,8 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
     chunk = Chunk(
         chunk_id="osha_3120_lockout_tagout_c0027",
         text=(
-            "Before beginning service or maintenance, the following steps must be accomplished in sequence: "
-            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
-            "from the energy sources."
+            "The LOTO procedure discussion explains that workers prepare for shutdown, shut down the "
+            "machine, and disconnect or isolate the machine from the energy sources before maintenance."
         ),
         metadata={
             "doc_id": "osha_3120_lockout_tagout",
@@ -191,13 +190,17 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
         [chunk],
     )
 
-    assert result.answer == response.content
+    assert result.answer == (
+        "1. Prepare for shutdown. [^1]\n"
+        "2. Shut down the machine. [^1]\n"
+        "3. Disconnect or isolate the machine from the energy sources. [^1]"
+    )
     assert mock_llm.invoke.call_count == 1
     prompt = mock_llm.invoke.call_args.args[0][1].content
-    assert "Cite coherent answer groups, not every sentence" in prompt
-    assert "Group adjacent sentences or related procedure steps under one citation marker" in prompt
-    assert "cite the whole lead-in plus list as one grouped procedure block" in prompt
-    assert "Do not scatter the same citation after every sentence" in prompt
+    assert "Cite coherent non-procedure answer groups, not every sentence" in prompt
+    assert "For procedures, output a flat numbered list with one visible action per numbered step" in prompt
+    assert "For procedures, cite each numbered step with the source marker that proves that step" in prompt
+    assert "Do not nest a numbered list inside another numbered item" in prompt
     assert "If no supported answer remains, output exactly the insufficient-context sentence" in prompt
     assert "If relevant evidence is split across multiple source chunks" in prompt
     assert "For section summaries or multi-part questions" in prompt
@@ -207,7 +210,7 @@ def test_answer_prompt_contains_full_citation_contract_in_first_generation_call(
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
-def test_generate_answer_preserves_grouped_loto_procedure_with_long_intro(mock_build_llm, mock_settings):
+def test_generate_answer_flattens_grouped_loto_procedure_with_long_intro(mock_build_llm, mock_settings):
     chunk = Chunk(
         chunk_id="osha_3120_lockout_tagout_c0027",
         text=(
@@ -254,9 +257,437 @@ def test_generate_answer_preserves_grouped_loto_procedure_with_long_intro(mock_b
         [chunk],
     )
 
-    assert result.answer == answer
+    assert result.answer == (
+        "1. Prepare for shutdown. [^1]\n"
+        "2. Shut down the machine. [^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s). [^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). [^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. [^1]"
+    )
     assert result.answer != insufficient_context_answer(has_sources=True)
     assert result.sources[0].source_number == 1
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_flattens_nested_procedure_answer_and_keeps_step_citations(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0027",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy; and (6) If a possibility exists for reaccumulation of hazardous energy, "
+            "regularly verify during service and maintenance that such energy has not reaccumulated."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 14,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    awkward_answer = (
+        "1. Before beginning service or maintenance, workers must complete the following steps in sequence "
+        "and according to the specific provisions of the employer's energy-control procedure:\n"
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
+        "3. Disconnect or isolate the machine from the energy source(s).\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s).\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy.\n"
+        "6. If a possibility exists for reaccumulation of hazardous energy, regularly verify during service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels.\n"
+        "2. After completing these steps, verify the isolation and deenergization of the machine.[^1]"
+    )
+    mock_response = MagicMock()
+    mock_response.content = awkward_answer
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert result.answer == (
+        "1. Prepare for shutdown. [^1]\n"
+        "2. Shut down the machine. [^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s). [^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). [^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. [^1]\n"
+        "6. If a possibility exists for reaccumulation of hazardous energy, regularly verify during service "
+        "and maintenance that such energy has not reaccumulated. [^1]"
+    )
+    assert "Before beginning service or maintenance, workers must complete the following steps" not in result.answer
+    assert "Safety notice" not in result.answer
+    assert result.safety_content
+    assert result.metadata["generation_validation"]["deterministic_procedure_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_flattens_inline_single_citation_procedure_output(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0015",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy; (6) If a possibility exists for reaccumulation of hazardous energy, "
+            "regularly verify during service and maintenance that such energy has not reaccumulated "
+            "to hazardous levels."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 13,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    live_shape_answer = (
+        "1. Prepare for shutdown. 2. Shut down the machine. "
+        "3. Disconnect or isolate the machine from the energy source(s). "
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). "
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+        "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels. "
+        "These steps must be accomplished in sequence and according to the specific provisions of the "
+        "employer's energy-control procedure.[^1]"
+    )
+    mock_response = MagicMock()
+    mock_response.content = live_shape_answer
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert result.answer == (
+        "1. Prepare for shutdown. [^1]\n"
+        "2. Shut down the machine. [^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s). [^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). [^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. [^1]\n"
+        "6. If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels. [^1]"
+    )
+    assert "These steps must be accomplished" not in result.answer
+
+
+def test_extract_explicit_procedure_evidence_preserves_inline_steps_and_child_page():
+    chunk = Chunk(
+        chunk_id="rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy. If a possibility exists for reaccumulation of hazardous energy, regularly "
+            "verify during the service and maintenance that such energy has not reaccumulated to hazardous "
+            "levels; and (6) Verify the isolation and deenergization of the machine.\n\n"
+            "Employees who work on deenergized machinery may be seriously injured if devices are removed."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 13,
+            "page_start": 13,
+            "page_end": 15,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+            "source_chunk_evidence": [
+                {
+                    "doc_id": "osha_3120_lockout_tagout",
+                    "chunk_id": "osha_3120_lockout_tagout_c0015",
+                    "page": 13,
+                    "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                    "snippet": "What must an energy-control procedure include?",
+                },
+                {
+                    "doc_id": "osha_3120_lockout_tagout",
+                    "chunk_id": "osha_3120_lockout_tagout_c0016",
+                    "page": 14,
+                    "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                    "snippet": (
+                        "Before beginning service or maintenance, the following steps must be accomplished "
+                        "in sequence and according to the specific provisions of the employer's energy-control "
+                        "procedure: (1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or "
+                        "isolate the machine from the energy source(s); (4) Apply the lockout or tagout "
+                        "device(s) to the energy-isolating device(s); (5) Release, restrain, or otherwise "
+                        "render safe all potential hazardous stored or residual energy. If a possibility "
+                        "exists for reaccumulation of hazardous energy, regularly verify during the service "
+                        "and maintenance that such energy has not reaccumulated to hazardous levels; and "
+                        "(6) Verify the isolation and deenergization of the machine."
+                    ),
+                },
+            ],
+        },
+    )
+
+    evidence = extract_explicit_procedure_evidence(
+        query="According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        doc_order=["osha_3120_lockout_tagout"],
+        doc_chunks={"osha_3120_lockout_tagout": [chunk]},
+    )
+
+    assert evidence is not None
+    assert [step.text for step in evidence.steps] == [
+        "Prepare for shutdown.",
+        "Shut down the machine.",
+        "Disconnect or isolate the machine from the energy source(s).",
+        "Apply the lockout or tagout device(s) to the energy-isolating device(s).",
+        (
+            "Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+            "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the "
+            "service and maintenance that such energy has not reaccumulated to hazardous levels."
+        ),
+        "Verify the isolation and deenergization of the machine.",
+    ]
+    assert evidence.steps[5].page == 14
+    assert evidence.steps[5].text_search == "Verify the isolation and deenergization of the machine"
+
+
+def test_extract_explicit_procedure_evidence_ignores_unmatched_or_truncated_lists():
+    removal_chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0017",
+        text=(
+            "Before removing lockout or tagout devices, employees must take the following steps: "
+            "(1) Inspect machines or their components; and (2) Check that everyone is positioned safely."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 15,
+        },
+    )
+    truncated_chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0018",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished: "
+            "(1) Prepare for shutdown; (2) Shut down the"
+        ),
+        metadata={**removal_chunk.metadata, "page": 14},
+    )
+    ellipsis_chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0019",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolat..."
+        ),
+        metadata={**removal_chunk.metadata, "page": 14},
+    )
+
+    query = "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?"
+
+    assert extract_explicit_procedure_evidence(
+        query=query,
+        doc_order=["osha_3120_lockout_tagout"],
+        doc_chunks={"osha_3120_lockout_tagout": [removal_chunk]},
+    ) is None
+    assert extract_explicit_procedure_evidence(
+        query=query,
+        doc_order=["osha_3120_lockout_tagout"],
+        doc_chunks={"osha_3120_lockout_tagout": [truncated_chunk]},
+    ) is None
+    assert extract_explicit_procedure_evidence(
+        query=query,
+        doc_order=["osha_3120_lockout_tagout"],
+        doc_chunks={"osha_3120_lockout_tagout": [ellipsis_chunk]},
+    ) is None
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_uses_deterministic_procedure_evidence_when_llm_would_omit_step(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy. If a possibility exists for reaccumulation of hazardous energy, regularly "
+            "verify during the service and maintenance that such energy has not reaccumulated to hazardous "
+            "levels; and (6) Verify the isolation and deenergization of the machine."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 13,
+            "page_start": 13,
+            "page_end": 15,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+            "source_chunk_evidence": [
+                {
+                    "doc_id": "osha_3120_lockout_tagout",
+                    "chunk_id": "osha_3120_lockout_tagout_c0015",
+                    "page": 13,
+                    "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                    "snippet": "What must an energy-control procedure include?",
+                },
+                {
+                    "doc_id": "osha_3120_lockout_tagout",
+                    "chunk_id": "osha_3120_lockout_tagout_c0016",
+                    "page": 14,
+                    "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                    "snippet": (
+                        "Before beginning service or maintenance, the following steps must be accomplished "
+                        "in sequence and according to the specific provisions of the employer's energy-control "
+                        "procedure: (1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or "
+                        "isolate the machine from the energy source(s); (4) Apply the lockout or tagout "
+                        "device(s) to the energy-isolating device(s); (5) Release, restrain, or otherwise "
+                        "render safe all potential hazardous stored or residual energy. If a possibility "
+                        "exists for reaccumulation of hazardous energy, regularly verify during the service "
+                        "and maintenance that such energy has not reaccumulated to hazardous levels; and "
+                        "(6) Verify the isolation and deenergization of the machine."
+                    ),
+                },
+            ],
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = (
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
+        "3. Disconnect or isolate the machine from the energy source(s).\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s).\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy.[^1]"
+    )
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert result.answer == (
+        "1. Prepare for shutdown. [^1]\n"
+        "2. Shut down the machine. [^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s). [^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). [^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+        "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels. [^1]\n"
+        "6. Verify the isolation and deenergization of the machine. [^1]"
+    )
+    assert mock_llm.invoke.call_count == 1
+    assert result.safety_content
+    assert result.metadata["generation_validation"]["procedure_evidence_repaired"] is True
+    assert result.metadata["generation_validation"]["deterministic_procedure_answer"] is True
+    assert result.sources[0].evidence_snippets[0]["page"] == 14
+    assert result.sources[0].evidence_snippets[0]["text_search"] == "Prepare for shutdown"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_repairs_procedure_step_that_omits_required_subsentence(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="osha_3120_lockout_tagout_c0016",
+        text=(
+            "Before beginning service or maintenance, the following steps must be accomplished in sequence "
+            "and according to the specific provisions of the employer's energy-control procedure: "
+            "(1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or isolate the machine "
+            "from the energy source(s); (4) Apply the lockout or tagout device(s) to the energy-isolating "
+            "device(s); (5) Release, restrain, or otherwise render safe all potential hazardous stored "
+            "or residual energy. If a possibility exists for reaccumulation of hazardous energy, regularly "
+            "verify during the service and maintenance that such energy has not reaccumulated to hazardous "
+            "levels; and (6) Verify the isolation and deenergization of the machine."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-10",
+            "page": 14,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = (
+        "1. Prepare for shutdown.[^1]\n"
+        "2. Shut down the machine.[^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s).[^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s).[^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy.[^1]\n"
+        "6. Verify the isolation and deenergization of the machine.[^1]"
+    )
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [chunk],
+    )
+
+    assert mock_llm.invoke.call_count == 1
+    assert "If a possibility exists for reaccumulation of hazardous energy" in result.answer
+    assert "regularly verify during the service and maintenance" in result.answer
+    assert result.metadata["generation_validation"]["procedure_evidence_repaired"] is True
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
@@ -1363,6 +1794,113 @@ def test_generate_answer_records_chunk_level_citation_support(mock_build_llm, mo
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_preserves_context_child_evidence_for_citation_resolution(mock_build_llm, mock_settings):
+    rse_chunk = Chunk(
+        chunk_id="rse:doc:01:doc_c0001",
+        text=(
+            "Broad parent context on page 13.\n\n"
+            "Before beginning service or maintenance, the following steps must be accomplished: "
+            "(1) Prepare for shutdown; (2) Shut down the machine."
+        ),
+        metadata={
+            "doc_id": "doc",
+            "title": "Evidence Source",
+            "organization": "Org",
+            "authority_level": "official_public_guidance",
+            "domain": "safety",
+            "subdomain": "loto",
+            "risk_level": "high",
+            "license": "public",
+            "version": "1",
+            "retrieved_date": "2026-05-25",
+            "page": 13,
+            "page_start": 13,
+            "page_end": 14,
+            "pdf_url": "/documents/doc/pdf",
+            "context_builder": "rse",
+            "source_chunk_evidence": [
+                {
+                    "doc_id": "doc",
+                    "chunk_id": "doc_c0001",
+                    "page": 13,
+                    "snippet": "Broad parent context on page 13.",
+                },
+                {
+                    "doc_id": "doc",
+                    "chunk_id": "doc_c0002",
+                    "page": 14,
+                    "pdf_url": "/documents/doc/pdf",
+                    "snippet": "Before beginning service or maintenance: (1) Prepare for shutdown; (2) Shut down the machine.",
+                },
+            ],
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "1. Shut down the machine. [^1]"
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("What must workers do before maintenance?", [rse_chunk])
+
+    source = result.sources[0].model_dump()
+    assert source["page"] == 14
+    assert source["evidence_snippets"][0]["page"] == 14
+    assert source["evidence_snippets"][1]["page"] == 14
+    assert source["evidence_snippets"][1]["text_search"] == "Shut down the machine"
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_answer_citation_locator_prefers_exact_claim_support_chunk(mock_build_llm, mock_settings):
+    broad_context = Chunk(
+        chunk_id="osha_loto_broad_page",
+        text=(
+            "Before beginning service or maintenance, the employer's energy-control procedure describes "
+            "the sequence workers must follow for hazardous energy control."
+        ),
+        metadata={
+            "doc_id": "osha_3120_lockout_tagout",
+            "title": "Control of Hazardous Energy Lockout/Tagout",
+            "organization": "OSHA",
+            "authority_level": "official_public_guidance",
+            "domain": "safety_maintenance",
+            "subdomain": "lockout_tagout",
+            "risk_level": "high",
+            "license": "public",
+            "version": "2002 (Revised)",
+            "retrieved_date": "2026-05-25",
+            "page": 13,
+            "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        },
+    )
+    exact_support = Chunk(
+        chunk_id="osha_loto_prepare_step",
+        text="Prepare for shutdown.",
+        metadata={
+            **broad_context.metadata,
+            "page": 14,
+        },
+    )
+    mock_llm = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = "1. Prepare for shutdown. [^1]"
+    mock_llm.invoke.return_value = mock_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?",
+        [broad_context, exact_support],
+    )
+
+    source = result.sources[0].model_dump()
+    assert source["chunk_id"] == "osha_loto_prepare_step"
+    assert source["page"] == 14
+    assert source["text_search"] == "Prepare for shutdown."
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_boundary_fallback_has_concrete_osha_live_status_caution(mock_build_llm, mock_settings):
     chunk = Chunk(
         chunk_id="osha_c0001",
@@ -1478,6 +2016,26 @@ def test_generate_answer_empty_input(mock_build_llm, mock_settings):
     
     assert result.answer == insufficient_context_answer(has_sources=False)
     assert len(result.sources) == 0
+
+
+def test_normalize_source_locator_does_not_promote_snippet_to_text_search():
+    source = normalize_source_locator(
+        {
+            "source_number": 1,
+            "source_id": "doc#chunk-1",
+            "doc_id": "doc",
+            "chunk_id": "chunk-1",
+            "title": "PDF Source",
+            "organization": "Org",
+            "snippet": "This is preview evidence for the source card, not an exact PDF search target.",
+            "pdf_url": "/documents/doc/pdf",
+            "page": 9,
+        }
+    )
+
+    assert source["page"] == 9
+    assert source["snippet"].startswith("This is preview evidence")
+    assert "text_search" not in source
 
 
 def test_normalize_source_locators_reassigns_duplicate_final_source_numbers():

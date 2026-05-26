@@ -261,6 +261,70 @@ test('response document reducer accepts terminal equal revision over active prog
   assert.equal(result.state.document.message, 'Some rows were updated, but other rows failed.')
 })
 
+test('response document reducer accepts terminal lower revision over active progress', () => {
+  const active = doc({
+    revision: 8,
+    state: 'running',
+    status: 'running',
+    message: "I'm working on the request and waiting for the next backend update.",
+    summary: "I'm working on the request and waiting for the next backend update.",
+    run_steps: [
+      {
+        step_id: 'checking-result',
+        kind: 'mutation',
+        state: 'current',
+        title: 'Checking result',
+        summary: 'Verifying the result',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['checking-result'] },
+      {
+        id: 'message:active-revision-8',
+        type: 'short_message',
+        message: "I'm working on the request and waiting for the next backend update.",
+        status: 'running',
+      },
+    ],
+  })
+  const state = applyResponseDocumentSnapshotUpdate(
+    createResponseDocumentReducerState(),
+    snapshot(active, { snapshot_revision: 8 }),
+    { transport: 'sse' },
+  ).state
+
+  const terminal = doc({
+    revision: 3,
+    state: 'completed',
+    status: 'completed',
+    message: 'I found a source-backed answer.',
+    summary: 'I found a source-backed answer.',
+    run_steps: [
+      {
+        step_id: 'completed-1',
+        kind: 'completed',
+        state: 'completed',
+        title: 'Run complete',
+        summary: 'I found a source-backed answer.',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['completed-1'] },
+      { id: 'message:completed-revision-3', type: 'short_message', message: 'I found a source-backed answer.', status: 'completed' },
+    ],
+  })
+
+  const result = applyResponseDocumentSnapshotUpdate(
+    state,
+    snapshot(terminal, { snapshot_revision: 3 }),
+    { transport: 'polling' },
+  )
+  assert.equal(result.accepted, true)
+  assert.equal(result.decision, 'accepted_terminal_lower_revision_over_active')
+  assert.equal(result.state.document.revision, 3)
+  assert.equal(result.state.document.message, 'I found a source-backed answer.')
+})
+
 test('response document reducer refuses older turn and document scopes', () => {
   const current = applyResponseDocumentSnapshotUpdate(
     createResponseDocumentReducerState(),

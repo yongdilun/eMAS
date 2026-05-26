@@ -119,10 +119,11 @@ export function longRunningNotificationStream() {
   ]
 }
 
-export function orderedActivityStream() {
+export function orderedActivityStream({ firstActivityDelayMs = 90, prematureTerminal = false } = {}) {
   const [understanding, checking, validating] = orderedSseActivitySteps({ terminal: false })
+  const [, , , complete] = orderedSseActivitySteps({ terminal: true })
 
-  return [
+  const frames = [
     {
       id: 1,
       event: 'control',
@@ -131,7 +132,7 @@ export function orderedActivityStream() {
     {
       id: 2,
       event: 'activity',
-      delayMs: 90,
+      delayMs: firstActivityDelayMs,
       data: { ...understanding, state: 'success', timestamp: Date.parse(fixtureTime(1)) / 1000 },
     },
     {
@@ -151,6 +152,82 @@ export function orderedActivityStream() {
       event: 'activity',
       delayMs: 1100,
       data: { ...validating, state: 'running' },
+    },
+  ]
+
+  if (prematureTerminal) {
+    frames.push({
+      id: 6,
+      event: 'activity',
+      delayMs: 120,
+      data: complete,
+    })
+  }
+
+  return frames
+}
+
+export function activeSnapshotRaceNotificationStream() {
+  return [
+    {
+      id: 1,
+      event: 'notification',
+      data: { type: 'hello', cursor: 1 },
+    },
+    {
+      id: 2,
+      event: 'notification',
+      delayMs: 650,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: 2,
+        reason: 'active_snapshot_race',
+        session_status: 'EXECUTING',
+      },
+    },
+    {
+      id: 3,
+      event: 'notification',
+      delayMs: 650,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: 3,
+        reason: 'active_snapshot_race',
+        session_status: 'EXECUTING',
+      },
+    },
+    {
+      id: 4,
+      event: 'notification',
+      delayMs: 650,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: 4,
+        reason: 'active_snapshot_race',
+        session_status: 'EXECUTING',
+      },
+    },
+    {
+      id: 5,
+      event: 'notification',
+      delayMs: 1200,
+      data: {
+        type: 'snapshot_invalidated',
+        cursor: 5,
+        reason: 'execution_completed',
+        session_status: 'COMPLETED',
+      },
+    },
+    {
+      id: 6,
+      event: 'notification',
+      delayMs: 40,
+      data: {
+        type: 'phase_changed',
+        cursor: 6,
+        phase: 'COMPLETED',
+        status: 'COMPLETED',
+      },
     },
   ]
 }

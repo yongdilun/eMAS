@@ -277,9 +277,9 @@ def test_phase7_activity_adapter_sanitizes_tool_and_runtime_details():
 
     steps = _activity_steps_for_snapshot(snapshot)
     assert [step.label for step in steps] == [
-        "Understanding your request",
-        "Gathering information",
-        "Information checked",
+        "Understood request",
+        "Reading machine records",
+        "Checked machine records",
         "Improving the response",
         "Run complete",
     ]
@@ -288,6 +288,213 @@ def test_phase7_activity_adapter_sanitizes_tool_and_runtime_details():
     assert steps[3].state == "success"
     assert set(step.state for step in steps) <= {"running", "success", "retry", "waiting", "error", "complete"}
     _assert_no_activity_leaks(steps)
+
+
+def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+
+    normal_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-specific-tool",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=5),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:specific-tool",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="started:specific-tool",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=2),
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+            ),
+            TimelineEventResponse(
+                event_id="result:specific-tool",
+                event_type="tool_result",
+                content="Machine status checked.",
+                created_at=created_at + timedelta(seconds=3),
+                tool_name="get__machines_{id}",
+                status="DONE",
+            ),
+            TimelineEventResponse(
+                event_id="completed:specific-tool",
+                event_type="session_completed",
+                content="Machine status is available.",
+                created_at=created_at + timedelta(seconds=4),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    normal_steps = _activity_steps_for_snapshot(normal_snapshot)
+    assert [step.label for step in normal_steps] == [
+        "Understood request",
+        "Reading machine records",
+        "Checked machine records",
+        "Run complete",
+    ]
+
+    rag_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-specific-rag",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=5),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:specific-rag",
+                event_type="plan_created",
+                content="Answer from OSHA LOTO sources.",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="started:specific-rag",
+                event_type="tool_started",
+                content="Searching retrieved documents.",
+                created_at=created_at + timedelta(seconds=2),
+                tool_name="rag_search_documents",
+                status="IN_PROGRESS",
+            ),
+            TimelineEventResponse(
+                event_id="result:specific-rag",
+                event_type="tool_result",
+                content="Prepared cited LOTO answer.",
+                created_at=created_at + timedelta(seconds=3),
+                tool_name="rag_search_documents",
+                status="DONE",
+                details={"sources": [{"doc_id": "osha_3120_lockout_tagout", "source_number": 1}]},
+            ),
+            TimelineEventResponse(
+                event_id="completed:specific-rag",
+                event_type="session_completed",
+                content="Source-backed answer is ready.",
+                created_at=created_at + timedelta(seconds=4),
+                status="COMPLETED",
+                details={"sources": [{"doc_id": "osha_3120_lockout_tagout", "source_number": 1}]},
+            ),
+        ],
+    )
+
+    rag_steps = _activity_steps_for_snapshot(rag_snapshot)
+    assert [step.label for step in rag_steps] == [
+        "Understood request",
+        "Searching knowledge sources",
+        "Building cited answer",
+        "Run complete",
+    ]
+    assert rag_steps[2].detail == "Checking citation support"
+
+
+def test_phase7_activity_adapter_uses_live_graph_activity_while_session_is_active():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    live_rows = [
+        {
+            "id": "graph:semantic_intake_node",
+            "timestamp": int((created_at + timedelta(seconds=1)).timestamp()),
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "running",
+        },
+        {
+            "id": "graph:tool_retrieval_node",
+            "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+            "group": "research",
+            "label": "Searching knowledge sources",
+            "detail": "Finding relevant source material",
+            "state": "running",
+        },
+        {
+            "id": "graph:evidence_observation_node",
+            "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+            "group": "response",
+            "label": "Checking citations",
+            "detail": "Checking evidence support",
+            "state": "running",
+        },
+    ]
+    active_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-live-graph",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=3),
+            "replan_context": {"live_activity_steps": live_rows},
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:live-graph",
+                event_type="plan_created",
+                content="Answer from retrieved safety sources.",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            )
+        ],
+    )
+
+    active_steps = _activity_steps_for_snapshot(active_snapshot)
+    assert [step.label for step in active_steps] == [
+        "Understood request",
+        "Searching knowledge sources",
+        "Checking citations",
+    ]
+    assert active_steps[-1].state == "running"
+    _assert_no_activity_leaks(active_steps)
+
+    completed_snapshot = active_snapshot.model_copy(
+        deep=True,
+        update={
+            "session": {
+                **active_snapshot.session.model_dump(),
+                "status": "COMPLETED",
+            },
+            "timeline": [
+                *active_snapshot.timeline,
+                TimelineEventResponse(
+                    event_id="completed:live-graph",
+                    event_type="session_completed",
+                    content="Source-backed answer is ready.",
+                    created_at=created_at + timedelta(seconds=4),
+                    status="COMPLETED",
+                ),
+            ],
+        },
+    )
+    assert [step.label for step in _activity_steps_for_snapshot(completed_snapshot)] == [
+        "Understood request",
+        "Run complete",
+    ]
 
 
 def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():
@@ -1202,9 +1409,9 @@ def test_phase7_activity_does_not_merge_plan_created_across_different_plan_ids()
         ],
     )
     steps = _activity_steps_for_snapshot(snapshot)
-    assert [s.label for s in steps if s.label == "Understanding your request"] == [
-        "Understanding your request",
-        "Understanding your request",
+    assert [s.label for s in steps if s.label == "Understood request"] == [
+        "Understood request",
+        "Understood request",
     ]
 
 
@@ -1277,7 +1484,7 @@ def test_phase7_activity_injects_plan_execution_when_timeline_omits_tool_rows():
     )
     steps = _activity_steps_for_snapshot(snapshot)
     labels = [s.label for s in steps]
-    assert "Understanding your request" in labels
+    assert "Understood request" in labels
     assert "Updating job records" in labels
     assert labels[-1] == "Run complete"
 

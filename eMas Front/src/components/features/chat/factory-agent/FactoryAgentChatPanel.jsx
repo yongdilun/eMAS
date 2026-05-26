@@ -11,7 +11,11 @@ import { useFactoryAgentChat } from './useFactoryAgentChat'
 import { FACTORY_AGENT_STATUS } from '../../../../services/factoryAgentApi'
 import { compactInterruptApprovalHeadline, resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { TablePresentation } from '../turns/TurnBlocks'
-import { assistantAnswerAllowed, friendlySessionStatus } from './activityTimelineUtils'
+import {
+  assistantAnswerAllowed,
+  friendlySessionStatus,
+  truncateActivityAfterTerminal,
+} from './activityTimelineUtils'
 import {
   diagnosticFactsForPresentation,
   tablePresentationFromTypedPresentation,
@@ -680,6 +684,9 @@ function AssistantTurnBubble({
           {hasResponseDocument ? (
             <ResponseDocumentRenderer
               document={responseDocument}
+              liveActivitySteps={activitySteps}
+              isLatestTurn={isLatestTurn}
+              sessionStatus={session?.status}
               pendingApproval={effectivePendingApproval}
               showApprovalActions={showApprovalCard || showResponseDocumentApprovalActions}
               decideApproval={decideApproval}
@@ -745,6 +752,21 @@ function statusLoadingText(status) {
   if (status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) return 'Waiting for approval...'
   if (status === FACTORY_AGENT_STATUS.WAITING_CONFIRMATION) return 'Waiting for confirmation...'
   return 'Working...'
+}
+
+function displayStatusFromActivity(steps, sessionStatus) {
+  const activeStatuses = new Set([
+    FACTORY_AGENT_STATUS.PLANNING,
+    FACTORY_AGENT_STATUS.EXECUTING,
+    FACTORY_AGENT_STATUS.WAITING_APPROVAL,
+    FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+  ])
+  if (!activeStatuses.has(sessionStatus)) return null
+  const rows = truncateActivityAfterTerminal(steps)
+  const latest = rows[rows.length - 1]
+  const label = String(latest?.label || '').trim()
+  if (!label || label === 'Run complete') return null
+  return label
 }
 
 function isBackendUnavailableError(error) {
@@ -882,11 +904,8 @@ const FactoryAgentChatPanel = ({
   const [sourceEvidencePdf, setSourceEvidencePdf] = useState(null)
   const activeSourceEvidence = useMemo(() => {
     if (!sourceEvidence) return null
-    return {
-      ...sourceEvidence,
-      source: sourceEvidencePdf || sourceEvidence.source,
-    }
-  }, [sourceEvidence, sourceEvidencePdf])
+    return sourceEvidence
+  }, [sourceEvidence])
   const latestResponseDocumentKey = useMemo(() => {
     const turnWithDocument = [...(turns || [])].reverse().find((turn) => turn?.responseDocument)
     const document = turnWithDocument?.responseDocument
@@ -972,7 +991,9 @@ const FactoryAgentChatPanel = ({
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
-  const displayStatus = friendlySessionStatus(effectiveSessionStatus, isSending)
+  const displayStatus =
+    displayStatusFromActivity(activitySteps, effectiveSessionStatus) ||
+    friendlySessionStatus(effectiveSessionStatus, isSending)
 
   return (
     <div className="flex h-full relative">

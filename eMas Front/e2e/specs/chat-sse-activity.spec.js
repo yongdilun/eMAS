@@ -2,7 +2,10 @@ import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import {
   activitySseAnswer,
+  activitySseDelayedFallbackPrompt,
+  activitySseGraphDuplicatePrompt,
   activitySsePrompt,
+  activitySseResponseDocumentPrompt,
 } from '../fixtures/factoryAgentFixtures.js'
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
@@ -155,5 +158,145 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       'SSE checking machine telemetry',
       'SSE validating result',
     ])).toThrow()
+  })
+
+  test('response_document turns render live activity before final snapshot completion', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySseResponseDocumentPrompt)
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activitySseResponseDocument',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toContain('SSE checking machine telemetry')
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const rdActivityList = page.locator('ol').filter({ hasText: 'SSE checking machine telemetry' }).first()
+    await expect(rdActivityList.getByText('SSE checking machine telemetry', { exact: true })).toBeVisible()
+    await expect(rdActivityList.getByText('Reading M-CNC-01 status and alarm records', { exact: true })).toBeVisible()
+    await expect(page.getByText('Working on response-document activity stream.')).toBeVisible()
+    await expect(page.getByText(activitySseAnswer).first()).not.toBeVisible()
+    await expect(page.getByText('Run complete')).not.toBeVisible({ timeout: 250 })
+
+    await expect
+      .poll(async () => {
+        const requests = await requestsFor({ scenario: 'activitySseResponseDocument' })
+        return requests.filter((entry) => String(entry.path || '').endsWith('/snapshot')).length
+      })
+      .toBeGreaterThanOrEqual(3)
+
+    await expect(rdActivityList.getByText('SSE checking machine telemetry', { exact: true })).toBeVisible()
+    await expect(rdActivityList.getByText('Reading M-CNC-01 status and alarm records', { exact: true })).toBeVisible()
+    await expect(page.getByText(activitySseAnswer).first()).not.toBeVisible()
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activitySseResponseDocument',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toContain('SSE validating result')
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activitySseResponseDocument',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toContain('Run complete')
+
+    await expect(page.getByText('Working on response-document activity stream.')).toBeVisible()
+    await expect(page.getByText(activitySseAnswer).first()).not.toBeVisible({ timeout: 250 })
+    await expect(page.getByText('Run complete')).not.toBeVisible({ timeout: 250 })
+
+    await expect(page.getByText(activitySseAnswer).first()).toBeVisible()
+    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByText('Working on response-document activity stream.')).not.toBeVisible()
+  })
+
+  test('delayed server activity replaces one neutral client fallback without generic status spam', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySseDelayedFallbackPrompt)
+
+    await expect(page.getByText('This updates as the session progresses')).toHaveCount(0)
+    await expect(page.getByText('Understanding...')).toHaveCount(0)
+    await expect(page.getByText('Checking information...')).toHaveCount(0)
+    await expect(page.getByText('Wrapping up…')).toHaveCount(0)
+    await expect(page.getByText('Reviewing results...')).toHaveCount(0)
+    await expect
+      .poll(async () => page.getByText('Starting request...').count())
+      .toBeLessThanOrEqual(1)
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activitySseDelayedFallback',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toContain('SSE understanding request')
+
+    const delayedActivityList = page.locator('ol').filter({ hasText: 'SSE understanding request' }).first()
+    await expect(delayedActivityList.getByText('SSE understanding request', { exact: true })).toBeVisible()
+    await expect(page.getByText('Starting request...')).toHaveCount(0)
+    await expect(page.getByText('This updates as the session progresses')).toHaveCount(0)
+    await expect(page.getByText('Understanding...')).toHaveCount(0)
+    await expect(page.getByText('Checking information...')).toHaveCount(0)
+    await expect(page.getByText('Wrapping up…')).toHaveCount(0)
+    await expect(page.getByText('Reviewing results...')).toHaveCount(0)
+
+    await expect
+      .poll(async () => {
+        const requests = await requestsFor({ scenario: 'activitySseDelayedFallback' })
+        return requests.filter((entry) => String(entry.path || '').endsWith('/snapshot')).length
+      })
+      .toBeGreaterThanOrEqual(2)
+
+    await expect(delayedActivityList.getByText('SSE understanding request', { exact: true })).toBeVisible()
+    await expect(delayedActivityList.getByText('SSE checking machine telemetry', { exact: true })).toBeVisible()
+    await expect(page.getByText(activitySseAnswer).first()).toBeVisible()
+    await expect(page.getByText('Run complete')).toBeVisible()
+  })
+
+  test('graph activity does not duplicate understood rows and completed answer appears', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySseGraphDuplicatePrompt)
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activitySseGraphDuplicate',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toContain('Searching knowledge sources')
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Searching knowledge sources' }).first()
+    await expect(activityList.getByText('Searching knowledge sources', { exact: true })).toBeVisible()
+    await expect
+      .poll(async () => activityList.getByText('Understood request', { exact: true }).count())
+      .toBeLessThanOrEqual(1)
+    await expect(activityList.getByText('Understanding your request', { exact: true })).toHaveCount(0)
+
+    await expect(page.getByText(activitySseAnswer).first()).toBeVisible()
+    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByText("I'm working on the request and waiting for the next backend update.")).toHaveCount(0)
+    await expect(page.getByText('Working on response-document activity stream.')).toHaveCount(0)
   })
 })

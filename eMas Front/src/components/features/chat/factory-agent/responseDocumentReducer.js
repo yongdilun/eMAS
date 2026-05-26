@@ -244,6 +244,15 @@ export function applyResponseDocumentUpdate(currentState, rawIncoming) {
       : reject(current, incoming, 'ignored_older_document_scope')
   }
 
+  if (terminalStateSupersedesCurrent(incoming, current)) {
+    return accept(
+      incoming,
+      incoming.revision < current.revision
+        ? 'accepted_terminal_lower_revision_over_active'
+        : 'accepted_terminal_equal_revision_over_active',
+    )
+  }
+
   if (incoming.revision < current.revision) {
     return reject(current, incoming, 'ignored_stale_revision')
   }
@@ -262,10 +271,6 @@ export function applyResponseDocumentUpdate(currentState, rawIncoming) {
 
   if (incoming.contentHash === current.contentHash) {
     return reject(current, incoming, 'ignored_duplicate_revision')
-  }
-
-  if (terminalStateSupersedesCurrent(incoming, current)) {
-    return accept(incoming, 'accepted_terminal_equal_revision_over_active')
   }
 
   return reject(current, incoming, 'ignored_conflicting_equal_revision')

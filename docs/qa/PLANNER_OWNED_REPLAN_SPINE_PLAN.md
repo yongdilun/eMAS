@@ -436,6 +436,8 @@ Behavior to prove:
 
 This is not the first development driver. Add it after backend tests pass.
 
+The current single scenario idea is a good smoke, but it is not enough as the only end-to-end proof. Plan 1 needs one success recovery scenario and one safe-failure scenario so the browser lane proves both sides of the replan spine.
+
 ### Test Target
 
 Use the seeded hard-query lane:
@@ -459,6 +461,47 @@ Behavior to prove:
 - UI does not show stale failed evidence as the answer.
 - No fake success text appears.
 
+Add a second scenario:
+
+```text
+HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE
+```
+
+Behavior to prove:
+
+- Controlled read failure or incomplete evidence repeats until the configured replan limit.
+- Backend stops safely with a failed/diagnostic response document.
+- Snapshot and visible UI include a safe failure message.
+- No `GraphRecursionError`, recursion-limit text, or fake success appears.
+- No mutation or approval path is created for the read-only recovery case.
+
+### Oracle Requirements
+
+Extend the hard-query oracle only if the existing expected fields cannot prove these facts. Prefer a small `expected.replanSpine` block rather than phrase-matching runtime text.
+
+Suggested expected shape:
+
+```js
+replanSpine: {
+  minAttempts: 2,
+  maxAttempts: 3,
+  requiresMissingEvidenceReason: true,
+  requiresFailedToolMemory: true,
+  requiresStaleAttemptEvidence: true,
+  requiresActiveFinalEvidence: true,
+  forbiddenFinalEvidenceRefs: ['first_failed_attempt'],
+}
+```
+
+The exact field names may change during implementation, but the oracle must prove behavior through the public snapshot/intent contract:
+
+- replan attempts happened,
+- missing evidence reasons were persisted,
+- failed tool memory was persisted,
+- stale attempt evidence did not become the final answer,
+- active final evidence did become the answer,
+- the browser-visible response agrees with the backend contract.
+
 ### Command
 
 ```powershell
@@ -471,6 +514,9 @@ npm run test:e2e -- --project=chromium-seeded --grep "HQ-REPLAN-SPINE"
 - Full stack uses real local Factory Agent and seeded Go API.
 - Deterministic seeded adapters are allowed.
 - No real LLM required for this proof.
+- At least one scenario proves successful recovery.
+- At least one scenario proves bounded safe failure.
+- The oracle checks backend snapshot/intent contract and visible DOM, not only final assistant text.
 
 ## Phase 9: Optional Real LLM Smoke
 
@@ -507,6 +553,66 @@ Then, if the seeded browser scenario is added:
 cd "eMas Front"
 npm run test:e2e -- --project=chromium-seeded --grep "HQ-REPLAN-SPINE"
 ```
+
+## Final Verification: Playwright Browser Confirmation
+
+After the automated backend and seeded Playwright gates pass, do one interactive browser confirmation with Playwright. This is a final confidence check, not a replacement for deterministic tests.
+
+### Goal
+
+Confirm the implemented behavior in the actual chat UI:
+
+- user sends a hard read prompt,
+- first attempt fails or returns incomplete evidence through a controlled seeded fault,
+- graph replans,
+- final visible answer is based on active evidence only,
+- stale failed evidence is not presented as success,
+- safe-failure scenario stops cleanly at the limit.
+
+### Manual Browser Steps
+
+Use the seeded stack and a headed Playwright run or the in-app browser automation:
+
+```powershell
+cd "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "HQ-REPLAN-SPINE-READ-RECOVERY" --headed
+```
+
+Then confirm:
+
+1. Open the Factory Agent chat.
+2. Send the recovery scenario prompt.
+3. Wait until the session reaches `COMPLETED`.
+4. Inspect the latest assistant response and activity timeline.
+5. Confirm the response shows the second active successful evidence.
+6. Confirm no visible text claims success from the first failed attempt.
+7. Open or fetch the session snapshot and confirm the intent contract contains replan diagnostics.
+
+Run the safe-failure scenario:
+
+```powershell
+cd "eMas Front"
+npm run test:e2e -- --project=chromium-seeded --grep "HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE" --headed
+```
+
+Then confirm:
+
+1. The session reaches `FAILED` or the expected safe diagnostic terminal state.
+2. The response document is diagnostic/failed, not success.
+3. The UI does not show fake status values.
+4. The timeline does not show an infinite planner loop.
+5. The snapshot contains `replan_limit_reached` or the equivalent bounded-stop diagnostic.
+
+### Screenshot And Trace Evidence
+
+For final verification, retain:
+
+- Playwright trace on failure,
+- one screenshot after recovery success,
+- one screenshot after bounded safe failure,
+- backend snapshot JSON or semantic probe artifact for both scenarios.
+
+These artifacts should prove agreement between browser UI, snapshot contract, graph diagnostics, and final response.
 
 ## Done Criteria
 

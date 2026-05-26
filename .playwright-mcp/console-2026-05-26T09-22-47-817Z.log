@@ -1,0 +1,46 @@
+[  817839ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:559
+[  817841ms] [ERROR] Failed to load resource: net::ERR_NETWORK_IO_SUSPENDED @ http://localhost:5173/:0
+[ 2638322ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-OXKSXUBP.js?v=ca883f67:21550
+[ 2638372ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=ca883f67:4412
+[ 2638373ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=ca883f67:4412
+[ 2638424ms] [LOG] %c[eMAS 🔍 10:06:46.240] → GET /dashboard/kpis color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638424ms] [LOG] %c[eMAS 🔍 10:06:46.241] → GET /alerts?status=active color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638427ms] [LOG] %c[eMAS 🔍 10:06:46.243] → GET /reports/production-output? color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638429ms] [LOG] %c[eMAS 🔍 10:06:46.245] → GET /dashboard/kpis color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638434ms] [LOG] %c[eMAS 🔍 10:06:46.250] → GET /alerts?status=active color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638437ms] [LOG] %c[eMAS 🔍 10:06:46.253] → GET /reports/production-output? color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638440ms] [LOG] %c[eMAS 🔍 10:06:46.256] ✅ GET /dashboard/kpis → 200 (16ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638440ms] [LOG] %c[eMAS 🔍 10:06:46.257] ✅ GET /alerts?status=active → 200 (16ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638441ms] [LOG] %c[eMAS 🔍 10:06:46.257] ✅ GET /reports/production-output? → 200 (14ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638441ms] [LOG] %c[eMAS 🔍 10:06:46.257] ✅ GET /dashboard/kpis → 200 (12ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638442ms] [LOG] %c[eMAS 🔍 10:06:46.259] ✅ GET /reports/production-output? → 200 (6ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638443ms] [LOG] %c[eMAS 🔍 10:06:46.259] ✅ GET /alerts?status=active → 200 (9ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 2638443ms] [LOG] %c[eMAS ℹ️ 10:06:46.260] Dashboard KPIs raw keys: color:#0ea5e9;font-weight:600 [oee_pct, oee_change, production_units, production_change, downtime_hrs, downtime_change, utilization_pct, utilization_change] @ http://localhost:5173/src/services/logger.js:40
+[ 2638443ms] [LOG] %c[eMAS ℹ️ 10:06:46.260] Dashboard KPIs loaded color:#0ea5e9;font-weight:600 {oee_pct: 85.2, oee_change: 1.5, production_units: 10450, production_change: 5, downtime_hrs: 0.4166666666666667} @ http://localhost:5173/src/services/logger.js:40
+[ 2638444ms] [WARNING] %c[eMAS ⚠️ 10:06:46.261] [DEBUG] Alerts: response has 0 items color:#f59e0b;font-weight:700 {success: true, data: Array(0)} @ http://localhost:5173/src/services/logger.js:38
+[ 2638452ms] [LOG] %c[eMAS ℹ️ 10:06:46.268] Dashboard KPIs raw keys: color:#0ea5e9;font-weight:600 [oee_pct, oee_change, production_units, production_change, downtime_hrs, downtime_change, utilization_pct, utilization_change] @ http://localhost:5173/src/services/logger.js:40
+[ 2638452ms] [LOG] %c[eMAS ℹ️ 10:06:46.268] Dashboard KPIs loaded color:#0ea5e9;font-weight:600 {oee_pct: 85.2, oee_change: 1.5, production_units: 10450, production_change: 5, downtime_hrs: 0.4166666666666667} @ http://localhost:5173/src/services/logger.js:40
+[ 2638452ms] [WARNING] %c[eMAS ⚠️ 10:06:46.269] [DEBUG] Alerts: response has 0 items color:#f59e0b;font-weight:700 {success: true, data: Array(0)} @ http://localhost:5173/src/services/logger.js:38
+[ 4456096ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:559
+[ 4456101ms] [ERROR] Failed to load resource: net::ERR_NETWORK_IO_SUSPENDED @ http://localhost:5173/:0
+[ 6278419ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-OXKSXUBP.js?v=ca883f67:21550
+[ 6278451ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=ca883f67:4412
+[ 6278452ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=ca883f67:4412
+[ 6278466ms] [LOG] %c[eMAS 🔍 11:07:26.282] → GET /dashboard/kpis color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278467ms] [LOG] %c[eMAS 🔍 11:07:26.284] → GET /alerts?status=active color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278468ms] [LOG] %c[eMAS 🔍 11:07:26.284] → GET /reports/production-output? color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278469ms] [LOG] %c[eMAS 🔍 11:07:26.285] → GET /dashboard/kpis color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278469ms] [LOG] %c[eMAS 🔍 11:07:26.285] → GET /alerts?status=active color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278469ms] [LOG] %c[eMAS 🔍 11:07:26.286] → GET /reports/production-output? color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278475ms] [LOG] %c[eMAS 🔍 11:07:26.291] ✅ GET /dashboard/kpis → 200 (9ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278475ms] [LOG] %c[eMAS 🔍 11:07:26.292] ✅ GET /alerts?status=active → 200 (8ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278475ms] [LOG] %c[eMAS 🔍 11:07:26.292] ✅ GET /dashboard/kpis → 200 (7ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278476ms] [LOG] %c[eMAS 🔍 11:07:26.293] ✅ GET /alerts?status=active → 200 (8ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278481ms] [LOG] %c[eMAS 🔍 11:07:26.298] ✅ GET /reports/production-output? → 200 (14ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278482ms] [LOG] %c[eMAS ℹ️ 11:07:26.298] Dashboard KPIs raw keys: color:#0ea5e9;font-weight:600 [oee_pct, oee_change, production_units, production_change, downtime_hrs, downtime_change, utilization_pct, utilization_change] @ http://localhost:5173/src/services/logger.js:40
+[ 6278482ms] [LOG] %c[eMAS ℹ️ 11:07:26.299] Dashboard KPIs loaded color:#0ea5e9;font-weight:600 {oee_pct: 85.2, oee_change: 1.5, production_units: 10450, production_change: 5, downtime_hrs: 0.4166666666666667} @ http://localhost:5173/src/services/logger.js:40
+[ 6278483ms] [WARNING] %c[eMAS ⚠️ 11:07:26.299] [DEBUG] Alerts: response has 0 items color:#f59e0b;font-weight:700 {success: true, data: Array(0)} @ http://localhost:5173/src/services/logger.js:38
+[ 6278483ms] [LOG] %c[eMAS 🔍 11:07:26.299] ✅ GET /reports/production-output? → 200 (13ms) color:#6b7280;font-weight:500 @ http://localhost:5173/src/services/logger.js:40
+[ 6278487ms] [LOG] %c[eMAS ℹ️ 11:07:26.304] Dashboard KPIs raw keys: color:#0ea5e9;font-weight:600 [oee_pct, oee_change, production_units, production_change, downtime_hrs, downtime_change, utilization_pct, utilization_change] @ http://localhost:5173/src/services/logger.js:40
+[ 6278487ms] [LOG] %c[eMAS ℹ️ 11:07:26.304] Dashboard KPIs loaded color:#0ea5e9;font-weight:600 {oee_pct: 85.2, oee_change: 1.5, production_units: 10450, production_change: 5, downtime_hrs: 0.4166666666666667} @ http://localhost:5173/src/services/logger.js:40
+[ 6278488ms] [WARNING] %c[eMAS ⚠️ 11:07:26.304] [DEBUG] Alerts: response has 0 items color:#f59e0b;font-weight:700 {success: true, data: Array(0)} @ http://localhost:5173/src/services/logger.js:38

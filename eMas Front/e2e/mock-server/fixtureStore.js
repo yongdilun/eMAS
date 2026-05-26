@@ -1,7 +1,10 @@
 import {
   activeHappyPathSnapshot,
   activitySseAnswer,
+  activitySseDelayedFallbackPrompt,
+  activitySseGraphDuplicatePrompt,
   activitySsePrompt,
+  activitySseResponseDocumentPrompt,
   backendUnavailablePrompt,
   buildFactoryAgentPlan,
   buildHappyPathPlan,
@@ -38,6 +41,7 @@ import {
   userMessageEvent,
 } from '../fixtures/factoryAgentFixtures.js'
 import {
+  activeSnapshotRaceNotificationStream,
   defaultActivityStream,
   defaultNotificationStream,
   disconnectingNotificationStream,
@@ -2574,6 +2578,330 @@ export const scenarioCatalog = {
       return frames.map((frame) => (
         frame.id === lastActivityId
           ? { ...frame, afterSent: (session) => completePendingStream(session) }
+          : frame
+      ))
+    },
+  },
+
+  activitySseResponseDocument: {
+    name: 'activitySseResponseDocument',
+    description: 'Response-document turns render live activity SSE rows while the run is active.',
+    prompts: [activitySseResponseDocumentPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySseResponseDocumentPrompt, 'pw-turn-activity-sse-rd')
+      session.response_document_revision = 1
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-rd'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-sse-rd'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse-rd',
+        objective: 'Validate response-document browser activity stream behavior',
+        stepId: 'pw-step-activity-sse-rd',
+        toolName: 'get_machine_status',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-rd-plan-created',
+          planId: 'pw-plan-activity-sse-rd',
+          content: 'Keeping a response document active while activity SSE rows arrive.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse-rd' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-rd'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-rd-execution-started',
+          planId: 'pw-plan-activity-sse-rd',
+        }),
+      )
+      completeAfterStream(session, {
+        turnId,
+        planId: 'pw-plan-activity-sse-rd',
+        stepId: 'pw-step-activity-sse-rd',
+        toolName: 'get_machine_status',
+        answer: activitySseAnswer,
+        eventPrefix: 'pw-activity-sse-rd',
+      })
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-rd'
+      const base = session.status === 'COMPLETED'
+        ? snapshotFromSession(session, orderedSseActivitySteps({ terminal: true }))
+        : snapshotFromSession(session)
+      const completed = session.status === 'COMPLETED'
+      const revision = completed ? 2 : Number(session.response_document_revision || 1)
+      const documentId = `rd:${session.session_id}:${turnId}`
+      return {
+        ...base,
+        snapshot_revision: revision,
+        response_document: {
+          version: 1,
+          id: documentId,
+          document_id: documentId,
+          turn_id: turnId,
+          operation_id: 'pw-plan-activity-sse-rd',
+          revision,
+          revision_source: 'mock_activity_sse_response_document',
+          state: completed ? 'completed' : 'running',
+          status: completed ? 'completed' : 'running',
+          message: completed ? activitySseAnswer : 'Working on response-document activity stream.',
+          summary: completed ? activitySseAnswer : 'Working on response-document activity stream.',
+          current_step_id: completed ? 'completed:activity-sse-rd' : 'analysis:activity-sse-rd',
+          run_steps: completed
+            ? [
+              {
+                step_id: 'analysis:activity-sse-rd',
+                kind: 'analysis',
+                state: 'completed',
+                title: 'Understood request',
+                summary: 'Request parsed.',
+              },
+              {
+                step_id: 'knowledge:activity-sse-rd',
+                kind: 'knowledge',
+                state: 'completed',
+                title: 'Prepared sourced answer',
+                summary: '1 source attached.',
+              },
+              {
+                step_id: 'completed:activity-sse-rd',
+                kind: 'completed',
+                state: 'completed',
+                title: 'Run complete',
+                summary: 'Source-backed answer is ready.',
+              },
+            ]
+            : [
+              {
+                step_id: 'analysis:activity-sse-rd',
+                kind: 'analysis',
+                state: 'completed',
+                title: 'Understood request',
+                summary: 'Request parsed.',
+              },
+            ],
+          blocks: [
+            {
+              id: 'activity:activity-sse-rd',
+              type: 'run_activity',
+              step_ids: completed
+                ? ['analysis:activity-sse-rd', 'knowledge:activity-sse-rd', 'completed:activity-sse-rd']
+                : ['analysis:activity-sse-rd'],
+            },
+            {
+              id: 'message:activity-sse-rd',
+              type: 'short_message',
+              message: completed ? activitySseAnswer : 'Working on response-document activity stream.',
+              status: completed ? 'completed' : 'running',
+            },
+          ],
+          invariants: { fixture: 'activity_sse_response_document' },
+          diagnostics: {},
+        },
+      }
+    },
+    notificationStream() {
+      return activeSnapshotRaceNotificationStream()
+    },
+    activityStream() {
+      const frames = orderedActivityStream({ prematureTerminal: true })
+      const lastActivityId = [...frames].reverse().find((frame) => frame.event === 'activity')?.id
+      return frames.map((frame) => (
+        frame.id === lastActivityId
+          ? { ...frame, afterSent: (session) => setTimeout(() => completePendingStream(session), 800) }
+          : frame
+      ))
+    },
+  },
+
+  activitySseDelayedFallback: {
+    name: 'activitySseDelayedFallback',
+    description: 'Delayed activity SSE replaces the one client fallback row without generic progress spam.',
+    prompts: [activitySseDelayedFallbackPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySseDelayedFallbackPrompt, 'pw-turn-activity-sse-delayed')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-delayed'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-sse-delayed'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse-delayed',
+        objective: 'Validate delayed activity stream replaces client fallback',
+        stepId: 'pw-step-activity-sse-delayed',
+        toolName: 'get_machine_status',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-delayed-plan-created',
+          planId: 'pw-plan-activity-sse-delayed',
+          content: 'Activity SSE is intentionally delayed for fallback replacement coverage.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse-delayed' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-delayed'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-delayed-execution-started',
+          planId: 'pw-plan-activity-sse-delayed',
+        }),
+      )
+      completeAfterStream(session, {
+        turnId,
+        planId: 'pw-plan-activity-sse-delayed',
+        stepId: 'pw-step-activity-sse-delayed',
+        toolName: 'get_machine_status',
+        answer: activitySseAnswer,
+        eventPrefix: 'pw-activity-sse-delayed',
+      })
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, orderedSseActivitySteps({ terminal: true }))
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return snapshotFromSession(session)
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return activeSnapshotRaceNotificationStream()
+    },
+    activityStream() {
+      const frames = orderedActivityStream({ firstActivityDelayMs: 1250 })
+      const lastActivityId = [...frames].reverse().find((frame) => frame.event === 'activity')?.id
+      return frames.map((frame) => (
+        frame.id === lastActivityId
+          ? { ...frame, afterSent: (session) => completePendingStream(session) }
+          : frame
+      ))
+    },
+  },
+
+  activitySseGraphDuplicate: {
+    name: 'activitySseGraphDuplicate',
+    description: 'Graph activity SSE rows do not duplicate matching snapshot timeline rows.',
+    prompts: [activitySseGraphDuplicatePrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySseGraphDuplicatePrompt, 'pw-turn-activity-sse-graph-dup')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-graph-dup'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-sse-graph-dup'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse-graph-dup',
+        objective: 'Validate graph activity does not duplicate snapshot fallback rows',
+        stepId: 'pw-step-activity-sse-graph-dup',
+        toolName: 'rag_search_documents',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-graph-dup-plan-created',
+          planId: 'pw-plan-activity-sse-graph-dup',
+          content: 'Preparing a source-backed answer from retrieved documents.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse-graph-dup' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-graph-dup'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-graph-dup-execution-started',
+          planId: 'pw-plan-activity-sse-graph-dup',
+        }),
+      )
+      completeAfterStream(session, {
+        turnId,
+        planId: 'pw-plan-activity-sse-graph-dup',
+        stepId: 'pw-step-activity-sse-graph-dup',
+        toolName: 'rag_search_documents',
+        answer: activitySseAnswer,
+        eventPrefix: 'pw-activity-sse-graph-dup',
+      })
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') return snapshotFromSession(session, completedActivitySteps())
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') return snapshotFromSession(session)
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return activeSnapshotRaceNotificationStream()
+    },
+    activityStream() {
+      const frames = [
+        { id: 1, event: 'control', data: { type: 'STREAM_READY' } },
+        {
+          id: 2,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:semantic_intake_node',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'running',
+          },
+        },
+        {
+          id: 3,
+          event: 'activity',
+          delayMs: 450,
+          data: {
+            id: 'graph:tool_execution_node',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            group: 'research',
+            label: 'Searching knowledge sources',
+            detail: 'Searching retrieved documents',
+            state: 'running',
+          },
+        },
+        {
+          id: 4,
+          event: 'activity',
+          delayMs: 550,
+          data: {
+            id: 'graph:satisfaction_node',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            group: 'response',
+            label: 'Checking result',
+            detail: 'Verifying the result',
+            state: 'running',
+          },
+        },
+      ]
+      const lastActivityId = [...frames].reverse().find((frame) => frame.event === 'activity')?.id
+      return frames.map((frame) => (
+        frame.id === lastActivityId
+          ? { ...frame, afterSent: (session) => setTimeout(() => completePendingStream(session), 800) }
           : frame
       ))
     },

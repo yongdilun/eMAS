@@ -2718,9 +2718,11 @@ async def test_rag_response_document_includes_knowledge_answer_and_source_blocks
     assert source_payload["text_search"] == "Notify affected employees before lockout starts."
     assert "C:/local/docs" not in json.dumps(document)
     assert any(step["kind"] == "knowledge" for step in document["run_steps"])
+    completed_step = next(step for step in document["run_steps"] if step["kind"] == "completed")
+    assert completed_step["summary"] == "Source-backed answer is ready."
 
 
-def test_knowledge_answer_payload_groups_adjacent_repeated_citations():
+def test_knowledge_answer_payload_keeps_procedure_steps_as_cited_segments():
     source = {
         "source_number": 1,
         "source_id": "osha_3120_lockout_tagout#c0027",
@@ -2743,12 +2745,18 @@ def test_knowledge_answer_payload_groups_adjacent_repeated_citations():
         "2. Shut down the machine.\n"
         "3. Disconnect or isolate energy sources."
     )
-    assert len(segments) == 1
-    assert segments[0]["text"] == clean_answer
-    assert segments[0]["citation_ids"] == [citations[0]["citation_id"]]
+    assert [segment["text"] for segment in segments] == [
+        "1. Prepare for shutdown.",
+        "2. Shut down the machine.",
+        "3. Disconnect or isolate energy sources.",
+    ]
+    assert len(citations) == 3
+    assert len({citation["citation_id"] for citation in citations}) == 3
+    assert {citation["source_id"] for citation in citations} == {"osha_3120_lockout_tagout#c0027"}
+    assert [segment["citation_ids"] for segment in segments] == [[citation["citation_id"]] for citation in citations]
 
 
-def test_knowledge_answer_payload_keeps_grouped_procedure_intro_citation():
+def test_knowledge_answer_payload_flattens_grouped_procedure_intro_into_step_segments():
     source = {
         "source_number": 1,
         "source_id": "osha_3120_lockout_tagout#c0027",
@@ -2768,11 +2776,454 @@ def test_knowledge_answer_payload_keeps_grouped_procedure_intro_citation():
 
     clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
 
-    assert clean_answer.startswith("Before beginning service or maintenance")
+    assert clean_answer == (
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
+        "3. Disconnect or isolate the machine from the energy source(s)."
+    )
     assert "I do not have enough retrieved evidence" not in clean_answer
-    assert len(segments) == 1
-    assert segments[0]["text"] == clean_answer
-    assert segments[0]["citation_ids"] == [citations[0]["citation_id"]]
+    assert [segment["text"] for segment in segments] == [
+        "1. Prepare for shutdown.",
+        "2. Shut down the machine.",
+        "3. Disconnect or isolate the machine from the energy source(s).",
+    ]
+    assert len(citations) == 3
+    assert len({citation["citation_id"] for citation in citations}) == 3
+
+
+def test_knowledge_answer_payload_flattens_live_single_citation_procedure_shape():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Before beginning service or maintenance, the following steps must be accomplished in sequence.",
+        "page": 13,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "char_range": [120, 260],
+        "text_search": "Before beginning service or maintenance, the following steps must be accomplished in sequence",
+    }
+    answer = (
+        "1. Prepare for shutdown. 2. Shut down the machine. "
+        "3. Disconnect or isolate the machine from the energy source(s). "
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s). "
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+        "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels. "
+        "These steps must be accomplished in sequence and according to the specific provisions of the "
+        "employer's energy-control procedure.[^1]"
+    )
+
+    clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert clean_answer == (
+        "1. Prepare for shutdown.\n"
+        "2. Shut down the machine.\n"
+        "3. Disconnect or isolate the machine from the energy source(s).\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s).\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy.\n"
+        "6. If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels."
+    )
+    assert [segment["text"] for segment in segments] == clean_answer.splitlines()
+    assert len(citations) == 6
+    assert len({citation["citation_id"] for citation in citations}) == 6
+    assert all(citation["page"] == 13 for citation in citations)
+    assert "These steps must be accomplished" not in json.dumps({"segments": segments, "citations": citations})
+
+
+def test_knowledge_answer_payload_uses_claim_specific_evidence_locator():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Before beginning service or maintenance, OSHA describes the energy-control sequence.",
+        "page": 13,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "text_search": "Before beginning service or maintenance, the following steps must be accomplished in sequence",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0015",
+                "page": 13,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Prepare for shutdown.",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Shut down the machine.",
+            },
+        ],
+    }
+    answer = "1. Prepare for shutdown. 2. Shut down the machine.[^1]"
+
+    _clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert [segment["text"] for segment in segments] == [
+        "1. Prepare for shutdown.",
+        "2. Shut down the machine.",
+    ]
+    assert len(citations) == 2
+    shutdown_citation = citations[1]
+    assert shutdown_citation["citation_id"].endswith(":claim-2")
+    assert shutdown_citation["chunk_id"] == "osha_3120_lockout_tagout_c0016"
+    assert shutdown_citation["page"] == 14
+    assert shutdown_citation["text_search"] == "Shut down the machine"
+
+
+def test_knowledge_answer_payload_keeps_snippet_only_evidence_page_only():
+    source = {
+        "source_number": 1,
+        "source_id": "loto#rse-c0015",
+        "doc_id": "loto",
+        "chunk_id": "rse:loto:c0015",
+        "title": "LOTO Procedure",
+        "organization": "Safety",
+        "snippet": "Broad source-card preview only.",
+        "page": 13,
+        "pdf_url": "/documents/loto/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "loto",
+                "chunk_id": "loto_c0018",
+                "page": 18,
+                "pdf_url": "/documents/loto/pdf",
+                "snippet": "This page discusses verification in general terms without the exact answer sentence.",
+            },
+        ],
+    }
+    answer = "1. Verify isolation before work starts. 2. Keep lockout devices applied until release.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 2
+    assert citations[0]["page"] == 18
+    assert citations[0]["chunk_id"] == "loto_c0018"
+    assert "text_search" not in citations[0]
+
+
+def test_knowledge_answer_payload_does_not_reuse_broad_source_search_for_step_claims():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "The source card preview is broad RSE context.",
+        "page": 13,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "text_search": (
+            "Employers must develop, document, and use procedures to control potentially hazardous energy. "
+            "The procedures explain what employees must know and do to control hazardous energy."
+        ),
+    }
+    answer = "1. Prepare for shutdown. 2. Shut down the machine.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 2
+    for citation in citations:
+        assert citation["page"] == 13
+        assert citation["pdf_url"] == "/documents/osha_3120_lockout_tagout/pdf"
+        assert "text_search" not in citation
+        assert "bbox" not in citation
+        assert "char_range" not in citation
+
+
+def test_knowledge_answer_payload_selects_child_page_from_rse_bundle_for_step_claim():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "A multi-page RSE bundle starts on page 13.",
+        "page": 13,
+        "page_start": 13,
+        "page_end": 15,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+                "page": 13,
+                "page_start": 13,
+                "page_end": 15,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "The RSE parent has broad energy-control procedure context.",
+                "source_chunk_evidence": [
+                    {
+                        "doc_id": "osha_3120_lockout_tagout",
+                        "chunk_id": "osha_3120_lockout_tagout_c0015",
+                        "page": 13,
+                        "snippet": "What must an energy-control procedure include?",
+                    },
+                    {
+                        "doc_id": "osha_3120_lockout_tagout",
+                        "chunk_id": "osha_3120_lockout_tagout_c0016",
+                        "page": 14,
+                        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                        "snippet": (
+                            "Before beginning service or maintenance, the following steps must be accomplished "
+                            "in sequence and according to the specific provisions of the employer's energy-control "
+                            "procedure: (1) Prepare for shutdown; (2) Shut down the machine; (3) Disconnect or "
+                            "isolate the machine from the energy source(s);"
+                        ),
+                    },
+                ],
+            }
+        ],
+    }
+    answer = "1. Shut down the machine.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["chunk_id"] == "osha_3120_lockout_tagout_c0016"
+    assert citation["page"] == 14
+    assert citation["text_search"] == "Shut down the machine"
+    assert citation["evidence"][0]["locator_confidence"] == "exact"
+    assert citation["evidence"][0]["page"] == 14
+    assert citation["evidence"][0]["text_search"] == "Shut down the machine"
+
+
+def test_knowledge_answer_payload_keeps_six_deterministic_procedure_steps_on_child_page():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "A multi-page RSE bundle starts on page 13.",
+        "page": 13,
+        "page_start": 13,
+        "page_end": 15,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Prepare for shutdown.",
+                "text_search": "Prepare for shutdown",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Shut down the machine.",
+                "text_search": "Shut down the machine",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Disconnect or isolate the machine from the energy source(s).",
+                "text_search": "Disconnect or isolate the machine from the energy source(s)",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Apply the lockout or tagout device(s) to the energy-isolating device(s).",
+                "text_search": "Apply the lockout or tagout device(s) to the energy-isolating device(s)",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": (
+                    "Release, restrain, or otherwise render safe all potential hazardous stored or residual "
+                    "energy. If a possibility exists for reaccumulation of hazardous energy, regularly verify "
+                    "during the service and maintenance that such energy has not reaccumulated to hazardous levels."
+                ),
+                "text_search": (
+                    "Release, restrain, or otherwise render safe all potential hazardous stored or residual "
+                    "energy. If a possibility exists for reaccumulation of hazardous energy, regularly verify "
+                    "during the service and maintenance that such energy has not reaccumulated to hazardous levels"
+                ),
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0016",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Verify the isolation and deenergization of the machine.",
+                "text_search": "Verify the isolation and deenergization of the machine",
+            },
+        ],
+    }
+    answer = (
+        "1. Prepare for shutdown.[^1]\n"
+        "2. Shut down the machine.[^1]\n"
+        "3. Disconnect or isolate the machine from the energy source(s).[^1]\n"
+        "4. Apply the lockout or tagout device(s) to the energy-isolating device(s).[^1]\n"
+        "5. Release, restrain, or otherwise render safe all potential hazardous stored or residual energy. "
+        "If a possibility exists for reaccumulation of hazardous energy, regularly verify during the service "
+        "and maintenance that such energy has not reaccumulated to hazardous levels.[^1]\n"
+        "6. Verify the isolation and deenergization of the machine.[^1]"
+    )
+
+    clean_answer, segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(clean_answer.splitlines()) == 6
+    assert [segment["text"] for segment in segments] == clean_answer.splitlines()
+    assert len(citations) == 6
+    assert len({citation["citation_id"] for citation in citations}) == 6
+    verify_citation = citations[5]
+    assert verify_citation["citation_id"].endswith(":claim-6")
+    assert verify_citation["page"] == 14
+    assert verify_citation["chunk_id"] == "osha_3120_lockout_tagout_c0016"
+    assert verify_citation["text_search"] == "Verify the isolation and deenergization of the machine"
+    assert verify_citation["evidence"][0]["locator_confidence"] == "exact"
+
+
+def test_knowledge_answer_payload_filters_broad_and_unrelated_evidence_when_exact_child_support_exists():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Prepare for shutdown.",
+        "text_search": "Prepare for shutdown",
+        "page": 13,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+                "page": 13,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Prepare for shutdown.",
+                "text_search": "Prepare for shutdown",
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0015",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": (
+                    "Before beginning service or maintenance, the following steps must be accomplished "
+                    "in sequence and according to the specific provisions of the employer's energy-control "
+                    "procedure: (1) Prepare for shutdown; (2) Shut down the machine."
+                ),
+            },
+            {
+                "source_number": 1,
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_3120_lockout_tagout_c0009",
+                "page": 10,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": (
+                    "An employee performs hot-tap operations when shutdown of the system is impractical "
+                    "and continuity of service is essential."
+                ),
+            },
+        ],
+    }
+    answer = "1. Prepare for shutdown.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["page"] == 14
+    assert citation["chunk_id"] == "osha_3120_lockout_tagout_c0015"
+    assert citation["snippet"] == "Prepare for shutdown"
+    assert citation["text_search"] == "Prepare for shutdown"
+    assert [item["page"] for item in citation["evidence"]] == [14]
+    assert [item["chunk_id"] for item in citation["evidence"]] == ["osha_3120_lockout_tagout_c0015"]
+    assert [item["snippet"] for item in citation["evidence"]] == ["Prepare for shutdown"]
+
+
+def test_knowledge_answer_payload_keeps_multiple_verified_evidence_items_for_compound_claim():
+    source = {
+        "source_number": 1,
+        "source_id": "osha_3120_lockout_tagout#rse-c0015",
+        "doc_id": "osha_3120_lockout_tagout",
+        "chunk_id": "rse:osha_3120_lockout_tagout:01:osha_3120_lockout_tagout_c0015",
+        "title": "Control of Hazardous Energy Lockout/Tagout",
+        "organization": "OSHA",
+        "snippet": "Procedure steps span one PDF page.",
+        "page": 14,
+        "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+        "evidence_snippets": [
+            {
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_loto_prepare",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Prepare for shutdown.",
+            },
+            {
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_loto_shutdown",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Shut down the machine.",
+            },
+            {
+                "doc_id": "osha_3120_lockout_tagout",
+                "chunk_id": "osha_loto_isolate",
+                "page": 14,
+                "pdf_url": "/documents/osha_3120_lockout_tagout/pdf",
+                "snippet": "Disconnect or isolate the machine from the energy source(s).",
+            },
+        ],
+    }
+    answer = (
+        "Workers must prepare for shutdown, shut down the machine, and disconnect or isolate the machine "
+        "from the energy source(s).[^1]"
+    )
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["chunk_id"] == "osha_loto_isolate"
+    assert citation["page"] == 14
+    assert [item["chunk_id"] for item in citation["evidence"]] == [
+        "osha_loto_isolate",
+        "osha_loto_shutdown",
+        "osha_loto_prepare",
+    ]
+    assert [item["text_search"] for item in citation["evidence"]] == [
+        "Disconnect or isolate the machine from the energy source(s)",
+        "Shut down the machine",
+        "Prepare for shutdown",
+    ]
+    assert all(item["locator_confidence"] == "exact" for item in citation["evidence"])
 
 
 @pytest.mark.asyncio

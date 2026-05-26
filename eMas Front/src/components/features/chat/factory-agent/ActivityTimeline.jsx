@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { shouldAutoCollapseActivity, shouldShowActivityTimeline } from './activityTimelineUtils'
+import {
+    shouldAutoCollapseActivity,
+    shouldShowActivityTimeline,
+    truncateActivityAfterTerminal,
+} from './activityTimelineUtils'
 
 const stateIcon = {
     running: 'progress_activity',
@@ -60,7 +64,7 @@ function visualStateForStep(step, rows, isTerminal) {
 }
 
 const ActivityTimeline = ({ steps = [] }) => {
-    const rows = useMemo(() => (Array.isArray(steps) ? steps.filter(Boolean) : []), [steps])
+    const rows = useMemo(() => truncateActivityAfterTerminal(steps), [steps])
     const latest = latestStep(rows)
     const isTerminal = latest?.state === 'complete' || latest?.state === 'error'
 

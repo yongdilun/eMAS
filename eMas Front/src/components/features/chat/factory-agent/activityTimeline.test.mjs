@@ -6,11 +6,13 @@ import {
   friendlySessionStatus,
   buildActivityStepsFromSnapshot,
   buildActivityStepsFromTimeline,
+  coalesceActivitySteps,
   mergeActivityStep,
   normalizeActivityStep,
   shouldAutoCollapseActivity,
   shouldShowActivityTimeline,
   stripPrematureTerminalActivitySteps,
+  truncateActivityAfterTerminal,
 } from './activityTimelineUtils.js'
 
 test('assistantAnswerAllowed: defers until activity terminal when steps exist', () => {
@@ -30,11 +32,27 @@ test('assistantAnswerAllowed: defers until activity terminal when steps exist', 
     assistantAnswerAllowed({
       activityTimelineEnabled: true,
       isLatestTurn: true,
-      sessionStatus: 'EXECUTING',
+      sessionStatus: 'COMPLETED',
       activitySteps: [...steps, { id: '2', label: 'Run complete', state: 'complete', group: 'g', timestamp: 2 }],
       turn,
     }),
     true,
+  )
+})
+
+test('assistantAnswerAllowed: active sessions do not unlock on activity terminal before final snapshot', () => {
+  assert.equal(
+    assistantAnswerAllowed({
+      activityTimelineEnabled: true,
+      isLatestTurn: true,
+      sessionStatus: 'EXECUTING',
+      activitySteps: [
+        { id: '1', label: 'Checking citations', state: 'success', group: 'response', timestamp: 1 },
+        { id: '2', label: 'Run complete', state: 'complete', group: 'response', timestamp: 2 },
+      ],
+      turn: { terminal: null },
+    }),
+    false,
   )
 })
 
@@ -120,6 +138,29 @@ test('assistantAnswerAllowed: COMPLETED still defers until last activity row is 
   )
 })
 
+test('assistantAnswerAllowed: completed turns ignore stale rows after terminal activity', () => {
+  const steps = [
+    { id: '1', label: 'Checking result', state: 'success', group: 'response', timestamp: 1 },
+    { id: '2', label: 'Run complete', state: 'complete', group: 'response', timestamp: 2 },
+    { id: '3', label: 'Understood request', state: 'running', group: 'planning', timestamp: 3 },
+  ]
+
+  assert.deepEqual(
+    truncateActivityAfterTerminal(steps).map((step) => step.label),
+    ['Checking result', 'Run complete'],
+  )
+  assert.equal(
+    assistantAnswerAllowed({
+      activityTimelineEnabled: true,
+      isLatestTurn: true,
+      sessionStatus: 'COMPLETED',
+      activitySteps: steps,
+      turn: { terminal: { event_type: 'session_completed' } },
+    }),
+    true,
+  )
+})
+
 test('assistantAnswerAllowed: IDLE with in-flight activity rows defers like EXECUTING', () => {
   assert.equal(
     assistantAnswerAllowed({
@@ -199,6 +240,39 @@ test('merges activity by id and auto-collapses on complete', () => {
   assert.equal(shouldAutoCollapseActivity(merged), true)
 })
 
+test('coalesces duplicate timeline and live graph activity rows by visible meaning', () => {
+  const rows = coalesceActivitySteps([
+    {
+      id: 'act:plan-created',
+      timestamp: 1,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'success',
+    },
+    {
+      id: 'graph:semantic_intake_node',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'running',
+    },
+    {
+      id: 'graph:satisfaction_node',
+      timestamp: 3,
+      group: 'response',
+      label: 'Checking result',
+      detail: 'Verifying the result',
+      state: 'running',
+    },
+  ])
+
+  assert.deepEqual(rows.map((step) => step.label), ['Understood request', 'Checking result'])
+  assert.equal(rows[0].id, 'graph:semantic_intake_node')
+  assert.equal(rows[0].state, 'success')
+})
+
 test('completed activity remains available as a collapsed summary', () => {
   assert.equal(shouldShowActivityTimeline([{
     id: 'activity_3',
@@ -248,8 +322,8 @@ test('builds sanitized activity from snapshot timeline fallback', () => {
   ])
 
   assert.deepEqual(steps.map((step) => step.label), [
-    'Understanding your request',
-    'Information checked',
+    'Understood request',
+    'Checked job records',
     'Run complete',
   ])
   assert.equal(steps[1].detail, 'Checked job records')
@@ -288,7 +362,7 @@ test('groups repeated checked records and finalizes historical retry states', ()
   const steps = buildActivityStepsFromTimeline(timeline)
 
   assert.deepEqual(steps.map((step) => step.label), [
-    'Information checked',
+    'Checked job records',
     'Improving the response',
     'Run complete',
   ])
@@ -583,7 +657,7 @@ test('uses full operation-scoped timeline across turns when operation_id matches
     ],
   })
   const labels = steps.map((s) => s.label)
-  assert.ok(labels.includes('Understanding your request'))
+  assert.ok(labels.includes('Understood request'))
   assert.ok(labels.includes('Preparing changes'))
   assert.ok(labels.includes('Waiting for approval'))
   assert.ok(labels.includes('Approval received'))
@@ -761,7 +835,7 @@ test('injects execution summary when plan steps exist but timeline has no tool r
     ],
   })
   const labels = steps.map((s) => s.label)
-  assert.ok(labels.includes('Understanding your request'))
+  assert.ok(labels.includes('Understood request'))
   assert.ok(labels.includes('Updating job records'))
   assert.ok(labels.includes('Run complete'))
   const info = steps.find((s) => s.label === 'Updating job records')
@@ -883,8 +957,8 @@ test('terminal snapshot fallback uses full timeline across user turns', () => {
     ],
   })
   // Latest-turn-only fallback would drop turn 1; merged plan rows still collapse to one "Understanding".
-  assert.ok(steps.some((s) => s.label === 'Information checked'), 'turn 1 tool_result must be included')
-  assert.ok(steps.some((s) => s.label === 'Understanding your request'))
+  assert.ok(steps.some((s) => s.label === 'Checked machine records'), 'turn 1 tool_result must be included')
+  assert.ok(steps.some((s) => s.label === 'Understood request'))
   assert.equal(steps.at(-1).label, 'Run complete')
   assert.equal(steps.at(-1).state, 'complete')
 })
@@ -953,4 +1027,20 @@ test('typed pending presentation keeps timeline waiting despite stale success an
   assert.equal(steps.some((step) => step.label === 'Improving the response'), false)
   assert.equal(steps.at(-1).label, 'Waiting for approval')
   assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('stripPrematureTerminalActivitySteps drops early terminal and stale trailing current rows while active', () => {
+  const steps = stripPrematureTerminalActivitySteps([
+    { id: '1', label: 'Understood request', state: 'success', group: 'planning', timestamp: 1 },
+    { id: '2', label: 'Checking citations', state: 'running', group: 'response', timestamp: 2 },
+    { id: '3', label: 'Run complete', state: 'complete', group: 'response', timestamp: 3 },
+    { id: '4', label: 'Understanding your request', state: 'running', group: 'planning', timestamp: 4 },
+  ], 'EXECUTING')
+
+  assert.deepEqual(steps.map((step) => step.label), [
+    'Understood request',
+    'Checking citations',
+  ])
+  assert.equal(steps.some((step) => step.label === 'Run complete'), false)
+  assert.equal(steps.some((step) => step.label === 'Understanding your request'), false)
 })

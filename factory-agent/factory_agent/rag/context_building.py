@@ -12,6 +12,7 @@ from factory_agent.rag.schemas import Chunk, ScoredChunk
 
 VALID_CONTEXT_BUILDERS = {"none", "small_to_big", "rse"}
 VALID_COMPRESSION_MODES = {"none", "light_extractive"}
+SOURCE_CHUNK_EVIDENCE_SNIPPET_LIMIT = 1200
 
 QUERY_REWRITE_EXPANSIONS = {
     "loto": "lockout tagout hazardous energy control",
@@ -215,6 +216,7 @@ class _SegmentDraft:
             "token_estimate_after_expansion": self.token_estimate_after_expansion,
             "token_estimate_after_compression": self.token_estimate_after_compression,
             "compression_ran": self.compression_ran,
+            "source_chunk_evidence": [_chunk_evidence(chunk) for chunk in self.chunks_in_segment],
         }
         metadata.update(_segment_locator_metadata(self.chunks_in_segment))
         return Chunk(chunk_id=self.segment_id, text=self.text, metadata=metadata)
@@ -1219,7 +1221,7 @@ def _chunk_evidence(chunk: Chunk) -> dict[str, Any]:
         "page_end": metadata.get("page_end"),
         "section_title": metadata.get("section_title"),
         "section_path": _jsonable_section_path(metadata.get("section_path")),
-        "snippet": _snippet(_strip_section_prefix(chunk.text), limit=360),
+        "snippet": _snippet(_strip_section_prefix(chunk.text), limit=SOURCE_CHUNK_EVIDENCE_SNIPPET_LIMIT),
     }
 
 

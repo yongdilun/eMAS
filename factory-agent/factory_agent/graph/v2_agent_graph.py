@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -147,20 +147,51 @@ class PlannerOwnedGraphRetrieval:
     trace: ToolRetrievalTrace
 
 
+def _trace_tool_names(state: PlannerOwnedAgentGraphState) -> list[str]:
+    names: list[str] = []
+    for decision in state.planner_decisions[-5:]:
+        calls = list(getattr(decision, "selected_tool_calls", None) or [])
+        selected = getattr(decision, "selected_tool_call", None)
+        if selected is not None:
+            calls.append(selected)
+        for call in calls:
+            tool_name = str(getattr(call, "tool_name", "") or "").strip()
+            if tool_name and tool_name not in names:
+                names.append(tool_name)
+    for evidence in state.evidence_ledger.evidence[-5:]:
+        tool_name = str(getattr(evidence, "tool_name", "") or "").strip()
+        if tool_name and tool_name not in names:
+            names.append(tool_name)
+    return names
+
+
+def _trace_source_types(state: PlannerOwnedAgentGraphState) -> list[str]:
+    source_types: list[str] = []
+    for evidence in state.evidence_ledger.evidence[-5:]:
+        source_type = str(getattr(evidence, "source_type", "") or "").strip()
+        if source_type and source_type not in source_types:
+            source_types.append(source_type)
+    return source_types
+
+
 @dataclass
 class LocalPlannerOwnedGraphTracer:
     events: list[dict[str, Any]] = field(default_factory=list)
+    on_node_recorded: Callable[[dict[str, Any]], Any] | None = None
 
     def record_node(self, node_name: str, state: PlannerOwnedAgentGraphState) -> None:
-        self.events.append(
-            {
-                "event": "planner_owned_agent_graph_node",
-                "node": node_name,
-                "ledger_revision": state.requirement_ledger.revision,
-                "planner_decision_count": len(state.planner_decisions),
-                "evidence_count": len(state.evidence_ledger.evidence),
-            }
-        )
+        event = {
+            "event": "planner_owned_agent_graph_node",
+            "node": node_name,
+            "ledger_revision": state.requirement_ledger.revision,
+            "planner_decision_count": len(state.planner_decisions),
+            "evidence_count": len(state.evidence_ledger.evidence),
+            "tool_names": _trace_tool_names(state),
+            "source_types": _trace_source_types(state),
+        }
+        self.events.append(event)
+        if self.on_node_recorded is not None:
+            self.on_node_recorded(dict(event))
 
 
 class PlannerOwnedAgentGraphAdapters:
