@@ -406,6 +406,7 @@ def _with_proposer_diagnostics(
         submission=PlannerDecisionSubmission(
             decision=updated_decision,
             proposed_requirement_ledger=submission.proposed_requirement_ledger,
+            candidate_tool_calls=list(context.candidate_tool_calls),
         ),
         diagnostics=proposer_diagnostics,
     )

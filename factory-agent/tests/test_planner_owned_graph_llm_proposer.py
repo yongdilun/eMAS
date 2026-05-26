@@ -23,6 +23,7 @@ from factory_agent.planning.v2_contracts import (
 )
 from factory_agent.planning.v2_planner_decisions import (
     PlannerDecisionSubmission,
+    PlannerDecisionValidationError,
     record_planner_decision,
     validate_planner_decision,
 )
@@ -643,6 +644,127 @@ async def test_phase10_5_qwen_adapter_accepts_compact_selected_tool_name_submiss
 
 
 @pytest.mark.asyncio
+async def test_replan_spine_qwen_adapter_carries_filtered_candidates_for_failed_memory_gate():
+    capability_need = CapabilityNeed(
+        source_of_truth="operational_state",
+        entity="machine",
+        action="read_one",
+        constraints={"machine_id": "M-LTH-77"},
+        requested_fields=["status"],
+        requirement_id="req-001",
+    )
+    state = PlannerOwnedAgentGraphState(
+        original_query="Show machine M-LTH-77 status.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Show machine M-LTH-77 status.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="show machine status",
+                    requirement_type="single_entity_status",
+                    entity="machine",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"machine_id": "M-LTH-77"},
+                    requested_fields=["status"],
+                    locked_constraints=["machine_id"],
+                )
+            ],
+        ),
+        candidate_tool_windows=[
+            CandidateToolWindow(
+                requirement_id="req-001",
+                capability_need=capability_need,
+                candidates=[
+                    CandidateTool(tool_name="get__machines_{id}", rank=1, actions=["read_one", "read"]),
+                    CandidateTool(tool_name="get__machine_status_{id}", rank=2, actions=["read_one", "read"]),
+                ],
+            )
+        ],
+        hydrated_tool_cards=[
+            HydratedToolCards(
+                requirement_id="req-001",
+                cards=[
+                    HydratedToolCard(
+                        tool_name="get__machines_{id}",
+                        actions=["read_one"],
+                        is_read_only=True,
+                        required_args=["id"],
+                        path_params=["id"],
+                        query_params=["fields"],
+                    ),
+                    HydratedToolCard(
+                        tool_name="get__machine_status_{id}",
+                        actions=["read_one"],
+                        is_read_only=True,
+                        required_args=["id"],
+                        path_params=["id"],
+                        query_params=["fields"],
+                    ),
+                ],
+            )
+        ],
+    )
+    failed_call = GraphToolCall(
+        call_id="call-failed-primary",
+        kind="api_tool",
+        tool_name="get__machines_{id}",
+        args={"id": "M-LTH-77", "fields": "status"},
+        requirement_id="req-001",
+        candidate_window_id="window-001",
+    )
+    alternate_call = GraphToolCall(
+        call_id="call-alternate-status",
+        kind="api_tool",
+        tool_name="get__machine_status_{id}",
+        args={"id": "M-LTH-77", "fields": "status"},
+        requirement_id="req-001",
+        candidate_window_id="window-001",
+    )
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": "req-001",
+                "evidence_ref": "evidence-failed-primary",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-choose-001",
+        requested_decision_kind="choose_tool",
+        allowed_decision_kinds=["choose_tool", "revise_requirements", "request_clarification", "fail"],
+        requirement_id="req-001",
+        capability_need=capability_need,
+        candidate_tool_calls=[alternate_call],
+    )
+    model = StaticPlannerModel(
+        '{"decision":{"decision_kind":"choose_tool",'
+        '"selected_tool_call":{'
+        '"call_id":"call-failed-primary",'
+        '"kind":"api_tool",'
+        '"tool_name":"get__machines_{id}",'
+        '"args":{"id":"M-LTH-77","fields":"status"},'
+        '"requirement_id":"req-001",'
+        '"candidate_window_id":"window-001"'
+        '},'
+        '"reason":"Repeat the previous full selected tool call."}}'
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+
+    assert result.submission.decision.selected_tool_call is not None
+    assert result.submission.decision.selected_tool_call.tool_name == failed_call.tool_name
+    assert result.submission.candidate_tool_calls == [alternate_call]
+    with pytest.raises(PlannerDecisionValidationError, match="failed-tool memory"):
+        validate_planner_decision(state, result.submission)
+
+
+@pytest.mark.asyncio
 async def test_phase10_5_qwen_adapter_expands_compact_tool_name_to_read_batch():
     capability_need = CapabilityNeed(
         source_of_truth="operational_state",
@@ -959,5 +1081,7 @@ def test_phase10_5_static_planner_authored_graph_decisions_use_proposer_seam():
         assert not (isinstance(author, ast.Constant) and author.value == "planner")
 
     assert "propose_decision(state=state, context=context)" in source
-    assert "record_planner_decision(state, proposal.submission)" in source
+    assert "proposal.submission.model_copy" in source
+    assert '"candidate_tool_calls": list(context.candidate_tool_calls)' in source
+    assert "record_planner_decision(state, submission)" in source
     assert "planner_proposer" in source

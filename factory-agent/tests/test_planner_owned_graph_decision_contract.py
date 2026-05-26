@@ -167,6 +167,33 @@ def _state_with_hydrated_machine_window():
     return state, requirement, need
 
 
+def _state_with_hydrated_machine_alternates():
+    state, requirement, need = _state_with_hydrated_machine_window()
+    state.candidate_tool_windows[0].candidates.append(
+        CandidateTool(
+            tool_name="get__machine_status_{id}",
+            rank=2,
+            source_of_truth="operational_state",
+            actions=["read_one", "read"],
+        )
+    )
+    state.hydrated_tool_cards[0].cards.append(
+        HydratedToolCard(
+            tool_name="get__machine_status_{id}",
+            source_of_truth="operational_state",
+            actions=["read_one", "read"],
+            required_args=["id"],
+            path_params=["id"],
+            query_params=["fields"],
+            supports_fields=True,
+            output_contract="entity_status_v1",
+            is_read_only=True,
+            requires_approval=False,
+        )
+    )
+    return state, requirement, need
+
+
 def _job_mutation_tools() -> dict[str, ToolInfo]:
     priority_schema = {"type": "string", "enum": ["low", "medium", "high"]}
     return {
@@ -278,6 +305,16 @@ def _machine_call(*, call_id: str = "call-machine-status") -> GraphToolCall:
     )
 
 
+def _alternate_machine_call(*, call_id: str = "call-machine-status-alternate") -> GraphToolCall:
+    return GraphToolCall(
+        call_id=call_id,
+        kind="api_tool",
+        tool_name="get__machine_status_{id}",
+        args={"id": "M-LTH-77", "fields": "status"},
+        requirement_id="req-001",
+    )
+
+
 def _planner_diagnostics(decision_id: str, **extra: Any) -> dict[str, Any]:
     return {
         **extra,
@@ -348,6 +385,110 @@ def test_phase2_rejects_choosing_tool_outside_hydrated_candidate_window():
 
     with pytest.raises(PlannerDecisionValidationError, match="selected tool is not in the hydrated candidate window"):
         validate_planner_decision(state, decision)
+
+
+def test_replan_spine_decision_gate_rejects_failed_selected_tool_call_excluded_by_memory():
+    state, requirement, need = _state_with_hydrated_machine_alternates()
+    failed_call = _machine_call()
+    alternate_call = _alternate_machine_call()
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": requirement.id,
+                "evidence_ref": "evidence-failed-primary",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-stale-failed-tool",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=failed_call,
+        reason="Planner repeated the full failed tool call after an alternate was retrieved.",
+        diagnostics=_planner_diagnostics("dec-choose-stale-failed-tool"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="failed-tool memory"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[alternate_call]),
+        )
+
+
+def test_replan_spine_decision_gate_rejects_failed_selected_tool_calls_batch_excluded_by_memory():
+    state, requirement, need = _state_with_hydrated_machine_alternates()
+    failed_call = _machine_call(call_id="call-failed-primary")
+    alternate_call = _alternate_machine_call(call_id="call-alternate-status")
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": requirement.id,
+                "evidence_ref": "evidence-failed-primary",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-stale-failed-batch",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_calls=[failed_call, alternate_call],
+        reason="Planner batched a stale failed read with the viable alternate.",
+        diagnostics=_planner_diagnostics("dec-choose-stale-failed-batch", batch_size=2),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="failed-tool memory"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[alternate_call]),
+        )
+
+
+def test_replan_spine_decision_gate_accepts_non_failed_alternate_after_failed_memory():
+    state, requirement, need = _state_with_hydrated_machine_alternates()
+    failed_call = _machine_call()
+    alternate_call = _alternate_machine_call()
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": requirement.id,
+                "evidence_ref": "evidence-failed-primary",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-non-failed-alternate",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=alternate_call,
+        reason="Planner recovered by selecting the non-failed alternate read.",
+        diagnostics=_planner_diagnostics("dec-choose-non-failed-alternate"),
+    )
+
+    assert (
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[alternate_call]),
+        ).accepted
+        is True
+    )
 
 
 def test_phase2_rejects_read_only_choice_for_mutation_requirement():

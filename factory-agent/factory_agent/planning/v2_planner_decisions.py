@@ -20,6 +20,12 @@ from .v2_contracts import (
     RequirementLedgerEntry,
     V2ContractModel,
 )
+from .v2_failed_tool_memory import (
+    failed_tool_calls_for_requirement,
+    same_tool_call_signature,
+    tool_call_matches_failed_memory,
+    tool_call_signature,
+)
 
 
 SUPPORTED_PLANNER_DECISION_KINDS: tuple[str, ...] = (
@@ -44,10 +50,20 @@ _DECISION_KINDS_REQUIRING_REQUIREMENT = {
 }
 _ACTIVE_REQUIREMENT_STATUSES = {"open", "blocked"}
 _PLANNER_PROPOSER_DIAGNOSTIC_KEY = "planner_proposer"
+_DECISION_KINDS_WITH_SELECTED_TOOL_CALLS = {
+    "choose_tool",
+    "execute_tool",
+    "execute_parallel_read_batch",
+    "request_approval",
+}
 
 
 class PlannerDecisionValidationError(ValueError):
     """Raised when a planner decision cannot authorize a graph transition."""
+
+    def __init__(self, message: str, *, diagnostics: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
 
 
 class PlannerDecisionSubmission(V2ContractModel):
@@ -60,6 +76,7 @@ class PlannerDecisionSubmission(V2ContractModel):
 
     decision: PlannerDecisionRecord
     proposed_requirement_ledger: RequirementLedger | None = None
+    candidate_tool_calls: list[GraphToolCall] = Field(default_factory=list)
 
 
 class PlannerDecisionValidationResult(V2ContractModel):
@@ -81,15 +98,17 @@ def validate_planner_decision(
     normalized = _as_submission(submission)
     decision = normalized.decision
     errors: list[str] = []
+    error_diagnostics: dict[str, Any] = {}
 
     _validate_decision_shape(state, normalized, errors)
     _validate_planner_author_has_proposer_diagnostics(normalized, errors)
     _validate_locked_constraints_preserved(state, normalized, errors)
     _validate_kind_specific_transition(state, normalized, errors)
+    _validate_failed_tool_memory_filtered_selection(state, normalized, errors, error_diagnostics)
     _validate_deterministic_guard_authority(state, normalized, errors)
 
     if errors:
-        raise PlannerDecisionValidationError("; ".join(errors))
+        raise PlannerDecisionValidationError("; ".join(errors), diagnostics=error_diagnostics)
 
     diagnostics: dict[str, Any] = {
         "validated_by": "planner_owned_agent_graph_decision_gate",
@@ -319,6 +338,67 @@ def _validate_kind_specific_transition(
 
     if kind == "fail" and not decision.reason:
         errors.append("fail decision requires a reason")
+
+
+def _validate_failed_tool_memory_filtered_selection(
+    state: PlannerOwnedAgentGraphState,
+    submission: PlannerDecisionSubmission,
+    errors: list[str],
+    diagnostics: dict[str, Any],
+) -> None:
+    decision = submission.decision
+    if decision.decision_kind not in _DECISION_KINDS_WITH_SELECTED_TOOL_CALLS:
+        return
+
+    selected_calls = _selected_tool_calls(decision)
+    if not selected_calls or not submission.candidate_tool_calls:
+        return
+
+    rejections: list[dict[str, Any]] = []
+    for requirement_id in dict.fromkeys(call.requirement_id for call in selected_calls):
+        failed_calls = failed_tool_calls_for_requirement(state, requirement_id)
+        if not failed_calls:
+            continue
+        candidate_calls = [
+            call for call in submission.candidate_tool_calls if call.requirement_id == requirement_id
+        ]
+        if not candidate_calls:
+            continue
+        filtered_candidates = [
+            call for call in candidate_calls if not tool_call_matches_failed_memory(call, failed_calls)
+        ]
+        if not filtered_candidates:
+            continue
+        for selected in [call for call in selected_calls if call.requirement_id == requirement_id]:
+            if any(same_tool_call_signature(selected, candidate) for candidate in filtered_candidates):
+                continue
+            if not tool_call_matches_failed_memory(selected, failed_calls):
+                continue
+            rejections.append(
+                {
+                    "requirement_id": requirement_id,
+                    "selected_tool_call": tool_call_signature(selected),
+                    "filtered_candidate_tool_calls": [
+                        tool_call_signature(candidate) for candidate in filtered_candidates
+                    ],
+                    "failed_tool_calls": [dict(call) for call in failed_calls],
+                }
+            )
+
+    if not rejections:
+        return
+
+    diagnostics["failed_tool_memory"] = {
+        "rejected_selected_tool_calls": rejections,
+        "reason": "selected_tool_call_excluded_by_failed_tool_memory",
+    }
+    rejected_names = ", ".join(
+        item["selected_tool_call"]["tool_name"] for item in rejections
+    )
+    errors.append(
+        "selected tool call was excluded by failed-tool memory while a viable alternate exists: "
+        f"{rejected_names}"
+    )
 
 
 def _validate_deterministic_guard_authority(

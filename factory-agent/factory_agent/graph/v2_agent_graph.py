@@ -34,6 +34,10 @@ from ..planning.v2_contracts import (
     V2ContractModel,
 )
 from ..planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
+from ..planning.v2_failed_tool_memory import (
+    failed_tool_calls_for_requirement,
+    failed_tool_memory_filtered_candidates,
+)
 from ..planning.v2_graph_adapters import (
     GraphToolExecutionResult,
     GraphToolHttpExecutor,
@@ -742,7 +746,11 @@ class PlannerOwnedAgentGraph:
             proposal = await _maybe_await(
                 self._proposer.propose_decision(state=state, context=context)
             )
-            validation = record_planner_decision(state, proposal.submission)
+            submission = proposal.submission.model_copy(
+                update={"candidate_tool_calls": list(context.candidate_tool_calls)},
+                deep=True,
+            )
+            validation = record_planner_decision(state, submission)
         except (PlannerDecisionProposerError, PlannerDecisionValidationError, ValueError) as exc:
             diagnostics = getattr(exc, "diagnostics", {}) or {}
             _record_planner_proposer_rejection(
@@ -754,7 +762,7 @@ class PlannerOwnedAgentGraph:
             )
             return None
 
-        decision = proposal.submission.decision
+        decision = submission.decision
         _record_planner_proposer_acceptance(
             state,
             node_name=node_name,
@@ -765,9 +773,9 @@ class PlannerOwnedAgentGraph:
         )
         if (
             decision.decision_kind == "revise_requirements"
-            and proposal.submission.proposed_requirement_ledger is not None
+            and submission.proposed_requirement_ledger is not None
         ):
-            _apply_planner_proposed_requirement_ledger(state, proposal.submission.proposed_requirement_ledger)
+            _apply_planner_proposed_requirement_ledger(state, submission.proposed_requirement_ledger)
         return decision
 
     async def _planner_decision_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -2532,35 +2540,15 @@ def _candidate_tool_calls_after_failed_memory(
     replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
     if not isinstance(replan, Mapping):
         return candidate_tool_calls
-    failed_calls = [
-        call
-        for call in replan.get("failed_tool_calls", [])
-        if isinstance(call, Mapping) and call.get("requirement_id") == requirement_id
-    ]
+    failed_calls = failed_tool_calls_for_requirement(state, requirement_id)
     if not failed_calls:
         return candidate_tool_calls
-    filtered = [
-        call
-        for call in candidate_tool_calls
-        if not _candidate_matches_failed_tool_call(call, failed_calls)
-    ]
-    if not filtered:
+    filtered = failed_tool_memory_filtered_candidates(candidate_tool_calls, failed_calls)
+    if len(filtered) == len(candidate_tool_calls):
         return candidate_tool_calls
     replan["failed_tool_memory_applied"] = True
     replan["failed_tool_memory_filtered_call_count"] = len(candidate_tool_calls) - len(filtered)
     return filtered
-
-
-def _candidate_matches_failed_tool_call(
-    candidate: GraphToolCall,
-    failed_calls: list[Mapping[str, Any]],
-) -> bool:
-    for failed in failed_calls:
-        if candidate.tool_name != failed.get("tool_name"):
-            continue
-        if dict(candidate.args) == dict(failed.get("args") or {}):
-            return True
-    return False
 
 
 def _retain_replan_missing_evidence_reason_history(state: PlannerOwnedAgentGraphState) -> None:

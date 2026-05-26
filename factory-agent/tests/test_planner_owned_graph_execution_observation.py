@@ -18,8 +18,11 @@ from factory_agent.planning.v2_contracts import (
     HydratedToolCards,
 )
 from factory_agent.planning.v2_graph_adapters import GraphExecutionAuthorizationError, execute_graph_api_tool_call
-from factory_agent.planning.v2_planner_decisions import record_planner_decision
-from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
+from factory_agent.planning.v2_planner_decisions import PlannerDecisionSubmission, record_planner_decision
+from factory_agent.planning.v2_planner_proposer import (
+    OfflineStructuredPlannerDecisionProposer,
+    PlannerDecisionProposalResult,
+)
 from factory_agent.schemas import ToolInfo
 
 
@@ -306,6 +309,7 @@ def _graph(
     http_executor=_successful_http_executor,
     rag_pipeline: Any | None = None,
     max_replans: int | None = None,
+    proposer: Any | None = None,
 ) -> PlannerOwnedAgentGraph:
     settings = _settings()
     if max_replans is not None:
@@ -320,9 +324,82 @@ def _graph(
     return PlannerOwnedAgentGraph(
         settings=settings,
         adapters=adapters,
-        proposer=OfflineStructuredPlannerDecisionProposer(),
+        proposer=proposer or OfflineStructuredPlannerDecisionProposer(),
         checkpointer=None,
     )
+
+
+def _planner_proposal(decision: PlannerDecisionRecord, *, adapter: str) -> PlannerDecisionProposalResult:
+    diagnostics = {
+        "proposer_seam": True,
+        "adapter": adapter,
+        "decision_id": decision.decision_id,
+        "bounded_state_view": True,
+        "full_openapi_catalog_visible": False,
+    }
+    decision = decision.model_copy(
+        update={"diagnostics": {**decision.diagnostics, "planner_proposer": diagnostics}},
+        deep=True,
+    )
+    return PlannerDecisionProposalResult(
+        submission=PlannerDecisionSubmission(decision=decision),
+        diagnostics=diagnostics,
+    )
+
+
+class RepeatFailedFullSelectedCallProposer:
+    def __init__(self) -> None:
+        self.contexts: list[Any] = []
+        self.first_selected_call: GraphToolCall | None = None
+        self.repeated_failed_full_call = False
+
+    async def propose_decision(self, *, state, context):
+        self.contexts.append(context)
+        if context.requested_decision_kind == "retrieve_tools":
+            return _planner_proposal(
+                PlannerDecisionRecord(
+                    decision_id=context.decision_id,
+                    decision_kind="retrieve_tools",
+                    requirement_id=context.requirement_id,
+                    ledger_revision=state.requirement_ledger.revision,
+                    capability_need=context.capability_need,
+                    reason="Retrieve a bounded tool window.",
+                ),
+                adapter="repeat_failed_full_selected_call_proposer",
+            )
+
+        if context.requested_decision_kind != "choose_tool":
+            return _planner_proposal(
+                PlannerDecisionRecord(
+                    decision_id=context.decision_id,
+                    decision_kind="fail",
+                    ledger_revision=state.requirement_ledger.revision,
+                    reason="Unexpected decision request in regression proposer.",
+                ),
+                adapter="repeat_failed_full_selected_call_proposer",
+            )
+
+        if self.first_selected_call is None:
+            selected = context.candidate_tool_calls[0]
+            self.first_selected_call = selected.model_copy(deep=True)
+        elif not self.repeated_failed_full_call:
+            selected = self.first_selected_call.model_copy(deep=True)
+            self.repeated_failed_full_call = True
+        else:
+            selected = context.candidate_tool_calls[0]
+
+        return _planner_proposal(
+            PlannerDecisionRecord(
+                decision_id=context.decision_id,
+                decision_kind="choose_tool",
+                requirement_id=context.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=context.capability_need,
+                selected_tool_call=selected,
+                reason="Select from the bounded candidate window.",
+            ),
+            adapter="repeat_failed_full_selected_call_proposer",
+        )
 
 
 def _state_with_persisted_choice():
@@ -536,6 +613,58 @@ async def test_replan_spine_avoids_repeating_failed_tool_when_alternate_candidat
     assert final_evidence.tool_name == "get__machine_status_{id}"
     assert result.state.requirement_ledger.requirements[0].status == "satisfied"
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_rejects_repeated_failed_full_selected_call_when_alternate_exists():
+    executor = FailPrimaryThenSucceedAlternateExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__machines_{id}"],
+            ["get__machines_{id}", "get__machine_status_{id}"],
+        ]
+    )
+    proposer = RepeatFailedFullSelectedCallProposer()
+
+    result = await _graph(
+        tools_by_name={
+            "get__machines_{id}": _machine_status_tool(),
+            "get__machine_status_{id}": _alternate_machine_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+        proposer=proposer,
+    ).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-reject-stale-full-selected"},
+    )
+
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+    failed_calls = replan["failed_tool_calls"]
+    choose_contexts = [
+        context for context in proposer.contexts if context.requested_decision_kind == "choose_tool"
+    ]
+    second_choose_context = choose_contexts[1]
+    rejected = result.state.execution_trace.planner.diagnostics["planner_decision_proposer"]["rejected"]
+    executed_tool_names = [call["tool_name"] for call in executor.calls]
+
+    assert selector.returned_name_batches[0] == ["get__machines_{id}"]
+    assert selector.returned_name_batches[1] == ["get__machines_{id}", "get__machine_status_{id}"]
+    assert failed_calls == [
+        {
+            "tool_name": "get__machines_{id}",
+            "args": {"id": "M-LTH-77", "fields": "status"},
+            "requirement_id": "req-001",
+            "evidence_ref": result.state.evidence_ledger.evidence[0].id,
+            "reason": "tool_error",
+            "attempt": 1,
+        }
+    ]
+    assert proposer.repeated_failed_full_call is True
+    assert [call.tool_name for call in second_choose_context.candidate_tool_calls] == ["get__machine_status_{id}"]
+    assert any("failed-tool memory" in item["reason"] for item in rejected)
+    assert executed_tool_names.count("get__machines_{id}") == 1
+    assert "get__machine_status_{id}" in executed_tool_names or result.state.response_document_context.state == "failed"
 
 
 @pytest.mark.asyncio
