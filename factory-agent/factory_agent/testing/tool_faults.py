@@ -52,7 +52,7 @@ def _normalize_rule(rule: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(rule, dict):
         return None
     fault = str(rule.get("fault") or "timeout").strip().lower()
-    if fault not in {"timeout", "network", "http_500", "http_error"}:
+    if fault not in {"timeout", "network", "http_500", "http_error", "empty_data"}:
         fault = "timeout"
     normalized = {
         "fault": fault,
@@ -133,6 +133,20 @@ def _fault_envelope(*, rule: dict[str, Any], tool: ToolInfo) -> dict[str, Any]:
             "body": base_body,
             "latency_ms": 0,
             "infrastructure_error": True,
+        }
+    if fault == "empty_data":
+        return {
+            "ok": True,
+            "http_status": 200,
+            "body": {
+                "data": {},
+                "fault_injected": True,
+                "message": reason,
+                "tool_name": tool.name,
+                "no_fake_completion": True,
+            },
+            "latency_ms": 0,
+            "infrastructure_error": False,
         }
     base_body["error_type"] = "timeout"
     return {

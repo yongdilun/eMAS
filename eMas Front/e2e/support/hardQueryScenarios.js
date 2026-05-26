@@ -515,6 +515,127 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-REPLAN-SPINE-READ-RECOVERY',
+    tags: ['hard query', 'replan-spine', 'read recovery', 'response_document'],
+    toolFaults: {
+      rules: [
+        {
+          method: 'GET',
+          endpoint: '/machines/{id}',
+          fault: 'empty_data',
+          once: true,
+          reason: 'Controlled incomplete machine status evidence for replan recovery.',
+        },
+      ],
+    },
+    prompt: 'Show machine M-CNC-01 status after the first machine status read returns incomplete evidence.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      maxStepCount: 3,
+      toolNames: ['get__machines_{id}'],
+      stepSequence: [
+        { toolName: 'get__machines_{id}', args: { id: 'M-CNC-01', fields: ['status'] } },
+      ],
+      noMutation: true,
+      replanSpine: {
+        minAttempts: 1,
+        maxAttempts: 2,
+        limitReached: false,
+        requiresMissingEvidenceReason: true,
+        requiresStaleAttemptEvidence: true,
+        requiresHistoricalEvidence: true,
+        requiresActiveFinalEvidence: true,
+        forbidStaleFinalEvidence: true,
+        activeFinalEvidenceInResponse: true,
+      },
+      responseDocument: {
+        blockTypes: ['status_result'],
+        blocks: [
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            readScope: 'status_only',
+            requestedFields: ['machine_id', 'status'],
+            displayMode: 'compact_status_card',
+            entityType: 'machine',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          readScope: 'status_only',
+          requestedFields: ['machine_id', 'status'],
+          displayMode: 'compact_status_card',
+          entityType: 'machine',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'active machine status after retry', pattern: /Machine\s+M-CNC-01\s+is/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'stale incomplete status result', pattern: /Machine(?:\s+M-CNC-01)?\s+(?:status\s+)?was retrieved/i },
+        { label: 'approval required for read recovery', pattern: /Approval required/i },
+      ],
+    },
+  },
+  {
+    id: 'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
+    tags: ['hard query', 'replan-spine', 'bounded safe failure', 'response_document'],
+    toolFaults: {
+      rules: [
+        {
+          method: 'GET',
+          endpoint: '/machines/{id}',
+          fault: 'empty_data',
+          once: false,
+          reason: 'Controlled repeated incomplete machine status evidence for replan limit proof.',
+        },
+      ],
+    },
+    prompt: 'Show machine M-CNC-01 status while every machine status read returns incomplete evidence.',
+    expected: {
+      sessionStatus: 'FAILED',
+      responseState: 'failed',
+      approvalCount: 0,
+      toolNames: ['get__machines_{id}'],
+      noMutation: true,
+      replanSpine: {
+        minAttempts: 1,
+        attemptCountEqualsMaxAttempts: true,
+        limitReached: true,
+        requiresMissingEvidenceReason: true,
+        requiresStaleAttemptEvidence: true,
+        requiresHistoricalEvidence: true,
+        forbidActiveFinalEvidence: true,
+        forbidStaleFinalEvidence: true,
+        forbidResponseEvidenceRefs: true,
+      },
+      responseDocument: {
+        blockTypes: ['diagnostic'],
+        hiddenBlockTypes: ['status_result', 'approval_required'],
+        blocks: [
+          { type: 'diagnostic' },
+        ],
+      },
+      visibleSemanticBlocks: [
+        { type: 'diagnostic' },
+      ],
+      visibleTextIncludes: [
+        { label: 'bounded safe failure message', pattern: /could not verify|bounded retries|no successful active evidence/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'fake machine status after bounded failure', pattern: /Machine\s+M-CNC-01\s+is/i },
+        { label: 'approval required for read failure', pattern: /Approval required/i },
+        { label: 'fake success text', pattern: /Run complete/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-9-TOOL-FAILURE',
     tags: ['hard query', 'phase9', 'tool failure fallback', 'response_document'],
     toolFaults: {

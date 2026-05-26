@@ -96,16 +96,31 @@ function plannerOwnedGraphPayload(snapshot) {
   const graphContext = context.planner_owned_agent_graph && typeof context.planner_owned_agent_graph === 'object'
     ? context.planner_owned_agent_graph
     : {}
+  const responseDocumentContext = intentContract.response_document_context && typeof intentContract.response_document_context === 'object'
+    ? intentContract.response_document_context
+    : graphContext.response_document_context && typeof graphContext.response_document_context === 'object'
+      ? graphContext.response_document_context
+      : {}
   const v2State = intentContract.v2_state && typeof intentContract.v2_state === 'object' ? intentContract.v2_state : {}
   const executionTrace = intentContract.execution_trace && typeof intentContract.execution_trace === 'object'
     ? intentContract.execution_trace
     : graphState.execution_trace && typeof graphState.execution_trace === 'object'
       ? graphState.execution_trace
       : {}
+  const graphDiagnostics = executionTrace.diagnostics && typeof executionTrace.diagnostics === 'object'
+    ? executionTrace.diagnostics
+    : {}
+  const replanSpine = intentContract.replan_spine && typeof intentContract.replan_spine === 'object'
+    ? intentContract.replan_spine
+    : graphContext.replan_spine && typeof graphContext.replan_spine === 'object'
+      ? graphContext.replan_spine
+      : graphDiagnostics.replan_spine && typeof graphDiagnostics.replan_spine === 'object'
+        ? graphDiagnostics.replan_spine
+        : {}
   const graphEvidence = graphState.evidence_ledger?.evidence
   const v2Evidence = v2State.evidence_ledger?.evidence
   const evidence = Array.isArray(graphEvidence) ? graphEvidence : Array.isArray(v2Evidence) ? v2Evidence : []
-  return { context: graphContext, intentContract, executionTrace, evidence }
+  return { context: graphContext, intentContract, executionTrace, evidence, responseDocumentContext, replanSpine }
 }
 
 function toolName(step) {
@@ -255,6 +270,70 @@ function addPlannerOwnedGraphViolations(violations, snapshot, expected) {
   }
 }
 
+function addReplanSpineViolations(violations, snapshot, expected) {
+  const replanExpected = expected.replanSpine || {}
+  if (!Object.keys(replanExpected).length) return
+
+  const payload = plannerOwnedGraphPayload(snapshot)
+  const replan = payload.replanSpine && typeof payload.replanSpine === 'object' ? payload.replanSpine : {}
+  const attemptCount = Number(replan.attempt_count || 0)
+  const maxAttempts = Number(replan.max_attempts || 0)
+  const missingReasons = Array.isArray(replan.missing_evidence_reasons) ? replan.missing_evidence_reasons : []
+  const failedToolCalls = Array.isArray(replan.failed_tool_calls) ? replan.failed_tool_calls : []
+  const staleRefs = asArray(replan.stale_attempt_evidence_refs || replan.stale_evidence_refs)
+  const historicalRefs = asArray(replan.historical_evidence_refs)
+  const activeFinalRefs = asArray(replan.active_final_evidence_refs)
+  const responseEvidenceRefs = asArray(snapshot?.response_document?.evidence_refs)
+    .concat(asArray(payload.responseDocumentContext?.evidence_refs))
+  const responseEvidenceSet = new Set(responseEvidenceRefs)
+
+  if (Object.hasOwn(replanExpected, 'minAttempts') && attemptCount < Number(replanExpected.minAttempts)) {
+    violations.push(`replan_spine expected at least ${replanExpected.minAttempts} attempts but saw ${attemptCount}`)
+  }
+  if (Object.hasOwn(replanExpected, 'maxAttempts') && attemptCount > Number(replanExpected.maxAttempts)) {
+    violations.push(`replan_spine expected at most ${replanExpected.maxAttempts} attempts but saw ${attemptCount}`)
+  }
+  if (replanExpected.attemptCountEqualsMaxAttempts && attemptCount !== maxAttempts) {
+    violations.push(`replan_spine attempt_count ${attemptCount} did not equal max_attempts ${maxAttempts}`)
+  }
+  if (Object.hasOwn(replanExpected, 'limitReached') && Boolean(replan.replan_limit_reached) !== Boolean(replanExpected.limitReached)) {
+    violations.push(`replan_spine limitReached expected ${replanExpected.limitReached} but saw ${Boolean(replan.replan_limit_reached)}`)
+  }
+  if (replanExpected.requiresMissingEvidenceReason && !missingReasons.length) {
+    violations.push('replan_spine missing persisted missing_evidence_reasons')
+  }
+  if (replanExpected.requiresFailedToolMemory && !failedToolCalls.length) {
+    violations.push('replan_spine missing persisted failed_tool_calls')
+  }
+  if (replanExpected.requiresStaleAttemptEvidence && !staleRefs.length) {
+    violations.push('replan_spine missing stale attempt evidence refs')
+  }
+  if (replanExpected.requiresHistoricalEvidence && !historicalRefs.length) {
+    violations.push('replan_spine missing historical evidence refs')
+  }
+  if (replanExpected.requiresActiveFinalEvidence && !activeFinalRefs.length) {
+    violations.push('replan_spine missing active final evidence refs')
+  }
+  if (replanExpected.forbidActiveFinalEvidence && activeFinalRefs.length) {
+    violations.push(`replan_spine unexpectedly had active final evidence refs ${activeFinalRefs.join(', ')}`)
+  }
+  if (replanExpected.forbidStaleFinalEvidence) {
+    const staleFinalRefs = staleRefs.filter((ref) => activeFinalRefs.includes(ref) || responseEvidenceSet.has(ref))
+    if (staleFinalRefs.length) {
+      violations.push(`replan_spine stale evidence leaked into final response refs: ${staleFinalRefs.join(', ')}`)
+    }
+  }
+  if (replanExpected.activeFinalEvidenceInResponse) {
+    const missing = activeFinalRefs.filter((ref) => !responseEvidenceSet.has(ref))
+    if (missing.length) {
+      violations.push(`replan_spine active final evidence missing from response refs: ${missing.join(', ')}`)
+    }
+  }
+  if (replanExpected.forbidResponseEvidenceRefs && responseEvidenceRefs.length) {
+    violations.push(`replan_spine safe failure unexpectedly exposed response evidence refs: ${responseEvidenceRefs.join(', ')}`)
+  }
+}
+
 function visibleBlockMatches(block, expectedBlock) {
   if (expectedBlock.type && block?.type !== expectedBlock.type) return false
   if (expectedBlock.contract && block?.contract !== expectedBlock.contract) return false
@@ -367,6 +446,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
   addStepViolations(violations, snapshot, expected)
   addResponseDocumentViolations(violations, snapshot, expected)
   addPlannerOwnedGraphViolations(violations, snapshot, expected)
+  addReplanSpineViolations(violations, snapshot, expected)
   addVisibleBlockViolations(violations, ui, expected)
   addApprovalViolations(violations, snapshot, pendingApprovals, expected)
   addForbiddenTextViolations(violations, snapshot, ui, expected)
@@ -422,6 +502,18 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
         evidenceSourceTypes: Array.from(
           new Set(graphPayload.evidence.map((entry) => entry?.source_type).filter(Boolean)),
         ),
+      },
+      replanSpine: {
+        attemptCount: graphPayload.replanSpine.attempt_count ?? null,
+        maxAttempts: graphPayload.replanSpine.max_attempts ?? null,
+        limitReached: graphPayload.replanSpine.replan_limit_reached ?? false,
+        missingEvidenceReasonCount: asArray(graphPayload.replanSpine.missing_evidence_reasons).length,
+        failedToolCallCount: asArray(graphPayload.replanSpine.failed_tool_calls).length,
+        staleAttemptEvidenceRefs: asArray(
+          graphPayload.replanSpine.stale_attempt_evidence_refs || graphPayload.replanSpine.stale_evidence_refs,
+        ),
+        activeFinalEvidenceRefs: asArray(graphPayload.replanSpine.active_final_evidence_refs),
+        historicalEvidenceRefs: asArray(graphPayload.replanSpine.historical_evidence_refs),
       },
       pendingApprovals,
       violations,

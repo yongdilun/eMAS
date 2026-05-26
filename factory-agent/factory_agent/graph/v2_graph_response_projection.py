@@ -25,13 +25,55 @@ def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str
 def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[dict[str, Any]]) -> str:
     _ = state
     parts = [
-        str(block.get("summary") or "").strip()
+        str(block.get("summary") or block.get("user_message") or "").strip()
         for block in blocks
-        if str(block.get("summary") or "").strip()
+        if str(block.get("summary") or block.get("user_message") or "").strip()
     ]
     if not parts:
         return "No fulfilled read evidence was available for response rendering."
     return " ".join(dict.fromkeys(parts))
+
+
+def _replan_limit_response_block(state: PlannerOwnedAgentGraphState, replan_spine: Mapping[str, Any]) -> dict[str, Any]:
+    stale_refs = [
+        str(ref)
+        for ref in replan_spine.get("stale_attempt_evidence_refs", replan_spine.get("stale_evidence_refs", []))
+        if str(ref)
+    ]
+    requirement_ids = [
+        requirement.id
+        for requirement in state.requirement_ledger.requirements
+        if requirement.status != "satisfied"
+    ]
+    message = (
+        "I could not verify the requested evidence after bounded retries, "
+        "so I did not claim a successful status."
+    )
+    return {
+        "id": "diagnostic:replan-limit",
+        "type": "diagnostic",
+        "severity": "error",
+        "reason": "replan_limit_reached",
+        "title": "Unable to verify evidence",
+        "summary": message,
+        "user_message": message,
+        "cause": "The graph kept receiving incomplete or stale evidence for the active read requirement.",
+        "impact": {
+            "changes_applied": False,
+            "safe_to_retry": True,
+            "unsatisfied_requirement_ids": requirement_ids,
+        },
+        "current_state": "No successful active evidence satisfied the request.",
+        "next_action": "Retry after the upstream data source can return the requested fields.",
+        "technical_details": {
+            "reason": "replan_limit_reached",
+            "attempt_count": int(replan_spine.get("attempt_count") or 0),
+            "max_attempts": int(replan_spine.get("max_attempts") or 0),
+            "stale_attempt_evidence_refs": stale_refs,
+            "sanitized": True,
+        },
+        "details_collapsed": True,
+    }
 
 
 def _phase6_response_block_for_evidence(requirement: Any | None, evidence: EvidenceLedgerEntry) -> dict[str, Any]:

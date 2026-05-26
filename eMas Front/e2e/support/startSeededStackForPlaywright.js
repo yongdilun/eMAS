@@ -47,9 +47,13 @@ function append(logPath, line) {
 function startProcess(name, command, args, options) {
   const logPath = fingerprint.logs[name]
   append(logPath, `[${new Date().toISOString()}] starting ${command} ${args.join(' ')}\n`)
+  const childEnv = { ...process.env, ...options.env }
+  for (const [key, value] of Object.entries(childEnv)) {
+    if (value === null) delete childEnv[key]
+  }
   const child = spawn(command, args, {
     cwd: options.cwd,
-    env: { ...process.env, ...options.env },
+    env: childEnv,
     shell: false,
     windowsHide: true,
   })
@@ -137,6 +141,19 @@ try {
       OPENAPI_URL: env.openApiUrl,
       JWT_REQUIRED: '0',
       CORS_ALLOW_ORIGINS: `${env.viteBaseUrl},http://localhost:${env.vitePort}`,
+      REDIS_URL: '',
+      FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER: '1',
+      PLANNER_OPENAI_BASE_URL: '',
+      OPENAI_BASE_URL: '',
+      LLM_BASE_URL: '',
+      PLANNER_API_KEY: '',
+      OPENAI_API_KEY: '',
+      LLM_API_KEY: '',
+      DEVELOPMENT_PLANNER_OPENAI_BASE_URL: '',
+      DEVELOPMENT_OPENAI_BASE_URL: '',
+      DEVELOPMENT_LLM_BASE_URL: '',
+      DEVELOPMENT_OPENAI_API_KEY: '',
+      DEVELOPMENT_LLM_API_KEY: '',
       FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE: '1',
       FACTORY_AGENT_TOOLS_MD_PATH: path.join(env.artifactDir, 'factory-agent-tools.md'),
       SUMMARY_BACKEND: 'deterministic',

@@ -86,6 +86,7 @@ from .v2_graph_response_projection import (
     _is_document_insufficient_context_evidence,
     _phase6_response_blocks,
     _phase6_response_summary,
+    _replan_limit_response_block,
 )
 from .v2_graph_state_utils import (
     PlannerOwnedAgentGraphRunOptions,
@@ -175,6 +176,11 @@ def _trace_source_types(state: PlannerOwnedAgentGraphState) -> list[str]:
         if source_type and source_type not in source_types:
             source_types.append(source_type)
     return source_types
+
+
+def _graph_recursion_limit(settings: Settings) -> int:
+    max_replans = max(0, int(getattr(settings, "max_replans", 0) or 0))
+    return max(25, 16 + ((max_replans + 1) * 8))
 
 
 def _replan_retrieval_context_refs(state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -479,6 +485,7 @@ class PlannerOwnedAgentGraph:
     ) -> PlannerOwnedGraphResult:
         normalized_options = _normalize_options(options)
         checkpoint_config = _checkpoint_config(normalized_options, session_context=session_context)
+        checkpoint_config.setdefault("recursion_limit", _graph_recursion_limit(self._settings))
         state.execution_trace.diagnostics["graph_checkpoint_identity"] = _graph_checkpoint_identity(
             checkpoint_config,
             ledger_revision=state.requirement_ledger.revision,
@@ -1355,6 +1362,10 @@ class PlannerOwnedAgentGraph:
         _record_node_visit(state, "response_document_node", self._tracer)
         validation_status = state.final_validation_result.status if state.final_validation_result else "deferred"
         response_blocks = _phase6_response_blocks(state)
+        replan_spine = _response_replan_spine_diagnostics(state)
+        replan_limit_safe_failure = validation_status != "passed" and replan_spine.get("replan_limit_reached")
+        if replan_limit_safe_failure:
+            response_blocks = [_replan_limit_response_block(state, replan_spine)]
         if state.pending_approval.status == "pending":
             approval_block = _pending_approval_response_block(state)
             if approval_block is not None:
@@ -1372,7 +1383,7 @@ class PlannerOwnedAgentGraph:
             for evidence in state.evidence_ledger.evidence
             if evidence.id not in set(active_evidence_refs)
         ]
-        replan_spine = _response_replan_spine_diagnostics(state)
+        response_evidence_refs = [] if replan_limit_safe_failure else active_evidence_refs
         state.response_document_context = ResponseDocumentContext(
             state="draft" if pending or validation_status == "deferred" else ("rendered" if validation_status == "passed" else "failed"),
             document_id=(
@@ -1382,7 +1393,7 @@ class PlannerOwnedAgentGraph:
             ),
             revision=state.requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in state.requirement_ledger.requirements],
-            evidence_refs=active_evidence_refs,
+            evidence_refs=response_evidence_refs,
             pending_approval_id=state.pending_approval.approval_id if pending else None,
             render_contract=(
                 "phase8_graph_write_approval_response_document_context"
@@ -1396,6 +1407,7 @@ class PlannerOwnedAgentGraph:
                 "summary": response_summary,
                 "blocks": response_blocks,
                 "active_evidence_refs": active_evidence_refs,
+                "response_evidence_refs": response_evidence_refs,
                 "historical_evidence_refs": historical_evidence_refs,
                 "stale_evidence_excluded_from_active_revision": bool(historical_evidence_refs),
                 "replan_limit_reached": bool(replan_spine.get("replan_limit_reached")),

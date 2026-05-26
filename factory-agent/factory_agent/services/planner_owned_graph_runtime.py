@@ -633,11 +633,19 @@ class PlannerOwnedGraphRuntimeAdapter:
         }
         business_change_hints = self._business_change_hints_by_requirement(state)
         active_response_refs = set(state.response_document_context.evidence_refs)
+        tool_output_refs = set(active_response_refs)
+        if not tool_output_refs and self._response_context_replan_limit_reached(state):
+            tool_output_refs = {
+                evidence.id
+                for evidence in state.evidence_ledger.evidence
+                if not evidence.diagnostic_metadata.get("stale_after_graph_replan")
+                and evidence.diagnostic_metadata.get("superseded_reason") != "replan_spine_retry"
+            }
         outputs: list[dict[str, Any]] = []
         for evidence in state.evidence_ledger.evidence:
             if not evidence.tool_name:
                 continue
-            if active_response_refs and evidence.id not in active_response_refs:
+            if tool_output_refs and evidence.id not in tool_output_refs:
                 continue
             if self._is_non_actionable_preview_evidence(evidence):
                 continue
@@ -685,6 +693,12 @@ class PlannerOwnedGraphRuntimeAdapter:
                 }
             )
         return outputs
+
+    def _response_context_replan_limit_reached(self, state: Any) -> bool:
+        context = getattr(state, "response_document_context", None)
+        diagnostics = getattr(context, "diagnostics", {}) if context is not None else {}
+        replan = diagnostics.get("replan_spine") if isinstance(diagnostics, Mapping) else None
+        return isinstance(replan, Mapping) and replan.get("replan_limit_reached") is True
 
     def _is_non_actionable_preview_evidence(self, evidence: EvidenceLedgerEntry) -> bool:
         metadata = evidence.diagnostic_metadata if isinstance(evidence.diagnostic_metadata, Mapping) else {}
