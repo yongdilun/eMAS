@@ -860,7 +860,10 @@ def _activity_collapse_noisy_replan_attempts(
     )
     if len(attempt_numbers) <= 3:
         return raw_steps
-    collapsed_attempts = set(attempt_numbers[1:-1])
+    has_terminal = any(step.get("state") in {"complete", "error"} for step in raw_steps)
+    tail_attempts_to_keep = 1 if has_terminal else 2
+    collapse_until = max(len(attempt_numbers) - tail_attempts_to_keep, 1)
+    collapsed_attempts = set(attempt_numbers[1:collapse_until])
     if not collapsed_attempts:
         return raw_steps
 
@@ -886,7 +889,8 @@ def _activity_collapse_noisy_replan_attempts(
 
     if not collapsed_seen or summary is None:
         return raw_steps
-    summary["detail"] = f"{len(collapsed_seen)} earlier attempts collapsed"
+    attempt_word = "attempt" if len(collapsed_seen) == 1 else "attempts"
+    summary["detail"] = f"{len(collapsed_seen)} earlier {attempt_word} collapsed"
     return compacted
 
 

@@ -656,6 +656,91 @@ def test_active_replan_spine_activity_uses_attempt_story_instead_of_jumpy_live_g
     assert "Selecting safe action" not in labels
 
 
+def test_active_replan_spine_collapse_keeps_previous_attempt_before_current_retry():
+    created_at = datetime(2026, 5, 13, 9, 55, 0)
+    attempts = []
+    for attempt in range(1, 4):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-job-priority",
+                        "evidence_refs": [f"ev-failed-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "requirement_id": "req-job-priority",
+                        "evidence_ref": f"ev-failed-{attempt}",
+                        "reason": "tool_error",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 3,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-collapse-previous",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 3,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=12),
+            "replan_context": {"live_replan_spine": replan_spine},
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-collapse-previous",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    details = [step.detail or "" for step in steps]
+
+    assert "1 earlier attempt collapsed" in details
+    assert any(detail.startswith("Attempt 3 of 6 - Previous read failed") for detail in details)
+    assert any(detail.startswith("Attempt 4 of 6 - Previous read failed") for detail in details)
+    assert any(detail.startswith("Attempt 4 of 6 - Running the next selected read") for detail in details)
+    assert not any(detail.startswith("Attempt 2 of 6 - Running the next selected read") for detail in details)
+    previous_check_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 3 of 6 - Previous read failed")
+    )
+    current_replan_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 4 of 6 - Previous read failed")
+    )
+    current_retry_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 4 of 6 - Running the next selected read")
+    )
+    assert previous_check_index < current_replan_index < current_retry_index
+    assert steps[current_retry_index].state == "running"
+    assert [step.state for step in steps].count("running") == 1
+
+
 def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
 
