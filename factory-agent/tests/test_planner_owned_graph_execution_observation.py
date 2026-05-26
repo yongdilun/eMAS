@@ -370,6 +370,29 @@ async def test_replan_spine_marks_retriable_bad_evidence_inactive_before_retry()
 
 
 @pytest.mark.asyncio
+async def test_replan_spine_passes_missing_evidence_context_to_tool_retrieval():
+    selector = RecordingSelector(["get__machines_{id}"])
+
+    result = await _graph(selector=selector, http_executor=SequentialMachineStatusExecutor()).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-retrieval-context"},
+    )
+
+    first_evidence = result.state.evidence_ledger.evidence[0]
+    second_context = selector.calls[1]["context"]
+    context_refs = second_context["context_refs"]
+    adapter_request = second_context["v2_tool_selector_adapter_request"]
+
+    assert len(selector.calls) == 2
+    assert context_refs["replan_attempt"] == 1
+    assert context_refs["missing_evidence_reasons"][0]["requirement_id"] == "req-001"
+    assert context_refs["missing_evidence_reasons"][0]["retriable"] is True
+    assert context_refs["active_evidence_refs"] == []
+    assert context_refs["historical_evidence_refs"] == [first_evidence.id]
+    assert adapter_request["capability_need"]["reason"].startswith("replan_spine:")
+
+
+@pytest.mark.asyncio
 async def test_phase5_tool_execution_requires_persisted_validated_decision():
     state, requirement, need, call = _state_with_persisted_choice()
     adapters = PlannerOwnedAgentGraphAdapters(

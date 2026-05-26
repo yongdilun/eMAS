@@ -177,6 +177,61 @@ def _trace_source_types(state: PlannerOwnedAgentGraphState) -> list[str]:
     return source_types
 
 
+def _replan_retrieval_context_refs(state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    replan = replan if isinstance(replan, Mapping) else {}
+    active_refs = [
+        evidence.id
+        for evidence in state.evidence_ledger.evidence
+        if _evidence_can_satisfy_active_revision(state, evidence)
+    ]
+    active_ref_set = set(active_refs)
+    historical_refs = [
+        evidence.id for evidence in state.evidence_ledger.evidence if evidence.id not in active_ref_set
+    ]
+    return {
+        "replan_attempt": int(replan.get("attempt_count") or 0),
+        "missing_evidence_reasons": [
+            dict(reason)
+            for reason in replan.get("missing_evidence_reasons", [])
+            if isinstance(reason, Mapping)
+        ],
+        "failed_tool_calls": [
+            dict(call)
+            for call in replan.get("failed_tool_calls", [])
+            if isinstance(call, Mapping)
+        ],
+        "active_evidence_refs": active_refs,
+        "historical_evidence_refs": historical_refs,
+        "stale_attempt_evidence_refs": [
+            evidence.id
+            for evidence in state.evidence_ledger.evidence
+            if evidence.diagnostic_metadata.get("stale_after_graph_replan") is True
+        ],
+    }
+
+
+def _capability_need_with_replan_reason(
+    capability_need: Any,
+    *,
+    replan_context_refs: Mapping[str, Any],
+) -> Any:
+    attempt = int(replan_context_refs.get("replan_attempt") or 0)
+    if attempt <= 0 or not hasattr(capability_need, "model_copy"):
+        return capability_need
+    reasons = [
+        reason
+        for reason in replan_context_refs.get("missing_evidence_reasons", [])
+        if isinstance(reason, Mapping)
+    ]
+    primary_reason = str(reasons[-1].get("reason") if reasons else "missing_evidence").strip()
+    return capability_need.model_copy(
+        update={
+            "reason": f"replan_spine:attempt_{attempt}:{primary_reason}",
+        }
+    )
+
+
 @dataclass
 class LocalPlannerOwnedGraphTracer:
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -242,6 +297,11 @@ class PlannerOwnedAgentGraphAdapters:
         capability_need = decision.capability_need
         if capability_need is None:
             raise ValueError("retrieve_tools transition requires a capability need")
+        replan_context_refs = _replan_retrieval_context_refs(state)
+        capability_need = _capability_need_with_replan_reason(
+            capability_need,
+            replan_context_refs=replan_context_refs,
+        )
         requirement_id = decision.requirement_id or capability_need.requirement_id
         if not requirement_id:
             raise ValueError("retrieve_tools transition requires a requirement id")
@@ -261,6 +321,7 @@ class PlannerOwnedAgentGraphAdapters:
             context_refs={
                 "original_user_query": state.original_query,
                 "graph_phase": "phase4_retrieval_and_tool_choice",
+                **replan_context_refs,
             },
             mode=self._retrieval_mode,
         )
