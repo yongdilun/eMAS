@@ -911,6 +911,11 @@ class PlannerOwnedAgentGraph:
                 requirement_id=retrieve_decision.requirement_id,
                 capability_need=retrieve_decision.capability_need,
             )
+            candidate_tool_calls = _candidate_tool_calls_after_failed_memory(
+                state,
+                requirement_id=retrieve_decision.requirement_id,
+                candidate_tool_calls=candidate_tool_calls,
+            )
             decision_id = f"dec-choose-{len(state.planner_decisions) + 1:03d}"
             decision = _deterministic_choose_tool_if_state_proves_single_document_tool(
                 state=state,
@@ -2209,6 +2214,7 @@ def _prepare_replan_spine_after_satisfaction(
         if reason.get("retriable") is True
         and reason.get("evidence_refs")
         and str(reason.get("requirement_id") or "").strip()
+        and _missing_reason_can_retry_with_current_graph_state(state, reason)
     ]
     if not retry_reasons:
         replan["route"] = "approval_node"
@@ -2236,6 +2242,11 @@ def _prepare_replan_spine_after_satisfaction(
         )
     )
     stale_decision_ids = _stale_planner_decision_ids_for_replan(state, requirement_ids)
+    failed_tool_calls = _failed_tool_calls_for_replan(
+        state,
+        retry_reasons,
+        attempt=attempt,
+    )
     _mark_replan_stale_evidence(state, stale_evidence_refs, attempt=attempt)
     _reset_requirements_for_replan_retry(
         state,
@@ -2258,6 +2269,7 @@ def _prepare_replan_spine_after_satisfaction(
             "missing_evidence_reasons": retry_reasons,
             "stale_evidence_refs": stale_evidence_refs,
             "stale_planner_decision_ids": stale_decision_ids,
+            "failed_tool_calls": failed_tool_calls,
         }
     )
     historical_reasons = [
@@ -2277,6 +2289,12 @@ def _prepare_replan_spine_after_satisfaction(
             ),
             "stale_planner_decision_ids": list(
                 dict.fromkeys([*replan.get("stale_planner_decision_ids", []), *stale_decision_ids])
+            ),
+            "failed_tool_calls": _dedupe_failed_tool_calls(
+                [
+                    *[dict(call) for call in replan.get("failed_tool_calls", []) if isinstance(call, Mapping)],
+                    *failed_tool_calls,
+                ]
             ),
         }
     )
@@ -2318,6 +2336,87 @@ def _mark_replan_stale_evidence(
         metadata["superseded_by_replan_attempt"] = attempt
         metadata["superseded_by_ledger_revision"] = state.requirement_ledger.revision + 1
         evidence.diagnostic_metadata = metadata
+
+
+def _missing_reason_can_retry_with_current_graph_state(
+    state: PlannerOwnedAgentGraphState,
+    reason: Mapping[str, Any],
+) -> bool:
+    if str(reason.get("reason") or "") != "tool_error":
+        return True
+    return _has_alternate_candidate_for_failed_tool_reason(state, reason)
+
+
+def _has_alternate_candidate_for_failed_tool_reason(
+    state: PlannerOwnedAgentGraphState,
+    reason: Mapping[str, Any],
+) -> bool:
+    requirement_id = str(reason.get("requirement_id") or "")
+    failed_tools = {
+        evidence.tool_name
+        for evidence in _evidence_for_reason_refs(state, reason)
+        if evidence.tool_name
+    }
+    if not failed_tools:
+        return False
+    return any(
+        card.tool_name not in failed_tools
+        for card in _hydrated_cards_for_requirement(state, requirement_id)
+    )
+
+
+def _failed_tool_calls_for_replan(
+    state: PlannerOwnedAgentGraphState,
+    retry_reasons: list[Mapping[str, Any]],
+    *,
+    attempt: int,
+) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for reason in retry_reasons:
+        if str(reason.get("reason") or "") != "tool_error":
+            continue
+        for evidence in _evidence_for_reason_refs(state, reason):
+            if not evidence.tool_name:
+                continue
+            calls.append(
+                {
+                    "tool_name": evidence.tool_name,
+                    "args": dict(evidence.args),
+                    "requirement_id": evidence.requirement_id,
+                    "evidence_ref": evidence.id,
+                    "reason": "tool_error",
+                    "attempt": attempt,
+                }
+            )
+    return _dedupe_failed_tool_calls(calls)
+
+
+def _evidence_for_reason_refs(
+    state: PlannerOwnedAgentGraphState,
+    reason: Mapping[str, Any],
+) -> list[EvidenceLedgerEntry]:
+    refs = {
+        str(evidence_ref)
+        for evidence_ref in reason.get("evidence_refs", [])
+        if str(evidence_ref)
+    }
+    return [evidence for evidence in state.evidence_ledger.evidence if evidence.id in refs]
+
+
+def _dedupe_failed_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for call in calls:
+        key = (
+            str(call.get("requirement_id") or ""),
+            str(call.get("tool_name") or ""),
+            str(call.get("args") or {}),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(call)
+    return deduped
 
 
 def _reset_requirements_for_replan_retry(
@@ -2401,6 +2500,46 @@ def _stale_planner_decision_ids_for_replan(
         if any(call.requirement_id in retry_ids for call in _planner_decision_selected_tool_calls(decision)):
             stale_decision_ids.append(decision.decision_id)
     return list(dict.fromkeys(stale_decision_ids))
+
+
+def _candidate_tool_calls_after_failed_memory(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    requirement_id: str,
+    candidate_tool_calls: list[GraphToolCall],
+) -> list[GraphToolCall]:
+    replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    if not isinstance(replan, Mapping):
+        return candidate_tool_calls
+    failed_calls = [
+        call
+        for call in replan.get("failed_tool_calls", [])
+        if isinstance(call, Mapping) and call.get("requirement_id") == requirement_id
+    ]
+    if not failed_calls:
+        return candidate_tool_calls
+    filtered = [
+        call
+        for call in candidate_tool_calls
+        if not _candidate_matches_failed_tool_call(call, failed_calls)
+    ]
+    if not filtered:
+        return candidate_tool_calls
+    replan["failed_tool_memory_applied"] = True
+    replan["failed_tool_memory_filtered_call_count"] = len(candidate_tool_calls) - len(filtered)
+    return filtered
+
+
+def _candidate_matches_failed_tool_call(
+    candidate: GraphToolCall,
+    failed_calls: list[Mapping[str, Any]],
+) -> bool:
+    for failed in failed_calls:
+        if candidate.tool_name != failed.get("tool_name"):
+            continue
+        if dict(candidate.args) == dict(failed.get("args") or {}):
+            return True
+    return False
 
 
 def _retain_replan_missing_evidence_reason_history(state: PlannerOwnedAgentGraphState) -> None:

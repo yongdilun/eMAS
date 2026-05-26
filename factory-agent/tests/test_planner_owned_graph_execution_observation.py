@@ -106,6 +106,23 @@ def _machine_status_tool() -> ToolInfo:
     )
 
 
+def _alternate_machine_status_tool() -> ToolInfo:
+    return _tool(
+        "get__machine_status_{id}",
+        endpoint="/machine-status/{id}",
+        tags=["machine", "lookup", "status", "alternate"],
+        required=["id"],
+        query_params=["fields"],
+        input_properties={
+            "id": {"type": "string", "x-ai-id-field": "machine_id", "x-ai-entity": "machine"},
+            "fields": {"type": "string"},
+        },
+        output_properties={"machine_id": {"type": "string"}, "status": {"type": "string"}},
+        entity="machine",
+        response_contract="entity_status_v1",
+    )
+
+
 class RecordingSelector:
     def __init__(self, names: list[str]) -> None:
         self.names = names
@@ -187,6 +204,35 @@ class SequentialMachineStatusExecutor:
             "ok": True,
             "http_status": 200,
             "latency_ms": 4,
+            "body": {
+                "data": {
+                    "machine_id": args.get("id"),
+                    "status": "running",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
+class FailPrimaryThenSucceedAlternateExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__machines_{id}":
+            return {
+                "ok": False,
+                "http_status": 503,
+                "latency_ms": 2,
+                "body": {"error": "primary upstream unavailable"},
+                "infrastructure_error": True,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 5,
             "body": {
                 "data": {
                     "machine_id": args.get("id"),
@@ -390,6 +436,47 @@ async def test_replan_spine_passes_missing_evidence_context_to_tool_retrieval():
     assert context_refs["active_evidence_refs"] == []
     assert context_refs["historical_evidence_refs"] == [first_evidence.id]
     assert adapter_request["capability_need"]["reason"].startswith("replan_spine:")
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_avoids_repeating_failed_tool_when_alternate_candidate_exists():
+    executor = FailPrimaryThenSucceedAlternateExecutor()
+    selector = RecordingSelector(["get__machines_{id}", "get__machine_status_{id}"])
+
+    result = await _graph(
+        tools_by_name={
+            "get__machines_{id}": _machine_status_tool(),
+            "get__machine_status_{id}": _alternate_machine_status_tool(),
+        },
+        selector=selector,
+        http_executor=executor,
+    ).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-failed-tool-memory"},
+    )
+
+    failed_evidence, final_evidence = result.state.evidence_ledger.evidence
+    failed_calls = result.state.execution_trace.diagnostics["replan_spine"]["failed_tool_calls"]
+    second_context = selector.calls[1]["context"]["context_refs"]
+
+    assert [call["tool_name"] for call in executor.calls] == [
+        "get__machines_{id}",
+        "get__machine_status_{id}",
+    ]
+    assert failed_calls == [
+        {
+            "tool_name": "get__machines_{id}",
+            "args": {"id": "M-LTH-77", "fields": "status"},
+            "requirement_id": "req-001",
+            "evidence_ref": failed_evidence.id,
+            "reason": "tool_error",
+            "attempt": 1,
+        }
+    ]
+    assert second_context["failed_tool_calls"] == failed_calls
+    assert final_evidence.tool_name == "get__machine_status_{id}"
+    assert result.state.requirement_ledger.requirements[0].status == "satisfied"
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

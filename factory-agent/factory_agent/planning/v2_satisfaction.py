@@ -359,8 +359,6 @@ def _missing_evidence_reason_is_retriable(
     if requirement.requirement_type in {"mutation_request", "approval_request"}:
         return False
     if reason in {
-        "tool_error",
-        "tool_failed",
         "failed",
         "failure",
         "error",
