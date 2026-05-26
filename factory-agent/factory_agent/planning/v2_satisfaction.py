@@ -315,8 +315,60 @@ def apply_deterministic_evidence_satisfaction(state: PlannerOwnedLoopV2State) ->
         "status": "applied",
         "changes": changes,
         "open_requirement_ids": open_ids,
+        "missing_evidence_reasons": _missing_evidence_reasons(ledger.requirements),
     }
     return state
+
+
+def _missing_evidence_reasons(requirements: Sequence[RequirementLedgerEntry]) -> list[dict[str, Any]]:
+    reasons: list[dict[str, Any]] = []
+    for requirement in requirements:
+        if requirement.status not in {"open", "blocked", "failed"}:
+            continue
+        failed_checks = [
+            {
+                "check": check.check,
+                "expected": check.expected,
+                "actual": check.actual,
+                "evidence_ref": check.evidence_ref,
+            }
+            for check in requirement.satisfaction_checks
+            if not check.passed
+        ]
+        reason = requirement.blockers[-1] if requirement.blockers else "missing_active_evidence"
+        reasons.append(
+            {
+                "requirement_id": requirement.id,
+                "status": requirement.status,
+                "reason": reason,
+                "retriable": _missing_evidence_reason_is_retriable(requirement, reason=reason),
+                "evidence_refs": list(requirement.evidence_refs),
+                "failed_checks": failed_checks,
+            }
+        )
+    return reasons
+
+
+def _missing_evidence_reason_is_retriable(
+    requirement: RequirementLedgerEntry,
+    *,
+    reason: str,
+) -> bool:
+    if requirement.status == "open":
+        return True
+    if requirement.requirement_type in {"mutation_request", "approval_request"}:
+        return False
+    if reason in {
+        "tool_error",
+        "tool_failed",
+        "failed",
+        "failure",
+        "error",
+        "write_or_approval_requires_planner",
+        "source_of_truth_unclear",
+    }:
+        return False
+    return requirement.status in {"blocked", "failed"}
 
 
 def validate_v2_final_state(state: PlannerOwnedLoopV2State) -> FinalValidationResult:

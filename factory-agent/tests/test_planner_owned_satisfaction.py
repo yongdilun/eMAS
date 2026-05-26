@@ -298,6 +298,47 @@ async def test_phase6_requested_fields_reject_unrelated_full_object_fields():
 
 
 @pytest.mark.asyncio
+async def test_satisfaction_records_replan_ready_missing_evidence_reasons():
+    selector = RecordingSelector(["get__machines_{id}"])
+
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
+        intent="Show machine M-LTH-77 status.",
+        tools_by_name=_base_tools(),
+        engine_mode="v2",
+        direct_test_evidence=[
+            _api_evidence(
+                "ev-machine-location-only",
+                "req-001",
+                entity="machine",
+                entity_id="M-LTH-77",
+                fields={"location": "line-7"},
+            )
+        ],
+    )
+
+    reasons = run.state.execution_trace.diagnostics["satisfaction"]["missing_evidence_reasons"]
+
+    assert reasons == [
+        {
+            "requirement_id": "req-001",
+            "status": "blocked",
+            "reason": "deterministic_checks_failed",
+            "retriable": True,
+            "evidence_refs": ["ev-machine-location-only"],
+            "failed_checks": [
+                {
+                    "check": "requested_fields",
+                    "expected": ["status"],
+                    "actual": ["location"],
+                    "evidence_ref": "ev-machine-location-only",
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_phase6_list_filter_sort_limit_and_fields_produce_proof_records():
     selector = RecordingSelector(["get__jobs"])
 
