@@ -1372,6 +1372,7 @@ class PlannerOwnedAgentGraph:
             for evidence in state.evidence_ledger.evidence
             if evidence.id not in set(active_evidence_refs)
         ]
+        replan_spine = _response_replan_spine_diagnostics(state)
         state.response_document_context = ResponseDocumentContext(
             state="draft" if pending or validation_status == "deferred" else ("rendered" if validation_status == "passed" else "failed"),
             document_id=(
@@ -1397,6 +1398,8 @@ class PlannerOwnedAgentGraph:
                 "active_evidence_refs": active_evidence_refs,
                 "historical_evidence_refs": historical_evidence_refs,
                 "stale_evidence_excluded_from_active_revision": bool(historical_evidence_refs),
+                "replan_limit_reached": bool(replan_spine.get("replan_limit_reached")),
+                "replan_spine": replan_spine,
                 "fulfilled_requirement_ids": [
                     requirement.id
                     for requirement in state.requirement_ledger.requirements
@@ -2584,6 +2587,33 @@ def _refresh_replan_evidence_diagnostics(state: PlannerOwnedAgentGraphState) -> 
         if state.final_validation_result is not None and state.final_validation_result.status == "passed"
         else []
     )
+
+
+def _response_replan_spine_diagnostics(state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    if not isinstance(replan, Mapping):
+        return {}
+    return {
+        key: value
+        for key, value in dict(replan).items()
+        if key
+        in {
+            "attempt_count",
+            "max_attempts",
+            "attempts",
+            "route",
+            "replan_needed",
+            "replan_limit_reached",
+            "limit_reached_reasons",
+            "missing_evidence_reasons",
+            "failed_tool_calls",
+            "stale_evidence_refs",
+            "stale_attempt_evidence_refs",
+            "active_evidence_refs",
+            "active_final_evidence_refs",
+            "historical_evidence_refs",
+        }
+    }
 
 
 def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):

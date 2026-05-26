@@ -214,6 +214,27 @@ class SequentialMachineStatusExecutor:
         }
 
 
+class AlwaysMissingStatusExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, tool, idempotency_key, extra_headers
+        self.calls.append({"args": dict(args)})
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "machine_id": args.get("id"),
+                    "location": "line-7",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 class FailPrimaryThenSucceedAlternateExecutor:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -249,8 +270,11 @@ def _graph(
     selector: RecordingSelector | None = None,
     http_executor=_successful_http_executor,
     rag_pipeline: Any | None = None,
+    max_replans: int | None = None,
 ) -> PlannerOwnedAgentGraph:
     settings = _settings()
+    if max_replans is not None:
+        settings = replace(settings, max_replans=max_replans)
     adapters = PlannerOwnedAgentGraphAdapters(
         settings=settings,
         tools_by_name=tools_by_name or {"get__machines_{id}": _machine_status_tool()},
@@ -477,6 +501,30 @@ async def test_replan_spine_avoids_repeating_failed_tool_when_alternate_candidat
     assert final_evidence.tool_name == "get__machine_status_{id}"
     assert result.state.requirement_ledger.requirements[0].status == "satisfied"
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_stops_at_max_attempts_with_safe_failure_diagnostic():
+    executor = AlwaysMissingStatusExecutor()
+
+    result = await _graph(http_executor=executor, max_replans=2).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-limit-safe-failure"},
+    )
+
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+    requirement = result.state.requirement_ledger.requirements[0]
+    response_diagnostics = result.state.response_document_context.diagnostics
+
+    assert len(executor.calls) == 3
+    assert replan["attempt_count"] == 2
+    assert replan["max_attempts"] == 2
+    assert replan["replan_limit_reached"] is True
+    assert requirement.status == "blocked"
+    assert result.state.final_validation_result.status == "failed"  # type: ignore[union-attr]
+    assert result.state.response_document_context.state == "failed"
+    assert response_diagnostics["replan_limit_reached"] is True
+    assert response_diagnostics["replan_spine"]["replan_limit_reached"] is True
 
 
 @pytest.mark.asyncio
