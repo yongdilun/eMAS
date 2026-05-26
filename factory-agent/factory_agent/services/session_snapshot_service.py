@@ -739,7 +739,6 @@ def _activity_replan_story_from_diagnostics(
     terminal_state = str(terminal.get("state") if terminal else "")
     terminal_ts = int(terminal.get("timestamp") or snapshot.session.updated_at.timestamp()) if terminal else int(snapshot.session.updated_at.timestamp())
     leading = [step for step in raw_steps if step.get("label") == "Understood request"][:1]
-    base_ts = int(leading[-1]["timestamp"]) if leading else terminal_ts - 10
     first_call = next((call for call in failed_calls if isinstance(call, Mapping)), None)
     probe = _activity_probe_event_from_failed_call(first_call)
     kind = _activity_attempt_reason_kind(replan_spine=replan_spine, replan_attempt=1, failed_event=probe)
@@ -749,6 +748,34 @@ def _activity_replan_story_from_diagnostics(
     active_attempt = min(total, max((_activity_int(replan_spine.get("attempt_count")) or 0) + 1, 1))
 
     story: list[dict[str, Any]] = [dict(step) for step in leading]
+    story_ids = {str(step.get("id") or "") for step in story}
+    first_run_index = next(
+        (idx for idx, step in enumerate(raw_steps) if step.get("label") == "Running selected tool"),
+        -1,
+    )
+    first_check_search_start = first_run_index + 1 if first_run_index >= 0 else 0
+    first_check_index = next(
+        (
+            idx
+            for idx, step in enumerate(
+                raw_steps[first_check_search_start:],
+                start=first_check_search_start,
+            )
+            if step.get("label") in {"Checking result", "Checking evidence"}
+        ),
+        -1,
+    )
+    prelude_limit = first_run_index if first_run_index >= 0 else len(raw_steps)
+    for step in raw_steps[:prelude_limit]:
+        step_id = str(step.get("id") or "")
+        if step_id in story_ids or step.get("state") in {"complete", "error"}:
+            continue
+        if step.get("label") in {"Running selected tool", "Checking result", "Checking evidence"}:
+            continue
+        story.append({**step, "state": "success" if step.get("state") in _ACTIVITY_FINALIZE_STATES else step.get("state")})
+        story_ids.add(step_id)
+
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=terminal_ts - 10)
 
     def add(offset: int, group: str, label: str, state: str, detail: str, *, attempt: int | None = None) -> None:
         row: dict[str, Any] = {
@@ -763,22 +790,44 @@ def _activity_replan_story_from_diagnostics(
             row["_replan_attempt"] = attempt
         story.append(row)
 
-    add(
-        1,
-        "research",
-        "Running selected tool",
-        "success",
-        _activity_attempt_text(1, total, "Running the selected read"),
-        attempt=1,
-    )
-    add(
-        2,
-        "response",
-        "Checking evidence",
-        "success",
-        _activity_attempt_text(1, total, reason),
-        attempt=1,
-    )
+    if first_run_index >= 0:
+        story.append(
+            {
+                **raw_steps[first_run_index],
+                "detail": _activity_attempt_text(1, total, "Running the selected read"),
+                "state": "success",
+                "_replan_attempt": 1,
+            }
+        )
+    else:
+        add(
+            1,
+            "research",
+            "Running selected tool",
+            "success",
+            _activity_attempt_text(1, total, "Running the selected read"),
+            attempt=1,
+        )
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=base_ts)
+    if first_check_index >= 0:
+        story.append(
+            {
+                **raw_steps[first_check_index],
+                "detail": _activity_attempt_text(1, total, reason),
+                "state": "success",
+                "_replan_attempt": 1,
+            }
+        )
+    else:
+        add(
+            2,
+            "response",
+            "Checking evidence",
+            "success",
+            _activity_attempt_text(1, total, reason),
+            attempt=1,
+        )
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=base_ts)
     for item in attempts:
         if not isinstance(item, Mapping):
             continue

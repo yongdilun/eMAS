@@ -331,22 +331,39 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
   })
 
-  test('active retry story keeps attempt order and ignores stale graph-stage frames', async ({ page }) => {
+  test('active retry story keeps graph prelude and appends attempts below the failed check', async ({ page }) => {
     await openChat(page)
     await sendChatPrompt(page, activityActiveRetryStoryPrompt)
 
     await expect(page.getByText('Session activity')).toBeVisible()
     const activityList = page.locator('ol').filter({ hasText: 'Attempt 3 of 6' }).first()
+    await expect(activityList.getByText('Structuring request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Finding information path', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toBeVisible()
     await expect(activityList.getByText('Attempt 1 of 6 - Running the selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 1 of 6 - Previous read timed out', { exact: true })).toBeVisible()
     await expect(activityList.getByText('Attempt 2 of 6 - Running the next selected read', { exact: true })).toBeVisible()
     await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toBeVisible()
     await expect(activityList.getByText('Replanning after timeout', { exact: true })).toHaveCount(2)
-    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(0)
 
     const initialText = await activityList.innerText()
+    expect(initialText.indexOf('Structuring request')).toBeLessThan(
+      initialText.indexOf('Choosing next action'),
+    )
+    expect(initialText.indexOf('Choosing next action')).toBeLessThan(
+      initialText.indexOf('Finding information path'),
+    )
+    expect(initialText.indexOf('Finding information path')).toBeLessThan(
+      initialText.indexOf('Selecting safe action'),
+    )
+    expect(initialText.indexOf('Selecting safe action')).toBeLessThan(
+      initialText.indexOf('Attempt 1 of 6 - Running the selected read'),
+    )
     expect(initialText.indexOf('Attempt 1 of 6 - Running the selected read')).toBeLessThan(
+      initialText.indexOf('Attempt 1 of 6 - Previous read timed out'),
+    )
+    expect(initialText.indexOf('Attempt 1 of 6 - Previous read timed out')).toBeLessThan(
       initialText.indexOf('Attempt 2 of 6 - Running the next selected read'),
     )
     expect(initialText.indexOf('Attempt 2 of 6 - Running the next selected read')).toBeLessThan(
@@ -364,9 +381,9 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       })
       .toEqual(['Selecting safe action', 'Finding information path', 'Choosing next action'])
 
-    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(1)
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(1)
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(1)
     const currentCount = await activityList.getByText('Current', { exact: true }).count()
     expect(currentCount).toBe(1)
   })
