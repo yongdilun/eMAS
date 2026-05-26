@@ -667,6 +667,102 @@ test('uses full operation-scoped timeline across turns when operation_id matches
   assert.ok(labels.includes('Run complete'))
 })
 
+test('retry and replan timeline remains append-only with distinct activity rows', () => {
+  const initialTimeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'execution_started',
+      content: 'execute selected read',
+      created_at: '2026-05-18T09:00:02.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'tool_result',
+      content: 'read timed out',
+      created_at: '2026-05-18T09:00:03.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      tool_name: 'get__machines_{id}',
+      status: 'FAILED',
+      details: { reason: 'tool_timeout' },
+    },
+  ]
+  const retriedTimeline = [
+    ...initialTimeline,
+    {
+      event_type: 'replan_requested',
+      content: 'retry with updated evidence memory',
+      created_at: '2026-05-18T09:00:04.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      details: { reason: 'tool_timeout' },
+    },
+    {
+      event_type: 'execution_started',
+      content: 'retry selected read',
+      created_at: '2026-05-18T09:00:05.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'tool_result',
+      content: 'read succeeded',
+      created_at: '2026-05-18T09:00:06.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      tool_name: 'get__machines_{id}',
+      status: 'DONE',
+    },
+    {
+      event_type: 'session_completed',
+      content: 'done',
+      created_at: '2026-05-18T09:00:07.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+  ]
+
+  const beforeRetry = buildActivityStepsFromTimeline(initialTimeline, {
+    mode: 'operational',
+    sessionStatus: 'EXECUTING',
+  }).map((step) => step.label)
+  const afterRetry = buildActivityStepsFromTimeline(retriedTimeline, {
+    mode: 'operational',
+    sessionStatus: 'COMPLETED',
+  }).map((step) => step.label)
+
+  assert.deepEqual(beforeRetry, [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+  ])
+  assert.deepEqual(afterRetry.slice(0, beforeRetry.length), beforeRetry)
+  assert.deepEqual(afterRetry, [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+    'Replanning',
+    'Retrying tool',
+    'Checking evidence',
+    'Run complete',
+  ])
+  assert.equal(afterRetry.includes('Preparing changes'), false)
+})
+
 test('completed approval snapshot uses post-approval progress when tool events are projected from plan steps', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-final', operation_id: 'plan-final' },

@@ -56,6 +56,58 @@ test('ActivityTimeline expands active multi-step runs and marks the current row'
   await view.unmount()
 })
 
+test('ActivityTimeline marks only the newest retry activity as current', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'research',
+          label: 'Running selected tool',
+          detail: 'Running the selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'response',
+          label: 'Checking evidence',
+          detail: 'Evidence from machine records needs another attempt',
+          state: 'success',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Replanning',
+          detail: 'Preparing another safe attempt',
+          state: 'success',
+        },
+        {
+          id: 'step-4',
+          timestamp: 4,
+          group: 'research',
+          label: 'Retrying tool',
+          detail: 'Running the next selected read',
+          state: 'running',
+        },
+      ],
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const currentBadges = Array.from(view.container.querySelectorAll('span'))
+    .filter((node) => node.textContent.trim() === 'Current')
+  assert.equal(currentBadges.length, 1)
+  const currentRow = currentBadges[0].closest('li')
+  assert.match(currentRow?.textContent || '', /Retrying tool/)
+  assert.doesNotMatch(currentRow?.textContent || '', /Running selected tool/)
+
+  await view.unmount()
+})
+
 test('ActivityTimeline renders completed runs as a collapsed latest-step summary', async () => {
   const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
   const view = await render(

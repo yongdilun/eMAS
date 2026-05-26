@@ -364,6 +364,28 @@ function scopedHasApprovalActivity(events) {
   })
 }
 
+function toolNameForEvent(event) {
+  return String(event?.tool_name || event?.toolName || event?.details?.tool_name || event?.step_context?.tool_name || '').trim()
+}
+
+function eventUsesWriteTool(event) {
+  return /^(post|put|patch|delete)__/.test(toolNameForEvent(event).toLowerCase())
+}
+
+function hasPriorReplan(sorted, index) {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (getEventType(sorted[i]) === 'replan_requested') return true
+  }
+  return false
+}
+
+function hasLaterReplan(sorted, index) {
+  for (let i = index + 1; i < sorted.length; i += 1) {
+    if (getEventType(sorted[i]) === 'replan_requested') return true
+  }
+  return false
+}
+
 /** Slice from the latest user_message so approval + pre/post plan ids stay in one strip. */
 function timelineFromLatestUserMessage(timeline) {
   const sorted = sortTimelineEvents(timeline)
@@ -576,6 +598,7 @@ function buildStepsFromEventsOperational(events) {
   let seenUnderstanding = false
   let seenPreparingChanges = false
   let seenApplying = false
+  let seenInitialReadExecution = false
 
   for (let i = 0; i < sorted.length; i += 1) {
     const event = sorted[i]
@@ -600,7 +623,7 @@ function buildStepsFromEventsOperational(events) {
     }
 
     if (t === 'replan_requested') {
-      push('planning', 'Preparing changes', 'retry', 'Refining the response with updated information', ts)
+      push('planning', 'Replanning', 'retry', 'Preparing another safe attempt', ts)
       continue
     }
 
@@ -610,6 +633,13 @@ function buildStepsFromEventsOperational(events) {
         if (!seenApplying) {
           push('research', 'Applying approved changes', 'running', 'Running approved tools', ts)
           seenApplying = true
+        }
+      } else if (!hasApproval) {
+        if (hasPriorReplan(sorted, i)) {
+          push('research', 'Retrying tool', 'running', 'Running the next selected read', ts)
+        } else if (!seenInitialReadExecution) {
+          push('research', 'Running selected tool', 'running', 'Running the selected read', ts)
+          seenInitialReadExecution = true
         }
       } else if (!seenPreparingChanges) {
         push('planning', 'Preparing changes', 'running', 'Preparing the next safe action', ts)
@@ -649,6 +679,27 @@ function buildStepsFromEventsOperational(events) {
     if (t === 'tool_result') {
       const st = String(event?.status || '').toUpperCase()
       const afterApproved = approvalApprovedIdx >= 0 && i > approvalApprovedIdx
+
+      if (!hasApproval && !eventUsesWriteTool(event)) {
+        const domain = safeDomainLabel(event)
+        if (st === 'FAILED' || st === 'AMBIGUOUS') {
+          const retryFollows = hasLaterReplan(sorted, i)
+          push(
+            'response',
+            'Checking evidence',
+            retryFollows ? 'success' : 'error',
+            retryFollows
+              ? `Evidence from ${domain} needs another attempt`
+              : `Evidence from ${domain} could not be verified`,
+            ts,
+          )
+          continue
+        }
+        if (st === 'DONE') {
+          push('response', 'Checking evidence', 'success', `Verified ${domain}`, ts)
+          continue
+        }
+      }
 
       if (st === 'FAILED' || st === 'AMBIGUOUS') {
         const domain = safeDomainLabel(event)
@@ -815,6 +866,9 @@ function timelineHasExecutionActivity(steps) {
     return (
       label === 'Information checked'
       || label === 'Gathering information'
+      || label === 'Running selected tool'
+      || label === 'Retrying tool'
+      || label === 'Checking evidence'
       || label === 'Could not complete that check'
       || label === 'Updating job records'
       || label === 'Verifying result'
