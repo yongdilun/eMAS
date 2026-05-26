@@ -47,7 +47,8 @@ export function normalizeActivityStep(step) {
   const label = String(step.label || '').trim()
   const state = ACTIVITY_STATES.includes(step.state) ? step.state : 'running'
   if (!id || !label) return null
-  return {
+  const replanAttempt = intValue(step._replanAttempt ?? step._replan_attempt ?? step.replanAttempt ?? step.replan_attempt)
+  const normalized = {
     id,
     timestamp: Number.isFinite(Number(step.timestamp)) ? Number(step.timestamp) : Date.now() / 1000,
     group: String(step.group || 'system'),
@@ -55,6 +56,8 @@ export function normalizeActivityStep(step) {
     detail: step.detail == null ? null : String(step.detail),
     state,
   }
+  if (replanAttempt != null) normalized._replanAttempt = replanAttempt
+  return normalized
 }
 
 export function mergeActivityStep(steps, step) {
@@ -658,6 +661,8 @@ export function finalizeHistoricalActivityStates(steps = []) {
 }
 
 function capActivitySteps(steps = [], idPrefix = 'snapshot_activity') {
+  const summarized = summarizeNoisyRetryAttempts(steps)
+  if (summarized !== steps) return summarized.map((step, index) => ({ ...step, id: `${idPrefix}_${index + 1}` }))
   if (steps.length <= 12) return steps.map((step, index) => ({ ...step, id: `${idPrefix}_${index + 1}` }))
   const olderCount = steps.length - 11
   return [
@@ -671,6 +676,45 @@ function capActivitySteps(steps = [], idPrefix = 'snapshot_activity') {
     }),
     ...steps.slice(-11).map((step, index) => ({ ...step, id: `${idPrefix}_${index + 2}` })),
   ].filter(Boolean)
+}
+
+function attemptNumberFromStep(step) {
+  return intValue(step?._replanAttempt ?? step?._replan_attempt ?? step?.replanAttempt ?? step?.replan_attempt)
+}
+
+function summarizeNoisyRetryAttempts(steps = []) {
+  const rows = Array.isArray(steps) ? steps : []
+  const attemptNumbers = Array.from(new Set(rows.map((step) => attemptNumberFromStep(step)).filter(Boolean))).sort((a, b) => a - b)
+  if (attemptNumbers.length <= 3) return steps
+  const firstAttempt = attemptNumbers[0]
+  const latestAttempt = attemptNumbers[attemptNumbers.length - 1]
+  const collapsedCount = attemptNumbers.filter((attempt) => attempt !== firstAttempt && attempt !== latestAttempt).length
+  if (collapsedCount <= 0) return steps
+
+  const out = []
+  let insertedSummary = false
+  let firstLatestIndex = rows.findIndex((step) => attemptNumberFromStep(step) === latestAttempt)
+  if (firstLatestIndex < 0) firstLatestIndex = rows.length
+  for (let index = 0; index < rows.length; index += 1) {
+    const step = rows[index]
+    const attempt = attemptNumberFromStep(step)
+    if (attempt && attempt !== firstAttempt && attempt !== latestAttempt) {
+      if (!insertedSummary && index < firstLatestIndex) {
+        out.push(normalizeActivityStep({
+          id: 'retry_attempts_collapsed',
+          timestamp: Number(step.timestamp || 0),
+          group: 'system',
+          label: 'Earlier retry attempts',
+          detail: `${collapsedCount} earlier attempts collapsed`,
+          state: 'success',
+        }))
+        insertedSummary = true
+      }
+      continue
+    }
+    out.push(step)
+  }
+  return out.filter(Boolean)
 }
 
 /**
@@ -721,7 +765,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
 
   const steps = []
   let uid = 0
-  const push = (group, label, state, detail, tsSrc) => {
+  const push = (group, label, state, detail, tsSrc, meta = {}) => {
     const timestamp = Number.isFinite(tsSrc) ? tsSrc : Date.now() / 1000
     uid += 1
     const step = normalizeActivityStep({
@@ -731,6 +775,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
       label,
       detail: detail == null ? null : String(detail),
       state,
+      _replanAttempt: meta.replanAttempt,
     })
     if (step) steps.push(step)
   }
@@ -772,7 +817,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
           replanAttempt: Math.max(1, nextAttempt - 1),
           failedEvent: lastFailedReadEvent,
         })
-        push('planning', replanLabel(kind), 'retry', attemptDetail(nextAttempt, totalAttempts, retryReasonText(kind)), ts)
+        push('planning', replanLabel(kind), 'retry', attemptDetail(nextAttempt, totalAttempts, retryReasonText(kind)), ts, { replanAttempt: nextAttempt })
         priorReplans += 1
       } else {
         push('planning', 'Replanning', 'retry', 'Preparing another safe attempt', ts)
@@ -797,6 +842,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
               ? attemptDetail(priorReplans + 1, totalAttempts, 'Running the next selected read')
               : 'Running the next selected read',
             ts,
+            { replanAttempt: storyEnabled ? priorReplans + 1 : null },
           )
         } else if (!seenInitialReadExecution) {
           push(
@@ -805,6 +851,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
             'running',
             storyEnabled ? attemptDetail(1, totalAttempts, 'Running the selected read') : 'Running the selected read',
             ts,
+            { replanAttempt: storyEnabled ? 1 : null },
           )
           seenInitialReadExecution = true
         }
@@ -869,6 +916,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
                 ? `Evidence from ${domain} needs another attempt`
                 : `Evidence from ${domain} could not be verified`,
             ts,
+            { replanAttempt: storyEnabled ? attempt : null },
           )
           lastFailedReadEvent = event
           continue
@@ -881,6 +929,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
             'success',
             storyEnabled ? attemptDetail(attempt, totalAttempts, `Verified ${domain}`) : `Verified ${domain}`,
             ts,
+            { replanAttempt: storyEnabled ? attempt : null },
           )
           continue
         }
@@ -959,6 +1008,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
           ? attemptDetail(attempt, totalAttempts, 'Evidence could not be verified after retries')
           : String(event?.content || 'The request could not be completed'),
         ts,
+        { replanAttempt: storyEnabled ? attempt : null },
       )
       continue
     }
@@ -974,6 +1024,7 @@ function buildStepsFromEventsOperational(events, options = {}) {
           ? attemptDetail(attempt, totalAttempts, 'Completed with verified evidence')
           : 'All steps finished. See the thread below.',
         ts,
+        { replanAttempt: storyEnabled && priorReplans > 0 ? attempt : null },
       )
       continue
     }

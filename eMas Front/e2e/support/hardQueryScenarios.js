@@ -646,6 +646,7 @@ export const hardQueryScenarios = Object.freeze([
         { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
         { label: 'safe failure final attempt count', pattern: /Attempt\s+\d+\s+of\s+\d+/i },
         { label: 'safe failure timeout retry reason', pattern: /Previous read timed out/i },
+        { label: 'safe failure collapsed retry summary', pattern: /earlier attempts collapsed/i },
       ],
       forbiddenVisibleText: [
         { label: 'misleading request start failure', pattern: /Request could not start/i },
@@ -716,6 +717,7 @@ export const hardQueryScenarios = Object.freeze([
         { label: 'safe failure response title', pattern: /Run needs attention/i },
         { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
         { label: 'safe failure final attempt count', pattern: /Attempt\s+\d+\s+of\s+\d+/i },
+        { label: 'safe failure collapsed retry summary', pattern: /earlier attempts collapsed/i },
       ],
       forbiddenVisibleText: [
         { label: 'misleading request start failure', pattern: /Request could not start/i },

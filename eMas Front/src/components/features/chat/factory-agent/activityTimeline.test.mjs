@@ -897,6 +897,90 @@ test('replan spine snapshot timeline shows attempt numbers and retry reason from
   assert.match(steps.at(-1).detail, /Attempt 2 of 3/)
 })
 
+test('replan spine timeline collapses older retry attempts when retry budget is noisy', () => {
+  const timeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+  ]
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    timeline.push(
+      {
+        event_type: 'execution_started',
+        content: `attempt ${attempt}`,
+        created_at: `2026-05-18T09:00:${String(1 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: `2026-05-18T09:00:${String(2 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry',
+        created_at: `2026-05-18T09:00:${String(3 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+      },
+    )
+  }
+  timeline.push(
+    {
+      event_type: 'execution_started',
+      content: 'final retry',
+      created_at: '2026-05-18T09:00:20.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+    {
+      event_type: 'session_blocked',
+      content: 'blocked',
+      created_at: '2026-05-18T09:00:21.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+  )
+
+  const steps = buildActivityStepsFromTimeline(timeline, {
+    mode: 'operational',
+    sessionStatus: 'BLOCKED',
+    replanSpine: {
+      attempt_count: 5,
+      max_attempts: 5,
+      replan_limit_reached: true,
+      attempts: [1, 2, 3, 4, 5].map((attempt) => ({
+        attempt,
+        missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: [`ev-${attempt}`], retriable: true }],
+      })),
+      missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: ['ev-1'], retriable: true }],
+    },
+  })
+
+  const labels = steps.map((step) => step.label)
+  assert.ok(labels.includes('Earlier retry attempts'))
+  assert.match(steps.find((step) => step.label === 'Earlier retry attempts')?.detail || '', /4 earlier attempts collapsed/)
+  assert.equal(labels.filter((label) => label.startsWith('Replanning')).length, 1)
+  assert.match(steps.at(-2).detail || '', /Attempt 6 of 6/)
+  assert.equal(steps.at(-1).label, 'Something needs attention')
+})
+
 test('completed approval snapshot uses post-approval progress when tool events are projected from plan steps', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-final', operation_id: 'plan-final' },

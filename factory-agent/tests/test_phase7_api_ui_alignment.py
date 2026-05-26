@@ -447,6 +447,97 @@ def test_replan_spine_activity_steps_show_attempt_numbers_and_retry_reason():
     assert "Attempt 2 of 3" in (steps[-1].detail or "")
 
 
+def test_replan_spine_activity_steps_collapse_noisy_retry_attempts():
+    created_at = datetime(2026, 5, 13, 9, 45, 0)
+    attempts = []
+    for attempt in range(1, 6):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": [f"ev-timeout-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": f"ev-timeout-{attempt}",
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 5,
+        "max_attempts": 5,
+        "replan_limit_reached": True,
+        "attempts": attempts,
+        "missing_evidence_reasons": [
+            {
+                "reason": "tool_error",
+                "requirement_id": "req-machine-status",
+                "evidence_refs": ["ev-timeout-5"],
+                "retriable": True,
+            }
+        ],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-noisy",
+            "user_id": "u1",
+            "status": "BLOCKED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 5,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=30),
+            "replan_context": {
+                "intent_contract": {
+                    "replan_spine": replan_spine,
+                }
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-noisy",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="blocked:replan-noisy",
+                event_type="session_blocked",
+                content="Evidence could not be verified.",
+                created_at=created_at + timedelta(seconds=29),
+                status="BLOCKED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert "Earlier retry attempts" in labels
+    assert (steps[labels.index("Earlier retry attempts")].detail or "") == "4 earlier attempts collapsed"
+    assert len([label for label in labels if label.startswith("Replanning")]) == 1
+    assert "Attempt 6 of 6" in (steps[-2].detail or "")
+    assert "needs attention" in steps[-1].label.lower()
+    assert "Attempt 6 of 6" in (steps[-1].detail or "")
+
+
 def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
 

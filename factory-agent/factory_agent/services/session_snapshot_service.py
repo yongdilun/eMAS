@@ -571,6 +571,12 @@ def _activity_is_read_event(ev: TimelineEventResponse) -> bool:
     return not tool_name.startswith(_WRITE_TOOL_PREFIXES) and not _is_rag_activity_event(ev)
 
 
+def _activity_replan_attempt_base(base: Mapping[str, Any], attempt: int) -> dict[str, Any]:
+    tagged = dict(base)
+    tagged["_replan_attempt"] = attempt
+    return tagged
+
+
 def _activity_replan_story_step(
     ev: TimelineEventResponse,
     base: dict[str, str],
@@ -580,7 +586,7 @@ def _activity_replan_story_step(
     prior_replans: int,
     failed_event: TimelineEventResponse | None,
     later_replan: bool,
-) -> tuple[dict[str, str], str | None]:
+) -> tuple[dict[str, Any], str | None]:
     total = _activity_replan_total_attempts(replan_spine)
     event_type = ev.event_type
     if total <= 0:
@@ -595,7 +601,10 @@ def _activity_replan_story_step(
         )
         reason = _activity_retry_reason_text(kind)
         return (
-            {"group": "planning", "label": _activity_replan_label(kind), "state": "retry"},
+            _activity_replan_attempt_base(
+                {"group": "planning", "label": _activity_replan_label(kind), "state": "retry"},
+                next_attempt,
+            ),
             _activity_attempt_text(next_attempt, total, reason),
         )
 
@@ -603,11 +612,17 @@ def _activity_replan_story_step(
         attempt = prior_replans + 1
         if attempt <= 1:
             return (
-                {"group": "research", "label": "Running selected tool", "state": "running"},
+                _activity_replan_attempt_base(
+                    {"group": "research", "label": "Running selected tool", "state": "running"},
+                    attempt,
+                ),
                 _activity_attempt_text(attempt, total, "Running the selected read"),
             )
         return (
-            {"group": "research", "label": f"Retrying {_activity_read_target_label(ev)}", "state": "running"},
+            _activity_replan_attempt_base(
+                {"group": "research", "label": f"Retrying {_activity_read_target_label(ev)}", "state": "running"},
+                attempt,
+            ),
             _activity_attempt_text(attempt, total, "Running the next selected read"),
         )
 
@@ -624,31 +639,37 @@ def _activity_replan_story_step(
             reason = _activity_retry_reason_text(kind)
             if later_replan:
                 return (
-                    {"group": "response", "label": "Checking evidence", "state": "success"},
+                    _activity_replan_attempt_base(
+                        {"group": "response", "label": "Checking evidence", "state": "success"},
+                        attempt,
+                    ),
                     _activity_attempt_text(attempt, total, reason),
                 )
             return (
-                {"group": "response", "label": "Checking evidence", "state": "error"},
+                _activity_replan_attempt_base(
+                    {"group": "response", "label": "Checking evidence", "state": "error"},
+                    attempt,
+                ),
                 _activity_attempt_text(attempt, total, "Evidence could not be verified"),
             )
         if status == "DONE":
             label = "Checking new evidence" if prior_replans > 0 else "Checking evidence"
             return (
-                {"group": "response", "label": label, "state": "success"},
+                _activity_replan_attempt_base({"group": "response", "label": label, "state": "success"}, attempt),
                 _activity_attempt_text(attempt, total, f"Verified {domain}"),
             )
 
     if event_type == "session_completed" and prior_replans > 0:
         attempt = min(total, max(prior_replans + 1, (_activity_int(replan_spine.get("attempt_count")) or 0) + 1))
         return (
-            base,
+            _activity_replan_attempt_base(base, attempt),
             _activity_attempt_text(attempt, total, "Completed with verified evidence"),
         )
 
     if event_type in {"session_failed", "session_blocked"} and replan_spine.get("replan_limit_reached"):
         attempt = min(total, max(prior_replans + 1, (_activity_int(replan_spine.get("attempt_count")) or 0) + 1))
         return (
-            base,
+            _activity_replan_attempt_base(base, attempt),
             _activity_attempt_text(attempt, total, "Evidence could not be verified after retries"),
         )
 
@@ -714,20 +735,35 @@ def _activity_replan_story_from_diagnostics(
 
     story: list[dict[str, Any]] = [dict(step) for step in leading]
 
-    def add(offset: int, group: str, label: str, state: str, detail: str) -> None:
-        story.append(
-            {
-                "id": f"act:replan_story:{len(story) + 1}",
-                "timestamp": base_ts + offset,
-                "group": group,
-                "label": label,
-                "detail": detail,
-                "state": state,
-            }
-        )
+    def add(offset: int, group: str, label: str, state: str, detail: str, *, attempt: int | None = None) -> None:
+        row: dict[str, Any] = {
+            "id": f"act:replan_story:{len(story) + 1}",
+            "timestamp": base_ts + offset,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": state,
+        }
+        if attempt is not None:
+            row["_replan_attempt"] = attempt
+        story.append(row)
 
-    add(1, "research", "Running selected tool", "success", _activity_attempt_text(1, total, "Running the selected read"))
-    add(2, "response", "Checking evidence", "success", _activity_attempt_text(1, total, reason))
+    add(
+        1,
+        "research",
+        "Running selected tool",
+        "success",
+        _activity_attempt_text(1, total, "Running the selected read"),
+        attempt=1,
+    )
+    add(
+        2,
+        "response",
+        "Checking evidence",
+        "success",
+        _activity_attempt_text(1, total, reason),
+        attempt=1,
+    )
     for item in attempts:
         if not isinstance(item, Mapping):
             continue
@@ -754,6 +790,7 @@ def _activity_replan_story_from_diagnostics(
             _activity_replan_label(attempt_kind),
             "success",
             _activity_attempt_text(next_attempt, total, attempt_reason),
+            attempt=next_attempt,
         )
         add(
             2 + (replan_attempt * 3),
@@ -761,6 +798,7 @@ def _activity_replan_story_from_diagnostics(
             f"Retrying {attempt_target}",
             "success" if terminal_state else "running",
             _activity_attempt_text(next_attempt, total, "Running the next selected read"),
+            attempt=next_attempt,
         )
 
     final_attempt = min(total, max((_activity_int(replan_spine.get("attempt_count")) or 0) + 1, 1))
@@ -771,6 +809,7 @@ def _activity_replan_story_from_diagnostics(
             "Checking new evidence",
             "success",
             _activity_attempt_text(final_attempt, total, f"Verified {domain}"),
+            attempt=final_attempt,
         )
     if terminal:
         terminal_detail = (
@@ -778,8 +817,53 @@ def _activity_replan_story_from_diagnostics(
             if terminal_state == "complete"
             else _activity_attempt_text(final_attempt, total, "Evidence could not be verified after retries")
         )
-        story.append({**terminal, "detail": terminal_detail})
+        story.append({**terminal, "detail": terminal_detail, "_replan_attempt": final_attempt})
     return story
+
+
+def _activity_collapse_noisy_replan_attempts(
+    raw_steps: list[dict[str, Any]],
+    replan_spine: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not replan_spine:
+        return raw_steps
+    attempt_numbers = sorted(
+        {
+            attempt
+            for step in raw_steps
+            if (attempt := _activity_int(step.get("_replan_attempt"))) is not None
+        }
+    )
+    if len(attempt_numbers) <= 3:
+        return raw_steps
+    collapsed_attempts = set(attempt_numbers[1:-1])
+    if not collapsed_attempts:
+        return raw_steps
+
+    collapsed_seen: set[int] = set()
+    summary: dict[str, Any] | None = None
+    compacted: list[dict[str, Any]] = []
+    for step in raw_steps:
+        attempt = _activity_int(step.get("_replan_attempt"))
+        if attempt in collapsed_attempts:
+            collapsed_seen.add(attempt)
+            if summary is None:
+                summary = {
+                    "id": "act:replan_attempts_collapsed",
+                    "timestamp": int(step.get("timestamp") or 0),
+                    "group": "system",
+                    "label": "Earlier retry attempts",
+                    "detail": "",
+                    "state": "success",
+                }
+                compacted.append(summary)
+            continue
+        compacted.append(step)
+
+    if not collapsed_seen or summary is None:
+        return raw_steps
+    summary["detail"] = f"{len(collapsed_seen)} earlier attempts collapsed"
+    return compacted
 
 
 def _is_rag_activity_event(ev: TimelineEventResponse) -> bool:
@@ -1085,16 +1169,17 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
             continue
         index_by_signature[signature] = len(raw_steps)
         repeated_by_signature[signature] = 1
-        raw_steps.append(
-            {
-                "id": _activity_step_stable_id(ev, signature),
-                "timestamp": int(ev.created_at.timestamp()),
-                "group": base["group"],
-                "label": base["label"],
-                "detail": detail,
-                "state": base["state"],
-            }
-        )
+        row = {
+            "id": _activity_step_stable_id(ev, signature),
+            "timestamp": int(ev.created_at.timestamp()),
+            "group": base["group"],
+            "label": base["label"],
+            "detail": detail,
+            "state": base["state"],
+        }
+        if base.get("_replan_attempt") is not None:
+            row["_replan_attempt"] = base["_replan_attempt"]
+        raw_steps.append(row)
         if ev.event_type == "tool_result" and str(ev.status or "").upper() in {"FAILED", "AMBIGUOUS"} and _activity_is_read_event(ev):
             last_failed_read_event = ev
         if ev.event_type == "replan_requested":
@@ -1161,6 +1246,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
     raw_steps = _activity_inject_plan_execution_summary(raw_steps, snapshot)
     if use_replan_story:
         raw_steps = _activity_replan_story_from_diagnostics(raw_steps, snapshot, replan_spine)
+        raw_steps = _activity_collapse_noisy_replan_attempts(raw_steps, replan_spine)
 
     if len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
         older = raw_steps[: -(_ACTIVITY_MAX_VISIBLE_STEPS - 1)]
