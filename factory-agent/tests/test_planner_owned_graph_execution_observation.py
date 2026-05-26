@@ -346,6 +346,30 @@ async def test_replan_spine_routes_unsatisfied_retriable_requirement_back_to_pla
 
 
 @pytest.mark.asyncio
+async def test_replan_spine_marks_retriable_bad_evidence_inactive_before_retry():
+    result = await _graph(http_executor=SequentialMachineStatusExecutor()).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-stale-evidence"},
+    )
+
+    first_evidence, final_evidence = result.state.evidence_ledger.evidence
+    requirement = result.state.requirement_ledger.requirements[0]
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+
+    assert first_evidence.diagnostic_metadata["active_revision_satisfaction"] is False
+    assert first_evidence.diagnostic_metadata["stale_after_graph_replan"] is True
+    assert first_evidence.diagnostic_metadata["superseded_reason"] == "replan_spine_retry"
+    assert final_evidence.diagnostic_metadata["active_revision_satisfaction"] is True
+    assert requirement.status == "satisfied"
+    assert requirement.locked_constraints == ["machine_id", "requested_fields"]
+    assert requirement.evidence_refs == [final_evidence.id]
+    assert result.state.response_document_context.evidence_refs == [final_evidence.id]
+    assert result.state.response_document_context.diagnostics["historical_evidence_refs"] == [first_evidence.id]
+    assert replan["stale_attempt_evidence_refs"] == [first_evidence.id]
+    assert replan["active_final_evidence_refs"] == [final_evidence.id]
+
+
+@pytest.mark.asyncio
 async def test_phase5_tool_execution_requires_persisted_validated_decision():
     state, requirement, need, call = _state_with_persisted_choice()
     adapters = PlannerOwnedAgentGraphAdapters(

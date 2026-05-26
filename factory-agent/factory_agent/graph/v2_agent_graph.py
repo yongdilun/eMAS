@@ -1218,6 +1218,7 @@ class PlannerOwnedAgentGraph:
             max_attempts=max(0, int(getattr(self._settings, "max_replans", 0) or 0)),
         )
         _retain_replan_missing_evidence_reason_history(state)
+        _refresh_replan_evidence_diagnostics(state)
         return _state_update(state)
 
     async def _approval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -2354,6 +2355,35 @@ def _retain_replan_missing_evidence_reason_history(state: PlannerOwnedAgentGraph
         return
     satisfaction["missing_evidence_reasons"] = [dict(item) for item in historical]
     satisfaction["missing_evidence_reason_history_retained"] = True
+
+
+def _refresh_replan_evidence_diagnostics(state: PlannerOwnedAgentGraphState) -> None:
+    replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    if not isinstance(replan, dict):
+        return
+    active_refs = [
+        evidence.id
+        for evidence in state.evidence_ledger.evidence
+        if _evidence_can_satisfy_active_revision(state, evidence)
+    ]
+    stale_attempt_refs = [
+        evidence.id
+        for evidence in state.evidence_ledger.evidence
+        if evidence.diagnostic_metadata.get("stale_after_graph_replan") is True
+        or evidence.diagnostic_metadata.get("superseded_reason") == "replan_spine_retry"
+    ]
+    replan["active_evidence_refs"] = active_refs
+    replan["stale_attempt_evidence_refs"] = stale_attempt_refs
+    replan["historical_evidence_refs"] = [
+        evidence.id
+        for evidence in state.evidence_ledger.evidence
+        if evidence.id not in set(active_refs)
+    ]
+    replan["active_final_evidence_refs"] = (
+        active_refs
+        if state.final_validation_result is not None and state.final_validation_result.status == "passed"
+        else []
+    )
 
 
 def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
