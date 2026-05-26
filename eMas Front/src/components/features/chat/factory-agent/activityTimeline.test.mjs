@@ -763,6 +763,140 @@ test('retry and replan timeline remains append-only with distinct activity rows'
   assert.equal(afterRetry.includes('Preparing changes'), false)
 })
 
+test('replan spine snapshot timeline shows attempt numbers and retry reason from diagnostics', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: {
+      status: 'COMPLETED',
+      operation_id: 'op-retry-story',
+      replan_context: {
+        intent_contract: {
+          replan_spine: {
+            attempt_count: 1,
+            max_attempts: 2,
+            attempts: [
+              {
+                attempt: 1,
+                missing_evidence_reasons: [
+                  {
+                    reason: 'tool_error',
+                    requirement_id: 'req-machine-status',
+                    evidence_refs: ['ev-timeout'],
+                    retriable: true,
+                  },
+                ],
+                failed_tool_calls: [
+                  {
+                    tool_name: 'get__machines_{id}',
+                    args: { id: 'M-001', fields: 'status' },
+                    requirement_id: 'req-machine-status',
+                    evidence_ref: 'ev-timeout',
+                    reason: 'tool_error',
+                    attempt: 1,
+                  },
+                ],
+              },
+            ],
+            missing_evidence_reasons: [
+              {
+                reason: 'tool_error',
+                requirement_id: 'req-machine-status',
+                evidence_refs: ['ev-timeout'],
+                retriable: true,
+              },
+            ],
+          },
+        },
+      },
+    },
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'show machine status',
+        created_at: '2026-05-18T09:00:00.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'plan_created',
+        content: 'plan',
+        created_at: '2026-05-18T09:00:01.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'execution_started',
+        content: 'execute selected read',
+        created_at: '2026-05-18T09:00:02.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: '2026-05-18T09:00:03.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            status_code: 504,
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry with updated evidence memory',
+        created_at: '2026-05-18T09:00:04.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        details: { reason: 'tool_error' },
+      },
+      {
+        event_type: 'execution_started',
+        content: 'retry selected read',
+        created_at: '2026-05-18T09:00:05.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read succeeded',
+        created_at: '2026-05-18T09:00:06.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        tool_name: 'get__machines_{id}',
+        status: 'DONE',
+        details: { args: { id: 'M-001', fields: 'status' } },
+      },
+      {
+        event_type: 'session_completed',
+        content: 'done',
+        created_at: '2026-05-18T09:00:07.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+    ],
+  })
+
+  assert.deepEqual(steps.map((step) => step.label), [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+    'Replanning after timeout',
+    'Retrying machine status read',
+    'Checking new evidence',
+    'Run complete',
+  ])
+  assert.match(steps[1].detail, /Attempt 1 of 3/)
+  assert.match(steps[2].detail, /Previous read timed out/)
+  assert.match(steps[3].detail, /Attempt 2 of 3/)
+  assert.match(steps.at(-1).detail, /Attempt 2 of 3/)
+})
+
 test('completed approval snapshot uses post-approval progress when tool events are projected from plan steps', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-final', operation_id: 'plan-final' },

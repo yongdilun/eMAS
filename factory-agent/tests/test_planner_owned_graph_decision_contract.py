@@ -421,6 +421,43 @@ def test_replan_spine_decision_gate_rejects_failed_selected_tool_call_excluded_b
         )
 
 
+def test_replan_spine_decision_gate_allows_bounded_retry_for_transient_timeout_memory():
+    state, requirement, need = _state_with_hydrated_machine_alternates()
+    failed_call = _machine_call()
+    alternate_call = _alternate_machine_call()
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": requirement.id,
+                "evidence_ref": "evidence-timeout-primary",
+                "reason": "tool_error",
+                "error_type": "timeout",
+                "attempt": 1,
+            }
+        ]
+    }
+    decision = PlannerDecisionRecord(
+        decision_id="dec-retry-transient-timeout-tool",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=failed_call,
+        reason="Planner retried the same read after a structured transient timeout.",
+        diagnostics=_planner_diagnostics("dec-retry-transient-timeout-tool"),
+    )
+
+    assert (
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[failed_call, alternate_call]),
+        ).accepted
+        is True
+    )
+
+
 def test_replan_spine_decision_gate_rejects_failed_selected_tool_calls_batch_excluded_by_memory():
     state, requirement, need = _state_with_hydrated_machine_alternates()
     failed_call = _machine_call(call_id="call-failed-primary")

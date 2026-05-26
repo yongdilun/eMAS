@@ -108,6 +108,62 @@ test('ActivityTimeline marks only the newest retry activity as current', async (
   await view.unmount()
 })
 
+test('ActivityTimeline keeps a terminal retry story expanded', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'research',
+          label: 'Running selected tool',
+          detail: 'Attempt 1 of 3 - Running the selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'response',
+          label: 'Checking evidence',
+          detail: 'Attempt 1 of 3 - Previous read timed out',
+          state: 'success',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Replanning after timeout',
+          detail: 'Attempt 2 of 3 - Previous read timed out',
+          state: 'success',
+        },
+        {
+          id: 'step-4',
+          timestamp: 4,
+          group: 'research',
+          label: 'Retrying machine status read',
+          detail: 'Attempt 2 of 3 - Running the next selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-5',
+          timestamp: 5,
+          group: 'response',
+          label: 'Run complete',
+          detail: 'Attempt 2 of 3 - Completed with verified evidence',
+          state: 'complete',
+        },
+      ],
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Replanning after timeout/))
+  assert.match(view.text(), /Retrying machine status read/)
+  assert.match(view.text(), /Attempt 2 of 3/)
+
+  await view.unmount()
+})
+
 test('ActivityTimeline renders completed runs as a collapsed latest-step summary', async () => {
   const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
   const view = await render(

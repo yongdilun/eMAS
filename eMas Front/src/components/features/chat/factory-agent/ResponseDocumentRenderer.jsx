@@ -24,6 +24,14 @@ const SAFETY_ADMONITION_RE = /(?:^|\n)[ \t]*:::\s*safety\b[\s\S]*?(?:\n[ \t]*:::
 const FOOTNOTE_DEFINITION_RE = /^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*/gm
 const FOOTNOTE_MARKER_RE = /\[\^[^\]\n]+\]/g
 
+function hasRetryStoryActivity(steps) {
+  return (Array.isArray(steps) ? steps : []).some((step) => {
+    const label = String(step?.label || '')
+    const detail = String(step?.detail || '')
+    return step?.state === 'retry' || label.startsWith('Replanning') || label.startsWith('Retrying') || /Attempt \d+ of \d+/.test(detail)
+  })
+}
+
 function safeText(value) {
   if (value == null) return ''
   return String(value)
@@ -2133,9 +2141,10 @@ export default function ResponseDocumentRenderer({
   const selectedCitationId = safeText(selectedSource?.citation_id || selectedSource?.citationId)
   const documentActivitySteps = activityStepsFromResponseDocument(document)
   const activeSessionStatus = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
+  const liveActivityHasRetryStory = hasRetryStoryActivity(liveActivitySteps)
   const shouldUseLiveActivitySteps = Boolean(
     isLatestTurn &&
-      activeSessionStatus.has(String(sessionStatus || '').toUpperCase()) &&
+      (activeSessionStatus.has(String(sessionStatus || '').toUpperCase()) || liveActivityHasRetryStory) &&
       Array.isArray(liveActivitySteps) &&
       liveActivitySteps.length > 0,
   )

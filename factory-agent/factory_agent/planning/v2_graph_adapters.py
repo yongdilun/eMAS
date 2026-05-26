@@ -170,6 +170,27 @@ async def execute_graph_api_tool_call(
         call=call,
     )
     ok = bool(env.get("ok"))
+    error_type = ""
+    normalized_error = normalized_result.get("error") if isinstance(normalized_result, dict) else None
+    if isinstance(normalized_error, Mapping):
+        error_type = str(normalized_error.get("error_type") or "").strip()
+    if not error_type:
+        error_type = str(body.get("error_type") or "").strip()
+    diagnostic_metadata = {
+        "graph_authorized_execution": True,
+        "execution_adapter": "graph_http_tool_adapter",
+        "decision_id": decision.decision_id,
+        "tool_call_id": call.call_id,
+        "http_status": env.get("http_status"),
+        "latency_ms": env.get("latency_ms"),
+        "ok": ok,
+        "infrastructure_error": bool(env.get("infrastructure_error")),
+        "direct_v2_execution": False,
+    }
+    if not ok:
+        diagnostic_metadata["reason"] = "tool_error"
+    if error_type:
+        diagnostic_metadata["error_type"] = error_type
     return GraphToolExecutionResult(
         tool_call=call,
         source_type="api_tool",
@@ -182,17 +203,7 @@ async def execute_graph_api_tool_call(
         },
         normalized_result=normalized_result,
         satisfies=["operational_state_tool_result"] if ok else [],
-        diagnostic_metadata={
-            "graph_authorized_execution": True,
-            "execution_adapter": "graph_http_tool_adapter",
-            "decision_id": decision.decision_id,
-            "tool_call_id": call.call_id,
-            "http_status": env.get("http_status"),
-            "latency_ms": env.get("latency_ms"),
-            "ok": ok,
-            "infrastructure_error": bool(env.get("infrastructure_error")),
-            "direct_v2_execution": False,
-        },
+        diagnostic_metadata=diagnostic_metadata,
     )
 
 
@@ -496,11 +507,15 @@ def _normalize_api_result(
         normalized["entity"] = entity
 
     if not bool(env.get("ok")):
-        normalized["status"] = "tool_failed"
-        normalized["error"] = {
+        error_type = str(body.get("error_type") or "").strip()
+        error: dict[str, Any] = {
             "code": "tool_error",
             "detail": body.get("error") or body.get("message") or body,
         }
+        if error_type:
+            error["error_type"] = error_type
+        normalized["status"] = "tool_failed"
+        normalized["error"] = error
         return normalized
 
     rows = _rows_from_body(body)

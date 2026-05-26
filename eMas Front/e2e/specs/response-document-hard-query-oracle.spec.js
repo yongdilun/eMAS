@@ -13,6 +13,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-9-RAG-INSUFFICIENT',
     'HQ-9-APPROVAL',
     'HQ-9-INTERRUPT',
+    'HQ-REPLAN-SPINE-RECOVERY',
     'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
     'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
     'HQ-9-TOOL-FAILURE',
@@ -171,6 +172,20 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     failedToolReason: 'tool_error',
     requiresStaleAttemptEvidence: true,
     forbidActiveFinalEvidence: true,
+    forbidStaleFinalEvidence: true,
+  })
+
+  const replanRecovery = byId['HQ-REPLAN-SPINE-RECOVERY']
+  expect(replanRecovery.toolFaults.rules[0]).toMatchObject({
+    fault: 'timeout',
+    once: true,
+  })
+  expect(replanRecovery.expected.replanSpine).toMatchObject({
+    limitReached: false,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    requiresActiveFinalEvidence: true,
+    activeFinalEvidenceInResponse: true,
     forbidStaleFinalEvidence: true,
   })
 

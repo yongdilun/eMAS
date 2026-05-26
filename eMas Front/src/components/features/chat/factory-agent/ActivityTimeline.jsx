@@ -63,15 +63,24 @@ function visualStateForStep(step, rows, isTerminal) {
     return step?.state
 }
 
+function hasRetryStory(rows) {
+    return (Array.isArray(rows) ? rows : []).some((step) => {
+        const label = String(step?.label || '')
+        const detail = String(step?.detail || '')
+        return step?.state === 'retry' || label.startsWith('Replanning') || label.startsWith('Retrying') || /Attempt \d+ of \d+/.test(detail)
+    })
+}
+
 const ActivityTimeline = ({ steps = [] }) => {
     const rows = useMemo(() => truncateActivityAfterTerminal(steps), [steps])
     const latest = latestStep(rows)
     const isTerminal = latest?.state === 'complete' || latest?.state === 'error'
+    const retryStory = hasRetryStory(rows)
 
     // Default collapsed; open while multiple in-flight steps arrive. When the run
     // finishes (complete / error), fold back to the summary strip once (user can
     // still expand to review the full list).
-    const [expanded, setExpanded] = useState(false)
+    const [expanded, setExpanded] = useState(() => Boolean(isTerminal && retryStory))
     const wasTerminalRef = useRef(isTerminal)
     const userCollapsedRef = useRef(false)
 
@@ -81,7 +90,7 @@ const ActivityTimeline = ({ steps = [] }) => {
 
         if (becameTerminal) {
             userCollapsedRef.current = false
-            setExpanded(false)
+            setExpanded(Boolean(retryStory))
         } else if (!isTerminal && rows.length > 1 && !userCollapsedRef.current) {
             // While several steps are arriving (SSE + poll), keep the list open so
             // intermediates are visible; the header alone only reflects `latest`.
@@ -92,7 +101,7 @@ const ActivityTimeline = ({ steps = [] }) => {
         } else if (rows.length <= 1) {
             userCollapsedRef.current = false
         }
-    }, [isTerminal, rows])
+    }, [isTerminal, retryStory, rows])
 
     if (!rows.length || !latest || !shouldShowActivityTimeline(rows)) return null
 

@@ -290,6 +290,163 @@ def test_phase7_activity_adapter_sanitizes_tool_and_runtime_details():
     _assert_no_activity_leaks(steps)
 
 
+def test_replan_spine_activity_steps_show_attempt_numbers_and_retry_reason():
+    created_at = datetime(2026, 5, 13, 9, 30, 0)
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 2,
+        "attempts": [
+            {
+                "attempt": 1,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": ["ev-timeout"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": "ev-timeout",
+                        "reason": "tool_error",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        ],
+        "missing_evidence_reasons": [
+            {
+                "reason": "tool_error",
+                "requirement_id": "req-machine-status",
+                "evidence_refs": ["ev-timeout"],
+                "retriable": True,
+            }
+        ],
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-001", "fields": "status"},
+                "requirement_id": "req-machine-status",
+                "evidence_ref": "ev-timeout",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-story",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {
+                "intent_contract": {
+                    "replan_spine": replan_spine,
+                }
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-story",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="started:replan-story-1",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=2),
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+                details={"args": {"id": "M-001", "fields": "status"}},
+            ),
+            TimelineEventResponse(
+                event_id="result:replan-story-1",
+                event_type="tool_result",
+                content="Machine status API timed out.",
+                created_at=created_at + timedelta(seconds=3),
+                tool_name="get__machines_{id}",
+                status="FAILED",
+                details={
+                    "args": {"id": "M-001", "fields": "status"},
+                    "result": {
+                        "status": "tool_failed",
+                        "status_code": 504,
+                        "error": {"code": "tool_error", "error_type": "timeout"},
+                    },
+                },
+            ),
+            TimelineEventResponse(
+                event_id="replan:replan-story",
+                event_type="replan_requested",
+                content="Retry after missing evidence.",
+                created_at=created_at + timedelta(seconds=4),
+                status="PLANNING",
+                details={"reason": "tool_error"},
+            ),
+            TimelineEventResponse(
+                event_id="started:replan-story-2",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=5),
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+                details={"args": {"id": "M-001", "fields": "status"}},
+            ),
+            TimelineEventResponse(
+                event_id="result:replan-story-2",
+                event_type="tool_result",
+                content="Machine status checked.",
+                created_at=created_at + timedelta(seconds=6),
+                tool_name="get__machines_{id}",
+                status="DONE",
+                details={
+                    "args": {"id": "M-001", "fields": "status"},
+                    "result": {"data": {"machine_id": "M-001", "status": "running"}},
+                },
+            ),
+            TimelineEventResponse(
+                event_id="completed:replan-story",
+                event_type="session_completed",
+                content="Machine status is available.",
+                created_at=created_at + timedelta(seconds=7),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+
+    assert [step.label for step in steps] == [
+        "Understood request",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+        "Checking new evidence",
+        "Run complete",
+    ]
+    assert "Attempt 1 of 3" in (steps[1].detail or "")
+    assert "Previous read timed out" in (steps[2].detail or "")
+    assert "Attempt 2 of 3" in (steps[3].detail or "")
+    assert "Previous read timed out" in (steps[3].detail or "")
+    assert "Attempt 2 of 3" in (steps[5].detail or "")
+    assert "Attempt 2 of 3" in (steps[-1].detail or "")
+
+
 def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
 

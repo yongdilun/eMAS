@@ -2414,6 +2414,11 @@ def _failed_tool_calls_for_replan(
                     "evidence_ref": evidence.id,
                     "reason": "tool_error",
                     "attempt": attempt,
+                    **(
+                        {"error_type": str(evidence.diagnostic_metadata.get("error_type"))}
+                        if evidence.diagnostic_metadata.get("error_type")
+                        else {}
+                    ),
                 }
             )
     return _dedupe_failed_tool_calls(calls)

@@ -515,6 +515,86 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-REPLAN-SPINE-RECOVERY',
+    tags: ['hard query', 'replan-spine', 'bounded recovery', 'response_document'],
+    toolFaults: {
+      rules: [
+        {
+          method: 'GET',
+          endpoint: '/jobs',
+          fault: 'timeout',
+          once: true,
+          reason: 'Controlled one-time job list timeout for replan recovery proof.',
+        },
+      ],
+    },
+    prompt: 'List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      noMutation: true,
+      replanSpine: {
+        minAttempts: 1,
+        limitReached: false,
+        requiresMissingEvidenceReason: true,
+        missingEvidenceReason: 'tool_error',
+        requiresFailedToolMemory: true,
+        failedToolReason: 'tool_error',
+        requiresStaleAttemptEvidence: true,
+        requiresHistoricalEvidence: true,
+        requiresActiveFinalEvidence: true,
+        activeFinalEvidenceInResponse: true,
+        forbidStaleFinalEvidence: true,
+      },
+      responseDocument: {
+        blockTypes: ['result_table'],
+        hiddenBlockTypes: ['diagnostic', 'status_result', 'approval_required'],
+        blocks: [
+          {
+            type: 'result_table',
+            readScope: 'records',
+            requestedFields: ['job_id', 'deadline'],
+            displayMode: 'collection_table',
+            entityType: 'job',
+            maxRows: 3,
+            tableColumnKeys: ['job_id', 'deadline'],
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'result_table',
+          readScope: 'records',
+          requestedFields: ['job_id', 'deadline'],
+          displayMode: 'collection_table',
+          entityType: 'job',
+          maxRows: 3,
+          tableColumnKeys: ['job_id', 'deadline'],
+          forbiddenTableColumnKeys: ['priority', 'product_id', 'status', 'row_id', 'operation_id', 'tool_name'],
+        },
+      ],
+      visibleRunSteps: [
+        { title: /Running selected tool/i },
+        { title: /Checking evidence/i },
+        { title: /Replanning after timeout/i },
+        { title: /Retrying .+ read/i },
+        { title: /Checking new evidence/i },
+        { title: /Run complete/i },
+      ],
+      visibleUiTextIncludes: [
+        { label: 'first visible retry attempt number', pattern: /Attempt\s+1\s+of\s+\d+/i },
+        { label: 'second visible retry attempt number', pattern: /Attempt\s+2\s+of\s+\d+/i },
+        { label: 'visible timeout retry reason', pattern: /Previous read timed out/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'safe failure text after recovery', pattern: /could not verify the requested evidence after bounded retries/i },
+        { label: 'approval required for read recovery', pattern: /Approval required/i },
+        { label: 'unrequested status column after retry', pattern: /\bStatus\b/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
     tags: ['hard query', 'replan-spine', 'bounded timeout safe failure', 'response_document'],
     toolFaults: {
@@ -564,6 +644,8 @@ export const hardQueryScenarios = Object.freeze([
         { label: 'safe failure shell status', pattern: /Needs attention/i },
         { label: 'safe failure response title', pattern: /Run needs attention/i },
         { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
+        { label: 'safe failure final attempt count', pattern: /Attempt\s+\d+\s+of\s+\d+/i },
+        { label: 'safe failure timeout retry reason', pattern: /Previous read timed out/i },
       ],
       forbiddenVisibleText: [
         { label: 'misleading request start failure', pattern: /Request could not start/i },
@@ -633,6 +715,7 @@ export const hardQueryScenarios = Object.freeze([
         { label: 'safe failure shell status', pattern: /Needs attention/i },
         { label: 'safe failure response title', pattern: /Run needs attention/i },
         { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
+        { label: 'safe failure final attempt count', pattern: /Attempt\s+\d+\s+of\s+\d+/i },
       ],
       forbiddenVisibleText: [
         { label: 'misleading request start failure', pattern: /Request could not start/i },

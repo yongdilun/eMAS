@@ -197,6 +197,20 @@ async def _failed_http_executor(settings, tool, args, *, idempotency_key, extra_
     }
 
 
+async def _timeout_fault_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
+    _ = settings, tool, args, idempotency_key, extra_headers
+    return {
+        "ok": False,
+        "http_status": None,
+        "latency_ms": 0,
+        "body": {
+            "error_type": "timeout",
+            "message": "Controlled typed timeout from the seeded tool fault harness.",
+        },
+        "infrastructure_error": True,
+    }
+
+
 async def _raising_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
     _ = settings, tool, args, idempotency_key, extra_headers
     raise ValueError("Missing required path args: id")
@@ -928,6 +942,20 @@ async def test_phase5_failed_tool_execution_does_not_satisfy_requirement():
     assert requirement.status != "satisfied"
     assert result.state.final_validation_result.status == "failed"  # type: ignore[union-attr]
     assert decisions[-1] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_failed_api_tool_preserves_structured_fault_type_for_retry_story():
+    result = await _graph(http_executor=_timeout_fault_http_executor).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "phase5-api-timeout-fault-type"},
+    )
+
+    evidence = result.state.evidence_ledger.evidence[0]
+
+    assert evidence.normalized_result["error"]["code"] == "tool_error"
+    assert evidence.normalized_result["error"]["error_type"] == "timeout"
+    assert evidence.diagnostic_metadata["error_type"] == "timeout"
 
 
 @pytest.mark.asyncio

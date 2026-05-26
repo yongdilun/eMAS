@@ -8,6 +8,7 @@ from .v2_agent_state import GraphToolCall, PlannerOwnedAgentGraphState
 
 
 REPLAN_SPINE_DIAGNOSTIC_KEY = "replan_spine"
+TRANSIENT_RETRYABLE_ERROR_TYPES = {"timeout", "network"}
 
 
 def failed_tool_calls_for_requirement(
@@ -49,6 +50,9 @@ def tool_call_matches_failed_tool_call(
     call: GraphToolCall,
     failed_call: Mapping[str, Any],
 ) -> bool:
+    error_type = str(failed_call.get("error_type") or "").strip().lower()
+    if error_type in TRANSIENT_RETRYABLE_ERROR_TYPES:
+        return False
     failed_requirement_id = str(failed_call.get("requirement_id") or "")
     if failed_requirement_id and failed_requirement_id != call.requirement_id:
         return False

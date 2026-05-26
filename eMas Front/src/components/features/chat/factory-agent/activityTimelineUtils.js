@@ -372,6 +372,143 @@ function eventUsesWriteTool(event) {
   return /^(post|put|patch|delete)__/.test(toolNameForEvent(event).toLowerCase())
 }
 
+function eventDetails(event) {
+  return event?.details && typeof event.details === 'object' ? event.details : {}
+}
+
+function eventArgs(event) {
+  const details = eventDetails(event)
+  if (details.args && typeof details.args === 'object') return details.args
+  const result = details.result && typeof details.result === 'object' ? details.result : {}
+  if (result.request_args && typeof result.request_args === 'object') return result.request_args
+  return {}
+}
+
+function domainSubjectForEvent(event) {
+  const label = safeDomainLabel(event)
+  if (label.endsWith(' records')) return label.slice(0, -' records'.length)
+  if (label.endsWith(' requests')) return label.slice(0, -' requests'.length)
+  return ''
+}
+
+function readTargetLabel(event) {
+  if (!event) return 'selected read'
+  const subject = domainSubjectForEvent(event)
+  const args = eventArgs(event)
+  const rawFields = args.fields || args.requested_fields || args.requestedFields
+  const fields = Array.isArray(rawFields)
+    ? rawFields.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+    : String(rawFields || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
+  if (subject && fields.includes('status')) return `${subject} status read`
+  if (subject) return `${subject} read`
+  return 'selected read'
+}
+
+function intValue(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null
+}
+
+function replanContextCandidates(context) {
+  if (!context || typeof context !== 'object') return []
+  const candidates = [context]
+  for (const key of ['intent_contract', 'intentContract', 'planner_owned_agent_graph', 'plannerOwnedAgentGraph']) {
+    if (context[key] && typeof context[key] === 'object') candidates.push(context[key])
+  }
+  return candidates
+}
+
+function replanSpineFromSnapshot(snapshot = {}) {
+  const session = snapshot?.session || {}
+  const context = session.replan_context || session.replanContext || {}
+  for (const candidate of replanContextCandidates(context)) {
+    const direct = candidate.replan_spine || candidate.replanSpine
+    if (direct && typeof direct === 'object') return direct
+    const responseContext = candidate.response_document_context || candidate.responseDocumentContext
+    const diagnostics = responseContext && typeof responseContext === 'object' ? responseContext.diagnostics : null
+    const nested = diagnostics && typeof diagnostics === 'object' ? diagnostics.replan_spine || diagnostics.replanSpine : null
+    if (nested && typeof nested === 'object') return nested
+  }
+  return {}
+}
+
+function hasReplanStory(replanSpine) {
+  return Boolean(
+    replanSpine
+    && typeof replanSpine === 'object'
+    && (
+      replanSpine.attempt_count
+      || replanSpine.attemptCount
+      || replanSpine.attempts
+      || replanSpine.replan_limit_reached
+      || replanSpine.replanLimitReached
+    ),
+  )
+}
+
+function totalAttemptCount(replanSpine) {
+  const maxReplans = intValue(replanSpine?.max_attempts ?? replanSpine?.maxAttempts) || 0
+  const attemptCount = intValue(replanSpine?.attempt_count ?? replanSpine?.attemptCount) || 0
+  if (maxReplans > 0) return maxReplans + 1
+  if (attemptCount > 0) return attemptCount + 1
+  return 0
+}
+
+function attemptDetail(attempt, total, message) {
+  if (attempt > 0 && total > 0) return `Attempt ${attempt} of ${total} - ${message}`
+  return message
+}
+
+function resultErrorKind(event) {
+  if (!event) return null
+  const details = eventDetails(event)
+  const result = details.result && typeof details.result === 'object' ? details.result : {}
+  const error = result.error && typeof result.error === 'object' ? result.error : {}
+  const errorType = String(error.error_type || error.errorType || result.error_type || result.errorType || details.error_type || details.errorType || '').trim().toLowerCase()
+  const statusCode = intValue(result.status_code ?? result.statusCode ?? result.http_status ?? result.httpStatus ?? details.http_status ?? details.httpStatus)
+  if (errorType === 'timeout' || statusCode === 408 || statusCode === 504) return 'timeout'
+  if (['empty_data', 'insufficient_context', 'no_match', 'missing_evidence'].includes(errorType)) return 'incomplete'
+  if (['http_error', 'http_500', 'network', 'tool_execution_exception'].includes(errorType)) return 'tool_error'
+  if (statusCode != null && statusCode >= 400) return 'tool_error'
+  return null
+}
+
+function attemptReasonKind({ replanSpine, replanAttempt, failedEvent }) {
+  const eventKind = resultErrorKind(failedEvent)
+  if (eventKind) return eventKind
+  const attempts = Array.isArray(replanSpine?.attempts) ? replanSpine.attempts : []
+  const attempt = attempts.find((item) => item && typeof item === 'object' && intValue(item.attempt) === replanAttempt)
+  const reasons = Array.isArray(attempt?.missing_evidence_reasons)
+    ? attempt.missing_evidence_reasons
+    : Array.isArray(attempt?.missingEvidenceReasons)
+      ? attempt.missingEvidenceReasons
+      : Array.isArray(replanSpine?.missing_evidence_reasons)
+        ? replanSpine.missing_evidence_reasons
+        : Array.isArray(replanSpine?.missingEvidenceReasons)
+          ? replanSpine.missingEvidenceReasons
+          : []
+  for (const reason of reasons) {
+    const code = String(reason?.reason || '').trim().toLowerCase()
+    if (['insufficient_context', 'missing_evidence', 'no_match'].includes(code)) return 'incomplete'
+    if (code === 'tool_error') return 'tool_error'
+  }
+  return 'tool_error'
+}
+
+function retryReasonText(kind) {
+  if (kind === 'timeout') return 'Previous read timed out'
+  if (kind === 'incomplete') return 'Evidence was incomplete'
+  if (kind === 'different_tool') return 'Trying a different tool'
+  return 'Previous read failed'
+}
+
+function replanLabel(kind) {
+  if (kind === 'timeout') return 'Replanning after timeout'
+  if (kind === 'incomplete') return 'Replanning for more evidence'
+  if (kind === 'different_tool') return 'Replanning with a different tool'
+  return 'Replanning after failed read'
+}
+
 function hasPriorReplan(sorted, index) {
   for (let i = index - 1; i >= 0; i -= 1) {
     if (getEventType(sorted[i]) === 'replan_requested') return true
@@ -540,8 +677,11 @@ function capActivitySteps(steps = [], idPrefix = 'snapshot_activity') {
  * One logical operation (plan scope): pre-approval tools show as review/staging rows;
  * post-approval execution uses Applying / Updating / Verifying labels.
  */
-function buildStepsFromEventsOperational(events) {
+function buildStepsFromEventsOperational(events, options = {}) {
   const sorted = sortTimelineEvents(events)
+  const replanSpine = options.replanSpine && typeof options.replanSpine === 'object' ? options.replanSpine : {}
+  const storyEnabled = hasReplanStory(replanSpine)
+  const totalAttempts = totalAttemptCount(replanSpine)
   const getType = (e) => getEventType(e)
   const firstAprIdx = sorted.findIndex((e) => getType(e) === 'approval_required')
   const hasApproval = firstAprIdx >= 0
@@ -599,6 +739,8 @@ function buildStepsFromEventsOperational(events) {
   let seenPreparingChanges = false
   let seenApplying = false
   let seenInitialReadExecution = false
+  let priorReplans = 0
+  let lastFailedReadEvent = null
 
   for (let i = 0; i < sorted.length; i += 1) {
     const event = sorted[i]
@@ -623,7 +765,18 @@ function buildStepsFromEventsOperational(events) {
     }
 
     if (t === 'replan_requested') {
-      push('planning', 'Replanning', 'retry', 'Preparing another safe attempt', ts)
+      if (storyEnabled && totalAttempts > 0) {
+        const nextAttempt = priorReplans + 2
+        const kind = attemptReasonKind({
+          replanSpine,
+          replanAttempt: Math.max(1, nextAttempt - 1),
+          failedEvent: lastFailedReadEvent,
+        })
+        push('planning', replanLabel(kind), 'retry', attemptDetail(nextAttempt, totalAttempts, retryReasonText(kind)), ts)
+        priorReplans += 1
+      } else {
+        push('planning', 'Replanning', 'retry', 'Preparing another safe attempt', ts)
+      }
       continue
     }
 
@@ -636,9 +789,23 @@ function buildStepsFromEventsOperational(events) {
         }
       } else if (!hasApproval) {
         if (hasPriorReplan(sorted, i)) {
-          push('research', 'Retrying tool', 'running', 'Running the next selected read', ts)
+          push(
+            'research',
+            storyEnabled ? `Retrying ${readTargetLabel(lastFailedReadEvent)}` : 'Retrying tool',
+            'running',
+            storyEnabled
+              ? attemptDetail(priorReplans + 1, totalAttempts, 'Running the next selected read')
+              : 'Running the next selected read',
+            ts,
+          )
         } else if (!seenInitialReadExecution) {
-          push('research', 'Running selected tool', 'running', 'Running the selected read', ts)
+          push(
+            'research',
+            'Running selected tool',
+            'running',
+            storyEnabled ? attemptDetail(1, totalAttempts, 'Running the selected read') : 'Running the selected read',
+            ts,
+          )
           seenInitialReadExecution = true
         }
       } else if (!seenPreparingChanges) {
@@ -684,19 +851,37 @@ function buildStepsFromEventsOperational(events) {
         const domain = safeDomainLabel(event)
         if (st === 'FAILED' || st === 'AMBIGUOUS') {
           const retryFollows = hasLaterReplan(sorted, i)
+          const attempt = priorReplans + 1
+          const kind = storyEnabled
+            ? attemptReasonKind({ replanSpine, replanAttempt: Math.max(1, attempt), failedEvent: event })
+            : null
           push(
             'response',
             'Checking evidence',
             retryFollows ? 'success' : 'error',
-            retryFollows
-              ? `Evidence from ${domain} needs another attempt`
-              : `Evidence from ${domain} could not be verified`,
+            storyEnabled
+              ? attemptDetail(
+                attempt,
+                totalAttempts,
+                retryFollows ? retryReasonText(kind) : 'Evidence could not be verified',
+              )
+              : retryFollows
+                ? `Evidence from ${domain} needs another attempt`
+                : `Evidence from ${domain} could not be verified`,
             ts,
           )
+          lastFailedReadEvent = event
           continue
         }
         if (st === 'DONE') {
-          push('response', 'Checking evidence', 'success', `Verified ${domain}`, ts)
+          const attempt = priorReplans + 1
+          push(
+            'response',
+            storyEnabled && priorReplans > 0 ? 'Checking new evidence' : 'Checking evidence',
+            'success',
+            storyEnabled ? attemptDetail(attempt, totalAttempts, `Verified ${domain}`) : `Verified ${domain}`,
+            ts,
+          )
           continue
         }
       }
@@ -704,6 +889,7 @@ function buildStepsFromEventsOperational(events) {
       if (st === 'FAILED' || st === 'AMBIGUOUS') {
         const domain = safeDomainLabel(event)
         push('research', 'Could not complete that check', 'error', `A check could not be completed (${domain})`, ts)
+        if (!eventUsesWriteTool(event)) lastFailedReadEvent = event
         continue
       }
       if (st !== 'DONE') continue
@@ -763,12 +949,32 @@ function buildStepsFromEventsOperational(events) {
     }
 
     if (t === 'session_failed' || t === 'session_blocked') {
-      push('system', 'Something needs attention', 'error', String(event?.content || 'The request could not be completed'), ts)
+      const attemptCount = intValue(replanSpine.attempt_count ?? replanSpine.attemptCount) || 0
+      const attempt = Math.min(totalAttempts || priorReplans + 1, Math.max(priorReplans + 1, attemptCount + 1))
+      push(
+        'system',
+        'Something needs attention',
+        'error',
+        storyEnabled && (replanSpine.replan_limit_reached || replanSpine.replanLimitReached)
+          ? attemptDetail(attempt, totalAttempts, 'Evidence could not be verified after retries')
+          : String(event?.content || 'The request could not be completed'),
+        ts,
+      )
       continue
     }
 
     if (t === 'session_completed') {
-      push('response', 'Run complete', 'complete', 'All steps finished. See the thread below.', ts)
+      const attemptCount = intValue(replanSpine.attempt_count ?? replanSpine.attemptCount) || 0
+      const attempt = Math.min(totalAttempts || priorReplans + 1, Math.max(priorReplans + 1, attemptCount + 1))
+      push(
+        'response',
+        'Run complete',
+        'complete',
+        storyEnabled && priorReplans > 0
+          ? attemptDetail(attempt, totalAttempts, 'Completed with verified evidence')
+          : 'All steps finished. See the thread below.',
+        ts,
+      )
       continue
     }
   }
@@ -798,7 +1004,7 @@ function activityTimelineIsTerminalSession(sessionStatus) {
 }
 
 export function buildActivityStepsFromTimeline(timeline = [], options = {}) {
-  const { mode = 'legacy', scopedEvents = null, sessionStatus = '' } = options
+  const { mode = 'legacy', scopedEvents = null, sessionStatus = '', replanSpine = {} } = options
   let sourceEvents
   if (scopedEvents != null && scopedEvents.length) {
     sourceEvents = sortTimelineEvents(scopedEvents)
@@ -809,7 +1015,7 @@ export function buildActivityStepsFromTimeline(timeline = [], options = {}) {
     sourceEvents = latestTurnTimeline(timeline)
   }
   if (mode === 'operational' && sourceEvents.length) {
-    const built = buildStepsFromEventsOperational(sourceEvents)
+    const built = buildStepsFromEventsOperational(sourceEvents, { replanSpine })
     const steps = finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(built))
     return capActivitySteps(steps)
   }
@@ -937,6 +1143,7 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
   const snapshotPresentation = normalizeTypedPresentation(snapshot?.presentation)
   const typedAuthoritative = typedPresentationIsAuthoritative(snapshotPresentation)
   const typedIsNonCompletedTerminal = Boolean(typedAuthoritative && snapshotPresentation?.state !== 'completed')
+  const replanSpine = replanSpineFromSnapshot(snapshot)
 
   // Suppress session_completed timeline events while the session is still active.
   // showing "Run complete" before the session is terminal is misleading.
@@ -953,6 +1160,7 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
       mode: 'operational',
       scopedEvents: scoped,
       sessionStatus: status,
+      replanSpine,
     })
   } else {
     steps = buildActivityStepsFromTimeline(timeline, { mode: 'legacy', sessionStatus: status })
