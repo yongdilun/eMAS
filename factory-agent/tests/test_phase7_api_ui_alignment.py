@@ -538,6 +538,124 @@ def test_replan_spine_activity_steps_collapse_noisy_retry_attempts():
     assert "Attempt 6 of 6" in (steps[-1].detail or "")
 
 
+def test_active_replan_spine_activity_uses_attempt_story_instead_of_jumpy_live_graph_rows():
+    created_at = datetime(2026, 5, 13, 9, 50, 0)
+    attempts = []
+    for attempt in range(1, 3):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": [f"ev-timeout-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": f"ev-timeout-{attempt}",
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 2,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-story",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 2,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "live_replan_spine": replan_spine,
+                "live_activity_steps": [
+                    {
+                        "id": "graph:planner_choose_tool_node",
+                        "timestamp": timestamp,
+                        "order": 7,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:tool_retrieval_node",
+                        "timestamp": timestamp,
+                        "order": 6,
+                        "group": "planning",
+                        "label": "Finding information path",
+                        "detail": "Finding the right information path",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:planner_decision_node",
+                        "timestamp": timestamp,
+                        "order": 5,
+                        "group": "planning",
+                        "label": "Choosing next action",
+                        "detail": "Choosing the next backend action",
+                        "state": "running",
+                    },
+                ],
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-story",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+    ]
+    assert "Attempt 1 of 6" in (steps[1].detail or "")
+    assert "Attempt 2 of 6" in (steps[3].detail or "")
+    assert "Attempt 3 of 6" in (steps[-1].detail or "")
+    assert [step.replan_attempt for step in steps] == [None, 1, 1, 2, 2, 2, 3, 3]
+    assert "Previous read timed out" in (steps[2].detail or "")
+    assert "Previous read timed out" in (steps[5].detail or "")
+    assert [step.state for step in steps].count("running") == 1
+    assert steps[-1].state == "running"
+    assert "Finding information path" not in labels
+    assert "Selecting safe action" not in labels
+
+
 def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
 

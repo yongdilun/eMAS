@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import {
+  activityActiveRetryStoryPrompt,
   activitySseAnswer,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
@@ -327,5 +328,45 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     )
     await expect(page.getByText(/Factory Agent chat could not start/i)).toHaveCount(0)
     await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
+  })
+
+  test('active retry story keeps attempt order and ignores stale graph-stage frames', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activityActiveRetryStoryPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Attempt 3 of 6' }).first()
+    await expect(activityList.getByText('Attempt 1 of 6 - Running the selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 2 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Replanning after timeout', { exact: true })).toHaveCount(2)
+    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(0)
+
+    const initialText = await activityList.innerText()
+    expect(initialText.indexOf('Attempt 1 of 6 - Running the selected read')).toBeLessThan(
+      initialText.indexOf('Attempt 2 of 6 - Running the next selected read'),
+    )
+    expect(initialText.indexOf('Attempt 2 of 6 - Running the next selected read')).toBeLessThan(
+      initialText.indexOf('Attempt 3 of 6 - Running the next selected read'),
+    )
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activityActiveRetryStory',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toEqual(['Selecting safe action', 'Finding information path', 'Choosing next action'])
+
+    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(0)
+    const currentCount = await activityList.getByText('Current', { exact: true }).count()
+    expect(currentCount).toBe(1)
   })
 })

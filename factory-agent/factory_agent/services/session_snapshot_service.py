@@ -720,6 +720,15 @@ def _activity_replan_story_from_diagnostics(
     if not isinstance(attempts, list) or not attempts:
         return raw_steps
     if not isinstance(failed_calls, list) or not failed_calls:
+        failed_calls = []
+        for item in attempts:
+            if not isinstance(item, Mapping):
+                continue
+            item_failed_calls = item.get("failed_tool_calls")
+            if not isinstance(item_failed_calls, list):
+                continue
+            failed_calls.extend(call for call in item_failed_calls if isinstance(call, Mapping))
+    if not failed_calls:
         return raw_steps
 
     total = _activity_replan_total_attempts(replan_spine)
@@ -737,6 +746,7 @@ def _activity_replan_story_from_diagnostics(
     reason = _activity_retry_reason_text(kind)
     target = _activity_read_target_label(probe)
     domain = _safe_activity_domain_label(probe) if probe is not None else "relevant records"
+    active_attempt = min(total, max((_activity_int(replan_spine.get("attempt_count")) or 0) + 1, 1))
 
     story: list[dict[str, Any]] = [dict(step) for step in leading]
 
@@ -789,6 +799,15 @@ def _activity_replan_story_from_diagnostics(
         )
         attempt_reason = _activity_retry_reason_text(attempt_kind)
         attempt_target = _activity_read_target_label(attempt_probe) if attempt_probe is not None else target
+        if replan_attempt > 1:
+            add(
+                2 + (replan_attempt * 3) - 2,
+                "response",
+                "Checking evidence",
+                "success",
+                _activity_attempt_text(replan_attempt, total, attempt_reason),
+                attempt=replan_attempt,
+            )
         add(
             2 + (replan_attempt * 3) - 1,
             "planning",
@@ -801,7 +820,7 @@ def _activity_replan_story_from_diagnostics(
             2 + (replan_attempt * 3),
             "research",
             f"Retrying {attempt_target}",
-            "success" if terminal_state else "running",
+            "success" if terminal_state or next_attempt != active_attempt else "running",
             _activity_attempt_text(next_attempt, total, "Running the next selected read"),
             attempt=next_attempt,
         )
@@ -1287,6 +1306,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
             id=str(step["id"]),
             timestamp=int(step["timestamp"]),
             order=_activity_int(step.get("order") or step.get("_order")),
+            replan_attempt=_activity_int(step.get("replan_attempt") or step.get("_replan_attempt")),
             group=step["group"],
             label=step["label"],
             detail=step.get("detail"),
@@ -1835,6 +1855,9 @@ def _replan_spine_from_session_context(session: Any) -> dict[str, Any]:
     context = getattr(session, "replan_context", None)
     if not isinstance(context, dict):
         return {}
+    live_replan_spine = context.get("live_replan_spine")
+    if isinstance(live_replan_spine, dict):
+        return dict(live_replan_spine)
     for candidate in _replan_context_candidates(context):
         replan_spine = candidate.get("replan_spine")
         if isinstance(replan_spine, dict):

@@ -674,6 +674,10 @@ class ActivityStepResponse(BaseModel):
         default=None,
         description="Optional backend-authored ordering key for rows emitted at the same timestamp.",
     )
+    replan_attempt: int | None = Field(
+        default=None,
+        description="Attempt number for retry/replan activity rows, when the row is part of a structured replan story.",
+    )
     group: Literal["planning", "research", "approval", "response", "system"]
     label: str
     detail: str | None = None

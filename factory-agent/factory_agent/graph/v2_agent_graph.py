@@ -248,6 +248,8 @@ class LocalPlannerOwnedGraphTracer:
     on_node_recorded: Callable[[dict[str, Any]], Any] | None = None
 
     def record_node(self, node_name: str, state: PlannerOwnedAgentGraphState) -> None:
+        diagnostics = state.execution_trace.diagnostics
+        replan_spine = diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY) if isinstance(diagnostics, Mapping) else None
         event = {
             "event": "planner_owned_agent_graph_node",
             "node": node_name,
@@ -257,6 +259,8 @@ class LocalPlannerOwnedGraphTracer:
             "tool_names": _trace_tool_names(state),
             "source_types": _trace_source_types(state),
         }
+        if isinstance(replan_spine, Mapping):
+            event["replan_spine"] = dict(replan_spine)
         self.events.append(event)
         if self.on_node_recorded is not None:
             self.on_node_recorded(dict(event))

@@ -344,6 +344,81 @@ async def test_live_activity_preserves_graph_progress_order_when_nodes_share_tim
     assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3, 4]
 
 
+@pytest.mark.asyncio
+async def test_live_activity_persists_active_replan_spine_for_retry_story(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-replan-spine",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Find low priority jobs",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "attempts": [
+            {
+                "attempt": 1,
+                "missing_evidence_reasons": [{"reason": "tool_error", "evidence_refs": ["ev-1"]}],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        ],
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__jobs",
+                "args": {"priority": "low"},
+                "reason": "tool_error",
+                "error_type": "timeout",
+                "attempt": 1,
+            }
+        ],
+    }
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-replan-spine",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "planner_decision_node",
+            "ledger_revision": 2,
+            "replan_spine": replan_spine,
+        }
+    )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-replan-spine")
+            )
+        ).scalar_one()
+
+    assert row.replan_context["live_replan_spine"] == replan_spine
+    assert row.replan_context["live_replan_spine_revision"] == 1
+    assert "_replan_spine" not in row.replan_context["live_activity_steps"][0]
+
+
 def test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume():
     source = APPROVAL_RESUME_SOURCE.read_text(encoding="utf-8")
     resume = _function_node(source, "resume_approved_graph_approval")

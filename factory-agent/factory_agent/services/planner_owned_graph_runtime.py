@@ -144,6 +144,9 @@ class LiveGraphActivityRecorder:
         step = _live_activity_step_for_graph_event(event)
         if step is None:
             return
+        replan_spine = event.get("replan_spine")
+        if isinstance(replan_spine, Mapping):
+            step["_replan_spine"] = dict(replan_spine)
         self._sequence += 1
         step["order"] = self._sequence
         step["_order"] = self._sequence
@@ -183,7 +186,11 @@ class LiveGraphActivityRecorder:
             existing_rows = context.get("live_activity_steps")
             existing = [dict(item) for item in existing_rows if isinstance(item, dict)] if isinstance(existing_rows, list) else []
             by_id = {str(item.get("id") or ""): item for item in existing if item.get("id")}
+            latest_replan_spine: dict[str, Any] | None = None
             for step in batch:
+                replan_spine = step.pop("_replan_spine", None)
+                if isinstance(replan_spine, Mapping):
+                    latest_replan_spine = dict(replan_spine)
                 step_id = str(step["id"])
                 existing_order = by_id.get(step_id, {}).get("order") or by_id.get(step_id, {}).get("_order")
                 if existing_order is not None:
@@ -200,6 +207,9 @@ class LiveGraphActivityRecorder:
             )[-_LIVE_GRAPH_MAX_STEPS:]
             context["live_activity_steps"] = live_steps
             context["live_activity_revision"] = int(context.get("live_activity_revision") or 0) + 1
+            if latest_replan_spine is not None:
+                context["live_replan_spine"] = latest_replan_spine
+                context["live_replan_spine_revision"] = int(context.get("live_replan_spine_revision") or 0) + 1
             row.replan_context = context
             row.updated_at = datetime.utcnow()
             bump_session_revision(row)
@@ -573,6 +583,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         context = dict(base_context or {})
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
+        context.pop("live_replan_spine", None)
+        context.pop("live_replan_spine_revision", None)
         context["intent_contract"] = {
             "intent": intent,
             "engine_version": "v2",

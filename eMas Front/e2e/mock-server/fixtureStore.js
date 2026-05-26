@@ -1,5 +1,7 @@
 import {
   activeHappyPathSnapshot,
+  activeRetryStoryActivitySteps,
+  activityActiveRetryStoryPrompt,
   activitySseAnswer,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
@@ -3056,6 +3058,108 @@ export const scenarioCatalog = {
     },
     activityStream() {
       return [{ id: 1, event: 'control', data: { type: 'STREAM_READY' } }]
+    },
+  },
+
+  activityActiveRetryStory: {
+    name: 'activityActiveRetryStory',
+    description: 'Active retry story rows suppress stale graph-stage activity frames.',
+    prompts: [activityActiveRetryStoryPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activityActiveRetryStoryPrompt, 'pw-turn-activity-active-retry-story')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-active-retry-story'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-active-retry-story'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-active-retry-story',
+        objective: 'Validate active retry activity stays on an attempt story',
+        stepId: 'pw-step-activity-active-retry-story',
+        toolName: 'get_jobs',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-active-retry-story-plan-created',
+          planId: 'pw-plan-activity-active-retry-story',
+          content: 'Retry diagnostics are active while graph rows are still arriving.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-active-retry-story' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-active-retry-story'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-active-retry-story-execution-started',
+          planId: 'pw-plan-activity-active-retry-story',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') {
+        return snapshotFromSession(session, activeRetryStoryActivitySteps())
+      }
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return longRunningNotificationStream()
+    },
+    activityStream() {
+      const timestamp = Date.parse(fixtureTime(8)) / 1000
+      return [
+        { id: 1, event: 'control', data: { type: 'STREAM_READY' } },
+        {
+          id: 2,
+          event: 'activity',
+          delayMs: 250,
+          data: {
+            id: 'graph:planner_choose_tool_node',
+            timestamp,
+            order: 7,
+            group: 'planning',
+            label: 'Selecting safe action',
+            detail: 'Selecting a safe action',
+            state: 'running',
+          },
+        },
+        {
+          id: 3,
+          event: 'activity',
+          delayMs: 450,
+          data: {
+            id: 'graph:tool_retrieval_node',
+            timestamp,
+            order: 6,
+            group: 'planning',
+            label: 'Finding information path',
+            detail: 'Finding the right information path',
+            state: 'running',
+          },
+        },
+        {
+          id: 4,
+          event: 'activity',
+          delayMs: 650,
+          data: {
+            id: 'graph:planner_decision_node',
+            timestamp,
+            order: 5,
+            group: 'planning',
+            label: 'Choosing next action',
+            detail: 'Choosing the next backend action',
+            state: 'running',
+          },
+        },
+      ]
     },
   },
 

@@ -42,6 +42,9 @@ export const activitySseGraphDuplicatePrompt =
 export const activitySharedTimestampOrderPrompt =
   'Validate shared timestamp activity order for Factory Agent run'
 
+export const activityActiveRetryStoryPrompt =
+  'Validate active retry story suppresses graph row jumps for Factory Agent run'
+
 export const malformedSsePrompt = 'Validate malformed SSE recovery for M-CNC-01'
 
 export const malformedSseAnswer =
@@ -387,6 +390,82 @@ export function sharedTimestampActivitySteps() {
       label: 'Running selected tool',
       detail: 'Checking relevant records',
       state: 'success',
+    },
+  ]
+}
+
+export function activeRetryStoryActivitySteps() {
+  return [
+    {
+      id: 'act:retry-story-understood',
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-run-1',
+      timestamp: Date.parse(fixtureTime(2)) / 1000,
+      replan_attempt: 1,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Attempt 1 of 6 - Running the selected read',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-check-1',
+      timestamp: Date.parse(fixtureTime(3)) / 1000,
+      replan_attempt: 1,
+      group: 'response',
+      label: 'Checking evidence',
+      detail: 'Attempt 1 of 6 - Previous read timed out',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-replan-2',
+      timestamp: Date.parse(fixtureTime(4)) / 1000,
+      replan_attempt: 2,
+      group: 'planning',
+      label: 'Replanning after timeout',
+      detail: 'Attempt 2 of 6 - Previous read timed out',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-run-2',
+      timestamp: Date.parse(fixtureTime(5)) / 1000,
+      replan_attempt: 2,
+      group: 'research',
+      label: 'Retrying job read',
+      detail: 'Attempt 2 of 6 - Running the next selected read',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-check-2',
+      timestamp: Date.parse(fixtureTime(6)) / 1000,
+      replan_attempt: 2,
+      group: 'response',
+      label: 'Checking evidence',
+      detail: 'Attempt 2 of 6 - Previous read timed out',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-replan-3',
+      timestamp: Date.parse(fixtureTime(7)) / 1000,
+      replan_attempt: 3,
+      group: 'planning',
+      label: 'Replanning after timeout',
+      detail: 'Attempt 3 of 6 - Previous read timed out',
+      state: 'success',
+    },
+    {
+      id: 'act:retry-story-run-3',
+      timestamp: Date.parse(fixtureTime(8)) / 1000,
+      replan_attempt: 3,
+      group: 'research',
+      label: 'Retrying job read',
+      detail: 'Attempt 3 of 6 - Running the next selected read',
+      state: 'running',
     },
   ]
 }

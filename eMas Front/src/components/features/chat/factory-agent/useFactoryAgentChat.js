@@ -40,6 +40,18 @@ const stripSnapshotFallbackActivitySteps = (steps) => (
 const hasTerminalActivityStep = (steps) => (
   Array.isArray(steps) && steps.some((step) => step?.state === 'complete' || step?.state === 'error')
 )
+const replanAttemptValue = (step) => {
+  const raw = step?._replanAttempt ?? step?._replan_attempt ?? step?.replanAttempt ?? step?.replan_attempt
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+const hasReplanAttemptActivityRows = (steps) => (
+  Array.isArray(steps) && steps.some((step) => replanAttemptValue(step) != null)
+)
+const isLiveGraphActivityStep = (step) => String(step?.id || '').startsWith('graph:')
+const stripLiveGraphActivitySteps = (steps) => (
+  Array.isArray(steps) ? steps.filter((step) => !isLiveGraphActivityStep(step)) : []
+)
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -257,7 +269,10 @@ export function useFactoryAgentChat() {
 
         let result
         if (visibleServerSteps.length) {
-          const priorAuthoritativeRows = stripSnapshotFallbackActivitySteps(visibleWithoutClient)
+          const serverHasReplanStory = hasReplanAttemptActivityRows(visibleServerSteps)
+          const priorAuthoritativeRows = serverHasReplanStory
+            ? stripLiveGraphActivitySteps(stripSnapshotFallbackActivitySteps(visibleWithoutClient))
+            : stripSnapshotFallbackActivitySteps(visibleWithoutClient)
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be
             // ahead on some ids - only updating `withoutClient` in place drops rows
@@ -415,8 +430,12 @@ export function useFactoryAgentChat() {
     setActivitySteps((prev) => {
       const withoutClient = stripClientActivitySteps(prev)
       if (hasTerminalActivityStep(withoutClient)) return withoutClient
-      const idx = withoutClient.findIndex((s) => s.id === incoming.id)
-      const next = [...withoutClient]
+      if (hasReplanAttemptActivityRows(withoutClient) && isLiveGraphActivityStep(incoming)) return withoutClient
+      const baseRows = hasReplanAttemptActivityRows([incoming])
+        ? stripLiveGraphActivitySteps(withoutClient)
+        : withoutClient
+      const idx = baseRows.findIndex((s) => s.id === incoming.id)
+      const next = [...baseRows]
       if (idx >= 0) next[idx] = { ...next[idx], ...incoming }
       else next.push(incoming)
       next.sort(compareActivitySteps)
