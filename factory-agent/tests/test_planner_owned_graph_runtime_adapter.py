@@ -532,3 +532,123 @@ def test_phase10_graph_runtime_keeps_no_record_preview_out_of_executable_tool_ou
             "reason": "no_matching_records",
         }
     ]
+
+
+def test_graph_runtime_keeps_failed_tool_evidence_out_of_plan_steps_but_in_tool_outputs():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show machine status.",
+        tools_by_name={},
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-failed-read",
+            requirement_id=state.requirement_ledger.requirements[0].id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__processes_{id}_steps",
+            args={"id": "M-CNC-01", "fields": "status"},
+            normalized_result={
+                "status": "tool_failed",
+                "error": {"code": "tool_error", "detail": "controlled timeout"},
+            },
+            diagnostic_metadata={"graph_authorized_execution": True, "reason": "tool_error"},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-failed-read"]
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "failed-tool-session"}},
+    )
+
+    draft, tool_outputs = adapter._plan_artifacts(
+        result,
+        tools_by_name={
+            "get__processes_{id}_steps": ToolInfo(
+                name="get__processes_{id}_steps",
+                description="Read process steps",
+                endpoint="/processes/{id}/steps",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "pattern": "^PRC-[A-Za-z0-9-]+$"}},
+                    "required": ["id"],
+                },
+                output_schema={"type": "object"},
+                path_params=["id"],
+                is_read_only=True,
+                capability_tags=["process", "step", "read"],
+            )
+        },
+    )
+
+    assert tool_outputs[0]["status"] == "FAILED"
+    assert tool_outputs[0]["tool_name"] == "get__processes_{id}_steps"
+    assert draft.steps == []
+
+
+def test_graph_runtime_keeps_invalid_successful_tool_args_out_of_plan_steps():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show machine status.",
+        tools_by_name={},
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-invalid-read",
+            requirement_id=state.requirement_ledger.requirements[0].id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__job-steps_{id}_slots",
+            args={"id": "M-CNC-01"},
+            normalized_result={"rows": [{"slot_id": "slot-1"}]},
+            satisfies=["operational_state_tool_result"],
+            diagnostic_metadata={"graph_authorized_execution": True},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-invalid-read"]
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "invalid-tool-session"}},
+    )
+
+    draft, tool_outputs = adapter._plan_artifacts(
+        result,
+        tools_by_name={
+            "get__job-steps_{id}_slots": ToolInfo(
+                name="get__job-steps_{id}_slots",
+                description="Read job step slots",
+                endpoint="/job-steps/{id}/slots",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "pattern": "^JOB-[A-Za-z0-9-]+$"}},
+                    "required": ["id"],
+                },
+                output_schema={"type": "object"},
+                path_params=["id"],
+                is_read_only=True,
+                capability_tags=["job", "slots", "read"],
+            )
+        },
+    )
+
+    assert tool_outputs[0]["status"] == "DONE"
+    assert tool_outputs[0]["tool_name"] == "get__job-steps_{id}_slots"
+    assert draft.steps == []

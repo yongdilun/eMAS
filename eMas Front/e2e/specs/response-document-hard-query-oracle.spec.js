@@ -13,6 +13,8 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-9-RAG-INSUFFICIENT',
     'HQ-9-APPROVAL',
     'HQ-9-INTERRUPT',
+    'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
+    'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
     'HQ-9-TOOL-FAILURE',
   ])
 
@@ -57,6 +59,8 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'HQ-9-RAG-INSUFFICIENT',
     'HQ-9-APPROVAL',
     'HQ-9-INTERRUPT',
+    'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
+    'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
     'HQ-9-TOOL-FAILURE',
   ]
 
@@ -153,6 +157,35 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     ledgerRevisionIncrements: true,
     staleApprovalInvalidated: true,
     staleEvidenceInvalidated: true,
+  })
+
+  const replanTimeout = byId['HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE']
+  expect(replanTimeout.toolFaults.rules[0]).toMatchObject({
+    fault: 'timeout',
+    once: false,
+  })
+  expect(replanTimeout.expected.replanSpine).toMatchObject({
+    attemptCountEqualsMaxAttempts: true,
+    limitReached: true,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    requiresStaleAttemptEvidence: true,
+    forbidActiveFinalEvidence: true,
+    forbidStaleFinalEvidence: true,
+  })
+
+  const replanLimit = byId['HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE']
+  expect(replanLimit.toolFaults.rules[0]).toMatchObject({
+    fault: 'http_error',
+    once: false,
+  })
+  expect(replanLimit.expected.replanSpine).toMatchObject({
+    attemptCountEqualsMaxAttempts: true,
+    limitReached: true,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    forbidActiveFinalEvidence: true,
+    forbidResponseEvidenceRefs: true,
   })
 
   const failure = byId['HQ-9-TOOL-FAILURE']

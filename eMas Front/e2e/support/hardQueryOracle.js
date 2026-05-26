@@ -302,8 +302,20 @@ function addReplanSpineViolations(violations, snapshot, expected) {
   if (replanExpected.requiresMissingEvidenceReason && !missingReasons.length) {
     violations.push('replan_spine missing persisted missing_evidence_reasons')
   }
+  if (
+    replanExpected.missingEvidenceReason
+    && !missingReasons.some((reason) => reason?.reason === replanExpected.missingEvidenceReason)
+  ) {
+    violations.push(`replan_spine missing evidence reason ${replanExpected.missingEvidenceReason}`)
+  }
   if (replanExpected.requiresFailedToolMemory && !failedToolCalls.length) {
     violations.push('replan_spine missing persisted failed_tool_calls')
+  }
+  if (
+    replanExpected.failedToolReason
+    && !failedToolCalls.some((call) => call?.reason === replanExpected.failedToolReason)
+  ) {
+    violations.push(`replan_spine failed_tool_calls missing reason ${replanExpected.failedToolReason}`)
   }
   if (replanExpected.requiresStaleAttemptEvidence && !staleRefs.length) {
     violations.push('replan_spine missing stale attempt evidence refs')

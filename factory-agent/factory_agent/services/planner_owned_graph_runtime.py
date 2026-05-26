@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -317,7 +318,7 @@ class PlannerOwnedGraphRuntimeAdapter:
                 context=context,
             )
 
-        draft, tool_outputs = self._plan_artifacts(result)
+        draft, tool_outputs = self._plan_artifacts(result, tools_by_name=tools_by_name)
         failed = self._graph_failed(result, tool_outputs)
         plan_status = "FAILED" if failed and mode != "plan" else "COMPLETED" if mode != "plan" else "DRAFT"
         response = await self._persist_plan(
@@ -597,6 +598,8 @@ class PlannerOwnedGraphRuntimeAdapter:
     def _plan_artifacts(
         self,
         result: PlannerOwnedGraphResult,
+        *,
+        tools_by_name: Mapping[str, ToolInfo] | None = None,
     ) -> tuple[PlanDraft, list[dict[str, Any]]]:
         state = result.state
         summary = self._response_summary(result)
@@ -606,6 +609,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             output
             for output in tool_outputs
             if str(output.get("tool_name") or "").strip() and not output.get("aggregated_from")
+            and str(output.get("status") or "").upper() != "FAILED"
+            and self._tool_output_has_valid_plan_step_args(output, tools_by_name or {})
         ]
         steps = [
             PlanStepDraft(
@@ -623,6 +628,23 @@ class PlannerOwnedGraphRuntimeAdapter:
             safety_content=self._safety_content(state),
         )
         return draft, tool_outputs
+
+    def _tool_output_has_valid_plan_step_args(
+        self,
+        output: Mapping[str, Any],
+        tools_by_name: Mapping[str, ToolInfo],
+    ) -> bool:
+        tool_name = str(output.get("tool_name") or "").strip()
+        tool = tools_by_name.get(tool_name)
+        if tool is None:
+            return False
+        args = output.get("args")
+        args = dict(args) if isinstance(args, Mapping) else {}
+        try:
+            Draft202012Validator(tool.input_schema or {"type": "object"}).validate(args)
+        except Exception:
+            return False
+        return True
 
     def _tool_outputs(self, result: PlannerOwnedGraphResult) -> list[dict[str, Any]]:
         state = result.state

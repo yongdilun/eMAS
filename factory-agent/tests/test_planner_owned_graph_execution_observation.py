@@ -17,7 +17,7 @@ from factory_agent.planning.v2_contracts import (
     HydratedToolCard,
     HydratedToolCards,
 )
-from factory_agent.planning.v2_graph_adapters import GraphExecutionAuthorizationError
+from factory_agent.planning.v2_graph_adapters import GraphExecutionAuthorizationError, execute_graph_api_tool_call
 from factory_agent.planning.v2_planner_decisions import record_planner_decision
 from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
@@ -133,6 +133,20 @@ class RecordingSelector:
         return ToolSelectionResult(self.names, backend_used="retrieval", llm_calls=0)
 
 
+class SequentialRecordingSelector:
+    def __init__(self, name_batches: list[list[str]]) -> None:
+        self.name_batches = name_batches
+        self.calls: list[dict[str, Any]] = []
+        self.returned_name_batches: list[list[str]] = []
+
+    async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+        self.calls.append(kwargs)
+        index = min(len(self.calls) - 1, len(self.name_batches) - 1)
+        names = self.name_batches[index]
+        self.returned_name_batches.append(list(names))
+        return ToolSelectionResult(names, backend_used="retrieval", llm_calls=0)
+
+
 class FakeRAGPipeline:
     def __init__(self, *, answer: str, sources: list[dict[str, Any]]) -> None:
         self.answer = answer
@@ -178,6 +192,11 @@ async def _failed_http_executor(settings, tool, args, *, idempotency_key, extra_
         "body": {"error": "upstream unavailable"},
         "infrastructure_error": True,
     }
+
+
+async def _raising_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
+    _ = settings, tool, args, idempotency_key, extra_headers
+    raise ValueError("Missing required path args: id")
 
 
 class SequentialMachineStatusExecutor:
@@ -261,6 +280,22 @@ class FailPrimaryThenSucceedAlternateExecutor:
                 }
             },
             "infrastructure_error": False,
+        }
+
+
+class AlwaysTimeoutExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        return {
+            "ok": False,
+            "http_status": 504,
+            "latency_ms": 30000,
+            "body": {"error": "primary machine status lookup timed out"},
+            "infrastructure_error": True,
         }
 
 
@@ -504,6 +539,109 @@ async def test_replan_spine_avoids_repeating_failed_tool_when_alternate_candidat
 
 
 @pytest.mark.asyncio
+async def test_replan_spine_retries_read_tool_error_without_preexisting_alternate_candidate():
+    executor = AlwaysTimeoutExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__machines_{id}"],
+            ["get__machines_{id}"],
+            ["get__machines_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+        max_replans=2,
+    ).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-tool-error-no-initial-alternate"},
+    )
+
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+    failed_calls = replan["failed_tool_calls"]
+    requirement = result.state.requirement_ledger.requirements[0]
+    second_context = selector.calls[1]["context"]["context_refs"]
+
+    assert selector.returned_name_batches[0] == ["get__machines_{id}"]
+    assert [call["tool_name"] for call in executor.calls] == [
+        "get__machines_{id}",
+        "get__machines_{id}",
+        "get__machines_{id}",
+    ]
+    assert len(selector.calls) == 3
+    assert replan["attempt_count"] == 2
+    assert replan["max_attempts"] == 2
+    assert replan["replan_limit_reached"] is True
+    assert len(failed_calls) == 3
+    assert failed_calls[0]["reason"] == "tool_error"
+    assert failed_calls[0]["tool_name"] == "get__machines_{id}"
+    assert second_context["failed_tool_calls"][:1] == failed_calls[:1]
+    assert second_context["missing_evidence_reasons"][0]["reason"] == "tool_error"
+    assert requirement.status == "failed"
+    assert result.state.final_validation_result.status == "failed"  # type: ignore[union-attr]
+    assert result.state.response_document_context.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_discovers_alternate_after_read_tool_error_and_excludes_failed_evidence():
+    executor = FailPrimaryThenSucceedAlternateExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__machines_{id}"],
+            ["get__machines_{id}", "get__machine_status_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__machines_{id}": _machine_status_tool(),
+            "get__machine_status_{id}": _alternate_machine_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-tool-error-alternate-discovery"},
+    )
+
+    failed_evidence, final_evidence = result.state.evidence_ledger.evidence
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+    failed_calls = replan["failed_tool_calls"]
+    requirement = result.state.requirement_ledger.requirements[0]
+    second_context = selector.calls[1]["context"]["context_refs"]
+
+    assert selector.returned_name_batches[0] == ["get__machines_{id}"]
+    assert selector.returned_name_batches[1] == ["get__machines_{id}", "get__machine_status_{id}"]
+    assert [call["tool_name"] for call in executor.calls] == [
+        "get__machines_{id}",
+        "get__machine_status_{id}",
+    ]
+    assert failed_calls == [
+        {
+            "tool_name": "get__machines_{id}",
+            "args": {"id": "M-LTH-77", "fields": "status"},
+            "requirement_id": "req-001",
+            "evidence_ref": failed_evidence.id,
+            "reason": "tool_error",
+            "attempt": 1,
+        }
+    ]
+    assert second_context["failed_tool_calls"] == failed_calls
+    assert failed_evidence.diagnostic_metadata["active_revision_satisfaction"] is False
+    assert failed_evidence.diagnostic_metadata["stale_after_graph_replan"] is True
+    assert final_evidence.tool_name == "get__machine_status_{id}"
+    assert final_evidence.diagnostic_metadata["active_revision_satisfaction"] is True
+    assert requirement.status == "satisfied"
+    assert requirement.evidence_refs == [final_evidence.id]
+    assert result.state.response_document_context.evidence_refs == [final_evidence.id]
+    assert replan["stale_attempt_evidence_refs"] == [failed_evidence.id]
+    assert replan["active_final_evidence_refs"] == [final_evidence.id]
+    assert failed_evidence.id not in replan["active_final_evidence_refs"]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_replan_spine_stops_at_max_attempts_with_safe_failure_diagnostic():
     executor = AlwaysMissingStatusExecutor()
 
@@ -661,6 +799,29 @@ async def test_phase5_failed_tool_execution_does_not_satisfy_requirement():
     assert requirement.status != "satisfied"
     assert result.state.final_validation_result.status == "failed"  # type: ignore[union-attr]
     assert decisions[-1] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_phase5_tool_executor_exception_is_typed_failed_tool_evidence():
+    state, _requirement, _need, call = _state_with_persisted_choice()
+    decision = next(decision for decision in state.planner_decisions if decision.decision_kind == "choose_tool")
+
+    execution = await execute_graph_api_tool_call(
+        settings=_settings(),
+        state=state,
+        decision=decision,
+        call=call,
+        tool=_machine_status_tool(),
+        http_executor=_raising_http_executor,
+    )
+
+    assert execution.ok is False
+    assert execution.source_type == "api_tool"
+    assert execution.normalized_result["status"] == "tool_failed"
+    assert execution.normalized_result["error"]["code"] == "tool_error"
+    assert execution.normalized_result["error"]["exception_type"] == "ValueError"
+    assert execution.diagnostic_metadata["reason"] == "tool_error"
+    assert execution.diagnostic_metadata["graph_authorized_execution"] is True
 
 
 @pytest.mark.asyncio

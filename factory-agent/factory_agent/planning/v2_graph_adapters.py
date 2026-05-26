@@ -147,12 +147,20 @@ async def execute_graph_api_tool_call(
     http_executor: GraphToolHttpExecutor | None = None,
 ) -> GraphToolExecutionResult:
     executor = http_executor or _default_http_executor
-    env = await executor(
-        settings,
-        tool,
-        dict(call.args),
-        idempotency_key=_idempotency_key(state=state, decision=decision, call=call),
-    )
+    try:
+        env = await executor(
+            settings,
+            tool,
+            dict(call.args),
+            idempotency_key=_idempotency_key(state=state, decision=decision, call=call),
+        )
+    except Exception as exc:
+        return _tool_execution_exception_result(
+            state=state,
+            decision=decision,
+            call=call,
+            exc=exc,
+        )
     body = _body_mapping(env.get("body"))
     requirement = _requirement_by_id(state, call.requirement_id)
     normalized_result = _normalize_api_result(
@@ -417,6 +425,56 @@ def _tool_missing_result(
             "tool_call_id": call.call_id,
             "status": "tool_failed",
             "reason": "tool_not_registered",
+            "direct_v2_execution": False,
+        },
+    )
+
+
+def _tool_execution_exception_result(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    decision: PlannerDecisionRecord,
+    call: GraphToolCall,
+    exc: Exception,
+) -> GraphToolExecutionResult:
+    _ = state
+    exception_type = type(exc).__name__
+    detail = str(exc) or exception_type
+    return GraphToolExecutionResult(
+        tool_call=call,
+        source_type="api_tool",
+        source_of_truth="operational_state",
+        ok=False,
+        result_ref=f"graph-api-result-{call.call_id}",
+        raw_result={
+            "http_status": None,
+            "body": {
+                "error_type": "tool_execution_exception",
+                "exception_type": exception_type,
+                "message": detail,
+            },
+        },
+        normalized_result={
+            "error": {
+                "code": "tool_error",
+                "detail": detail,
+                "exception_type": exception_type,
+            },
+            "status": "tool_failed",
+            "status_code": None,
+            "request_args": dict(call.args),
+        },
+        diagnostic_metadata={
+            "graph_authorized_execution": True,
+            "execution_adapter": "graph_http_tool_adapter",
+            "decision_id": decision.decision_id,
+            "tool_call_id": call.call_id,
+            "http_status": None,
+            "ok": False,
+            "infrastructure_error": True,
+            "status": "tool_failed",
+            "reason": "tool_error",
+            "exception_type": exception_type,
             "direct_v2_execution": False,
         },
     )
