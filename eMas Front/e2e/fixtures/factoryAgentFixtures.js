@@ -39,6 +39,9 @@ export const activitySseDelayedFallbackPrompt =
 export const activitySseGraphDuplicatePrompt =
   'Validate graph activity does not duplicate understood request rows for M-CNC-01'
 
+export const activitySharedTimestampOrderPrompt =
+  'Validate shared timestamp activity order for Factory Agent run'
+
 export const malformedSsePrompt = 'Validate malformed SSE recovery for M-CNC-01'
 
 export const malformedSseAnswer =
@@ -344,6 +347,48 @@ export function orderedSseActivitySteps({ terminal = false } = {}) {
   }
 
   return steps
+}
+
+export function sharedTimestampActivitySteps() {
+  const timestamp = Date.parse(fixtureTime(4)) / 1000
+  return [
+    {
+      id: 'graph:aaa-evidence-observation',
+      timestamp,
+      order: 4,
+      group: 'response',
+      label: 'Checking result',
+      detail: 'Checking tool evidence',
+      state: 'running',
+    },
+    {
+      id: 'graph:mmm-planner-decision',
+      timestamp,
+      order: 2,
+      group: 'planning',
+      label: 'Choosing next action',
+      detail: 'Choosing the next backend action',
+      state: 'success',
+    },
+    {
+      id: 'graph:zzz-requirement-ledger',
+      timestamp,
+      order: 1,
+      group: 'planning',
+      label: 'Structuring request',
+      detail: 'Structuring the request',
+      state: 'success',
+    },
+    {
+      id: 'graph:bbb-tool-execution',
+      timestamp,
+      order: 3,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      state: 'success',
+    },
+  ]
 }
 
 export function sessionSummary(session) {

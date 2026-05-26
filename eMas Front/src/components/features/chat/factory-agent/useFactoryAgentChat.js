@@ -5,6 +5,7 @@ import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../tu
 import {
   buildActivityStepsFromSnapshot,
   coalesceActivitySteps,
+  compareActivitySteps,
   finalizeHistoricalActivityStates,
   stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils'
@@ -35,6 +36,9 @@ const hasAuthoritativeActivityRows = (steps) => (
 )
 const stripSnapshotFallbackActivitySteps = (steps) => (
   Array.isArray(steps) ? steps.filter((step) => !isSnapshotFallbackActivityStep(step)) : []
+)
+const hasTerminalActivityStep = (steps) => (
+  Array.isArray(steps) && steps.some((step) => step?.state === 'complete' || step?.state === 'error')
 )
 
 function nowTime() {
@@ -230,7 +234,6 @@ export function useFactoryAgentChat() {
     const nextTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
     setTimeline(nextTimeline)
     setPresentation(snapshot?.presentation || null)
-    setResponseDocument(responseDocumentUpdate.state.document)
 
     if (ACTIVITY_TIMELINE_ENABLED) {
       setActivitySteps((prev) => {
@@ -268,9 +271,7 @@ export function useFactoryAgentChat() {
               const existing = byId.get(s.id)
               byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
             }
-            const merged = Array.from(byId.values()).sort(
-              (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-            )
+            const merged = Array.from(byId.values()).sort(compareActivitySteps)
             result = coalesceActivitySteps(merged)
           } else {
             // Session no longer in an active stream: drop client placeholder rows so a
@@ -306,9 +307,7 @@ export function useFactoryAgentChat() {
                 if (!s?.id || byId.has(s.id)) continue
                 byId.set(s.id, { ...s })
               }
-              const merged = Array.from(byId.values()).sort(
-                (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-              )
+              const merged = Array.from(byId.values()).sort(compareActivitySteps)
               result = coalesceActivitySteps(merged)
             } else {
               result = finalizeHistoricalActivityStates(built)
@@ -330,6 +329,8 @@ export function useFactoryAgentChat() {
         return result
       })
     }
+
+    setResponseDocument(responseDocumentUpdate.state.document)
 
     // Server is now the source of truth for pending_approval.
     // The snapshot loader self-heals stale approvals, so we trust it directly.
@@ -413,11 +414,12 @@ export function useFactoryAgentChat() {
     const currentSessionStatus = session?.status || null
     setActivitySteps((prev) => {
       const withoutClient = stripClientActivitySteps(prev)
+      if (hasTerminalActivityStep(withoutClient)) return withoutClient
       const idx = withoutClient.findIndex((s) => s.id === incoming.id)
       const next = [...withoutClient]
       if (idx >= 0) next[idx] = { ...next[idx], ...incoming }
       else next.push(incoming)
-      next.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      next.sort(compareActivitySteps)
       return coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus))
     })
     if (terminalActivity && currentSessionId) {
@@ -459,7 +461,6 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-        FACTORY_AGENT_STATUS.BLOCKED,
       ].includes(session?.status))
 
   useActivityStream(session?.session_id || null, applyStreamActivityStep, {
@@ -475,7 +476,6 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-        FACTORY_AGENT_STATUS.BLOCKED,
       ].includes(session?.status)),
   )
 
@@ -511,7 +511,6 @@ export function useFactoryAgentChat() {
     ) {
       return 3000
     }
-    if (session.status === FACTORY_AGENT_STATUS.BLOCKED) return 6000
     return null
   }, [session?.status])
 

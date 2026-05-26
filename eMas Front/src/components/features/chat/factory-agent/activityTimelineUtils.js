@@ -48,6 +48,7 @@ export function normalizeActivityStep(step) {
   const state = ACTIVITY_STATES.includes(step.state) ? step.state : 'running'
   if (!id || !label) return null
   const replanAttempt = intValue(step._replanAttempt ?? step._replan_attempt ?? step.replanAttempt ?? step.replan_attempt)
+  const order = activityOrderValue(step)
   const normalized = {
     id,
     timestamp: Number.isFinite(Number(step.timestamp)) ? Number(step.timestamp) : Date.now() / 1000,
@@ -57,7 +58,19 @@ export function normalizeActivityStep(step) {
     state,
   }
   if (replanAttempt != null) normalized._replanAttempt = replanAttempt
+  if (order != null) normalized.order = order
   return normalized
+}
+
+export function compareActivitySteps(a, b) {
+  const ts = Number(a?.timestamp || 0) - Number(b?.timestamp || 0)
+  if (ts !== 0) return ts
+  const aOrder = activityOrderValue(a)
+  const bOrder = activityOrderValue(b)
+  if (aOrder != null || bOrder != null) {
+    return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
+  }
+  return String(a?.id || '').localeCompare(String(b?.id || ''))
 }
 
 export function mergeActivityStep(steps, step) {
@@ -65,11 +78,7 @@ export function mergeActivityStep(steps, step) {
   if (!normalized) return Array.isArray(steps) ? steps : []
   const existing = Array.isArray(steps) ? steps : []
   const without = existing.filter((item) => item.id !== normalized.id)
-  return coalesceActivitySteps([...without, normalized].sort((a, b) => {
-    const ts = Number(a.timestamp || 0) - Number(b.timestamp || 0)
-    if (ts !== 0) return ts
-    return String(a.id || '').localeCompare(String(b.id || ''))
-  }))
+  return coalesceActivitySteps([...without, normalized].sort(compareActivitySteps))
 }
 
 export function truncateActivityAfterTerminal(steps = []) {
@@ -117,12 +126,18 @@ function mergeDuplicateActivityStep(existing, incoming) {
   const existingRank = ACTIVITY_STATE_MERGE_RANK[existing?.state] ?? 0
   const incomingRank = ACTIVITY_STATE_MERGE_RANK[incoming?.state] ?? 0
   const preferredState = incomingRank > existingRank ? incoming.state : existing.state
+  const existingOrder = activityOrderValue(existing)
+  const incomingOrder = activityOrderValue(incoming)
+  const order = existingOrder != null && incomingOrder != null
+    ? Math.min(existingOrder, incomingOrder)
+    : existingOrder ?? incomingOrder
   return {
     ...existing,
     ...incoming,
     id: preferActivityId(existing, incoming),
     timestamp: Math.min(Number(existing?.timestamp || 0), Number(incoming?.timestamp || 0)) || incoming.timestamp || existing.timestamp,
     state: preferredState,
+    ...(order != null ? { order } : {}),
   }
 }
 
@@ -142,11 +157,7 @@ export function coalesceActivitySteps(steps = []) {
     indexByMeaning.set(key, out.length)
     out.push(step)
   }
-  return out.sort((a, b) => {
-    const ts = Number(a.timestamp || 0) - Number(b.timestamp || 0)
-    if (ts !== 0) return ts
-    return String(a.id || '').localeCompare(String(b.id || ''))
-  })
+  return out.sort(compareActivitySteps)
 }
 
 /** Collapse only when the latest step is terminal — not if an older step was `complete` while the user is still waiting (e.g. approval). */
@@ -410,6 +421,19 @@ function readTargetLabel(event) {
 function intValue(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null
+}
+
+function activityOrderValue(step) {
+  if (!step || typeof step !== 'object') return null
+  return intValue(
+    step.order ??
+    step.sequence ??
+    step.activityOrder ??
+    step.activity_order ??
+    step._activityOrder ??
+    step._activity_order ??
+    step._order,
+  )
 }
 
 function replanContextCandidates(context) {

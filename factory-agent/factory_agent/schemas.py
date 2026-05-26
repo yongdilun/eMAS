@@ -670,6 +670,10 @@ class TimelineEventResponse(BaseModel):
 class ActivityStepResponse(BaseModel):
     id: str
     timestamp: int
+    order: int | None = Field(
+        default=None,
+        description="Optional backend-authored ordering key for rows emitted at the same timestamp.",
+    )
     group: Literal["planning", "research", "approval", "response", "system"]
     label: str
     detail: str | None = None

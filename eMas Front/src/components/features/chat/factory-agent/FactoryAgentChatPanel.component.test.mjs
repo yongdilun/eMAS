@@ -445,6 +445,66 @@ test('FactoryAgentChatPanel renders backend unavailable errors without fake succ
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel does not describe a started active run timeout as chat startup failure', async () => {
+  const chatState = createChatState({
+    session: { session_id: 'session-started-timeout', name: 'Started timeout', status: 'EXECUTING' },
+    sessionList: [{ session_id: 'session-started-timeout', name: 'Started timeout', status: 'EXECUTING' }],
+    activeSessionName: 'Started timeout',
+    error: 'Factory Agent request timed out after 75000 ms. Retry or cancel the current run.',
+    turns: [
+      {
+        id: 'turn-started-timeout',
+        created_at: '2026-05-27T09:07:00.000Z',
+        user: {
+          content: 'Find all low priority jobs',
+          created_at: '2026-05-27T09:07:00.000Z',
+        },
+        summary: "I'm working on the request and waiting for the next backend update.",
+        responseDocument: baseResponseDocument({
+          state: 'running',
+          status: 'running',
+          message: "I'm working on the request and waiting for the next backend update.",
+          blocks: [
+            {
+              id: 'activity:started-timeout',
+              type: 'run_activity',
+              step_ids: ['analysis-1'],
+            },
+          ],
+        }),
+      },
+    ],
+    activitySteps: [
+      {
+        id: 'act:running-tool',
+        timestamp: 1,
+        group: 'research',
+        label: 'Running selected tool',
+        detail: 'Checking relevant records',
+        state: 'success',
+      },
+      {
+        id: 'act:checking-result',
+        timestamp: 2,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'running',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.match(view.container.querySelector('[data-chatbot-topbar]')?.textContent || '', /Checking result/)
+  assert.doesNotMatch(view.text(), /Factory Agent chat could not start/i)
+  assert.doesNotMatch(view.text(), /Try starting chat again/i)
+  assert.doesNotMatch(view.text(), /request timed out after 75000 ms/i)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders failed commit diagnostics without stale success copy', async () => {
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
   const safeSummary =
@@ -2320,6 +2380,10 @@ test('FactoryAgentChatPanel lets terminal response_document own stale timeout er
   assert.doesNotMatch(view.text(), /Factory Agent request timed out/i)
   assert.doesNotMatch(view.text(), /Request could not start/i)
   assert.doesNotMatch(view.text(), /Try starting chat again/i)
+  assert.equal(
+    Array.from(view.container.querySelectorAll('button')).some((button) => button.textContent.trim() === 'stop'),
+    false,
+  )
 
   await view.unmount()
 })

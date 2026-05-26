@@ -6,6 +6,7 @@ import {
   activitySseGraphDuplicatePrompt,
   activitySsePrompt,
   activitySseResponseDocumentPrompt,
+  activitySharedTimestampOrderPrompt,
 } from '../fixtures/factoryAgentFixtures.js'
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
@@ -298,5 +299,33 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(page.getByText('Run complete')).toBeVisible()
     await expect(page.getByText("I'm working on the request and waiting for the next backend update.")).toHaveCount(0)
     await expect(page.getByText('Working on response-document activity stream.')).toHaveCount(0)
+  })
+
+  test('active activity rows keep graph order when backend timestamps collide', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySharedTimestampOrderPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Checking tool evidence' }).first()
+    await expect(activityList.getByText('Structuring request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Structuring the request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing the next backend action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Checking relevant records', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Checking tool evidence', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Preparing next action', { exact: true })).toHaveCount(0)
+
+    const activityText = await activityList.innerText()
+    expect(activityText.indexOf('Structuring the request')).toBeLessThan(
+      activityText.indexOf('Choosing the next backend action'),
+    )
+    expect(activityText.indexOf('Choosing the next backend action')).toBeLessThan(
+      activityText.indexOf('Checking relevant records'),
+    )
+    expect(activityText.indexOf('Checking relevant records')).toBeLessThan(
+      activityText.indexOf('Checking tool evidence'),
+    )
+    await expect(page.getByText(/Factory Agent chat could not start/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
   })
 })

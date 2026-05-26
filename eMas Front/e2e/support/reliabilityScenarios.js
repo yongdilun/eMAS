@@ -21,6 +21,9 @@ export const reliabilityLargeResultAnswer =
   'Phase 15 reliability large result rendered 120 rows and 24 knowledge sources without losing usable controls. [^1] [^24]'
 
 export const reliabilitySlowTimeoutPrompt = 'Phase 15 reliability slow tool response should timeout safely'
+export const reliabilityStartedTimeoutPrompt = 'Phase 15 started execution timeout should not look like startup failure'
+export const reliabilityStartedTimeoutAnswer =
+  'Started execution continued after the client timeout and produced the final reliability answer.'
 
 export function reliabilityTurnForPrompt(prompt) {
   const normalized = String(prompt || '').trim().toLowerCase()
@@ -121,4 +124,44 @@ export function reliabilitySlowActivitySteps() {
       state: 'running',
     },
   ]
+}
+
+export function reliabilityStartedTimeoutActivitySteps({ terminal = false } = {}) {
+  const rows = [
+    {
+      id: 'pw-reliability-started-understood',
+      timestamp: Date.parse(fixtureTime(1)) / 1000,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'success',
+    },
+    {
+      id: 'pw-reliability-started-tool',
+      timestamp: Date.parse(fixtureTime(2)) / 1000,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      state: terminal ? 'success' : 'running',
+    },
+    {
+      id: 'pw-reliability-started-response',
+      timestamp: Date.parse(fixtureTime(3)) / 1000,
+      group: 'response',
+      label: 'Preparing response',
+      detail: 'Finalizing the answer',
+      state: terminal ? 'success' : 'running',
+    },
+  ]
+  if (terminal) {
+    rows.push({
+      id: 'pw-reliability-started-complete',
+      timestamp: Date.parse(fixtureTime(4)) / 1000,
+      group: 'response',
+      label: 'Run complete',
+      detail: 'All steps finished. See the thread below.',
+      state: 'complete',
+    })
+  }
+  return rows
 }

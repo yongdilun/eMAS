@@ -354,11 +354,16 @@ _LIVE_ACTIVITY_ALLOWED_STATES = {"running", "success", "retry", "waiting", "erro
 _LIVE_ACTIVITY_ALLOWED_LABELS = {
     "Understood request",
     "Preparing next action",
+    "Structuring request",
+    "Choosing next action",
+    "Finding information path",
+    "Selecting safe action",
     "Searching knowledge sources",
     "Building cited answer",
     "Checking citations",
     "Running selected tool",
     "Checking result",
+    "Checking approvals",
     "Waiting for approval",
     "Applying approved changes",
     "Preparing response",
@@ -1026,17 +1031,27 @@ def _live_activity_steps_for_snapshot(
         except (TypeError, ValueError):
             timestamp = fallback_ts + idx
         detail = _live_activity_text(row.get("detail")) or None
+        order = _activity_int(row.get("order") or row.get("_order")) or idx + 1
         out.append(
             {
                 "id": step_id,
                 "timestamp": timestamp,
+                "order": order,
+                "_order": order,
                 "group": group,
                 "label": label,
                 "detail": detail,
                 "state": state,
             }
         )
-    return sorted(out, key=lambda step: (int(step["timestamp"]), str(step["id"])))
+    return sorted(
+        out,
+        key=lambda step: (
+            int(step.get("order") or step.get("_order") or 0),
+            int(step["timestamp"]),
+            str(step["id"]),
+        ),
+    )
 
 
 def _snapshot_plan_scoped_steps(
@@ -1203,7 +1218,13 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         live_ids = {str(step["id"]) for step in live_steps}
         raw_steps = [step for step in raw_steps if str(step.get("id") or "") not in live_ids]
         raw_steps.extend(live_steps)
-        raw_steps.sort(key=lambda step: (int(step["timestamp"]), str(step["id"])))
+        raw_steps.sort(
+            key=lambda step: (
+                int(step["timestamp"]),
+                int(step.get("order") or step.get("_order") or 0),
+                str(step["id"]),
+            )
+        )
 
     if session_status == "WAITING_APPROVAL":
         latest_waiting_approval_index = -1
@@ -1265,6 +1286,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         ActivityStepResponse(
             id=str(step["id"]),
             timestamp=int(step["timestamp"]),
+            order=_activity_int(step.get("order") or step.get("_order")),
             group=step["group"],
             label=step["label"],
             detail=step.get("detail"),

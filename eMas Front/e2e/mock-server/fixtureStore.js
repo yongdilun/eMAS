@@ -5,6 +5,7 @@ import {
   activitySseGraphDuplicatePrompt,
   activitySsePrompt,
   activitySseResponseDocumentPrompt,
+  activitySharedTimestampOrderPrompt,
   backendUnavailablePrompt,
   buildFactoryAgentPlan,
   buildHappyPathPlan,
@@ -31,6 +32,7 @@ import {
   retryExecutePrompt,
   sessionCompletedEvent,
   sessionFailedEvent,
+  sharedTimestampActivitySteps,
   sessionSummary,
   snapshotFromSession,
   streamDropPrompt,
@@ -130,6 +132,9 @@ import {
   reliabilityLongActivitySteps,
   reliabilityLongStreamAnswer,
   reliabilityLongStreamPrompt,
+  reliabilityStartedTimeoutActivitySteps,
+  reliabilityStartedTimeoutAnswer,
+  reliabilityStartedTimeoutPrompt,
   reliabilitySlowActivitySteps,
   reliabilitySlowTimeoutPrompt,
   reliabilityTurnForPrompt,
@@ -1450,6 +1455,96 @@ export const scenarioCatalog = {
     snapshot(session) {
       if (session.status === 'FAILED') return snapshotFromSession(session)
       if (session.status === 'PLANNING' || session.status === 'EXECUTING') return snapshotFromSession(session, reliabilitySlowActivitySteps())
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return longRunningNotificationStream()
+    },
+  },
+
+  reliabilityStartedExecutionTimeout: {
+    name: 'reliabilityStartedExecutionTimeout',
+    description: 'Started execution can outlive a client timeout without showing startup-failure UX.',
+    prompts: [reliabilityStartedTimeoutPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || reliabilityStartedTimeoutPrompt, 'pw-turn-reliability-started-timeout')
+    },
+    onPlan(session) {
+      const ids = reliabilityIds(session, 'started-timeout')
+      session.status = 'EXECUTING'
+      session.operation_id = ids.planId
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: ids.planId,
+        objective: 'Execution starts and finishes even when the client request times out.',
+        stepId: ids.stepId,
+        toolName: 'slow_reliability_tool',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-created`,
+          planId: ids.planId,
+          content: 'The run has enough structure to start execution.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: ids.planId } }
+    },
+    async onExecute(session, sleep) {
+      const ids = reliabilityIds(session, 'started-timeout')
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-execution-started`,
+          planId: ids.planId,
+        }),
+      )
+      await sleep(2600)
+      if (session.status === 'FAILED') {
+        return { status: 409, body: { detail: 'Run was cancelled before slow execution completed.' } }
+      }
+      session.status = 'COMPLETED'
+      completeSteps(session)
+      appendTimeline(
+        session,
+        toolResultEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-tool-result`,
+          stepId: ids.stepId,
+          planId: ids.planId,
+          toolName: 'slow_reliability_tool',
+          content: reliabilityStartedTimeoutAnswer,
+          details: {
+            result: {
+              status: 'completed',
+              _summary: reliabilityStartedTimeoutAnswer,
+            },
+          },
+        }),
+      )
+      appendTimeline(
+        session,
+        sessionCompletedEvent({
+          turnId: ids.turnId,
+          eventId: `${ids.planId}-completed`,
+          planId: ids.planId,
+          content: reliabilityStartedTimeoutAnswer,
+          reason: 'reliability_started_timeout_fixture',
+        }),
+      )
+      return { status: 200, body: { status: 'COMPLETED', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'COMPLETED') {
+        return snapshotFromSession(session, reliabilityStartedTimeoutActivitySteps({ terminal: true }))
+      }
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') {
+        return snapshotFromSession(session, reliabilityStartedTimeoutActivitySteps())
+      }
       return defaultIdleSnapshot(session)
     },
     notificationStream() {
@@ -2904,6 +2999,63 @@ export const scenarioCatalog = {
           ? { ...frame, afterSent: (session) => setTimeout(() => completePendingStream(session), 800) }
           : frame
       ))
+    },
+  },
+
+  activitySharedTimestampOrder: {
+    name: 'activitySharedTimestampOrder',
+    description: 'Active graph activity rows use structured order when timestamps collide.',
+    prompts: [activitySharedTimestampOrderPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySharedTimestampOrderPrompt, 'pw-turn-activity-shared-order')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-shared-order'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-shared-order'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-shared-order',
+        objective: 'Validate stable activity ordering when graph rows share timestamps',
+        stepId: 'pw-step-activity-shared-order',
+        toolName: 'get_machine_status',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-shared-order-plan-created',
+          planId: 'pw-plan-activity-shared-order',
+          content: 'Activity rows share a timestamp while retaining graph progress order.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-shared-order' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-shared-order'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-shared-order-execution-started',
+          planId: 'pw-plan-activity-shared-order',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') {
+        return snapshotFromSession(session, sharedTimestampActivitySteps())
+      }
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return longRunningNotificationStream()
+    },
+    activityStream() {
+      return [{ id: 1, event: 'control', data: { type: 'STREAM_READY' } }]
     },
   },
 

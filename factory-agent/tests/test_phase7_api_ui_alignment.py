@@ -745,6 +745,66 @@ def test_phase7_activity_adapter_uses_live_graph_activity_while_session_is_activ
     ]
 
 
+def test_live_graph_activity_exposes_serialized_order_when_timestamps_collide():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    timestamp = int(created_at.timestamp())
+    active_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-live-graph-order",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at,
+            "replan_context": {
+                "live_activity_steps": [
+                    {
+                        "id": "graph:aaa-evidence",
+                        "timestamp": timestamp,
+                        "order": 3,
+                        "group": "response",
+                        "label": "Checking result",
+                        "detail": "Checking tool evidence",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:zzz-requirement",
+                        "timestamp": timestamp,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Structuring request",
+                        "detail": "Structuring the request",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:mmm-tool",
+                        "timestamp": timestamp,
+                        "order": 2,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                ]
+            },
+        },
+    )
+
+    steps = _activity_steps_for_snapshot(active_snapshot)
+    assert [step.label for step in steps] == [
+        "Structuring request",
+        "Running selected tool",
+        "Checking result",
+    ]
+    assert [step.order for step in steps] == [1, 2, 3]
+    assert [step.model_dump()["order"] for step in steps] == [1, 2, 3]
+
+
 def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
     domains = ["machines", "jobs", "products", "inventory", "reports"]

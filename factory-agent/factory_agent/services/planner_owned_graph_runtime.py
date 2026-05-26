@@ -62,22 +62,22 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "requirement_ledger_node": (
             "planning",
-            "Preparing next action",
+            "Structuring request",
             "Structuring the request",
         ),
         "planner_decision_node": (
             "planning",
-            "Preparing next action",
+            "Choosing next action",
             "Choosing the next backend action",
         ),
         "tool_retrieval_node": (
             "planning",
-            "Preparing next action",
+            "Finding information path",
             "Finding the right information path",
         ),
         "planner_choose_tool_node": (
             "planning",
-            "Preparing next action",
+            "Selecting safe action",
             "Selecting a safe action",
         ),
         "tool_execution_node": (
@@ -97,7 +97,7 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "approval_node": (
             "planning",
-            "Preparing next action",
+            "Checking approvals",
             "Checking approval requirements",
         ),
         "finalize_node": (
@@ -138,11 +138,15 @@ class LiveGraphActivityRecorder:
         self._session_id = session_id
         self._pending: list[dict[str, Any]] = []
         self._drain_task: asyncio.Task[None] | None = None
+        self._sequence = 0
 
     def record_graph_event(self, event: Mapping[str, Any]) -> None:
         step = _live_activity_step_for_graph_event(event)
         if step is None:
             return
+        self._sequence += 1
+        step["order"] = self._sequence
+        step["_order"] = self._sequence
         self._pending.append(step)
         try:
             loop = asyncio.get_running_loop()
@@ -180,10 +184,19 @@ class LiveGraphActivityRecorder:
             existing = [dict(item) for item in existing_rows if isinstance(item, dict)] if isinstance(existing_rows, list) else []
             by_id = {str(item.get("id") or ""): item for item in existing if item.get("id")}
             for step in batch:
-                by_id[str(step["id"])] = dict(step)
+                step_id = str(step["id"])
+                existing_order = by_id.get(step_id, {}).get("order") or by_id.get(step_id, {}).get("_order")
+                if existing_order is not None:
+                    step["order"] = existing_order
+                    step["_order"] = existing_order
+                by_id[step_id] = dict(step)
             live_steps = sorted(
                 by_id.values(),
-                key=lambda item: (int(item.get("timestamp") or 0), str(item.get("id") or "")),
+                key=lambda item: (
+                    int(item.get("order") or item.get("_order") or 0),
+                    int(item.get("timestamp") or 0),
+                    str(item.get("id") or ""),
+                ),
             )[-_LIVE_GRAPH_MAX_STEPS:]
             context["live_activity_steps"] = live_steps
             context["live_activity_revision"] = int(context.get("live_activity_revision") or 0) + 1

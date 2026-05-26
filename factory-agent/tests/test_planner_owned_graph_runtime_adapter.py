@@ -18,6 +18,7 @@ from factory_agent.planning.v2_agent_state import build_initial_planner_owned_ag
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.schemas import PlanResponse, ToolInfo
 from factory_agent.services.plan_creation_service import PlanCreationService
+from factory_agent.services import planner_owned_graph_runtime as runtime_module
 from factory_agent.services.planner_owned_graph_runtime import LiveGraphActivityRecorder, PlannerOwnedGraphRuntimeAdapter
 
 
@@ -271,6 +272,76 @@ async def test_phase10_graph_runtime_records_live_activity_for_activity_sse(sess
     ]
     assert live_steps[1]["detail"] == "Searching retrieved documents"
     assert row.event_seq > 3
+
+
+@pytest.mark.asyncio
+async def test_live_activity_preserves_graph_progress_order_when_nodes_share_timestamp(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+
+    class FrozenDateTime:
+        @staticmethod
+        def utcnow():
+            return created_at
+
+    monkeypatch.setattr(runtime_module, "datetime", FrozenDateTime)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-order",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Find low priority jobs",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-order",
+    )
+    for node in [
+        "requirement_ledger_node",
+        "planner_decision_node",
+        "tool_execution_node",
+        "evidence_observation_node",
+    ]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-order")
+            )
+        ).scalar_one()
+
+    assert [step["detail"] for step in row.replan_context["live_activity_steps"]] == [
+        "Structuring the request",
+        "Choosing the next backend action",
+        "Checking relevant records",
+        "Checking tool evidence",
+    ]
+    assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
+        "Structuring request",
+        "Choosing next action",
+        "Running selected tool",
+        "Checking result",
+    ]
+    assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3, 4]
 
 
 def test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume():

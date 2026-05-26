@@ -7,6 +7,7 @@ import {
   buildActivityStepsFromSnapshot,
   buildActivityStepsFromTimeline,
   coalesceActivitySteps,
+  compareActivitySteps,
   mergeActivityStep,
   normalizeActivityStep,
   shouldAutoCollapseActivity,
@@ -38,6 +39,46 @@ test('assistantAnswerAllowed: defers until activity terminal when steps exist', 
     }),
     true,
   )
+})
+
+test('activity ordering uses backend order when timestamps collide', () => {
+  const timestamp = 1770000000
+  const ordered = [
+    {
+      id: 'graph:aaa-last',
+      timestamp,
+      order: 3,
+      label: 'Checking result',
+      detail: 'Checking tool evidence',
+      group: 'response',
+      state: 'running',
+    },
+    {
+      id: 'graph:zzz-first',
+      timestamp,
+      order: 1,
+      label: 'Understood request',
+      detail: 'Structuring the request',
+      group: 'planning',
+      state: 'success',
+    },
+    {
+      id: 'graph:mmm-second',
+      timestamp,
+      order: 2,
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      group: 'research',
+      state: 'success',
+    },
+  ].sort(compareActivitySteps)
+
+  assert.deepEqual(ordered.map((step) => step.detail), [
+    'Structuring the request',
+    'Checking relevant records',
+    'Checking tool evidence',
+  ])
+  assert.equal(normalizeActivityStep(ordered[0]).order, 1)
 })
 
 test('assistantAnswerAllowed: active sessions do not unlock on activity terminal before final snapshot', () => {

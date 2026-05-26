@@ -808,12 +808,14 @@ function FactoryAgentDiagnostics({
   retrying,
   onRetryConnection,
   terminalResponseDocumentAvailable = false,
+  runStarted = false,
 }) {
   const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
-  const visibleError = terminalResponseDocumentAvailable ? null : error
-  if (!visibleError && diagnostics.length === 0) return null
-  const backendUnavailable = isBackendUnavailableError(visibleError)
+  const candidateError = terminalResponseDocumentAvailable ? null : error
+  const backendUnavailable = isBackendUnavailableError(candidateError)
   const terminalAttention = !backendUnavailable && isTerminalAttentionStatus(sessionStatus)
+  const visibleError = runStarted && !backendUnavailable && !terminalAttention ? null : candidateError
+  if (!visibleError && diagnostics.length === 0) return null
   const title = backendUnavailable
     ? 'Factory Agent is disconnected'
     : terminalAttention
@@ -1018,7 +1020,8 @@ const FactoryAgentChatPanel = ({
       isSending ||
       sessionShowsActiveProgress),
   )
-  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(effectiveSessionStatus)
+  const terminalResponseDocumentAvailable = latestTurnHasTerminalResponseDocument(turns)
+  const canCancel = Boolean(session?.session_id) && sessionShowsActiveProgress && !terminalResponseDocumentAvailable
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
   let placeholder = 'Ask factory agent...'
@@ -1028,7 +1031,14 @@ const FactoryAgentChatPanel = ({
   const displayStatus =
     displayStatusFromActivity(activitySteps, effectiveSessionStatus) ||
     friendlySessionStatus(effectiveSessionStatus, isSending)
-  const terminalResponseDocumentAvailable = latestTurnHasTerminalResponseDocument(turns)
+  const runStartedWithProgress = Boolean(
+    session?.session_id &&
+    sessionShowsActiveProgress &&
+    (
+      (Array.isArray(activitySteps) && activitySteps.length > 0) ||
+      (Array.isArray(turns) && turns.some((turn) => normalizeResponseDocument(turn?.responseDocument).status !== 'absent'))
+    ),
+  )
 
   return (
     <div className="flex h-full relative">
@@ -1144,6 +1154,7 @@ const FactoryAgentChatPanel = ({
           retrying={isRetryingConnection}
           onRetryConnection={retryConnection}
           terminalResponseDocumentAvailable={terminalResponseDocumentAvailable}
+          runStarted={runStartedWithProgress}
         />
 
         <div className="flex min-h-0 flex-1 bg-canvas" data-chatbot-workspace="">
