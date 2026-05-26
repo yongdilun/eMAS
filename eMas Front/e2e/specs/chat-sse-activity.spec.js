@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import {
   activityActiveRetryStoryPrompt,
+  activityRetryCollapseHandoffPrompt,
   activitySseAnswer,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
@@ -368,5 +369,23 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(0)
     const currentCount = await activityList.getByText('Current', { exact: true }).count()
     expect(currentCount).toBe(1)
+  })
+
+  test('active collapsed retry snapshot prunes old attempt rows and stale spinners', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activityRetryCollapseHandoffPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Attempt 1 of 6' }).first()
+    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+
+    await expect(activityList.getByText('Earlier retry attempts', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('4 earlier attempts collapsed', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 6 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Attempt 4 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
+    const progressIcons = await activityList.locator('[data-icon="progress_activity"]').count()
+    expect(progressIcons).toBe(1)
   })
 })

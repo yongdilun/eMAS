@@ -52,6 +52,9 @@ const isLiveGraphActivityStep = (step) => String(step?.id || '').startsWith('gra
 const stripLiveGraphActivitySteps = (steps) => (
   Array.isArray(steps) ? steps.filter((step) => !isLiveGraphActivityStep(step)) : []
 )
+const stripReplanAttemptActivitySteps = (steps) => (
+  Array.isArray(steps) ? steps.filter((step) => replanAttemptValue(step) == null) : []
+)
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -271,7 +274,9 @@ export function useFactoryAgentChat() {
         if (visibleServerSteps.length) {
           const serverHasReplanStory = hasReplanAttemptActivityRows(visibleServerSteps)
           const priorAuthoritativeRows = serverHasReplanStory
-            ? stripLiveGraphActivitySteps(stripSnapshotFallbackActivitySteps(visibleWithoutClient))
+            ? stripReplanAttemptActivitySteps(
+              stripLiveGraphActivitySteps(stripSnapshotFallbackActivitySteps(visibleWithoutClient)),
+            )
             : stripSnapshotFallbackActivitySteps(visibleWithoutClient)
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be

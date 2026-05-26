@@ -1,7 +1,10 @@
 import {
   activeHappyPathSnapshot,
+  activeRetryCollapsedStoryActivitySteps,
+  activeRetryFullNoisyStoryActivitySteps,
   activeRetryStoryActivitySteps,
   activityActiveRetryStoryPrompt,
+  activityRetryCollapseHandoffPrompt,
   activitySseAnswer,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
@@ -3160,6 +3163,69 @@ export const scenarioCatalog = {
           },
         },
       ]
+    },
+  },
+
+  activityRetryCollapseHandoff: {
+    name: 'activityRetryCollapseHandoff',
+    description: 'Active retry story rows removed by a later collapsed snapshot are pruned from the UI.',
+    prompts: [activityRetryCollapseHandoffPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activityRetryCollapseHandoffPrompt, 'pw-turn-activity-retry-collapse')
+      session.retry_collapse_snapshot_count = 0
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-retry-collapse'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-retry-collapse'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-retry-collapse',
+        objective: 'Validate active retry collapsed snapshot handoff',
+        stepId: 'pw-step-activity-retry-collapse',
+        toolName: 'get_jobs',
+      })
+      session.steps = [...session.plan.steps]
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-retry-collapse-plan-created',
+          planId: 'pw-plan-activity-retry-collapse',
+          content: 'Retry attempts are being compacted while the run remains active.',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-retry-collapse' } }
+    },
+    async onExecute(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-retry-collapse'
+      session.execute_count += 1
+      session.status = 'EXECUTING'
+      appendTimeline(
+        session,
+        executionStartedEvent({
+          turnId,
+          eventId: 'pw-activity-retry-collapse-execution-started',
+          planId: 'pw-plan-activity-retry-collapse',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      if (session.status === 'PLANNING' || session.status === 'EXECUTING') {
+        const count = Number(session.retry_collapse_snapshot_count || 0) + 1
+        session.retry_collapse_snapshot_count = count
+        const steps = count <= 3
+          ? activeRetryFullNoisyStoryActivitySteps({ activeAttempt: 5 })
+          : activeRetryCollapsedStoryActivitySteps()
+        return snapshotFromSession(session, steps)
+      }
+      return defaultIdleSnapshot(session)
+    },
+    notificationStream() {
+      return longRunningNotificationStream()
+    },
+    activityStream() {
+      return [{ id: 1, event: 'control', data: { type: 'STREAM_READY' } }]
     },
   },
 
