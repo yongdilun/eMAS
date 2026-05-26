@@ -375,14 +375,23 @@ def _planner_decision_is_active_for_graph_revision(
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
 ) -> bool:
+    stale_ids: set[str] = set()
     stale = state.execution_trace.diagnostics.get("phase9_stale_work")
-    if not isinstance(stale, Mapping):
+    if isinstance(stale, Mapping):
+        stale_ids.update(
+            str(decision_id)
+            for decision_id in stale.get("stale_planner_decision_ids", [])
+            if str(decision_id)
+        )
+    replan = state.execution_trace.diagnostics.get("replan_spine")
+    if isinstance(replan, Mapping):
+        stale_ids.update(
+            str(decision_id)
+            for decision_id in replan.get("stale_planner_decision_ids", [])
+            if str(decision_id)
+        )
+    if not stale_ids:
         return True
-    stale_ids = {
-        str(decision_id)
-        for decision_id in stale.get("stale_planner_decision_ids", [])
-        if str(decision_id)
-    }
     return decision.decision_id not in stale_ids
 
 

@@ -163,6 +163,40 @@ async def _failed_http_executor(settings, tool, args, *, idempotency_key, extra_
     }
 
 
+class SequentialMachineStatusExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, tool, idempotency_key, extra_headers
+        self.calls.append({"args": dict(args)})
+        if len(self.calls) == 1:
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "machine_id": args.get("id"),
+                        "location": "line-7",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {
+                "data": {
+                    "machine_id": args.get("id"),
+                    "status": "running",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 def _graph(
     *,
     tools_by_name: dict[str, ToolInfo] | None = None,
@@ -259,6 +293,56 @@ def _state_with_persisted_choice():
     )
     record_planner_decision(state, choose)
     return state, requirement, need, call
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_retries_after_retriable_missing_evidence_and_then_satisfies():
+    executor = SequentialMachineStatusExecutor()
+    selector = RecordingSelector(["get__machines_{id}"])
+
+    result = await _graph(selector=selector, http_executor=executor).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-read-recovery"},
+    )
+
+    requirement = result.state.requirement_ledger.requirements[0]
+    evidence = result.state.evidence_ledger.evidence
+    diagnostics = result.state.execution_trace.diagnostics
+
+    assert len(executor.calls) == 2
+    assert len(selector.calls) == 2
+    assert requirement.status == "satisfied"
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert "status" not in evidence[0].normalized_result.get("fields", {})
+    assert evidence[-1].normalized_result.get("fields", {}).get("status") == "running"
+    assert requirement.evidence_refs == [evidence[-1].id]
+    assert diagnostics["satisfaction"]["missing_evidence_reasons"][0]["retriable"] is True
+    assert diagnostics["replan_spine"]["attempt_count"] == 1
+    assert diagnostics["phase9_active_revision_evidence"]["historical_evidence_refs"] == [evidence[0].id]
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_routes_unsatisfied_retriable_requirement_back_to_planner():
+    executor = SequentialMachineStatusExecutor()
+    result = await _graph(http_executor=executor).run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "replan-spine-route"},
+    )
+
+    node_order = result.node_order
+    replan = result.state.execution_trace.diagnostics["replan_spine"]
+    requirement = result.state.requirement_ledger.requirements[0]
+
+    assert node_order.count("planner_decision_node") == 2
+    assert node_order.count("tool_retrieval_node") == 2
+    assert node_order.count("planner_choose_tool_node") == 2
+    assert node_order.count("tool_execution_node") == 2
+    assert node_order.count("satisfaction_node") == 2
+    assert replan["attempt_count"] == 1
+    assert replan["attempts"][0]["requirement_ids"] == [requirement.id]
+    assert replan["route"] == "approval_node"
+    assert requirement.status == "satisfied"
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,8 @@ from ..planning.v2_contracts import (
     HydratedToolCard,
     HydratedToolCards,
     RequirementLedger,
+    RequirementRevisionRecord,
+    RequirementSatisfactionState,
     SatisfactionCheck,
     ToolRetrievalTrace,
     V2ContractModel,
@@ -130,6 +132,7 @@ PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER: tuple[str, ...] = (
 )
 
 _PENDING_EXECUTION_DIAGNOSTIC_KEY = "phase5_pending_tool_execution"
+_REPLAN_SPINE_DIAGNOSTIC_KEY = "replan_spine"
 _CHECKPOINTER_UNSET = object()
 
 
@@ -616,13 +619,26 @@ class PlannerOwnedAgentGraph:
         graph.add_edge("planner_choose_tool_node", "tool_execution_node")
         graph.add_edge("tool_execution_node", "evidence_observation_node")
         graph.add_edge("evidence_observation_node", "satisfaction_node")
-        graph.add_edge("satisfaction_node", "approval_node")
+        graph.add_conditional_edges(
+            "satisfaction_node",
+            self._route_after_satisfaction,
+            {
+                "replan": "planner_decision_node",
+                "continue": "approval_node",
+            },
+        )
         graph.add_edge("approval_node", "finalize_node")
         graph.add_edge("finalize_node", "response_document_node")
         graph.add_edge("response_document_node", END)
         if self._checkpointer is None:
             return graph.compile()
         return graph.compile(checkpointer=self._checkpointer)
+
+    def _route_after_satisfaction(self, state: PlannerOwnedAgentGraphState) -> str:
+        replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+        if isinstance(replan, Mapping) and replan.get("route") == "planner_decision_node":
+            return "replan"
+        return "continue"
 
     async def _semantic_intake_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "semantic_intake_node", self._tracer)
@@ -1195,6 +1211,13 @@ class PlannerOwnedAgentGraph:
             ),
         }
         validate_graph_state_final_state(state)
+        current_missing_reasons = _current_missing_evidence_reasons(state)
+        _prepare_replan_spine_after_satisfaction(
+            state,
+            current_missing_reasons=current_missing_reasons,
+            max_attempts=max(0, int(getattr(self._settings, "max_replans", 0) or 0)),
+        )
+        _retain_replan_missing_evidence_reason_history(state)
         return _state_update(state)
 
     async def _approval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -1226,12 +1249,17 @@ class PlannerOwnedAgentGraph:
             }
             return _state_update(state)
         if state.final_validation_result is not None and state.final_validation_result.status == "passed":
+            active_evidence_refs = [
+                evidence.id
+                for evidence in state.evidence_ledger.evidence
+                if _evidence_can_satisfy_active_revision(state, evidence)
+            ]
             decision = PlannerDecisionRecord(
                 decision_id=f"dec-finalize-{len(state.planner_decisions) + 1:03d}",
                 decision_kind="finalize",
                 author="deterministic_guard",
                 ledger_revision=state.requirement_ledger.revision,
-                evidence_refs=[evidence.id for evidence in state.evidence_ledger.evidence],
+                evidence_refs=active_evidence_refs,
                 reason="All active requirements have typed evidence and passed final validation.",
             )
             record_planner_decision(state, decision)
@@ -2093,6 +2121,239 @@ def _record_repeated_retrieval_guard_trace(
         "decisions": decisions,
     }
     return active_decision
+
+
+def _current_missing_evidence_reasons(state: PlannerOwnedAgentGraphState) -> list[dict[str, Any]]:
+    satisfaction = state.execution_trace.diagnostics.get("satisfaction")
+    if not isinstance(satisfaction, Mapping):
+        return []
+    reasons = satisfaction.get("missing_evidence_reasons")
+    if not isinstance(reasons, list):
+        return []
+    return [dict(reason) for reason in reasons if isinstance(reason, Mapping)]
+
+
+def _prepare_replan_spine_after_satisfaction(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    current_missing_reasons: list[dict[str, Any]],
+    max_attempts: int,
+) -> None:
+    replan = _replan_spine_diagnostics(state)
+    replan["max_attempts"] = max_attempts
+    retry_reasons = [
+        reason
+        for reason in current_missing_reasons
+        if reason.get("retriable") is True
+        and reason.get("evidence_refs")
+        and str(reason.get("requirement_id") or "").strip()
+    ]
+    if not retry_reasons:
+        replan["route"] = "approval_node"
+        replan["replan_needed"] = False
+        return
+
+    attempt_count = int(replan.get("attempt_count") or 0)
+    if attempt_count >= max_attempts:
+        replan["route"] = "approval_node"
+        replan["replan_needed"] = False
+        replan["replan_limit_reached"] = True
+        replan["limit_reached_reasons"] = retry_reasons
+        return
+
+    attempt = attempt_count + 1
+    requirement_ids = list(
+        dict.fromkeys(str(reason.get("requirement_id")) for reason in retry_reasons)
+    )
+    stale_evidence_refs = list(
+        dict.fromkeys(
+            str(evidence_ref)
+            for reason in retry_reasons
+            for evidence_ref in reason.get("evidence_refs", [])
+            if str(evidence_ref)
+        )
+    )
+    stale_decision_ids = _stale_planner_decision_ids_for_replan(state, requirement_ids)
+    _mark_replan_stale_evidence(state, stale_evidence_refs, attempt=attempt)
+    _reset_requirements_for_replan_retry(
+        state,
+        requirement_ids=requirement_ids,
+        stale_evidence_refs=stale_evidence_refs,
+        attempt=attempt,
+    )
+    state.candidate_tool_windows = [
+        window for window in state.candidate_tool_windows if window.requirement_id not in set(requirement_ids)
+    ]
+    state.hydrated_tool_cards = [
+        cards for cards in state.hydrated_tool_cards if cards.requirement_id not in set(requirement_ids)
+    ]
+
+    attempts = [item for item in replan.get("attempts", []) if isinstance(item, Mapping)]
+    attempts.append(
+        {
+            "attempt": attempt,
+            "requirement_ids": requirement_ids,
+            "missing_evidence_reasons": retry_reasons,
+            "stale_evidence_refs": stale_evidence_refs,
+            "stale_planner_decision_ids": stale_decision_ids,
+        }
+    )
+    historical_reasons = [
+        item for item in replan.get("missing_evidence_reasons", []) if isinstance(item, Mapping)
+    ]
+    historical_reasons.extend(retry_reasons)
+    replan.update(
+        {
+            "route": "planner_decision_node",
+            "replan_needed": True,
+            "attempt_count": attempt,
+            "current_attempt": attempt,
+            "attempts": attempts,
+            "missing_evidence_reasons": historical_reasons,
+            "stale_evidence_refs": list(
+                dict.fromkeys([*replan.get("stale_evidence_refs", []), *stale_evidence_refs])
+            ),
+            "stale_planner_decision_ids": list(
+                dict.fromkeys([*replan.get("stale_planner_decision_ids", []), *stale_decision_ids])
+            ),
+        }
+    )
+    state.final_validation_result = None
+    state.execution_trace.final_validator_status = None
+
+
+def _replan_spine_diagnostics(state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    existing = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    if not isinstance(existing, dict):
+        existing = {
+            "attempt_count": 0,
+            "attempts": [],
+            "route": "approval_node",
+            "replan_needed": False,
+            "missing_evidence_reasons": [],
+            "stale_evidence_refs": [],
+            "stale_planner_decision_ids": [],
+        }
+        state.execution_trace.diagnostics[_REPLAN_SPINE_DIAGNOSTIC_KEY] = existing
+    return existing
+
+
+def _mark_replan_stale_evidence(
+    state: PlannerOwnedAgentGraphState,
+    stale_evidence_refs: list[str],
+    *,
+    attempt: int,
+) -> None:
+    stale = set(stale_evidence_refs)
+    for evidence in state.evidence_ledger.evidence:
+        if evidence.id not in stale:
+            continue
+        metadata = dict(evidence.diagnostic_metadata or {})
+        metadata["active_revision_satisfaction"] = False
+        metadata["stale_after_graph_replan"] = True
+        metadata["stale_after_graph_revision"] = True
+        metadata["superseded_reason"] = "replan_spine_retry"
+        metadata["superseded_by_replan_attempt"] = attempt
+        metadata["superseded_by_ledger_revision"] = state.requirement_ledger.revision + 1
+        evidence.diagnostic_metadata = metadata
+
+
+def _reset_requirements_for_replan_retry(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    requirement_ids: list[str],
+    stale_evidence_refs: list[str],
+    attempt: int,
+) -> None:
+    stale = set(stale_evidence_refs)
+    retry_ids = set(requirement_ids)
+    changed: list[dict[str, Any]] = []
+    for requirement in state.requirement_ledger.requirements:
+        if requirement.id not in retry_ids:
+            continue
+        previous_status = requirement.status
+        previous_refs = list(requirement.evidence_refs)
+        requirement.status = "open"
+        requirement.evidence_refs = [
+            evidence_ref for evidence_ref in requirement.evidence_refs if evidence_ref not in stale
+        ]
+        requirement.satisfaction_checks = [
+            check
+            for check in requirement.satisfaction_checks
+            if check.evidence_ref is None or check.evidence_ref not in stale
+        ]
+        requirement.blockers = []
+        changed.append(
+            {
+                "requirement_id": requirement.id,
+                "previous_status": previous_status,
+                "new_status": requirement.status,
+                "previous_evidence_refs": previous_refs,
+                "active_evidence_refs": list(requirement.evidence_refs),
+            }
+        )
+    if not changed:
+        return
+
+    state.requirement_ledger.revision += 1
+    record = RequirementRevisionRecord(
+        revision=state.requirement_ledger.revision,
+        actor="deterministic_guard",
+        change_type="replan_spine_retry",
+        reason="replan_spine_retry",
+        locked_constraints_preserved=True,
+        details={
+            "attempt": attempt,
+            "requirements": changed,
+            "stale_evidence_refs": stale_evidence_refs,
+        },
+    )
+    state.requirement_ledger.revision_history.append(record)
+    state.revision_history.append(record)
+    _sync_replan_satisfaction_state(state)
+
+
+def _sync_replan_satisfaction_state(state: PlannerOwnedAgentGraphState) -> None:
+    state.satisfaction_state.requirements = [
+        RequirementSatisfactionState(
+            requirement_id=requirement.id,
+            status=requirement.status,
+            evidence_refs=list(requirement.evidence_refs),
+            satisfaction_checks=list(requirement.satisfaction_checks),
+            blocker_reason=requirement.blockers[-1] if requirement.blockers else None,
+        )
+        for requirement in state.requirement_ledger.requirements
+    ]
+
+
+def _stale_planner_decision_ids_for_replan(
+    state: PlannerOwnedAgentGraphState,
+    requirement_ids: list[str],
+) -> list[str]:
+    retry_ids = set(requirement_ids)
+    stale_decision_ids: list[str] = []
+    for decision in state.planner_decisions:
+        if decision.requirement_id in retry_ids:
+            stale_decision_ids.append(decision.decision_id)
+            continue
+        if any(call.requirement_id in retry_ids for call in _planner_decision_selected_tool_calls(decision)):
+            stale_decision_ids.append(decision.decision_id)
+    return list(dict.fromkeys(stale_decision_ids))
+
+
+def _retain_replan_missing_evidence_reason_history(state: PlannerOwnedAgentGraphState) -> None:
+    replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
+    satisfaction = state.execution_trace.diagnostics.get("satisfaction")
+    if not isinstance(replan, Mapping) or not isinstance(satisfaction, dict):
+        return
+    historical = [item for item in replan.get("missing_evidence_reasons", []) if isinstance(item, Mapping)]
+    if not historical:
+        return
+    current = [item for item in satisfaction.get("missing_evidence_reasons", []) if isinstance(item, Mapping)]
+    if current:
+        return
+    satisfaction["missing_evidence_reasons"] = [dict(item) for item in historical]
+    satisfaction["missing_evidence_reason_history_retained"] = True
 
 
 def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
