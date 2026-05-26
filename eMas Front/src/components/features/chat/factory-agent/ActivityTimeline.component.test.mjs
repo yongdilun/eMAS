@@ -301,3 +301,105 @@ test('ActivityTimeline respects manual collapse while active rows refresh', asyn
 
   await view.unmount()
 })
+
+test('ActivityTimeline marks only newly appended rows for gentle entry animation', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const activeSteps = [
+    {
+      id: 'step-1',
+      timestamp: 1,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing recent context',
+      state: 'success',
+    },
+    {
+      id: 'step-2',
+      timestamp: 2,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Attempt 1 of 6 - Running the selected read',
+      state: 'success',
+    },
+  ]
+  const view = await render(React.createElement(ActivityTimeline, { steps: activeSteps }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.equal(view.container.querySelector('[data-activity-entry="appended"]'), null)
+
+  await view.rerender(React.createElement(ActivityTimeline, {
+    steps: [
+      ...activeSteps,
+      {
+        id: 'step-3',
+        timestamp: 3,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Attempt 1 of 6 - Previous read failed',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => {
+    const appended = view.container.querySelector('[data-step-id="step-3"]')
+    assert.equal(appended?.getAttribute('data-activity-entry'), 'appended')
+  })
+  assert.equal(view.container.querySelector('[data-step-id="step-1"]')?.getAttribute('data-activity-entry'), null)
+  assert.equal(view.container.querySelector('[data-step-id="step-2"]')?.getAttribute('data-activity-entry'), null)
+  assert.match(view.container.querySelector('[data-step-id="step-3"]')?.className || '', /activity-timeline-row--new/)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline does not entry-animate replacement rows', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'first-run-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing recent context',
+        state: 'success',
+      },
+      {
+        id: 'first-run-2',
+        timestamp: 2,
+        group: 'research',
+        label: 'Running selected tool',
+        detail: 'Attempt 1 of 6 - Running the selected read',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+
+  await view.rerender(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'second-run-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing recent context',
+        state: 'success',
+      },
+      {
+        id: 'second-run-2',
+        timestamp: 2,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await flushEffects()
+  assert.equal(view.container.querySelector('[data-activity-entry="appended"]'), null)
+
+  await view.unmount()
+})

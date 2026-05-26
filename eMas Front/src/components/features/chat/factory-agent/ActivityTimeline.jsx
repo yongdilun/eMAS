@@ -73,6 +73,8 @@ function hasRetryStory(rows) {
 
 const ActivityTimeline = ({ steps = [] }) => {
     const rows = useMemo(() => truncateActivityAfterTerminal(steps), [steps])
+    const rowIds = useMemo(() => rows.map((step) => String(step?.id || '')).filter(Boolean), [rows])
+    const rowIdsKey = rowIds.join('\u001f')
     const latest = latestStep(rows)
     const isTerminal = latest?.state === 'complete' || latest?.state === 'error'
     const retryStory = hasRetryStory(rows)
@@ -83,6 +85,14 @@ const ActivityTimeline = ({ steps = [] }) => {
     const [expanded, setExpanded] = useState(() => Boolean(isTerminal && retryStory))
     const wasTerminalRef = useRef(isTerminal)
     const userCollapsedRef = useRef(false)
+    const knownRowIdsRef = useRef(new Set(rowIds))
+    const entryTimersRef = useRef([])
+    const [enteringRowIds, setEnteringRowIds] = useState(() => new Set())
+
+    useEffect(() => () => {
+        entryTimersRef.current.forEach((timer) => clearTimeout(timer))
+        entryTimersRef.current = []
+    }, [])
 
     useEffect(() => {
         const becameTerminal = isTerminal && !wasTerminalRef.current
@@ -102,6 +112,28 @@ const ActivityTimeline = ({ steps = [] }) => {
             userCollapsedRef.current = false
         }
     }, [isTerminal, retryStory, rows])
+
+    useEffect(() => {
+        const known = knownRowIdsRef.current
+        const previousRowIds = Array.from(known)
+        const appendedAfterKnownRows = previousRowIds.length > 0
+            && previousRowIds.length < rowIds.length
+            && previousRowIds.every((id, index) => rowIds[index] === id)
+        const added = appendedAfterKnownRows ? rowIds.slice(previousRowIds.length) : []
+        knownRowIdsRef.current = new Set(rowIds)
+        if (!added.length) return
+
+        setEnteringRowIds((prev) => new Set([...prev, ...added]))
+        const timer = setTimeout(() => {
+            setEnteringRowIds((prev) => {
+                const next = new Set(prev)
+                added.forEach((id) => next.delete(id))
+                return next
+            })
+            entryTimersRef.current = entryTimersRef.current.filter((item) => item !== timer)
+        }, 700)
+        entryTimersRef.current.push(timer)
+    }, [rowIdsKey, rowIds])
 
     if (!rows.length || !latest || !shouldShowActivityTimeline(rows)) return null
 
@@ -151,10 +183,14 @@ const ActivityTimeline = ({ steps = [] }) => {
                             const stepTone = stateTone[stepVisualState] || stateTone.running
                             const stepIcon = stateIcon[stepVisualState] || 'progress_activity'
                             const stepMotion = stepVisualState === 'running' || stepVisualState === 'retry' ? 'animate-spin' : ''
+                            const entering = enteringRowIds.has(String(step.id))
                             return (
                                 <li
                                     key={step.id}
-                                    className={`flex gap-2 rounded-md px-2 py-1.5 ${current ? 'bg-primary/10 ring-1 ring-inset ring-primary/20' : ''
+                                    data-step-id={step.id}
+                                    data-activity-entry={entering ? 'appended' : undefined}
+                                    className={`activity-timeline-row flex gap-2 rounded-md px-2 py-1.5 ${entering ? 'activity-timeline-row--new' : ''
+                                        } ${current ? 'bg-primary/10 ring-1 ring-inset ring-primary/20' : ''
                                         }`}
                                 >
                                     <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${stepTone}`}>
