@@ -197,6 +197,79 @@ test('semantic probe summarizes Phase 37 status display policy evidence', () => 
   )
 })
 
+test('semantic probe summarizes replan safe failure without startup wording', () => {
+  const snapshot = baseSnapshot({
+    session: { session_id: 'session-replan-limit', name: 'Machine status', status: 'BLOCKED' },
+    phase: 'BLOCKED',
+    pending_approval: null,
+    response_document: {
+      state: 'blocked',
+      revision: 41,
+      current_step_id: 'diagnostic:replan-limit',
+      run_steps: [
+        {
+          step_id: 'diagnostic:replan-limit',
+          kind: 'diagnostic',
+          state: 'failed',
+          title: 'Run needs attention',
+          current: true,
+          diagnostics: { error_code: 'replan_limit_reached', sanitized: true },
+        },
+      ],
+      blocks: [
+        {
+          id: 'diagnostic:replan-limit',
+          type: 'diagnostic',
+          title: 'Run needs attention',
+          reason: 'replan_limit_reached',
+          user_message: 'I could not verify the requested evidence after bounded retries.',
+          technical_details: { error_code: 'planner_no_action', sanitized: true },
+          details_collapsed: true,
+        },
+      ],
+      diagnostics: { reason: 'replan_limit_reached', sanitized: true },
+    },
+  })
+  const ui = baseUi({
+    headerStatus: 'Needs attention',
+    activeSidebarStatus: 'Needs attention',
+    latestAssistantTitle: 'eMAS Response',
+    latestAssistantMessage: 'Run needs attention I could not verify the requested evidence after bounded retries. Technical details',
+    visibleBlockTypes: ['diagnostic'],
+    visibleBlockIds: ['diagnostic:replan-limit'],
+    visibleBlocks: [
+      {
+        type: 'diagnostic',
+        id: 'diagnostic:replan-limit',
+        title: 'Run needs attention',
+        text: 'Run needs attention I could not verify the requested evidence after bounded retries. Technical details',
+        buttons: [],
+      },
+    ],
+    visibleRunSteps: [{ title: 'Run needs attention', state: 'error' }],
+    visibleApprovalIds: [],
+    approvalActionLabels: [],
+    visibleText: 'Needs attention Run needs attention I could not verify the requested evidence after bounded retries. Technical details',
+  })
+  const probe = buildSemanticProbe({
+    checkpoint: 'replan safe failure',
+    snapshot,
+    ui,
+    expected: {
+      sessionStatus: 'BLOCKED',
+      responseState: 'blocked',
+      visibleBlockTypes: ['diagnostic'],
+      backendBlockTypes: ['diagnostic'],
+    },
+  })
+
+  assert.equal(probe.diagnosis.classification, 'unknown')
+  assert.match(probe.visible.latestAssistant.message, /could not verify the requested evidence after bounded retries/i)
+  assert.doesNotMatch(probe.visible.latestAssistant.message, /Request could not start|planner_no_action/i)
+  assert.equal(probe.backend.responseDocument.blocks[0].title, 'Run needs attention')
+  assert.match(probe.backend.responseDocument.blocks[0].summary, /could not verify the requested evidence/i)
+})
+
 test('semantic probe classifies header/sidebar/backend mismatch as session_list_sync_gap', () => {
   const probe = buildSemanticProbe({
     checkpoint: 'status mismatch',

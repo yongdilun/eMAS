@@ -786,10 +786,33 @@ function isTerminalAttentionStatus(status) {
   return status === FACTORY_AGENT_STATUS.FAILED || status === FACTORY_AGENT_STATUS.BLOCKED
 }
 
-function FactoryAgentDiagnostics({ error, sessionStatus, streamDiagnostics = [], retrying, onRetryConnection }) {
+function responseDocumentIsTerminal(document) {
+  const state = String(document?.state || document?.status || '').toLowerCase()
+  return ['blocked', 'failed', 'completed', 'cancelled', 'rejected', 'expired'].includes(state)
+}
+
+function latestTurnHasTerminalResponseDocument(turns = []) {
+  const rows = Array.isArray(turns) ? turns : []
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const normalized = normalizeResponseDocument(rows[i]?.responseDocument)
+    if (normalized.status === 'absent') continue
+    return responseDocumentIsTerminal(normalized.document)
+  }
+  return false
+}
+
+function FactoryAgentDiagnostics({
+  error,
+  sessionStatus,
+  streamDiagnostics = [],
+  retrying,
+  onRetryConnection,
+  terminalResponseDocumentAvailable = false,
+}) {
   const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
-  if (!error && diagnostics.length === 0) return null
-  const backendUnavailable = isBackendUnavailableError(error)
+  const visibleError = terminalResponseDocumentAvailable ? null : error
+  if (!visibleError && diagnostics.length === 0) return null
+  const backendUnavailable = isBackendUnavailableError(visibleError)
   const terminalAttention = !backendUnavailable && isTerminalAttentionStatus(sessionStatus)
   const title = backendUnavailable
     ? 'Factory Agent is disconnected'
@@ -800,13 +823,13 @@ function FactoryAgentDiagnostics({ error, sessionStatus, streamDiagnostics = [],
 
   return (
     <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
-      {error ? (
+      {visibleError ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-semibold text-ink">
               {title}
             </div>
-            <div className="mt-0.5">{error}</div>
+            <div className="mt-0.5">{visibleError}</div>
           </div>
           {onRetryConnection ? (
             <button
@@ -1005,6 +1028,7 @@ const FactoryAgentChatPanel = ({
   const displayStatus =
     displayStatusFromActivity(activitySteps, effectiveSessionStatus) ||
     friendlySessionStatus(effectiveSessionStatus, isSending)
+  const terminalResponseDocumentAvailable = latestTurnHasTerminalResponseDocument(turns)
 
   return (
     <div className="flex h-full relative">
@@ -1119,6 +1143,7 @@ const FactoryAgentChatPanel = ({
           streamDiagnostics={streamDiagnostics}
           retrying={isRetryingConnection}
           onRetryConnection={retryConnection}
+          terminalResponseDocumentAvailable={terminalResponseDocumentAvailable}
         />
 
         <div className="flex min-h-0 flex-1 bg-canvas" data-chatbot-workspace="">

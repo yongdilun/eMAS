@@ -1302,7 +1302,7 @@ def _presentation_diagnostics(
     reason: str,
     steps: list[PlanStepResponse],
 ) -> dict[str, Any]:
-    return {
+    diagnostics = {
         "reason": reason,
         "session_status": getattr(session, "status", None),
         "session_error": getattr(session, "error", None),
@@ -1319,9 +1319,77 @@ def _presentation_diagnostics(
             if str(step.status or "").upper() in {"FAILED", "AMBIGUOUS"} or step.last_error
         ],
     }
+    replan_spine = _replan_spine_from_session_context(session)
+    if replan_spine:
+        diagnostics["replan_spine"] = replan_spine
+        diagnostics["replan_limit_reached"] = bool(replan_spine.get("replan_limit_reached"))
+    return diagnostics
+
+
+def _replan_spine_from_session_context(session: Any) -> dict[str, Any]:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return {}
+    for candidate in _replan_context_candidates(context):
+        replan_spine = candidate.get("replan_spine")
+        if isinstance(replan_spine, dict):
+            return dict(replan_spine)
+        response_context = candidate.get("response_document_context")
+        if not isinstance(response_context, dict):
+            continue
+        response_diagnostics = response_context.get("diagnostics")
+        if not isinstance(response_diagnostics, dict):
+            continue
+        replan_spine = response_diagnostics.get("replan_spine")
+        if isinstance(replan_spine, dict):
+            return dict(replan_spine)
+    return {}
+
+
+def _replan_context_candidates(context: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = [context]
+    for key in ("intent_contract", "planner_owned_agent_graph"):
+        nested = context.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    return candidates
+
+
+def _response_document_context_from_replan_context(context: dict[str, Any]) -> dict[str, Any]:
+    for candidate in _replan_context_candidates(context):
+        response_context = candidate.get("response_document_context")
+        if isinstance(response_context, dict):
+            return response_context
+    return {}
+
+
+def _response_document_diagnostics_from_replan_context(context: dict[str, Any]) -> dict[str, Any]:
+    response_context = _response_document_context_from_replan_context(context)
+    if not isinstance(response_context, dict):
+        return {}
+    response_diagnostics = response_context.get("diagnostics")
+    if not isinstance(response_diagnostics, dict):
+        return {}
+    return response_diagnostics
+
+
+def _replan_limit_reached(session: Any) -> bool:
+    replan_spine = _replan_spine_from_session_context(session)
+    return bool(replan_spine.get("replan_limit_reached"))
+
+
+def _replan_limit_summary(session: Any) -> str | None:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return None
+    response_diagnostics = _response_document_diagnostics_from_replan_context(context)
+    summary = str(response_diagnostics.get("summary") or "").strip()
+    return summary or None
 
 
 def _typed_blocked_reason(session: Any, *, default: str = "session_blocked") -> str:
+    if _replan_limit_reached(session):
+        return "replan_limit_reached"
     context = getattr(session, "replan_context", None)
     if isinstance(context, dict):
         reason = str(context.get("blocked_reason") or "").strip()
@@ -1489,11 +1557,16 @@ def _derive_snapshot_presentation(
         context = getattr(session, "replan_context", None)
         if isinstance(context, dict) and context.get("original_session_status"):
             diagnostics["original_session_status"] = context.get("original_session_status")
+        summary = (
+            _replan_limit_summary(session)
+            if reason == "replan_limit_reached"
+            else None
+        )
         return PresentationResponse(
             kind="diagnostic",
             state="blocked",
             operation_id=operation_id,
-            summary=getattr(session, "error", None) or (terminal_event.content if terminal_event else "Execution blocked."),
+            summary=summary or getattr(session, "error", None) or (terminal_event.content if terminal_event else "Execution blocked."),
             rows=step_rows,
             sources=sources,
             diagnostics=diagnostics,

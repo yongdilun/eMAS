@@ -2271,6 +2271,59 @@ test('FactoryAgentChatPanel renders response_document failure diagnostic safely'
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel lets terminal response_document own stale timeout errors', async () => {
+  const document = baseResponseDocument({
+    state: 'blocked',
+    status: 'blocked',
+    message: 'I could not verify the requested evidence after bounded retries.',
+    run_steps: [
+      {
+        step_id: 'diagnostic:replan-limit',
+        kind: 'diagnostic',
+        state: 'failed',
+        title: 'Run needs attention',
+        summary: 'I could not verify the requested evidence after bounded retries.',
+        current: true,
+      },
+    ],
+    blocks: [
+      {
+        id: 'diagnostic:replan-limit',
+        type: 'diagnostic',
+        severity: 'error',
+        reason: 'replan_limit_reached',
+        title: 'Run needs attention',
+        user_message: 'I could not verify the requested evidence after bounded retries.',
+        cause: 'Evidence could not be verified after retrying the read.',
+        current_state: 'No successful active evidence satisfied the request.',
+        next_action: 'Retry after the upstream data source can return the requested fields.',
+        impact: { changes_applied: false, safe_to_retry: true },
+        technical_details: { error_code: 'planner_no_action', sanitized: true },
+        details_collapsed: true,
+      },
+    ],
+    diagnostics: { reason: 'replan_limit_reached', sanitized: true },
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-replan-limit', name: 'Machine status', status: 'BLOCKED' },
+    sessionList: [{ session_id: 'session-replan-limit', name: 'Machine status', status: 'BLOCKED' }],
+    activeSessionName: 'Machine status',
+    error: 'Factory Agent request timed out while waiting for the final snapshot.',
+    turns: [responseDocumentTurn(document, { summary: 'Request could not start.' })],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Run needs attention/))
+  assert.match(view.text(), /could not verify the requested evidence after bounded retries/i)
+  assert.match(view.text(), /Technical details/)
+  assert.doesNotMatch(view.text(), /Factory Agent request timed out/i)
+  assert.doesNotMatch(view.text(), /Request could not start/i)
+  assert.doesNotMatch(view.text(), /Try starting chat again/i)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel preserves completed response_document evidence while approval 2 is pending', async () => {
   const approvalRows = [
     { job_id: 'JOB-SEED-001', previous_priority: 'high', new_priority: 'low' },

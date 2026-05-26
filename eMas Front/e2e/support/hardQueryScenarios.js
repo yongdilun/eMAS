@@ -558,13 +558,16 @@ export const hardQueryScenarios = Object.freeze([
         { type: 'diagnostic' },
       ],
       visibleTextIncludes: [
-        { label: 'bounded timeout safe terminal diagnostic', pattern: /Request could not start|planner_no_action|blocked before execution|did not produce a safe plan/i },
+        { label: 'bounded timeout safe terminal diagnostic', pattern: /could not verify the requested evidence after bounded retries/i },
       ],
       visibleUiTextIncludes: [
         { label: 'safe failure shell status', pattern: /Needs attention/i },
-        { label: 'safe failure response title', pattern: /Request could not start|Run needs attention/i },
+        { label: 'safe failure response title', pattern: /Run needs attention/i },
+        { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
       ],
       forbiddenVisibleText: [
+        { label: 'misleading request start failure', pattern: /Request could not start/i },
+        { label: 'technical planner code as primary text', pattern: /planner_no_action/i },
         { label: 'fake machine status after bounded timeout', pattern: /Machine M-CNC-01 is|Status\s+Running|CNC Mill 01/i },
         { label: 'approval required for read failure', pattern: /Approval required/i },
         { label: 'fake success text', pattern: /Run complete/i },
@@ -575,6 +578,7 @@ export const hardQueryScenarios = Object.freeze([
       forbiddenUiText: [
         { label: 'misleading startup failure banner', pattern: /Factory Agent chat could not start/i },
         { label: 'misleading start retry action', pattern: /Try starting chat again/i },
+        { label: 'misleading request start failure', pattern: /Request could not start/i },
         { label: 'raw backend error JSON', pattern: /["']errors["']\s*:/i },
       ],
     },
@@ -623,13 +627,16 @@ export const hardQueryScenarios = Object.freeze([
         { type: 'diagnostic' },
       ],
       visibleTextIncludes: [
-        { label: 'bounded safe terminal diagnostic', pattern: /Request could not start|planner_no_action|blocked before execution|did not produce a safe plan/i },
+        { label: 'bounded safe terminal diagnostic', pattern: /could not verify the requested evidence after bounded retries/i },
       ],
       visibleUiTextIncludes: [
         { label: 'safe failure shell status', pattern: /Needs attention/i },
-        { label: 'safe failure response title', pattern: /Request could not start|Run needs attention/i },
+        { label: 'safe failure response title', pattern: /Run needs attention/i },
+        { label: 'safe failure evidence explanation', pattern: /could not verify the requested evidence after bounded retries/i },
       ],
       forbiddenVisibleText: [
+        { label: 'misleading request start failure', pattern: /Request could not start/i },
+        { label: 'technical planner code as primary text', pattern: /planner_no_action/i },
         { label: 'fake machine status after bounded failure', pattern: /Machine M-CNC-01 is|Status\s+Running|CNC Mill 01/i },
         { label: 'approval required for read failure', pattern: /Approval required/i },
         { label: 'fake success text', pattern: /Run complete/i },
@@ -637,6 +644,7 @@ export const hardQueryScenarios = Object.freeze([
       forbiddenUiText: [
         { label: 'misleading startup failure banner', pattern: /Factory Agent chat could not start/i },
         { label: 'misleading start retry action', pattern: /Try starting chat again/i },
+        { label: 'misleading request start failure', pattern: /Request could not start/i },
         { label: 'raw backend error JSON', pattern: /["']errors["']\s*:/i },
       ],
     },

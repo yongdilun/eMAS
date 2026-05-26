@@ -303,6 +303,17 @@ _FAILURE_TEMPLATES: dict[str, FailureTemplate] = {
         retry_policy="retry_failed_rows_only",
         safe_to_retry=True,
     ),
+    "replan_limit_reached": FailureTemplate(
+        reason="replan_limit_reached",
+        title="Run needs attention",
+        user_message="I could not verify the requested evidence after bounded retries.",
+        cause="The run reached its retry limit before active evidence satisfied the request.",
+        current_state="No successful active evidence satisfied the request.",
+        next_action="Retry after the upstream data source can return the requested fields.",
+        action_ids=("check_status", "start_new_request", "view_diagnostics"),
+        retry_policy="retry_after_upstream_evidence_recovers",
+        safe_to_retry=True,
+    ),
     "planner_no_action": FailureTemplate(
         reason="planner_no_action",
         title="Request could not start",
@@ -1293,6 +1304,8 @@ def _failure_reason(
     latest_closed_approval = _latest_closed_approval(approvals)
     text = _failure_probe_text(presentation=presentation, steps=steps, approvals=approvals)
 
+    if legacy_reason == "replan_limit_reached":
+        return legacy_reason
     if legacy_reason in {"planner_no_action", "unable_to_start_request", "orphan_turn_state"}:
         return legacy_reason
     if "planner_no_action" in text:

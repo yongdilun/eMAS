@@ -56,6 +56,7 @@ def _session(
     event_seq: int = 1,
     step_count: int = 1,
     error: str | None = None,
+    replan_context: dict[str, Any] | None = None,
 ) -> Session:
     return Session(
         session_id=session_id,
@@ -74,6 +75,7 @@ def _session(
         updated_at=created_at + timedelta(seconds=5),
         completed_at=created_at + timedelta(seconds=5) if status == "COMPLETED" else None,
         error=error,
+        replan_context=replan_context,
     )
 
 
@@ -274,6 +276,105 @@ async def test_decision_guard_loop_has_bounded_diagnostic_and_no_blind_retry(db_
     assert diagnostic["retry_safety"]["safe_to_retry"] is False
     assert "retry_from_checkpoint" not in {action["id"] for action in diagnostic["next_actions"]}
     assert diagnostic["impact"]["incomplete_steps"] == ["diagnostic:planner_validation_loop"]
+    _assert_failure_fields(diagnostic)
+
+
+@pytest.mark.asyncio
+async def test_replan_limit_failure_uses_diagnostic_wording_not_startup_failure(db_session):
+    created_at = datetime(2026, 5, 18, 8, 45, 0)
+    session_id = "rd-failure-replan-limit"
+    replan_spine = {
+        "attempt_count": 2,
+        "max_attempts": 2,
+        "replan_limit_reached": True,
+        "missing_evidence_reasons": [
+            {
+                "requirement_id": "req-machine-status",
+                "reason": "tool_error",
+                "retriable": True,
+                "evidence_refs": ["ev-failed-read-1"],
+            }
+        ],
+        "failed_tool_calls": [
+            {
+                "requirement_id": "req-machine-status",
+                "tool_name": "get__machines_{id}",
+                "reason": "tool_error",
+                "attempt": 2,
+            }
+        ],
+    }
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                created_at=created_at,
+                status="BLOCKED",
+                event_seq=9,
+                error="Request could not start: planner_no_action",
+                replan_context={
+                    "blocked_reason": "planner_no_action",
+                    "intent_contract": {
+                        "replan_spine": replan_spine,
+                        "response_document_context": {
+                            "diagnostics": {
+                                "summary": "I could not verify the requested evidence after bounded retries.",
+                                "replan_limit_reached": True,
+                                "replan_spine": replan_spine,
+                            }
+                        },
+                    },
+                    "planner_owned_agent_graph": {
+                        "response_document_state": "failed",
+                        "response_document_context": {
+                            "diagnostics": {
+                                "summary": "I could not verify the requested evidence after bounded retries.",
+                                "replan_limit_reached": True,
+                                "replan_spine": replan_spine,
+                            }
+                        },
+                        "replan_spine": replan_spine,
+                    },
+                    "planner_no_action": {
+                        "backend_used": "planner_owned_agent_graph",
+                        "requested_status": "FAILED",
+                        "persisted_status": "FAILED",
+                        "step_count": 0,
+                    },
+                },
+            ),
+            _user_message(
+                session_id=session_id,
+                created_at=created_at,
+                content="Show status for machine M-CNC-01 only.",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    diagnostic = _diagnostic(document)
+
+    assert document["state"] == "blocked"
+    assert document["message"] == "I could not verify the requested evidence after bounded retries."
+    assert diagnostic["reason"] == "replan_limit_reached"
+    assert diagnostic["title"] == "Run needs attention"
+    assert diagnostic["technical_details"]["error_code"] == "replan_limit_reached"
+    assert diagnostic["technical_details"]["legacy_reason"] != "planner_no_action"
+    assert "planner_no_action" in json.dumps(diagnostic["technical_details"])
+    primary_text = " ".join(
+        str(value or "")
+        for value in [
+            document["message"],
+            diagnostic["title"],
+            diagnostic["user_message"],
+            diagnostic["cause"],
+            diagnostic["current_state"],
+            diagnostic["next_action"],
+        ]
+    )
+    assert "Request could not start" not in primary_text
+    assert "planner_no_action" not in primary_text
     _assert_failure_fields(diagnostic)
 
 
