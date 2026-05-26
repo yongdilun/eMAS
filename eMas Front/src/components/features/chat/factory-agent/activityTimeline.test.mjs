@@ -1022,6 +1022,83 @@ test('replan spine timeline collapses older retry attempts when retry budget is 
   assert.equal(steps.at(-1).label, 'Something needs attention')
 })
 
+test('active replan spine fallback keeps retry attempts uncollapsed while executing', () => {
+  const timeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      operation_id: 'op-active-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      operation_id: 'op-active-retry',
+    },
+  ]
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    timeline.push(
+      {
+        event_type: 'execution_started',
+        content: `attempt ${attempt}`,
+        created_at: `2026-05-18T09:00:${String(1 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: `2026-05-18T09:00:${String(2 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry',
+        created_at: `2026-05-18T09:00:${String(3 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+      },
+    )
+  }
+  timeline.push({
+    event_type: 'execution_started',
+    content: 'current retry',
+    created_at: '2026-05-18T09:00:18.000Z',
+    operation_id: 'op-active-retry',
+  })
+
+  const steps = buildActivityStepsFromTimeline(timeline, {
+    mode: 'operational',
+    sessionStatus: 'EXECUTING',
+    replanSpine: {
+      attempt_count: 4,
+      max_attempts: 5,
+      attempts: [1, 2, 3, 4].map((attempt) => ({
+        attempt,
+        missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: [`ev-${attempt}`], retriable: true }],
+      })),
+      missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: ['ev-1'], retriable: true }],
+    },
+  })
+
+  const labels = steps.map((step) => step.label)
+  const details = steps.map((step) => step.detail || '')
+  assert.equal(labels.includes('Earlier retry attempts'), false)
+  assert.equal(labels.includes('Earlier activity'), false)
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    assert.ok(details.some((detail) => detail.startsWith(`Attempt ${attempt} of 6`)))
+  }
+  assert.equal(steps.at(-1).state, 'running')
+})
+
 test('completed approval snapshot uses post-approval progress when tool events are projected from plan steps', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-final', operation_id: 'plan-final' },

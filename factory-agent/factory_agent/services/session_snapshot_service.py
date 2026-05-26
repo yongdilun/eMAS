@@ -910,7 +910,9 @@ def _activity_collapse_noisy_replan_attempts(
     if len(attempt_numbers) <= 3:
         return raw_steps
     has_terminal = any(step.get("state") in {"complete", "error"} for step in raw_steps)
-    tail_attempts_to_keep = 1 if has_terminal else 2
+    if not has_terminal:
+        return raw_steps
+    tail_attempts_to_keep = 1
     collapse_until = max(len(attempt_numbers) - tail_attempts_to_keep, 1)
     collapsed_attempts = set(attempt_numbers[1:collapse_until])
     if not collapsed_attempts:
@@ -1341,7 +1343,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         raw_steps = _activity_replan_story_from_diagnostics(raw_steps, snapshot, replan_spine)
         raw_steps = _activity_collapse_noisy_replan_attempts(raw_steps, replan_spine)
 
-    if len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
+    if session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES and len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
         older = raw_steps[: -(_ACTIVITY_MAX_VISIBLE_STEPS - 1)]
         recent = raw_steps[-(_ACTIVITY_MAX_VISIBLE_STEPS - 1) :]
         grouped = {

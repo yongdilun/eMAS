@@ -684,10 +684,11 @@ export function finalizeHistoricalActivityStates(steps = []) {
   return finalized
 }
 
-function capActivitySteps(steps = [], idPrefix = 'snapshot_activity') {
-  const summarized = summarizeNoisyRetryAttempts(steps)
+function capActivitySteps(steps = [], idPrefix = 'snapshot_activity', options = {}) {
+  const terminal = Boolean(options.terminal)
+  const summarized = terminal ? summarizeNoisyRetryAttempts(steps) : steps
   if (summarized !== steps) return summarized.map((step, index) => ({ ...step, id: `${idPrefix}_${index + 1}` }))
-  if (steps.length <= 12) return steps.map((step, index) => ({ ...step, id: `${idPrefix}_${index + 1}` }))
+  if (!terminal || steps.length <= 12) return steps.map((step, index) => ({ ...step, id: `${idPrefix}_${index + 1}` }))
   const olderCount = steps.length - 11
   return [
     normalizeActivityStep({
@@ -1080,10 +1081,11 @@ function activityTimelineIsTerminalSession(sessionStatus) {
 
 export function buildActivityStepsFromTimeline(timeline = [], options = {}) {
   const { mode = 'legacy', scopedEvents = null, sessionStatus = '', replanSpine = {} } = options
+  const terminal = activityTimelineIsTerminalSession(sessionStatus)
   let sourceEvents
   if (scopedEvents != null && scopedEvents.length) {
     sourceEvents = sortTimelineEvents(scopedEvents)
-  } else if (activityTimelineIsTerminalSession(sessionStatus)) {
+  } else if (terminal) {
     // Read-only review: show the whole session, not only events tied to the latest user turn.
     sourceEvents = sortTimelineEvents(timeline)
   } else {
@@ -1092,7 +1094,7 @@ export function buildActivityStepsFromTimeline(timeline = [], options = {}) {
   if (mode === 'operational' && sourceEvents.length) {
     const built = buildStepsFromEventsOperational(sourceEvents, { replanSpine })
     const steps = finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(built))
-    return capActivitySteps(steps)
+    return capActivitySteps(steps, 'snapshot_activity', { terminal })
   }
   let steps = []
   for (const event of sourceEvents) {
@@ -1112,7 +1114,7 @@ export function buildActivityStepsFromTimeline(timeline = [], options = {}) {
     if (step) steps.push(step)
   }
   steps = finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(steps))
-  return capActivitySteps(steps)
+  return capActivitySteps(steps, 'snapshot_activity', { terminal })
 }
 
 function appendStep(steps, step) {
@@ -1339,7 +1341,11 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
   }
 
   steps = stripPrematureTerminalActivitySteps(steps, status)
-  return capActivitySteps(finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(steps)))
+  return capActivitySteps(
+    finalizeHistoricalActivityStates(mergeRepeatedActivitySteps(steps)),
+    'snapshot_activity',
+    { terminal: activityTimelineIsTerminalSession(status) },
+  )
 }
 
 export function friendlySessionStatus(status, isSending = false) {

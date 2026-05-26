@@ -388,7 +388,7 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     expect(currentCount).toBe(1)
   })
 
-  test('active collapsed retry snapshot prunes old attempt rows and stale spinners', async ({ page }) => {
+  test('active retry snapshots keep the full story stable until terminal', async ({ page }) => {
     await openChat(page)
     await sendChatPrompt(page, activityRetryCollapseHandoffPrompt)
 
@@ -396,12 +396,12 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     const activityList = page.locator('ol').filter({ hasText: 'Attempt 1 of 6' }).first()
     await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toBeVisible()
 
-    await expect(activityList.getByText('Earlier retry attempts', { exact: true })).toBeVisible()
-    await expect(activityList.getByText('4 earlier attempts collapsed', { exact: true })).toBeVisible()
     await expect(activityList.getByText('Attempt 6 of 6 - Running the next selected read', { exact: true })).toBeVisible()
-    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Attempt 4 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
-    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Earlier retry attempts', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('4 earlier attempts collapsed', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 4 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toBeVisible()
     const progressIcons = await activityList.locator('[data-icon="progress_activity"]').count()
     expect(progressIcons).toBe(1)
   })

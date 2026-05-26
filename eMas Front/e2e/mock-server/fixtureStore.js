@@ -1,6 +1,5 @@
 import {
   activeHappyPathSnapshot,
-  activeRetryCollapsedStoryActivitySteps,
   activeRetryFullNoisyStoryActivitySteps,
   activeRetryStoryActivitySteps,
   activityActiveRetryStoryPrompt,
@@ -3168,7 +3167,7 @@ export const scenarioCatalog = {
 
   activityRetryCollapseHandoff: {
     name: 'activityRetryCollapseHandoff',
-    description: 'Active retry story rows removed by a later collapsed snapshot are pruned from the UI.',
+    description: 'Active retry story rows stay uncollapsed as later snapshots append new attempts.',
     prompts: [activityRetryCollapseHandoffPrompt],
     onMessage(session, content) {
       addUserTurn(session, content || activityRetryCollapseHandoffPrompt, 'pw-turn-activity-retry-collapse')
@@ -3214,9 +3213,7 @@ export const scenarioCatalog = {
       if (session.status === 'PLANNING' || session.status === 'EXECUTING') {
         const count = Number(session.retry_collapse_snapshot_count || 0) + 1
         session.retry_collapse_snapshot_count = count
-        const steps = count <= 3
-          ? activeRetryFullNoisyStoryActivitySteps({ activeAttempt: 5 })
-          : activeRetryCollapsedStoryActivitySteps()
+        const steps = activeRetryFullNoisyStoryActivitySteps({ activeAttempt: count <= 3 ? 5 : 6 })
         return snapshotFromSession(session, steps)
       }
       return defaultIdleSnapshot(session)

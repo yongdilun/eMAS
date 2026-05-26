@@ -796,7 +796,132 @@ def test_active_replan_spine_activity_continues_from_existing_check_result():
     assert steps[-1].state == "running"
 
 
-def test_active_replan_spine_collapse_keeps_previous_attempt_before_current_retry():
+def test_active_replan_spine_activity_is_uncollapsed_canonical_timeline():
+    created_at = datetime(2026, 5, 13, 9, 54, 0)
+    attempts = []
+    for attempt in range(1, 5):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-job-priority",
+                        "evidence_refs": [f"ev-failed-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "requirement_id": "req-job-priority",
+                        "evidence_ref": f"ev-failed-{attempt}",
+                        "reason": "tool_error",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 4,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-canonical-uncollapsed",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 4,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=15),
+            "replan_context": {
+                "live_replan_spine": replan_spine,
+                "live_activity_steps": [
+                    {
+                        "id": "graph:requirement_ledger_node",
+                        "timestamp": timestamp,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Structuring request",
+                        "detail": "Structuring the request",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:planner_decision_node",
+                        "timestamp": timestamp,
+                        "order": 2,
+                        "group": "planning",
+                        "label": "Choosing next action",
+                        "detail": "Choosing the next backend action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:tool_execution_node",
+                        "timestamp": timestamp,
+                        "order": 3,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:evidence_observation_node",
+                        "timestamp": timestamp,
+                        "order": 4,
+                        "group": "response",
+                        "label": "Checking result",
+                        "detail": "Checking tool evidence",
+                        "state": "running",
+                    },
+                ],
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-canonical-uncollapsed",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+    details = [step.detail or "" for step in steps]
+
+    assert "Earlier retry attempts" not in labels
+    assert "Earlier activity" not in labels
+    assert labels[:4] == [
+        "Understood request",
+        "Structuring request",
+        "Choosing next action",
+        "Running selected tool",
+    ]
+    for attempt in range(1, 6):
+        assert any(detail.startswith(f"Attempt {attempt} of 6") for detail in details)
+    assert details.index("Attempt 1 of 6 - Previous read failed") < details.index(
+        "Attempt 2 of 6 - Previous read failed"
+    )
+    assert details.index("Attempt 4 of 6 - Previous read failed") < details.index(
+        "Attempt 5 of 6 - Running the next selected read"
+    )
+    assert steps[-1].state == "running"
+    assert [step.state for step in steps].count("running") == 1
+
+
+def test_active_replan_spine_keeps_previous_attempt_before_current_retry_without_collapsing():
     created_at = datetime(2026, 5, 13, 9, 55, 0)
     attempts = []
     for attempt in range(1, 4):
@@ -859,11 +984,12 @@ def test_active_replan_spine_collapse_keeps_previous_attempt_before_current_retr
     steps = _activity_steps_for_snapshot(snapshot)
     details = [step.detail or "" for step in steps]
 
-    assert "1 earlier attempt collapsed" in details
+    assert "1 earlier attempt collapsed" not in details
+    assert "Earlier retry attempts" not in [step.label for step in steps]
+    assert any(detail.startswith("Attempt 2 of 6 - Running the next selected read") for detail in details)
     assert any(detail.startswith("Attempt 3 of 6 - Previous read failed") for detail in details)
     assert any(detail.startswith("Attempt 4 of 6 - Previous read failed") for detail in details)
     assert any(detail.startswith("Attempt 4 of 6 - Running the next selected read") for detail in details)
-    assert not any(detail.startswith("Attempt 2 of 6 - Running the next selected read") for detail in details)
     previous_check_index = next(
         idx for idx, detail in enumerate(details)
         if detail.startswith("Attempt 3 of 6 - Previous read failed")

@@ -40,21 +40,17 @@ const stripSnapshotFallbackActivitySteps = (steps) => (
 const hasTerminalActivityStep = (steps) => (
   Array.isArray(steps) && steps.some((step) => step?.state === 'complete' || step?.state === 'error')
 )
-const replanAttemptValue = (step) => {
-  const raw = step?._replanAttempt ?? step?._replan_attempt ?? step?.replanAttempt ?? step?.replan_attempt
-  const value = Number(raw)
-  return Number.isFinite(value) && value > 0 ? value : null
+const ACTIVITY_SETTLED_STATES = new Set(['success', 'complete', 'error'])
+const ACTIVITY_IN_FLIGHT_STATES = new Set(['running', 'retry', 'waiting'])
+const mergeLiveActivityStep = (existing, incoming) => {
+  if (!existing) return { ...incoming }
+  const existingState = String(existing?.state || '')
+  const incomingState = String(incoming?.state || '')
+  if (ACTIVITY_SETTLED_STATES.has(existingState) && ACTIVITY_IN_FLIGHT_STATES.has(incomingState)) {
+    return { ...incoming, ...existing }
+  }
+  return { ...existing, ...incoming }
 }
-const hasReplanAttemptActivityRows = (steps) => (
-  Array.isArray(steps) && steps.some((step) => replanAttemptValue(step) != null)
-)
-const isLiveGraphActivityStep = (step) => String(step?.id || '').startsWith('graph:')
-const stripLiveGraphActivitySteps = (steps) => (
-  Array.isArray(steps) ? steps.filter((step) => !isLiveGraphActivityStep(step)) : []
-)
-const stripReplanAttemptActivitySteps = (steps) => (
-  Array.isArray(steps) ? steps.filter((step) => replanAttemptValue(step) == null) : []
-)
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -272,12 +268,7 @@ export function useFactoryAgentChat() {
 
         let result
         if (visibleServerSteps.length) {
-          const serverHasReplanStory = hasReplanAttemptActivityRows(visibleServerSteps)
-          const priorAuthoritativeRows = serverHasReplanStory
-            ? stripReplanAttemptActivitySteps(
-              stripLiveGraphActivitySteps(stripSnapshotFallbackActivitySteps(visibleWithoutClient)),
-            )
-            : stripSnapshotFallbackActivitySteps(visibleWithoutClient)
+          const priorAuthoritativeRows = stripSnapshotFallbackActivitySteps(visibleWithoutClient)
           if (isStreamActive) {
             // Union by id: polls can arrive before SSE has caught up, or SSE can be
             // ahead on some ids - only updating `withoutClient` in place drops rows
@@ -435,13 +426,9 @@ export function useFactoryAgentChat() {
     setActivitySteps((prev) => {
       const withoutClient = stripClientActivitySteps(prev)
       if (hasTerminalActivityStep(withoutClient)) return withoutClient
-      if (hasReplanAttemptActivityRows(withoutClient) && isLiveGraphActivityStep(incoming)) return withoutClient
-      const baseRows = hasReplanAttemptActivityRows([incoming])
-        ? stripLiveGraphActivitySteps(withoutClient)
-        : withoutClient
-      const idx = baseRows.findIndex((s) => s.id === incoming.id)
-      const next = [...baseRows]
-      if (idx >= 0) next[idx] = { ...next[idx], ...incoming }
+      const idx = withoutClient.findIndex((s) => s.id === incoming.id)
+      const next = [...withoutClient]
+      if (idx >= 0) next[idx] = mergeLiveActivityStep(next[idx], incoming)
       else next.push(incoming)
       next.sort(compareActivitySteps)
       return coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus))
