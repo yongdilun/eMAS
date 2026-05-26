@@ -220,6 +220,78 @@ async def test_phase8_v2_api_retrieval_uses_capability_phrase_not_whole_query(
     assert any("machine" in call["intent"] and "jobs sorted" not in call["intent"] for call in calls)
 
 
+@pytest.mark.asyncio
+async def test_replan_spine_persists_attempts_and_active_evidence_in_intent_contract(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    executor_calls: list[dict[str, Any]] = []
+
+    async def sequential_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, tool, idempotency_key, extra_headers
+        executor_calls.append({"args": dict(args)})
+        if len(executor_calls) == 1:
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 2,
+                "body": {
+                    "data": {}
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "machine_id": args.get("id"),
+                    "status": "running",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(
+        "factory_agent.planning.v2_graph_adapters._default_http_executor",
+        sequential_execute_tool_http,
+    )
+    await _seed_tool(
+        db_session,
+        name="get__machines_{id}",
+        endpoint="/machines/{id}",
+        method="GET",
+        input_schema=_machine_status_schema(),
+        capability_tags=json.dumps(["machine", "lookup", "status"]),
+    )
+    app, _event_bus = await _make_app(
+        sessionmaker_override,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = await _create_prompt(client, "Show machine M-LTH-77 status.")
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200, created.text
+        session = (await client.get(f"/sessions/{session_id}")).json()
+
+    contract = session["replan_context"]["intent_contract"]
+    evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
+    replan = contract["replan_spine"]
+
+    assert len(executor_calls) == 2
+    assert replan["attempt_count"] == 1
+    assert replan["stale_attempt_evidence_refs"] == [evidence[0]["id"]]
+    assert replan["active_final_evidence_refs"] == [evidence[-1]["id"]]
+    assert contract["response_document_context"]["evidence_refs"] == [evidence[-1]["id"]]
+    assert evidence[0]["diagnostic_metadata"]["active_revision_satisfaction"] is False
+    assert evidence[-1]["diagnostic_metadata"]["active_revision_satisfaction"] is True
+
+
 def test_phase8_runtime_has_no_second_parallel_tool_selector_retriever():
     planning_sources = "\n".join(
         path.read_text(encoding="utf-8")

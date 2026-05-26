@@ -32,6 +32,14 @@ _ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITIN
 _LIVE_GRAPH_MAX_STEPS = 8
 
 
+def _intent_contract_replan_spine(state: Any) -> dict[str, Any]:
+    diagnostics = getattr(getattr(state, "execution_trace", None), "diagnostics", {})
+    replan = diagnostics.get("replan_spine") if isinstance(diagnostics, Mapping) else None
+    if not isinstance(replan, Mapping):
+        return {}
+    return dict(replan)
+
+
 def _graph_event_is_rag(event: Mapping[str, Any]) -> bool:
     tool_names = [str(item or "").lower() for item in event.get("tool_names") or []]
     source_types = [str(item or "").lower() for item in event.get("source_types") or []]
@@ -546,6 +554,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         state = result.state
         loop_state = state.as_loop_compat_state()
         graph_state = state.model_dump(mode="json")
+        response_document_context = state.response_document_context.model_dump(mode="json")
+        replan_spine = _intent_contract_replan_spine(state)
         context = dict(base_context or {})
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
@@ -555,6 +565,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "execution_trace": state.execution_trace.model_dump(mode="json"),
             "v2_state": loop_state.model_dump(mode="json"),
             "planner_owned_agent_graph_state": graph_state,
+            "response_document_context": response_document_context,
+            "replan_spine": replan_spine,
         }
         context.pop("no_op_mutations", None)
         no_op_mutations = self._no_op_mutations(state)
@@ -570,7 +582,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "planner_decision_count": len(state.planner_decisions),
             "evidence_refs": [evidence.id for evidence in state.evidence_ledger.evidence],
             "response_document_state": state.response_document_context.state,
-            "response_document_context": state.response_document_context.model_dump(mode="json"),
+            "response_document_context": response_document_context,
+            "replan_spine": replan_spine,
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
         }
@@ -619,9 +632,12 @@ class PlannerOwnedGraphRuntimeAdapter:
             if isinstance(block, dict) and block.get("evidence_ref")
         }
         business_change_hints = self._business_change_hints_by_requirement(state)
+        active_response_refs = set(state.response_document_context.evidence_refs)
         outputs: list[dict[str, Any]] = []
         for evidence in state.evidence_ledger.evidence:
             if not evidence.tool_name:
+                continue
+            if active_response_refs and evidence.id not in active_response_refs:
                 continue
             if self._is_non_actionable_preview_evidence(evidence):
                 continue
