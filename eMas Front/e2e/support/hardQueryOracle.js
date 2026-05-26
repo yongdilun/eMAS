@@ -394,6 +394,7 @@ function addApprovalViolations(violations, snapshot, pendingApprovals, expected)
 
 function addForbiddenTextViolations(violations, snapshot, ui, expected) {
   const visibleText = String(ui?.latestAssistantText || ui?.latestAssistantMessage || '')
+  const visibleUiText = String(ui?.visibleText || '')
   const backendContractText = JSON.stringify({
     response_document: snapshot?.response_document || {},
     steps: backendSteps(snapshot).map((step) => ({
@@ -409,6 +410,12 @@ function addForbiddenTextViolations(violations, snapshot, ui, expected) {
       violations.push(`forbidden visible text matched ${item?.label || labelForPattern(pattern)}`)
     }
   }
+  for (const item of asArray(expected.forbiddenUiText)) {
+    const pattern = item?.pattern || item
+    if (matches(visibleUiText, pattern)) {
+      violations.push(`forbidden visible UI text matched ${item?.label || labelForPattern(pattern)}`)
+    }
+  }
   for (const item of [...HARD_QUERY_FORBIDDEN_RUNTIME_PATTERNS, ...asArray(expected.forbiddenBackendText)]) {
     const pattern = item?.pattern || item
     if (matches(backendContractText, pattern)) {
@@ -419,6 +426,12 @@ function addForbiddenTextViolations(violations, snapshot, ui, expected) {
     const pattern = item?.pattern || item
     if (!matches(visibleText, pattern)) {
       violations.push(`visible text missing ${item?.label || labelForPattern(pattern)}`)
+    }
+  }
+  for (const item of asArray(expected.visibleUiTextIncludes)) {
+    const pattern = item?.pattern || item
+    if (!matches(visibleUiText, pattern)) {
+      violations.push(`visible UI text missing ${item?.label || labelForPattern(pattern)}`)
     }
   }
   for (const item of asArray(expected.backendTextIncludes)) {

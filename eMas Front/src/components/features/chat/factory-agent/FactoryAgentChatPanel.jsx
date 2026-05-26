@@ -782,10 +782,21 @@ function isBackendUnavailableError(error) {
   )
 }
 
-function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRetryConnection }) {
+function isTerminalAttentionStatus(status) {
+  return status === FACTORY_AGENT_STATUS.FAILED || status === FACTORY_AGENT_STATUS.BLOCKED
+}
+
+function FactoryAgentDiagnostics({ error, sessionStatus, streamDiagnostics = [], retrying, onRetryConnection }) {
   const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
   if (!error && diagnostics.length === 0) return null
   const backendUnavailable = isBackendUnavailableError(error)
+  const terminalAttention = !backendUnavailable && isTerminalAttentionStatus(sessionStatus)
+  const title = backendUnavailable
+    ? 'Factory Agent is disconnected'
+    : terminalAttention
+      ? 'Run needs attention'
+      : 'Factory Agent chat could not start'
+  const retryLabel = terminalAttention ? 'Refresh run status' : 'Try starting chat again'
 
   return (
     <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
@@ -793,7 +804,7 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-semibold text-ink">
-              {backendUnavailable ? 'Factory Agent is disconnected' : 'Factory Agent chat could not start'}
+              {title}
             </div>
             <div className="mt-0.5">{error}</div>
           </div>
@@ -804,7 +815,7 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
               disabled={retrying}
               className="rounded-md border border-hairline bg-surface-1 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
             >
-              {retrying ? 'Retrying...' : 'Try starting chat again'}
+              {retrying ? 'Retrying...' : retryLabel}
             </button>
           ) : null}
         </div>
@@ -1104,6 +1115,7 @@ const FactoryAgentChatPanel = ({
 
         <FactoryAgentDiagnostics
           error={error}
+          sessionStatus={effectiveSessionStatus}
           streamDiagnostics={streamDiagnostics}
           retrying={isRetryingConnection}
           onRetryConnection={retryConnection}

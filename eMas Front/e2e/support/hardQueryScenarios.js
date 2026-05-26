@@ -577,9 +577,15 @@ export const hardQueryScenarios = Object.freeze([
       visibleTextIncludes: [
         { label: 'active machine status after retry', pattern: /Machine\s+M-CNC-01\s+is/i },
       ],
+      visibleUiTextIncludes: [
+        { label: 'completed recovery shell status', pattern: /Complete/i },
+      ],
       forbiddenVisibleText: [
         { label: 'stale incomplete status result', pattern: /Machine(?:\s+M-CNC-01)?\s+(?:status\s+)?was retrieved/i },
         { label: 'approval required for read recovery', pattern: /Approval required/i },
+      ],
+      forbiddenUiText: [
+        { label: 'safe failure banner on recovery', pattern: /Factory Agent chat could not start|Run needs attention/i },
       ],
     },
   },
@@ -628,10 +634,19 @@ export const hardQueryScenarios = Object.freeze([
       visibleTextIncludes: [
         { label: 'bounded safe failure message', pattern: /could not verify|bounded retries|no successful active evidence/i },
       ],
+      visibleUiTextIncludes: [
+        { label: 'safe failure shell status', pattern: /Needs attention/i },
+        { label: 'safe failure response title', pattern: /Run needs attention/i },
+      ],
       forbiddenVisibleText: [
         { label: 'fake machine status after bounded failure', pattern: /Machine\s+M-CNC-01\s+is/i },
         { label: 'approval required for read failure', pattern: /Approval required/i },
         { label: 'fake success text', pattern: /Run complete/i },
+      ],
+      forbiddenUiText: [
+        { label: 'misleading startup failure banner', pattern: /Factory Agent chat could not start/i },
+        { label: 'misleading start retry action', pattern: /Try starting chat again/i },
+        { label: 'raw backend error JSON', pattern: /["']errors["']\s*:/i },
       ],
     },
   },
