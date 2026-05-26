@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 import os
 from typing import Any
 
+from factory_agent.platform_compat import guard_blocking_windows_platform_queries
+
+guard_blocking_windows_platform_queries()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
