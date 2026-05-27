@@ -7,8 +7,11 @@ import pytest
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_contracts import (
     EvidenceCitation,
+    EvidenceLedger,
     EvidenceLedgerEntry,
     LegacyRagRouteMetadata,
+    PlannerOwnedLoopV2State,
+    RequirementLedger,
     RequirementLedgerEntry,
     SatisfactionCheck,
 )
@@ -202,6 +205,160 @@ def _api_evidence(
         confidence=confidence,  # type: ignore[arg-type]
         tool_name="get__jobs" if rows is not None else f"get__{entity}s_{{id}}",
         normalized_result=normalized_result,
+    )
+
+
+def test_requirement_expansion_final_validation_blocks_open_required_child():
+    parent = RequirementLedgerEntry(
+        id="req-001",
+        goal="Read machine status",
+        requirement_type="single_entity_status",
+        entity="machine",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"machine_id": "M-LTH-77"},
+        requested_fields=[],
+        locked_constraints=["machine_id"],
+        status="satisfied",
+        evidence_refs=["ev-parent"],
+        satisfaction_checks=[
+            SatisfactionCheck(
+                check="entity_match",
+                expected={"machine_id": "M-LTH-77"},
+                actual="M-LTH-77",
+                passed=True,
+                evidence_ref="ev-parent",
+            )
+        ],
+    )
+    child = RequirementLedgerEntry(
+        id="req-001.a",
+        goal="Read active job status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=[],
+        locked_constraints=["job_id"],
+        parent_requirement_id=parent.id,
+        expansion_reason="Parent evidence exposed an active job.",
+        derived_from_evidence_refs=["ev-parent"],
+        status="open",
+    )
+    state = PlannerOwnedLoopV2State(
+        requirement_ledger=RequirementLedger(
+            user_goal="Explain why machine M-LTH-77 is stopped.",
+            requirements=[parent, child],
+            revision=2,
+        ),
+        evidence_ledger=EvidenceLedger(
+            evidence=[
+                _api_evidence(
+                    "ev-parent",
+                    parent.id,
+                    entity="machine",
+                    entity_id="M-LTH-77",
+                    fields={"machine_id": "M-LTH-77", "status": "stopped", "active_job_id": "JOB-CAUSE-17"},
+                )
+            ]
+        ),
+    )
+
+    result = validate_v2_final_state(state)
+
+    assert result.status == "failed"
+    assert any(
+        issue.issue == "required_requirement_open" and issue.requirement_id == child.id
+        for issue in result.issues
+    )
+
+
+def test_requirement_expansion_final_validation_rejects_stale_child_evidence():
+    parent = RequirementLedgerEntry(
+        id="req-001",
+        goal="Read machine status",
+        requirement_type="single_entity_status",
+        entity="machine",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"machine_id": "M-LTH-77"},
+        requested_fields=[],
+        locked_constraints=["machine_id"],
+        status="satisfied",
+        evidence_refs=["ev-parent"],
+        satisfaction_checks=[
+            SatisfactionCheck(
+                check="entity_match",
+                expected={"machine_id": "M-LTH-77"},
+                actual="M-LTH-77",
+                passed=True,
+                evidence_ref="ev-parent",
+            )
+        ],
+    )
+    child = RequirementLedgerEntry(
+        id="req-001.a",
+        goal="Read active job status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=[],
+        locked_constraints=["job_id"],
+        parent_requirement_id=parent.id,
+        expansion_reason="Parent evidence exposed an active job.",
+        derived_from_evidence_refs=["ev-parent"],
+        status="satisfied",
+        evidence_refs=["ev-child"],
+        satisfaction_checks=[
+            SatisfactionCheck(
+                check="entity_match",
+                expected={"job_id": "JOB-CAUSE-17"},
+                actual="JOB-CAUSE-17",
+                passed=True,
+                evidence_ref="ev-child",
+            )
+        ],
+    )
+    child_evidence = _api_evidence(
+        "ev-child",
+        child.id,
+        entity="job",
+        entity_id="JOB-CAUSE-17",
+        fields={"job_id": "JOB-CAUSE-17", "status": "waiting"},
+    )
+    child_evidence.diagnostic_metadata = {
+        "active_revision_satisfaction": False,
+        "stale_after_graph_revision": True,
+    }
+    state = PlannerOwnedLoopV2State(
+        requirement_ledger=RequirementLedger(
+            user_goal="Explain why machine M-LTH-77 is stopped.",
+            requirements=[parent, child],
+            revision=3,
+        ),
+        evidence_ledger=EvidenceLedger(
+            evidence=[
+                _api_evidence(
+                    "ev-parent",
+                    parent.id,
+                    entity="machine",
+                    entity_id="M-LTH-77",
+                    fields={"machine_id": "M-LTH-77", "status": "stopped", "active_job_id": "JOB-CAUSE-17"},
+                ),
+                child_evidence,
+            ]
+        ),
+    )
+
+    result = validate_v2_final_state(state)
+
+    assert result.status == "failed"
+    assert any(
+        issue.issue == "stale_evidence_not_finalizable" and issue.requirement_id == child.id
+        for issue in result.issues
     )
 
 

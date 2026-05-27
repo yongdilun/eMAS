@@ -1352,6 +1352,16 @@ def _validate_typed_evidence(
     evidence: EvidenceLedgerEntry,
     issues: list[FinalValidationIssue],
 ) -> None:
+    if _evidence_marked_stale(evidence):
+        issues.append(
+            FinalValidationIssue(
+                issue="stale_evidence_not_finalizable",
+                requirement_id=requirement.id,
+                evidence_ref=evidence.id,
+                expected="active_revision_evidence",
+                actual=evidence.diagnostic_metadata,
+            )
+        )
     if requirement.status == "satisfied" and evidence.confidence != "deterministic":
         issues.append(
             FinalValidationIssue(
@@ -1386,6 +1396,16 @@ def _validate_typed_evidence(
                 evidence_ref=evidence.id,
             )
         )
+
+
+def _evidence_marked_stale(evidence: EvidenceLedgerEntry) -> bool:
+    metadata = evidence.diagnostic_metadata or {}
+    return (
+        metadata.get("active_revision_satisfaction") is False
+        or metadata.get("stale_after_graph_revision") is True
+        or metadata.get("stale_after_graph_replan") is True
+        or metadata.get("stale_after_user_interrupt") is True
+    )
 
 
 def _final_validation_result(
