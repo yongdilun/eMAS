@@ -44,11 +44,26 @@ def _conditional_branch_summary_parts(state: PlannerOwnedAgentGraphState) -> lis
             continue
         on_true = getattr(branch, "on_true", {}) or {}
         entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
-        if entity and entity != "follow-up":
-            parts.append(f"No {entity} id was present, so the conditional {entity} follow-up was skipped.")
+        missing_field = _branch_missing_identifier_label(branch)
+        if missing_field:
+            follow_up = f"{entity} follow-up" if entity and entity != "follow-up" else "follow-up"
+            parts.append(f"No {missing_field} was present, so the conditional {follow_up} was skipped.")
         else:
             parts.append("The conditional follow-up was skipped because its trigger was not present.")
     return parts
+
+
+def _branch_missing_identifier_label(branch: Any) -> str | None:
+    on_true = getattr(branch, "on_true", {}) or {}
+    condition = getattr(branch, "condition", {}) or {}
+    field = str(on_true.get("constraint_field") or "").strip()
+    if not field:
+        field_any = condition.get("field_any")
+        if isinstance(field_any, list) and field_any:
+            field = str(field_any[0] or "").strip()
+    if not field:
+        return None
+    return field.replace("_", " ")
 
 
 def _replan_limit_response_block(state: PlannerOwnedAgentGraphState, replan_spine: Mapping[str, Any]) -> dict[str, Any]:

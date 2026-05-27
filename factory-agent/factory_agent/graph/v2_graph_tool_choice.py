@@ -5,6 +5,12 @@ from typing import Any
 from ..planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord, PlannerOwnedAgentGraphState
 from ..planning.v2_capability_map import build_capability_needs_for_text
 from ..planning.v2_contracts import CapabilityNeed, HydratedToolCard
+from ..planning.v2_tool_card_selection import (
+    card_entity_matches_requirement as _card_entity_matches_requirement,
+    card_supports_collection_read as _card_supports_collection_read,
+    card_supports_single_entity_read as _card_supports_single_entity_read,
+    identity_arg_names as _identity_arg_names,
+)
 from .v2_graph_interrupts import _planner_decision_is_active_for_graph_revision
 
 
@@ -154,38 +160,6 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
     return cards[0]
 
 
-def _card_supports_single_entity_read(card: HydratedToolCard, requirement: Any) -> bool:
-    if not bool(card.is_read_only) or bool(card.requires_approval):
-        return False
-    if not _card_entity_matches_requirement(card, requirement):
-        return False
-    actions = set(card.actions)
-    if not {"read_one", "read"}.intersection(actions):
-        return False
-    identity_args = set(card.path_params or []) | set(card.required_args or [])
-    if identity_args.intersection(_identity_arg_names(requirement)):
-        return True
-    return str(card.metadata.get("endpoint_shape") or "").strip().lower() == "item" and not _card_supports_collection_read(card)
-
-
-def _card_entity_matches_requirement(card: HydratedToolCard, requirement: Any) -> bool:
-    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
-    if not entity:
-        return True
-    endpoint_root = str(card.metadata.get("endpoint_root") or "").strip().lower()
-    return endpoint_root == entity
-
-
-def _card_supports_collection_read(card: HydratedToolCard) -> bool:
-    if card.path_params:
-        return False
-    if "{id}" in card.tool_name or "id" in set(card.required_args):
-        return False
-    if "list" in set(card.actions):
-        return True
-    return bool(card.supports_filters or card.supports_sort or card.supports_limit)
-
-
 def _card_supports_collection_identity_read(card: HydratedToolCard, requirement: Any) -> bool:
     if not _card_supports_collection_read(card):
         return False
@@ -211,14 +185,6 @@ def _batch_identity_arg(card: HydratedToolCard, requirement: Any) -> str | None:
     if "id" in path_or_required:
         return "id"
     return path_or_required[0]
-
-
-def _identity_arg_names(requirement: Any) -> set[str]:
-    entity = str(getattr(requirement, "entity", "") or "").strip()
-    names = {"id", "entity_id", "record_id"}
-    if entity:
-        names.update({f"{entity}_id", f"{entity}_ref"})
-    return names
 
 
 def _multi_entity_identity_values(requirement: Any, capability_need: Any) -> list[Any]:

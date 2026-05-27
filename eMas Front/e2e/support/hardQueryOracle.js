@@ -409,7 +409,10 @@ function addConditionalBranchViolations(violations, snapshot, expected) {
       if (expectedBranch.conditionType && condition.type !== expectedBranch.conditionType) return false
       if (expectedBranch.conditionField && condition.field !== expectedBranch.conditionField) return false
       if (Object.hasOwn(expectedBranch, 'conditionValue') && String(condition.value ?? '') !== String(expectedBranch.conditionValue)) return false
-      if (expectedBranch.fieldAny && !arrayEquals(condition.field_any || [], expectedBranch.fieldAny)) return false
+      if (expectedBranch.fieldAny) {
+        const actualFields = new Set(asArray(condition.field_any))
+        if (!expectedBranch.fieldAny.every((field) => actualFields.has(field))) return false
+      }
       return true
     })
     if (!found) {

@@ -1028,7 +1028,7 @@ def _conditional_branch_for_clause(
             branch_entity = entity or ""
         if not branch_entity:
             return None
-        field_any = [f"{branch_entity}_id", f"active_{branch_entity}_id"]
+        field_any = _conditional_identifier_fields(capability_map, branch_entity)
         return {
             "condition": {
                 "type": "active_parent_evidence_has_any_field",
@@ -1084,6 +1084,18 @@ def _conditional_branch_for_clause(
             ),
         },
     }
+
+
+def _conditional_identifier_fields(capability_map: CapabilityMap, entity: str) -> list[str]:
+    primary = f"{entity}_id"
+    fields: list[str] = [primary]
+    suffix = f"_{primary}"
+    for alias in capability_map.field_aliases.aliases:
+        canonical = str(alias.canonical_field or "").strip()
+        if canonical == primary or canonical.endswith(suffix):
+            fields.append(canonical)
+    fields.append(f"active_{primary}")
+    return list(dict.fromkeys(field for field in fields if field))
 
 
 def _answer_instruction_for_clause(

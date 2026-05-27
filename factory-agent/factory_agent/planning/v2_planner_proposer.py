@@ -25,6 +25,11 @@ from .v2_contracts import (
     V2ContractModel,
 )
 from .v2_planner_decisions import PlannerDecisionSubmission
+from .v2_tool_card_selection import (
+    card_entity_matches_requirement as _card_entity_matches_requirement,
+    card_supports_collection_read as _card_supports_collection_read,
+    card_supports_single_entity_read as _card_supports_single_entity_read,
+)
 
 
 class PlannerDecisionProposerError(RuntimeError):
@@ -224,45 +229,6 @@ def _requirement_for_context(
     if context.requirement_id is None:
         return None
     return next((item for item in state.requirement_ledger.requirements if item.id == context.requirement_id), None)
-
-
-def _card_supports_single_entity_read(card: HydratedToolCard, requirement: RequirementLedgerEntry | None) -> bool:
-    if requirement is None:
-        return False
-    if not bool(card.is_read_only) or bool(card.requires_approval):
-        return False
-    if not _card_entity_matches_requirement(card, requirement):
-        return False
-    if not {"read_one", "read"}.intersection(set(card.actions)):
-        return False
-    identity_args = set(card.path_params or []) | set(card.required_args or [])
-    if identity_args.intersection(_identity_arg_names(requirement)):
-        return True
-    return str(card.metadata.get("endpoint_shape") or "").strip().lower() == "item" and not _card_supports_collection_read(card)
-
-
-def _card_entity_matches_requirement(card: HydratedToolCard, requirement: RequirementLedgerEntry | None) -> bool:
-    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
-    if not entity:
-        return True
-    endpoint_root = str(card.metadata.get("endpoint_root") or "").strip().lower()
-    return endpoint_root == entity
-
-
-def _card_supports_collection_read(card: HydratedToolCard) -> bool:
-    if card.path_params or "{id}" in card.tool_name or "id" in set(card.required_args):
-        return False
-    if "list" in set(card.actions):
-        return True
-    return bool(card.supports_filters or card.supports_sort or card.supports_limit)
-
-
-def _identity_arg_names(requirement: RequirementLedgerEntry | None) -> set[str]:
-    entity = str(getattr(requirement, "entity", "") or "").strip()
-    names = {"id", "entity_id", "record_id"}
-    if entity:
-        names.update({f"{entity}_id", f"{entity}_ref"})
-    return names
 
 
 class OpenAICompatibleQwenPlannerDecisionProposer:
