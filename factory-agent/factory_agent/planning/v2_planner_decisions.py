@@ -14,6 +14,7 @@ from .v2_agent_state import (
 )
 from .v2_contracts import (
     CapabilityNeed,
+    EvidenceLedgerEntry,
     FinalValidationResult,
     HydratedToolCard,
     RequirementLedger,
@@ -225,6 +226,8 @@ def _validate_locked_constraints_preserved(
 
     proposed_by_id = {requirement.id: requirement for requirement in proposed.requirements}
     for current in state.requirement_ledger.requirements:
+        if current.id not in proposed_by_id:
+            errors.append(f"existing requirement was dropped: {current.id}")
         if not current.locked_constraints:
             continue
         replacement = proposed_by_id.get(current.id)
@@ -232,6 +235,8 @@ def _validate_locked_constraints_preserved(
             errors.append(f"locked requirement was dropped: {current.id}")
             continue
         _validate_requirement_locks(current, replacement, errors)
+
+    _validate_child_requirement_expansion(state, proposed, errors)
 
 
 def _validate_requirement_locks(
@@ -250,6 +255,227 @@ def _validate_requirement_locks(
                 "locked constraint value changed for "
                 f"{current.id}:{locked} expected={expected!r} actual={actual!r}"
             )
+
+
+def _validate_child_requirement_expansion(
+    state: PlannerOwnedAgentGraphState,
+    proposed: RequirementLedger,
+    errors: list[str],
+) -> None:
+    current_by_id = {requirement.id: requirement for requirement in state.requirement_ledger.requirements}
+    proposed_by_id = {requirement.id: requirement for requirement in proposed.requirements}
+    added = [requirement for requirement in proposed.requirements if requirement.id not in current_by_id]
+    if not added:
+        return
+
+    for requirement in added:
+        parent_id = requirement.parent_requirement_id
+        if not parent_id:
+            errors.append(f"new requirement additions must be child requirements: {requirement.id}")
+            continue
+        parent = current_by_id.get(parent_id)
+        if parent is None:
+            errors.append(f"child requirement parent is missing: {requirement.id}")
+            continue
+        if parent.parent_requirement_id is not None:
+            errors.append(f"child requirement depth exceeds maximum: {requirement.id}")
+        if parent.status not in _ACTIVE_REQUIREMENT_STATUSES:
+            errors.append(f"child requirement parent is not active: {requirement.id}")
+        _validate_child_requirement_id(parent, requirement, proposed_by_id, errors)
+        _validate_child_requirement_locks(parent, requirement, errors)
+        _validate_child_requirement_justification(state, parent, requirement, errors)
+
+
+def _validate_child_requirement_id(
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    proposed_by_id: Mapping[str, RequirementLedgerEntry],
+    errors: list[str],
+) -> None:
+    prefix = f"{parent.id}."
+    if not child.id.startswith(prefix):
+        errors.append(f"child requirement id must be scoped to parent: {child.id}")
+        return
+    suffix = child.id[len(prefix):]
+    if suffix not in {"a", "b"}:
+        errors.append(f"child requirement id exceeds bounded child window: {child.id}")
+        return
+    child_ids = [
+        requirement.id
+        for requirement in proposed_by_id.values()
+        if requirement.parent_requirement_id == parent.id
+    ]
+    if len(set(child_ids)) > 2:
+        errors.append(f"child requirement limit exceeded for parent: {parent.id}")
+
+
+def _validate_child_requirement_locks(
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    errors: list[str],
+) -> None:
+    for locked in parent.locked_constraints:
+        if locked not in child.constraints:
+            continue
+        expected = _locked_value(parent, locked)
+        actual = _locked_value(child, locked)
+        if not _json_equal(expected, actual):
+            errors.append(
+                "child requirement contradicts parent locked constraint "
+                f"{parent.id}:{locked} expected={expected!r} actual={actual!r}"
+            )
+    if child.requirement_type == "mutation_request":
+        requires_approval = child.constraints.get("requires_approval") is True
+        if not requires_approval or "requires_approval" not in child.locked_constraints:
+            errors.append("child mutation requirements must remain approval-gated")
+
+
+def _validate_child_requirement_justification(
+    state: PlannerOwnedAgentGraphState,
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    errors: list[str],
+) -> None:
+    evidence_items = _child_justifying_evidence(state, parent, child, errors)
+    missing_reasons = _child_justifying_missing_reasons(state, parent, child, errors)
+    if not evidence_items and not missing_reasons:
+        errors.append("child requirement expansion requires evidence or missing-evidence justification")
+        return
+    if not _child_supported_by_justification(parent, child, evidence_items=evidence_items, missing_reasons=missing_reasons):
+        errors.append(f"child requirement is not supported by current evidence gap: {child.id}")
+
+
+def _child_justifying_evidence(
+    state: PlannerOwnedAgentGraphState,
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    errors: list[str],
+) -> list[EvidenceLedgerEntry]:
+    refs = [str(ref).strip() for ref in child.derived_from_evidence_refs if str(ref).strip()]
+    evidence_by_id = {evidence.id: evidence for evidence in state.evidence_ledger.evidence}
+    evidence_items: list[EvidenceLedgerEntry] = []
+    for ref in refs:
+        evidence = evidence_by_id.get(ref)
+        if evidence is None:
+            errors.append(f"child requirement references missing evidence: {ref}")
+            continue
+        if evidence.requirement_id != parent.id:
+            errors.append(f"child requirement evidence does not belong to parent: {ref}")
+            continue
+        evidence_items.append(evidence)
+    return evidence_items
+
+
+def _child_justifying_missing_reasons(
+    state: PlannerOwnedAgentGraphState,
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    errors: list[str],
+) -> list[Mapping[str, Any]]:
+    declared = [
+        dict(reason)
+        for reason in child.derived_from_missing_reasons
+        if isinstance(reason, Mapping)
+    ]
+    if not declared:
+        return []
+    known = _known_missing_evidence_reasons(state)
+    matched: list[Mapping[str, Any]] = []
+    for reason in declared:
+        if str(reason.get("requirement_id") or "") != parent.id:
+            errors.append(f"child requirement missing-evidence reason does not belong to parent: {child.id}")
+            continue
+        if known and not any(_json_equal(reason, known_reason) for known_reason in known):
+            errors.append(f"child requirement missing-evidence reason is not current: {child.id}")
+            continue
+        matched.append(reason)
+    return matched
+
+
+def _known_missing_evidence_reasons(state: PlannerOwnedAgentGraphState) -> list[Mapping[str, Any]]:
+    diagnostics = state.execution_trace.diagnostics
+    reasons: list[Mapping[str, Any]] = []
+    for key in ("satisfaction", "replan_spine"):
+        section = diagnostics.get(key)
+        if not isinstance(section, Mapping):
+            continue
+        raw_reasons = section.get("missing_evidence_reasons")
+        if isinstance(raw_reasons, list):
+            reasons.extend(dict(reason) for reason in raw_reasons if isinstance(reason, Mapping))
+    return reasons
+
+
+def _child_supported_by_justification(
+    parent: RequirementLedgerEntry,
+    child: RequirementLedgerEntry,
+    *,
+    evidence_items: list[EvidenceLedgerEntry],
+    missing_reasons: list[Mapping[str, Any]],
+) -> bool:
+    if child.source_of_truth not in {parent.source_of_truth, "unknown"}:
+        if not any(evidence.source_of_truth == child.source_of_truth for evidence in evidence_items):
+            return False
+    if child.entity == parent.entity and child.source_of_truth == parent.source_of_truth:
+        return True
+    if any(_evidence_supports_child_requirement(evidence, child) for evidence in evidence_items):
+        return True
+    return any(_missing_reason_supports_child_requirement(reason, child) for reason in missing_reasons)
+
+
+def _evidence_supports_child_requirement(
+    evidence: EvidenceLedgerEntry,
+    child: RequirementLedgerEntry,
+) -> bool:
+    evidence_values = _flatten_mapping_values(evidence.normalized_result)
+    for key, value in child.constraints.items():
+        if key in {"requires_approval"} or value in (None, "", [], {}):
+            continue
+        if _constraint_value_supported_by_values(key, value, evidence_values):
+            return True
+    entity = str(child.entity or "").strip()
+    return bool(entity and any(key.endswith(f"{entity}_id") for key, _value in evidence_values))
+
+
+def _missing_reason_supports_child_requirement(
+    reason: Mapping[str, Any],
+    child: RequirementLedgerEntry,
+) -> bool:
+    reason_values = _flatten_mapping_values(reason)
+    for key, value in child.constraints.items():
+        if key in {"requires_approval"} or value in (None, "", [], {}):
+            continue
+        if _constraint_value_supported_by_values(key, value, reason_values):
+            return True
+    return bool(reason.get("reason"))
+
+
+def _constraint_value_supported_by_values(
+    key: str,
+    value: Any,
+    evidence_values: list[tuple[str, Any]],
+) -> bool:
+    comparable = _json_key(value)
+    for evidence_key, evidence_value in evidence_values:
+        if evidence_key != key and not evidence_key.endswith(f"_{key}"):
+            continue
+        if _json_key(evidence_value) == comparable:
+            return True
+    return False
+
+
+def _flatten_mapping_values(value: Any, *, prefix: str = "") -> list[tuple[str, Any]]:
+    if isinstance(value, Mapping):
+        flattened: list[tuple[str, Any]] = []
+        for key, child in value.items():
+            child_key = str(key)
+            flattened.extend(_flatten_mapping_values(child, prefix=child_key))
+        return flattened
+    if isinstance(value, list):
+        flattened = []
+        for item in value:
+            flattened.extend(_flatten_mapping_values(item, prefix=prefix))
+        return flattened
+    return [(prefix, value)] if prefix else []
 
 
 def _validate_kind_specific_transition(
@@ -475,8 +701,23 @@ def _validate_tool_call_from_hydrated_window(
     call: GraphToolCall,
     errors: list[str],
 ) -> HydratedToolCard | None:
-    if _requirement_by_id(state, call.requirement_id) is None:
+    requirement = _requirement_by_id(state, call.requirement_id)
+    if requirement is None:
         errors.append(f"selected tool call targets missing requirement: {call.requirement_id}")
+    elif requirement.status != "open":
+        errors.append(f"selected tool call targets non-open requirement: {call.requirement_id}")
+
+    if call.decision_id:
+        previous = next(
+            (
+                decision
+                for decision in state.planner_decisions
+                if decision.decision_id == call.decision_id
+            ),
+            None,
+        )
+        if previous is not None and previous.ledger_revision != state.requirement_ledger.revision:
+            errors.append("selected tool call comes from a previous ledger revision")
 
     candidate_names = {
         candidate.tool_name
@@ -562,6 +803,7 @@ def _state_has_prior_tool_choice(state: PlannerOwnedAgentGraphState, call: Graph
     return any(
         previous.decision_kind == "choose_tool"
         and previous.author in {"planner", "system", "deterministic_guard"}
+        and previous.ledger_revision == state.requirement_ledger.revision
         and _decision_is_not_stale_after_graph_interrupt(state, previous)
         and any(_same_tool_call(call, previous_call) for previous_call in _selected_tool_calls(previous))
         for previous in state.planner_decisions

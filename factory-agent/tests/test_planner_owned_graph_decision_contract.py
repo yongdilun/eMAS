@@ -13,8 +13,12 @@ from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
     CapabilityNeed,
+    EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
+    RequirementLedgerEntry,
+    RequirementRevisionRecord,
+    next_child_requirement_id,
 )
 from factory_agent.planning.v2_planner_decisions import (
     PlannerDecisionSubmission,
@@ -328,6 +332,59 @@ def _planner_diagnostics(decision_id: str, **extra: Any) -> dict[str, Any]:
     }
 
 
+def _active_job_evidence(requirement_id: str) -> EvidenceLedgerEntry:
+    return EvidenceLedgerEntry(
+        id="ev-api-active-job",
+        requirement_id=requirement_id,
+        source_type="api_tool",
+        source_of_truth="operational_state",
+        tool_name="get__machines_{id}",
+        normalized_result={
+            "entity": "machine",
+            "entity_id": "M-LTH-77",
+            "fields": {
+                "machine_id": "M-LTH-77",
+                "status": "stopped",
+                "active_job_id": "JOB-CAUSE-17",
+            },
+        },
+    )
+
+
+def _child_revision_ledger(state, child: RequirementLedgerEntry):
+    proposed_ledger = state.requirement_ledger.model_copy(deep=True)
+    proposed_ledger.revision = state.requirement_ledger.revision + 1
+    proposed_ledger.requirements.append(child)
+    proposed_ledger.revision_history.append(
+        RequirementRevisionRecord(
+            revision=proposed_ledger.revision,
+            actor="planner",
+            change_type="add_child_requirements",
+            requirement_id=child.parent_requirement_id,
+            locked_constraints_preserved=True,
+            details={
+                "parent_requirement_id": child.parent_requirement_id,
+                "added_child_requirement_ids": [child.id],
+                "derived_from_evidence_refs": list(child.derived_from_evidence_refs),
+                "derived_from_missing_reasons": list(child.derived_from_missing_reasons),
+                "locked_constraints_preserved": True,
+            },
+        )
+    )
+    return proposed_ledger
+
+
+def _revise_decision(decision_id: str, requirement_id: str) -> PlannerDecisionRecord:
+    return PlannerDecisionRecord(
+        decision_id=decision_id,
+        decision_kind="revise_requirements",
+        requirement_id=requirement_id,
+        ledger_revision=1,
+        reason="Planner proposed a bounded requirement expansion.",
+        diagnostics=_planner_diagnostics(decision_id),
+    )
+
+
 def test_phase2_supports_declared_planner_decision_kinds():
     assert SUPPORTED_PLANNER_DECISION_KINDS == (
         "retrieve_tools",
@@ -362,6 +419,205 @@ def test_phase2_rejects_planner_decision_that_changes_locked_constraints():
             state,
             PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=proposed_ledger),
         )
+
+
+def test_requirement_expansion_rejects_child_addition_without_evidence_or_missing_reason_justification():
+    state, requirement, _need = _machine_state()
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-UNSUPPORTED"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Planner proposed a follow-up without grounded evidence.",
+    )
+    proposed_ledger = state.requirement_ledger.model_copy(deep=True)
+    proposed_ledger.revision = state.requirement_ledger.revision + 1
+    proposed_ledger.requirements.append(child)
+    proposed_ledger.revision_history.append(
+        RequirementRevisionRecord(
+            revision=proposed_ledger.revision,
+            actor="planner",
+            change_type="add_child_requirements",
+            requirement_id=requirement.id,
+            locked_constraints_preserved=True,
+            details={
+                "parent_requirement_id": requirement.id,
+                "added_child_requirement_ids": [child.id],
+            },
+        )
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-child-without-justification",
+        decision_kind="revise_requirements",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        reason="Planner tried to expand the requirement ledger.",
+        diagnostics=_planner_diagnostics("dec-child-without-justification"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement expansion requires evidence or missing-evidence justification"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=proposed_ledger),
+        )
+
+
+def test_requirement_expansion_accepts_valid_child_requirement_addition():
+    state, requirement, _need = _machine_state()
+    state.evidence_ledger.evidence.append(_active_job_evidence(requirement.id))
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Machine evidence exposed an active job id.",
+        derived_from_evidence_refs=["ev-api-active-job"],
+        depends_on=["ev-api-active-job"],
+    )
+    decision = _revise_decision("dec-valid-child", requirement.id)
+
+    result = validate_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+    )
+
+    assert result.accepted is True
+
+
+def test_requirement_expansion_rejects_child_addition_with_missing_parent():
+    state, requirement, _need = _machine_state()
+    state.evidence_ledger.evidence.append(_active_job_evidence(requirement.id))
+    child = RequirementLedgerEntry(
+        id="req-missing.a",
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id"],
+        parent_requirement_id="req-missing",
+        expansion_reason="Machine evidence exposed an active job id.",
+        derived_from_evidence_refs=["ev-api-active-job"],
+    )
+    decision = _revise_decision("dec-missing-parent", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement parent is missing"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
+
+
+def test_requirement_expansion_rejects_child_mutation_that_bypasses_approval_safety():
+    state, requirement, _need = _machine_state()
+    state.evidence_ledger.evidence.append(_active_job_evidence(requirement.id))
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Update active job JOB-CAUSE-17 priority",
+        requirement_type="mutation_request",
+        entity="job",
+        intent_operation="stage_mutation",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=[],
+        locked_constraints=["job_id"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Machine evidence exposed an active job id.",
+        derived_from_evidence_refs=["ev-api-active-job"],
+    )
+    decision = _revise_decision("dec-child-mutation-no-approval", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child mutation requirements must remain approval-gated"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
+
+
+def test_requirement_expansion_rejects_child_that_changes_parent_locked_value():
+    state, requirement, _need = _machine_state()
+    state.evidence_ledger.evidence.append(_active_job_evidence(requirement.id))
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read a different machine status",
+        requirement_type="single_entity_status",
+        entity="machine",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"machine_id": "M-OTHER-77"},
+        requested_fields=["status"],
+        locked_constraints=["machine_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Planner tried to branch to a conflicting machine.",
+        derived_from_evidence_refs=["ev-api-active-job"],
+    )
+    decision = _revise_decision("dec-child-locked-conflict", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement contradicts parent locked constraint"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
+
+
+def test_requirement_expansion_rejects_selected_tool_call_for_terminal_requirement():
+    state, requirement, _need = _state_with_hydrated_machine_window()
+    requirement.status = "satisfied"
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-terminal-requirement",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        selected_tool_call=_machine_call(),
+        reason="Planner tried to execute against a terminal requirement.",
+        diagnostics=_planner_diagnostics("dec-choose-terminal-requirement"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="selected tool call targets non-open requirement"):
+        validate_planner_decision(state, decision)
+
+
+def test_requirement_expansion_rejects_old_revision_selected_tool_call_after_expansion():
+    state, requirement, _need = _state_with_hydrated_machine_window()
+    old_call = _machine_call()
+    old_choose = PlannerDecisionRecord(
+        decision_id="dec-old-choose",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        selected_tool_call=old_call,
+        reason="Planner selected the original machine reader.",
+        diagnostics=_planner_diagnostics("dec-old-choose"),
+    )
+    record_planner_decision(state, old_choose)
+    state.requirement_ledger.revision += 1
+    old_call = old_call.model_copy(update={"decision_id": old_choose.decision_id}, deep=True)
+    decision = PlannerDecisionRecord(
+        decision_id="dec-reuse-old-call",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        selected_tool_call=old_call,
+        reason="Planner tried to reuse a selected call from a previous ledger revision.",
+        diagnostics=_planner_diagnostics("dec-reuse-old-call"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="selected tool call comes from a previous ledger revision"):
+        validate_planner_decision(state, decision)
 
 
 def test_phase2_rejects_choosing_tool_outside_hydrated_candidate_window():
