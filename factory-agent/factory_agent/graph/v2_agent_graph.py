@@ -2861,7 +2861,33 @@ def _open_requirements_need_fresh_retrieval(state: PlannerOwnedAgentGraphState) 
         requirement.status == "open"
         and not _has_evidence_for_requirement(state, requirement.id)
         and not _has_decision_for_requirement(state, "retrieve_tools", requirement.id)
+        and not _has_planner_proposer_rejection_for_requirement(
+            state,
+            requirement.id,
+            requested_decision_kind="retrieve_tools",
+        )
         for requirement in state.requirement_ledger.requirements
+    )
+
+
+def _has_planner_proposer_rejection_for_requirement(
+    state: PlannerOwnedAgentGraphState,
+    requirement_id: str,
+    *,
+    requested_decision_kind: str,
+) -> bool:
+    trace = state.execution_trace.planner.diagnostics.get("planner_decision_proposer")
+    if not isinstance(trace, Mapping):
+        return False
+    rejected = trace.get("rejected")
+    if not isinstance(rejected, list):
+        return False
+    return any(
+        isinstance(item, Mapping)
+        and item.get("requirement_id") == requirement_id
+        and item.get("requested_decision_kind") == requested_decision_kind
+        and item.get("fail_closed") is True
+        for item in rejected
     )
 
 
