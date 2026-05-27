@@ -16,10 +16,13 @@ from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
     CapabilityNeed,
+    EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
     RequirementLedger,
     RequirementLedgerEntry,
+    RequirementRevisionRecord,
+    next_child_requirement_id,
 )
 from factory_agent.planning.v2_planner_decisions import (
     PlannerDecisionSubmission,
@@ -255,6 +258,70 @@ class StaticPlannerModel:
         return self.content
 
 
+def _child_expansion_state() -> PlannerOwnedAgentGraphState:
+    state = PlannerOwnedAgentGraphState(
+        original_query="Explain why machine M-LTH-77 is stopped.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Explain why machine M-LTH-77 is stopped.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="Read machine M-LTH-77 status",
+                    requirement_type="single_entity_status",
+                    entity="machine",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"machine_id": "M-LTH-77"},
+                    requested_fields=["status"],
+                    locked_constraints=["machine_id", "requested_fields"],
+                )
+            ],
+        ),
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-api-machine",
+            requirement_id="req-001",
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__machines_{id}",
+            normalized_result={
+                "entity": "machine",
+                "entity_id": "M-LTH-77",
+                "fields": {
+                    "machine_id": "M-LTH-77",
+                    "status": "stopped",
+                    "active_job_id": "JOB-CAUSE-17",
+                },
+            },
+        )
+    )
+    state.execution_trace.diagnostics["satisfaction"] = {
+        "missing_evidence_reasons": [
+            {
+                "requirement_id": "req-001",
+                "status": "blocked",
+                "reason": "needs_follow_up_entity",
+                "retriable": True,
+                "evidence_refs": ["ev-api-machine"],
+            }
+        ]
+    }
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-LTH-77", "fields": "status"},
+                "requirement_id": "req-001",
+                "evidence_ref": "ev-api-machine",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    return state
+
+
 def _graph(proposer, executor: RecordingExecutor | None = None) -> tuple[PlannerOwnedAgentGraph, RecordingExecutor]:
     settings = _settings()
     executor = executor or RecordingExecutor()
@@ -462,6 +529,144 @@ def test_phase10_5_qwen_prompt_is_compact_and_decision_specific_for_choose_tool(
     )
     assert write_call["missing_required_args"] == ["id"]
     assert len(prompt) < 6000
+
+
+def test_requirement_expansion_revise_prompt_includes_child_rules_and_bounded_context():
+    state = _child_expansion_state()
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id="req-001",
+        reason="Consider bounded child expansion after parent evidence.",
+    )
+
+    prompt = _build_planner_decision_prompt(state=state, context=context)
+    payload = json.loads(prompt)
+    decision_state = payload["decision_state"]
+
+    assert payload["response_contract"]["minimal_json"]["proposed_requirement_ledger"]["requirements"] == (
+        "complete revised requirement list preserving locked constraints"
+    )
+    assert decision_state["child_expansion_rules"]["max_child_depth"] == 1
+    assert decision_state["child_expansion_rules"]["max_children_per_parent"] == 2
+    assert decision_state["child_expansion_rules"]["allowed_initial_child_actions"] == [
+        "read",
+        "read_one",
+        "read_many",
+        "list",
+        "search_documents",
+    ]
+    assert decision_state["missing_evidence_reasons"][0]["evidence_refs"] == ["ev-api-machine"]
+    assert decision_state["failed_tool_memory"][0]["requirement_id"] == "req-001"
+    assert decision_state["candidate_source_of_truth_hints"]["matching_capabilities"] == []
+    assert "active_job_id" in json.dumps(decision_state["active_evidence_summary"])
+    assert decision_state["full_openapi_catalog_visible"] is False
+    assert "input_schema" not in json.dumps(decision_state)
+
+
+@pytest.mark.asyncio
+async def test_requirement_expansion_qwen_adapter_normalizes_valid_child_revision_record():
+    state = _child_expansion_state()
+    parent = state.requirement_ledger.requirements[0]
+    child_id = next_child_requirement_id(parent.id, [requirement.id for requirement in state.requirement_ledger.requirements])
+    proposed = state.requirement_ledger.model_dump(mode="json")
+    proposed["revision"] = state.requirement_ledger.revision + 1
+    proposed["requirements"].append(
+        {
+            "id": child_id,
+            "goal": "Read active job JOB-CAUSE-17 status",
+            "requirement_type": "single_entity_status",
+            "entity": "job",
+            "intent_operation": "report_status",
+            "source_of_truth": "operational_state",
+            "constraints": {"job_id": "JOB-CAUSE-17"},
+            "requested_fields": ["status"],
+            "locked_constraints": ["job_id", "requested_fields"],
+            "parent_requirement_id": parent.id,
+            "expansion_reason": "Machine evidence exposed the active job id.",
+            "derived_from_evidence_refs": ["ev-api-machine"],
+            "derived_from_missing_reasons": [],
+            "depends_on": ["ev-api-machine"],
+        }
+    )
+    proposed["revision_history"] = []
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id=parent.id,
+    )
+    model = StaticPlannerModel(
+        json.dumps(
+            {
+                "decision": {
+                    "decision_kind": "revise_requirements",
+                    "reason": "Add a bounded child requirement from parent evidence.",
+                },
+                "proposed_requirement_ledger": proposed,
+            }
+        )
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+    revision = result.submission.proposed_requirement_ledger.revision_history[-1]  # type: ignore[union-attr]
+
+    assert revision.change_type == "add_child_requirements"
+    assert revision.details["parent_requirement_id"] == parent.id
+    assert revision.details["added_child_requirement_ids"] == [child_id]
+    assert revision.details["derived_from_evidence_refs"] == ["ev-api-machine"]
+    assert validate_planner_decision(state, result.submission).accepted is True
+
+
+@pytest.mark.asyncio
+async def test_requirement_expansion_qwen_adapter_unjustified_child_ledger_is_rejected_by_gate():
+    state = _child_expansion_state()
+    parent = state.requirement_ledger.requirements[0]
+    child_id = next_child_requirement_id(parent.id, [requirement.id for requirement in state.requirement_ledger.requirements])
+    proposed = state.requirement_ledger.model_dump(mode="json")
+    proposed["revision"] = state.requirement_ledger.revision + 1
+    proposed["requirements"].append(
+        {
+            "id": child_id,
+            "goal": "Read unrelated job status",
+            "requirement_type": "single_entity_status",
+            "entity": "job",
+            "intent_operation": "report_status",
+            "source_of_truth": "operational_state",
+            "constraints": {"job_id": "JOB-UNSUPPORTED"},
+            "requested_fields": ["status"],
+            "locked_constraints": ["job_id"],
+            "parent_requirement_id": parent.id,
+            "expansion_reason": "Planner invented a follow-up.",
+            "derived_from_evidence_refs": [],
+            "derived_from_missing_reasons": [],
+        }
+    )
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-unjustified-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id=parent.id,
+    )
+    model = StaticPlannerModel(
+        json.dumps(
+            {
+                "decision": {
+                    "decision_kind": "revise_requirements",
+                    "reason": "Invent a child requirement.",
+                },
+                "proposed_requirement_ledger": proposed,
+            }
+        )
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement expansion requires evidence"):
+        validate_planner_decision(state, result.submission)
 
 
 @pytest.mark.asyncio
