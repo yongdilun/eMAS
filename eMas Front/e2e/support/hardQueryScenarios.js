@@ -319,10 +319,11 @@ export const hardQueryScenarios = Object.freeze([
         },
       ],
       visibleTextIncludes: [
-        { label: 'job answer', pattern: /Job\s+JOB-SEED-001/i },
-        { label: 'product follow-up answer', pattern: /product[\s\S]*P-001/i },
+        { label: 'conditional relationship summary', pattern: /Job\s+JOB-SEED-001\s+included\s+product\s+id\s+P-001/i },
+        { label: 'product status summary', pattern: /Product\s+P-001\s+is\s+active/i },
       ],
       forbiddenVisibleText: [
+        { label: 'shallow mixed-read counter', pattern: /Found\s+1\s+job\.\s+Found\s+1\s+product/i },
         { label: 'attention state', pattern: /Run needs attention/i },
         { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
       ],

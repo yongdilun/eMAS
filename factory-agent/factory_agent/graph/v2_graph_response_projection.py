@@ -23,18 +23,72 @@ def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str
 
 
 def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[dict[str, Any]]) -> str:
-    parts = [
-        str(block.get("summary") or block.get("user_message") or "").strip()
-        for block in blocks
-        if str(block.get("summary") or block.get("user_message") or "").strip()
-    ]
-    parts.extend(_conditional_branch_summary_parts(state))
+    activated_parts, covered_requirement_ids = _activated_conditional_branch_summary_parts(state, blocks)
+    parts: list[str] = []
+    if activated_parts:
+        parts.extend(activated_parts)
+        parts.extend(
+            str(block.get("summary") or block.get("user_message") or "").strip()
+            for block in blocks
+            if str(block.get("requirement_id") or "") not in covered_requirement_ids
+            and str(block.get("summary") or block.get("user_message") or "").strip()
+        )
+    else:
+        parts.extend(
+            str(block.get("summary") or block.get("user_message") or "").strip()
+            for block in blocks
+            if str(block.get("summary") or block.get("user_message") or "").strip()
+        )
+    parts.extend(_conditional_branch_summary_parts(state, blocks))
     if not parts:
         return "No fulfilled read evidence was available for response rendering."
     return " ".join(dict.fromkeys(parts))
 
 
-def _conditional_branch_summary_parts(state: PlannerOwnedAgentGraphState) -> list[str]:
+def _activated_conditional_branch_summary_parts(
+    state: PlannerOwnedAgentGraphState,
+    blocks: list[dict[str, Any]],
+) -> tuple[list[str], set[str]]:
+    block_by_requirement_id = {
+        str(block.get("requirement_id")): block
+        for block in blocks
+        if str(block.get("requirement_id") or "")
+    }
+    parts: list[str] = []
+    covered_requirement_ids: set[str] = set()
+    for branch in getattr(state.requirement_ledger, "conditional_branches", []) or []:
+        if getattr(branch, "status", None) != "activated":
+            continue
+        parent_requirement_id = str(getattr(branch, "parent_requirement_id", "") or "")
+        parent_block = block_by_requirement_id.get(parent_requirement_id)
+        field, value = _branch_trigger_field_value(branch, parent_block)
+        child_entity = _branch_child_entity(branch)
+        parent_label = _block_record_label(parent_block)
+        if parent_label and field and value not in (None, "", [], {}):
+            parts.append(
+                f"{parent_label} included {_field_label(field)} {value}, "
+                f"so the conditional {child_entity} follow-up was run."
+            )
+            covered_requirement_ids.add(parent_requirement_id)
+        for child_requirement_id in getattr(branch, "activated_child_requirement_ids", []) or []:
+            child_id = str(child_requirement_id or "")
+            child_block = block_by_requirement_id.get(child_id)
+            child_summary = str((child_block or {}).get("summary") or "").strip()
+            if child_summary:
+                parts.append(child_summary)
+                covered_requirement_ids.add(child_id)
+    return parts, covered_requirement_ids
+
+
+def _conditional_branch_summary_parts(
+    state: PlannerOwnedAgentGraphState,
+    blocks: list[dict[str, Any]],
+) -> list[str]:
+    block_by_requirement_id = {
+        str(block.get("requirement_id")): block
+        for block in blocks
+        if str(block.get("requirement_id") or "")
+    }
     ledger = state.requirement_ledger
     parts: list[str] = []
     for branch in getattr(ledger, "conditional_branches", []) or []:
@@ -47,10 +101,36 @@ def _conditional_branch_summary_parts(state: PlannerOwnedAgentGraphState) -> lis
         missing_field = _branch_missing_identifier_label(branch)
         if missing_field:
             follow_up = f"{entity} follow-up" if entity and entity != "follow-up" else "follow-up"
-            parts.append(f"No {missing_field} was present, so the conditional {follow_up} was skipped.")
+            parent_label = _block_record_label(block_by_requirement_id.get(str(branch.parent_requirement_id)))
+            parent_suffix = f" on {parent_label}" if parent_label else ""
+            parts.append(f"No {missing_field} was present{parent_suffix}, so the conditional {follow_up} was skipped.")
         else:
             parts.append("The conditional follow-up was skipped because its trigger was not present.")
     return parts
+
+
+def _branch_trigger_field_value(branch: Any, parent_block: dict[str, Any] | None) -> tuple[str | None, Any]:
+    diagnostics = getattr(branch, "diagnostics", {}) or {}
+    field = str(diagnostics.get("trigger_field") or "").strip()
+    value = diagnostics.get("trigger_value")
+    if field and value not in (None, "", [], {}):
+        return field, value
+    condition = getattr(branch, "condition", {}) or {}
+    field_any = condition.get("field_any")
+    fields = (parent_block or {}).get("fields")
+    if isinstance(field_any, list) and isinstance(fields, Mapping):
+        for candidate in field_any:
+            candidate_field = str(candidate or "").strip()
+            candidate_value = fields.get(candidate_field)
+            if candidate_field and candidate_value not in (None, "", [], {}):
+                return candidate_field, candidate_value
+    return field or None, value
+
+
+def _branch_child_entity(branch: Any) -> str:
+    on_true = getattr(branch, "on_true", {}) or {}
+    entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
+    return entity or "follow-up"
 
 
 def _branch_missing_identifier_label(branch: Any) -> str | None:
@@ -63,7 +143,27 @@ def _branch_missing_identifier_label(branch: Any) -> str | None:
             field = str(field_any[0] or "").strip()
     if not field:
         return None
+    return _field_label(field)
+
+
+def _field_label(field: str) -> str:
     return field.replace("_", " ")
+
+
+def _block_record_label(block: dict[str, Any] | None) -> str | None:
+    if not block:
+        return None
+    entity = str(block.get("entity_type") or "record").strip()
+    fields = block.get("fields")
+    field_values = fields if isinstance(fields, Mapping) else {}
+    entity_id = block.get("entity_id") or _first_field_value(
+        field_values,
+        [f"{entity}_id", "entity_id", "id", "machine_ref"],
+    )
+    label = entity.capitalize() if entity else "Record"
+    if entity_id not in (None, ""):
+        return f"{label} {entity_id}"
+    return label
 
 
 def _replan_limit_response_block(state: PlannerOwnedAgentGraphState, replan_spine: Mapping[str, Any]) -> dict[str, Any]:

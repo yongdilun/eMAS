@@ -843,6 +843,9 @@ async def test_conditional_product_branch_creates_child_when_job_evidence_has_pr
         evidence_by_requirement[child.id].id,
     ]
     assert response_diagnostics["response_evidence_refs"] == response_diagnostics["active_evidence_refs"]
+    assert "Job JOB-SEED-001 included product id P-001" in response_diagnostics["summary"]
+    assert "Product P-001 is active." in response_diagnostics["summary"]
+    assert "Found 1 job" not in response_diagnostics["summary"]
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 

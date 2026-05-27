@@ -270,6 +270,106 @@ def test_planner_owned_completed_answer_summary_prefers_graph_response_summary()
     )
 
 
+@pytest.mark.asyncio
+async def test_planner_owned_conditional_summary_overrides_mixed_read_counter(db_session):
+    created_at = datetime(2026, 5, 27, 14, 35, 0)
+    session_id = "rd-conditional-product-summary"
+    plan_id = "rd-conditional-product-summary-plan"
+    prompt = "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result."
+    planner_summary = (
+        "Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. "
+        "Product P-001 is active."
+    )
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=6,
+                status="COMPLETED",
+                current_intent=prompt,
+                replan_context={
+                    "intent_contract": {
+                        "response_document_context": {
+                            "diagnostics": {
+                                "summary": planner_summary,
+                                "conditional_branches": [
+                                    {
+                                        "id": "branch-001",
+                                        "status": "activated",
+                                        "parent_requirement_id": "req-001",
+                                        "activated_child_requirement_ids": ["req-001.a"],
+                                        "diagnostics": {
+                                            "trigger_field": "product_id",
+                                            "trigger_value": "P-001",
+                                        },
+                                    }
+                                ],
+                                "answer_instructions": [
+                                    {"id": "answer-001", "text": "Summarize the result."}
+                                ],
+                            }
+                        }
+                    }
+                },
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-conditional-job",
+                completed_at=created_at + timedelta(seconds=2),
+                rows=[],
+                summary="Job JOB-SEED-001 was retrieved.",
+                tool_name="get__jobs_{id}",
+                args={"id": "JOB-SEED-001"},
+                result={
+                    "success": True,
+                    "data": {
+                        "job_id": "JOB-SEED-001",
+                        "product_id": "P-001",
+                    },
+                },
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-conditional-product",
+                completed_at=created_at + timedelta(seconds=3),
+                rows=[],
+                summary="Product P-001 is active.",
+                tool_name="get__products_{id}",
+                args={"id": "P-001"},
+                result={
+                    "success": True,
+                    "data": {
+                        "product_id": "P-001",
+                        "status": "active",
+                    },
+                },
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content="Found 1 job. Found 1 product.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=4),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+
+    assert document["state"] == "completed"
+    assert document["message"] == planner_summary
+    assert document["summary"] == planner_summary
+    assert "Found 1 job. Found 1 product." not in json.dumps(document)
+    completion = next(step for step in document["run_steps"] if step["kind"] == "completed")
+    assert completion["summary"] == planner_summary
+
+
 def _write_step(
     *,
     session_id: str,

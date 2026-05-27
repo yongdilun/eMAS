@@ -88,6 +88,8 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'get__jobs_{id}',
     'get__products_{id}',
   ])
+  expect(conditionTrue.expected.visibleTextIncludes.map((item) => item.label)).toContain('conditional relationship summary')
+  expect(conditionTrue.expected.forbiddenVisibleText.map((item) => item.label)).toContain('shallow mixed-read counter')
 
   const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
   expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({

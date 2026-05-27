@@ -3787,6 +3787,47 @@ def _mixed_read_summary(read_evidence: list[ReadEvidence], *, session: Any) -> s
     return ". ".join(summaries) + "."
 
 
+def _planner_owned_response_diagnostics(session: Any) -> dict[str, Any]:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return {}
+    candidates = [context.get("intent_contract"), context]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        response_context = candidate.get("response_document_context")
+        if not isinstance(response_context, dict):
+            continue
+        diagnostics = response_context.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            return diagnostics
+    return {}
+
+
+def _planner_owned_composed_summary(session: Any, presentation: PresentationResponse) -> str | None:
+    summary = _trimmed(presentation.summary)
+    if not summary:
+        return None
+    diagnostics = _planner_owned_response_diagnostics(session)
+    if not diagnostics:
+        return None
+    diagnostic_summary = _trimmed(diagnostics.get("summary"))
+    if diagnostic_summary and diagnostic_summary != summary:
+        summary = diagnostic_summary
+    branches = diagnostics.get("conditional_branches")
+    answer_instructions = diagnostics.get("answer_instructions")
+    has_branch_outcome = False
+    if isinstance(branches, list):
+        has_branch_outcome = any(
+            isinstance(branch, dict) and str(branch.get("status") or "").lower() in {"activated", "skipped"}
+            for branch in branches
+        )
+    has_answer_instruction = bool(answer_instructions) if isinstance(answer_instructions, list) else False
+    if has_branch_outcome or has_answer_instruction:
+        return summary
+    return None
+
+
 def _compose_run_steps(
     *,
     document_id: str,
@@ -3806,6 +3847,7 @@ def _compose_run_steps(
     failure_profile: FailureProfile | None,
 ) -> list[RunStep]:
     run_steps: list[RunStep] = []
+    planner_owned_summary = _planner_owned_composed_summary(session, presentation)
     non_terminal_progress = _is_non_terminal_progress_presentation(presentation=presentation, state=state)
     has_request_evidence = bool(timeline or approvals or mutation_groups or read_evidence or sources)
     if has_request_evidence:
@@ -4075,7 +4117,11 @@ def _compose_run_steps(
             completion_summary = _trimmed(status_result.get("summary")) or None
         elif read_evidence:
             read_rows = [row for item in read_evidence for row in item.rows]
-            completion_summary = _mixed_read_summary(read_evidence, session=session) or _read_policy_summary(read_rows, read_policy, presentation.summary)
+            completion_summary = (
+                planner_owned_summary
+                or _mixed_read_summary(read_evidence, session=session)
+                or _read_policy_summary(read_rows, read_policy, presentation.summary)
+            )
         elif sources:
             completion_summary = "Source-backed answer is ready."
         else:
@@ -4306,6 +4352,10 @@ def _short_message(
                 return clean_summary.split(" The related sources checked", 1)[0].rstrip(".") + "."
             return "I do not have enough retrieved evidence to answer that safely."
         return "I found a source-backed answer."
+
+    planner_owned_summary = _planner_owned_composed_summary(session, presentation)
+    if state == "completed" and planner_owned_summary:
+        return planner_owned_summary
 
     if status_result:
         return _trimmed(status_result.get("summary")) or "Status is ready."
