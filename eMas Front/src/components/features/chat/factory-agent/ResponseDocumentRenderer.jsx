@@ -23,6 +23,8 @@ const TECHNICAL_REDACTION_RE = /\b(api[_-]?key|authorization|bearer|password|sec
 const SAFETY_ADMONITION_RE = /(?:^|\n)[ \t]*:::\s*safety\b[\s\S]*?(?:\n[ \t]*:::[ \t]*(?=\n|$)|$)/gi
 const FOOTNOTE_DEFINITION_RE = /^[ \t]*\[\^[^\]\n]+\]:[^\n]*(?:\n[ \t]+[^\n]*)*/gm
 const FOOTNOTE_MARKER_RE = /\[\^[^\]\n]+\]/g
+const RECORD_PREVIEW_METADATA_KEYS = new Set(['operation_id', 'step_id', 'tool_id', 'tool_name', 'approval_id', 'row_id'])
+const RECORD_PREVIEW_ID_KEYS = ['display_id', 'display_name', 'record_id', 'job_id', 'machine_id', 'product_id', 'material_id', 'inventory_id', 'entity_id', 'id', 'name']
 
 function hasRetryStoryActivity(steps) {
   return (Array.isArray(steps) ? steps : []).some((step) => {
@@ -51,13 +53,11 @@ function clampNumber(value, min, max) {
 }
 
 function rowLabel(row, index) {
-  const keys = ['display_id', 'display_name', 'record_id', 'job_id', 'machine_id', 'product_id', 'material_id', 'inventory_id', 'entity_id', 'id', 'name']
-  for (const key of keys) {
+  for (const key of RECORD_PREVIEW_ID_KEYS) {
     if (row?.[key] != null && row[key] !== '') return String(row[key])
   }
-  const metadataIds = new Set(['operation_id', 'step_id', 'tool_id', 'approval_id', 'row_id'])
   const identity = Object.entries(row || {}).find(([key, value]) => (
-    /_id$/i.test(key) && !metadataIds.has(key) && value != null && value !== ''
+    /_id$/i.test(key) && !RECORD_PREVIEW_METADATA_KEYS.has(key) && value != null && value !== ''
   ))
   if (identity) return String(identity[1])
   const first = Object.values(row || {}).find((value) => value != null && value !== '')
@@ -66,6 +66,23 @@ function rowLabel(row, index) {
 
 function rowRecordId(row, index) {
   return rowLabel(row, index)
+}
+
+function recordPreviewDetailFields(row) {
+  if (!row || typeof row !== 'object') return []
+  const keys = [...RECORD_PREVIEW_ID_KEYS, 'status', 'state', ...Object.keys(row)]
+  const seen = new Set()
+  const fields = []
+  for (const key of keys) {
+    if (seen.has(key) || RECORD_PREVIEW_METADATA_KEYS.has(key)) continue
+    seen.add(key)
+    const value = row[key]
+    if (value == null || value === '' || Array.isArray(value) || typeof value === 'object') continue
+    const text = safeText(value)
+    if (!text) continue
+    fields.push({ key, label: humanizeResponseDocumentKey(key), value: text })
+  }
+  return fields.slice(0, 8)
 }
 
 function businessChangeLabel(value, fallback = 'Business change') {
@@ -1784,6 +1801,7 @@ function FinalBusinessResultBlock({ summaryBlock, mutationBlock }) {
 function RecordPreviewBlock({ block }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
   const previewLimit = Number.isFinite(Number(block.preview_limit)) ? Number(block.preview_limit) : PREVIEW_LIMIT
+  const detailFields = rows.length === 1 ? recordPreviewDetailFields(rows[0]) : []
   return (
     <CompactCard
       title={block.title || 'Records'}
@@ -1799,6 +1817,21 @@ function RecordPreviewBlock({ block }) {
       detailsCollapsed={block.details_collapsed}
     >
       <RowPreview rows={rows} limit={previewLimit} />
+      {detailFields.length ? (
+        <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2" data-record-detail-preview="">
+          {detailFields.map((field) => (
+            <div
+              key={field.key}
+              className="min-w-0 rounded-md bg-surface-2 px-2.5 py-2"
+              data-record-detail-field=""
+              data-record-detail-field-key={field.key}
+            >
+              <dt className="font-semibold text-ink-muted">{field.label}</dt>
+              <dd className="mt-0.5 break-words text-ink">{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
       {rows.length > previewLimit ? <ExpandableTable title={block.title || 'Records'} rows={rows} defaultCollapsed={block.details_collapsed !== false} blockId={block.id} /> : null}
     </CompactCard>
   )

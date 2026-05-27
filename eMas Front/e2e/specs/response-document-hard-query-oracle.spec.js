@@ -94,7 +94,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     entityType: 'product',
     title: /Read product status/i,
   })
-  expect(conditionTrue.expected.visibleSemanticBlocks[1].textIncludes).toEqual([/P-001/i])
+  expect(conditionTrue.expected.visibleSemanticBlocks[1].textIncludes).toEqual([/P-001/i, /Status\s+active/i])
 
   const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
   expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({

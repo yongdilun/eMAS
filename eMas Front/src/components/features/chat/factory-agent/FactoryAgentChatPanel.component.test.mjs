@@ -1086,10 +1086,12 @@ test('FactoryAgentChatPanel labels product record previews by product id before 
   const view = await renderPanelWithState(chatState)
 
   await waitFor(() => assert.match(view.text(), /Read product status/))
-  const chip = view.container.querySelector('[data-response-block-type="record_preview"] [data-affected-record-row]')
+  const productBlock = view.container.querySelector('[data-response-block-type="record_preview"]')
+  const chip = productBlock?.querySelector('[data-affected-record-row]')
   assert.equal(chip?.textContent, 'P-001')
   assert.equal(chip?.getAttribute('data-record-id'), 'P-001')
   assert.notEqual(chip?.textContent, 'active')
+  assert.match(productBlock?.textContent || '', /Status\s*active/i)
 
   await view.unmount()
 })

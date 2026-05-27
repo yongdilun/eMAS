@@ -317,7 +317,7 @@ export const hardQueryScenarios = Object.freeze([
           displayMode: 'record_preview',
           entityType: 'product',
           title: /Read product status/i,
-          textIncludes: [/P-001/i],
+          textIncludes: [/P-001/i, /Status\s+active/i],
           forbiddenText: [/Read product status\s+active/i],
         },
       ],
