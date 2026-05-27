@@ -15,7 +15,7 @@ from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, 
 from factory_agent.rag.source_metadata import insufficient_context_answer
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PresentationResponse, ResponseDocument
-from factory_agent.services import response_document_service
+from factory_agent.services import response_document_service, session_snapshot_service
 from factory_agent.services.response_document_service import (
     BUSINESS_CHANGE_CONTRACT,
     ENTITY_STATUS_CONTRACT,
@@ -228,6 +228,46 @@ def test_read_evidence_collection_summary_surfaces_business_rule_rows():
     )
 
     assert summary == "Rule Applied: found 2 low-priority jobs."
+
+
+def test_planner_owned_completed_answer_summary_prefers_graph_response_summary():
+    created_at = datetime(2026, 5, 27, 12, 0, 0)
+    session = _session(
+        session_id="rd-conditional-summary",
+        plan_id="plan-rd-conditional-summary",
+        created_at=created_at,
+        event_seq=3,
+        status="COMPLETED",
+        replan_context={
+            "intent_contract": {
+                "response_document_context": {
+                    "diagnostics": {
+                        "summary": (
+                            "Job JOB-SEED-001 was retrieved. "
+                            "No machine id was present, so the conditional machine follow-up was skipped."
+                        )
+                    }
+                }
+            }
+        },
+    )
+    plan = _plan(
+        session_id=session.session_id,
+        plan_id=session.plan_id,
+        created_at=created_at,
+    )
+    terminal = type("TerminalEvent", (), {"content": "Job JOB-SEED-001 was retrieved."})()
+
+    summary = session_snapshot_service._planner_owned_completed_answer_summary(
+        session=session,
+        terminal_event=terminal,
+        plan=plan,
+    )
+
+    assert summary == (
+        "Job JOB-SEED-001 was retrieved. "
+        "No machine id was present, so the conditional machine follow-up was skipped."
+    )
 
 
 def _write_step(

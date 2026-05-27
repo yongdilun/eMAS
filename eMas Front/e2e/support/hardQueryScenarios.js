@@ -241,74 +241,155 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
+    tags: ['hard query', 'requirement-expansion', 'conditional branch', 'response_document'],
+    prompt: 'Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 2,
+      maxStepCount: 3,
+      stepSequence: [
+        {
+          toolName: 'get__jobs_{id}',
+          args: {
+            id: 'JOB-SEED-001',
+          },
+        },
+        {
+          toolName: 'get__products_{id}',
+          args: {
+            id: 'P-001',
+          },
+        },
+      ],
+      toolNames: ['get__jobs_{id}', 'get__products_{id}'],
+      noMutation: true,
+      conditionalBranches: [
+        {
+          status: 'activated',
+          conditionType: 'active_parent_evidence_has_any_field',
+          fieldAny: ['product_id', 'active_product_id'],
+        },
+      ],
+      requirementExpansion: {
+        requireChildLineage: true,
+        parentRequirementId: 'req-001',
+        childEntity: 'product',
+        childConstraintKey: 'product_id',
+        childConstraintValue: 'P-001',
+        requireFreshChildRetrieval: true,
+        childToolNames: ['get__products_{id}'],
+        parentToolNames: ['get__jobs_{id}'],
+        forbidParentToolExecutableReuse: true,
+        requireFinalParentAndChildEvidence: true,
+        forbidStaleFinalEvidence: true,
+      },
+      responseDocument: {
+        blockTypes: ['record_preview'],
+        hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
+        blocks: [
+          {
+            type: 'record_preview',
+            readScope: 'records',
+            entityType: 'job',
+            displayMode: 'record_preview',
+          },
+          {
+            type: 'record_preview',
+            readScope: 'records',
+            entityType: 'product',
+            displayMode: 'record_preview',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'job',
+        },
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'product',
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'job answer', pattern: /Job\s+JOB-SEED-001/i },
+        { label: 'product follow-up answer', pattern: /product[\s\S]*P-001/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'attention state', pattern: /Run needs attention/i },
+        { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     tags: ['hard query', 'requirement-expansion', 'conditional branch', 'response_document'],
-    prompt: 'Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.',
+    prompt: 'Read job JOB-SEED-001. If the job result includes a machine id, read that machine. Summarize the result.',
     expected: {
       sessionStatus: 'COMPLETED',
       responseState: 'completed',
       approvalCount: 0,
       minStepCount: 1,
-      maxStepCount: 3,
+      maxStepCount: 2,
       stepSequence: [
         {
-          toolName: 'get__machines_{id}',
+          toolName: 'get__jobs_{id}',
           args: {
-            id: 'M-CNC-01',
+            id: 'JOB-SEED-001',
           },
         },
       ],
       forbiddenStepSequence: [
         {
-          toolName: 'get__jobs',
-          emptyArgs: true,
-        },
-        {
-          toolName: 'get__jobs_{id}',
+          toolName: 'get__machines_{id}',
         },
       ],
-      toolNames: ['get__machines_{id}'],
+      toolNames: ['get__jobs_{id}'],
       noMutation: true,
       conditionalBranches: [
         {
           status: 'skipped',
           skippedReason: 'conditional_branch_not_triggered',
           conditionType: 'active_parent_evidence_has_any_field',
-          fieldAny: ['job_id', 'active_job_id'],
+          fieldAny: ['machine_id', 'active_machine_id'],
         },
       ],
       requirementExpansion: {
         expectNoChildLineage: true,
       },
       responseDocument: {
-        blockTypes: ['status_result'],
+        blockTypes: ['record_preview'],
         hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
         blocks: [
           {
-            type: 'status_result',
-            contract: 'entity_status_v1',
-            readScope: 'status_only',
-            entityType: 'machine',
-            displayMode: 'compact_status_card',
+            type: 'record_preview',
+            readScope: 'records',
+            entityType: 'job',
+            displayMode: 'record_preview',
           },
         ],
       },
       visibleSemanticBlocks: [
         {
-          type: 'status_result',
-          contract: 'entity_status_v1',
-          readScope: 'status_only',
-          displayMode: 'compact_status_card',
-          entityType: 'machine',
-          statusFieldKeys: ['machine_id', 'status'],
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'job',
         },
       ],
       visibleTextIncludes: [
-        { label: 'machine running answer', pattern: /Machine\s+M-CNC-01\s+is\s+running/i },
+        { label: 'job answer', pattern: /Job\s+JOB-SEED-001/i },
+        { label: 'missing machine id answer', pattern: /No\s+machine\s+id/i },
       ],
       forbiddenVisibleText: [
-        { label: 'job cause claim', pattern: /cause\s+(?:was|is|:)/i },
-        { label: 'job read result', pattern: /Job\s+JOB-/i },
+        { label: 'machine read result', pattern: /Machine\s+M-/i },
         { label: 'attention state', pattern: /Run needs attention/i },
         { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
       ],

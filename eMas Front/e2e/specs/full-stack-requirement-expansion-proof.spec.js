@@ -37,8 +37,8 @@ test('HQ-REQUIREMENT-EXPANSION repo-owned proof generator reproduces child expan
   })
 
   expect(proof.browser_validation).toBe('planner_owned_requirement_expansion')
-  expect(proof.seeded_fixture_feasibility).toMatchObject({ feasible: false })
-  expect(proof.executor_tool_sequence).toEqual(['get__machines_{id}', 'get__jobs_{id}'])
+  expect(proof.seeded_fixture_feasibility).toMatchObject({ feasible: true })
+  expect(proof.executor_tool_sequence).toEqual(['get__jobs_{id}', 'get__products_{id}'])
   expect(proof.selector_requirement_ids).toEqual(['req-001', 'req-001.a'])
   expect(proof.conditional_branches[0]).toMatchObject({
     status: 'activated',
@@ -50,11 +50,11 @@ test('HQ-REQUIREMENT-EXPANSION repo-owned proof generator reproduces child expan
     tool_state_policy: 'child_requires_fresh_retrieval',
   })
   expect(proof.child_choose_tool_call).toMatchObject({
-    tool_name: 'get__jobs_{id}',
+    tool_name: 'get__products_{id}',
     requirement_id: 'req-001.a',
     candidate_window_id: 'window-002',
   })
-  expect(proof.child_choose_tool_call.tool_name).not.toBe('get__machines_{id}')
+  expect(proof.child_choose_tool_call.tool_name).not.toBe('get__jobs_{id}')
   expect(proof.active_final_evidence_refs).toEqual(['ev-api-req-001', 'ev-api-req-001.a'])
   expect(proof.response_evidence_refs).toEqual(proof.active_final_evidence_refs)
   expect(proof.stale_or_failed_final_evidence_refs).toEqual([])

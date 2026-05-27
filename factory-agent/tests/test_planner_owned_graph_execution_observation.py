@@ -399,6 +399,93 @@ class MachineRunningNoJobThenBroadJobsExecutor:
         }
 
 
+class JobProductThenProductExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "job_id": args.get("id"),
+                        "product_id": "P-001",
+                        "status": "scheduled",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        if tool.name == "get__products_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {
+                    "data": {
+                        "product_id": args.get("id"),
+                        "product_name": "Valve Body Assembly",
+                        "status": "active",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {"data": {}},
+            "infrastructure_error": False,
+        }
+
+
+class JobWithoutMachineThenMachineExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "job_id": args.get("id"),
+                        "product_id": "P-001",
+                        "status": "scheduled",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        if tool.name == "get__machines_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {
+                    "data": {
+                        "machine_id": args.get("id"),
+                        "status": "running",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {"data": {}},
+            "infrastructure_error": False,
+        }
+
+
 class FailPrimaryThenSucceedAlternateExecutor:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -686,120 +773,30 @@ async def test_requirement_expansion_baseline_missing_child_requirement_after_ca
 
 
 @pytest.mark.asyncio
-async def test_conditional_job_branch_skips_when_machine_evidence_has_no_job_id():
-    executor = MachineRunningNoJobThenBroadJobsExecutor()
+async def test_conditional_product_branch_creates_child_when_job_evidence_has_product_id():
+    executor = JobProductThenProductExecutor()
     selector = SequentialRecordingSelector(
         [
-            ["get__machines_{id}"],
-            ["get__jobs"],
-            ["get__settings_get"],
+            ["get__jobs_{id}"],
+            ["get__products_{id}"],
         ]
     )
 
     result = await _graph(
         tools_by_name={
-            "get__machines_{id}": _machine_status_tool(),
-            "get__jobs": _job_collection_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
         },
         selector=selector,  # type: ignore[arg-type]
         http_executor=executor,
     ).run(
-        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
-        session_context={"session_id": "condition-false-job-branch"},
+        "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result.",
+        session_context={"session_id": "condition-true-product-branch"},
     )
 
     requirements = result.state.requirement_ledger.requirements
     branches = result.state.requirement_ledger.conditional_branches
     answer_instructions = result.state.requirement_ledger.answer_instructions
-    evidence = result.state.evidence_ledger.evidence
-    response_diagnostics = result.state.response_document_context.diagnostics
-
-    assert [call["tool_name"] for call in executor.calls] == ["get__machines_{id}"]
-    assert executor.calls[0]["args"]["id"] == "M-CNC-01"
-    assert evidence[0].normalized_result["fields"]["status"] == "running"
-    assert "job_id" not in evidence[0].normalized_result["fields"]
-    assert "active_job_id" not in evidence[0].normalized_result["fields"]
-    assert len(branches) == 1
-    assert branches[0].status == "skipped"
-    assert branches[0].skipped_reason == "conditional_branch_not_triggered"
-    assert branches[0].parent_requirement_id == "req-001"
-    assert branches[0].condition.get("field_any") == ["job_id", "active_job_id"]
-    assert answer_instructions
-    assert [item.text for item in answer_instructions] == ["explain the cause."]
-    assert all(requirement.parent_requirement_id is None for requirement in requirements)
-    assert [requirement.id for requirement in requirements] == ["req-001"]
-    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
-    assert not any(call["tool_name"] == "get__jobs" and call["args"] == {} for call in executor.calls)
-    assert not any(
-        decision.decision_kind == "choose_tool"
-        and any(call.tool_name == "get__jobs" and call.args == {} for call in [decision.selected_tool_call, *decision.selected_tool_calls] if call is not None)
-        for decision in result.state.planner_decisions
-    )
-    assert not any(
-        decision.decision_kind == "choose_tool"
-        and any(call.tool_name == "get__settings_get" for call in [decision.selected_tool_call, *decision.selected_tool_calls] if call is not None)
-        for decision in result.state.planner_decisions
-    )
-    assert response_diagnostics["response_evidence_refs"] == [evidence[0].id]
-    assert response_diagnostics["child_requirement_lineage"] == []
-    assert "Machine M-CNC-01 is running." in response_diagnostics["summary"]
-    assert "No job id" in response_diagnostics["summary"]
-
-
-@pytest.mark.asyncio
-async def test_machine_requirement_prefers_entity_matched_single_read_over_job_collection_candidate():
-    executor = MachineRunningNoJobThenBroadJobsExecutor()
-    selector = RecordingSelector(["get__jobs", "get__machines_{id}"])
-
-    result = await _graph(
-        tools_by_name={
-            "get__jobs": _job_collection_tool(),
-            "get__machines_{id}": _machine_status_tool(),
-        },
-        selector=selector,
-        http_executor=executor,
-        max_replans=0,
-    ).run(
-        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
-        session_context={"session_id": "condition-false-machine-candidate-order"},
-    )
-
-    choose = next(
-        decision
-        for decision in result.state.planner_decisions
-        if decision.decision_kind == "choose_tool" and decision.requirement_id == "req-001"
-    )
-
-    assert choose.selected_tool_call is not None
-    assert choose.selected_tool_call.tool_name == "get__machines_{id}"
-    assert [call["tool_name"] for call in executor.calls] == ["get__machines_{id}"]
-    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
-
-
-@pytest.mark.asyncio
-async def test_conditional_job_branch_creates_child_when_parent_evidence_has_active_job_id():
-    executor = MachineCauseThenJobExecutor()
-    selector = SequentialRecordingSelector(
-        [
-            ["get__machines_{id}"],
-            ["get__jobs_{id}"],
-        ]
-    )
-
-    result = await _graph(
-        tools_by_name={
-            "get__machines_{id}": _machine_status_tool(),
-            "get__jobs_{id}": _job_status_tool(),
-        },
-        selector=selector,  # type: ignore[arg-type]
-        http_executor=executor,
-    ).run(
-        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
-        session_context={"session_id": "condition-true-job-branch"},
-    )
-
-    requirements = result.state.requirement_ledger.requirements
-    branches = result.state.requirement_ledger.conditional_branches
     child = next(requirement for requirement in requirements if requirement.parent_requirement_id == "req-001")
     evidence_by_requirement = {
         evidence.requirement_id: evidence
@@ -813,19 +810,25 @@ async def test_conditional_job_branch_creates_child_when_parent_evidence_has_act
     response_diagnostics = result.state.response_document_context.diagnostics
 
     assert [call["tool_name"] for call in executor.calls] == [
-        "get__machines_{id}",
         "get__jobs_{id}",
+        "get__products_{id}",
     ]
-    assert executor.calls[1]["args"]["id"] == "JOB-CAUSE-17"
+    assert executor.calls[0]["args"]["id"] == "JOB-SEED-001"
+    assert executor.calls[1]["args"]["id"] == "P-001"
     assert len(branches) == 1
     assert branches[0].status == "activated"
     assert branches[0].skipped_reason is None
+    assert branches[0].parent_requirement_id == "req-001"
+    assert branches[0].condition.get("field_any") == ["product_id", "active_product_id"]
     assert branches[0].activated_child_requirement_ids == [child.id]
     assert branches[0].derived_from_evidence_refs == [evidence_by_requirement["req-001"].id]
     assert child.id == "req-001.a"
-    assert child.constraints == {"job_id": "JOB-CAUSE-17"}
+    assert child.entity == "product"
+    assert child.constraints == {"product_id": "P-001"}
     assert child.parent_requirement_id == "req-001"
     assert child.derived_from_evidence_refs == [evidence_by_requirement["req-001"].id]
+    assert answer_instructions
+    assert [item.text for item in answer_instructions] == ["Summarize the result."]
     assert [window.requirement_id for window in result.state.candidate_tool_windows] == ["req-001", child.id]
     assert [cards.requirement_id for cards in result.state.hydrated_tool_cards] == ["req-001", child.id]
     assert selector.calls[0]["context"]["v2_tool_selector_adapter_request"]["requirement_id"] == "req-001"
@@ -833,7 +836,7 @@ async def test_conditional_job_branch_creates_child_when_parent_evidence_has_act
     assert child_choose.selected_tool_call is not None
     assert child_choose.selected_tool_call.requirement_id == child.id
     assert child_choose.selected_tool_call.candidate_window_id != "window-001"
-    assert child_choose.selected_tool_call.tool_name == "get__jobs_{id}"
+    assert child_choose.selected_tool_call.tool_name == "get__products_{id}"
     assert child_choose.selected_tool_call.call_id != "call-001"
     assert response_diagnostics["active_evidence_refs"] == [
         evidence_by_requirement["req-001"].id,
@@ -843,13 +846,97 @@ async def test_conditional_job_branch_creates_child_when_parent_evidence_has_act
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
-def test_answer_instruction_does_not_become_executable_requirement():
-    state = build_initial_planner_owned_agent_graph_state(
-        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
+@pytest.mark.asyncio
+async def test_conditional_machine_branch_skips_when_job_evidence_has_no_machine_id():
+    executor = JobWithoutMachineThenMachineExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__machines_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__machines_{id}": _machine_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Read job JOB-SEED-001. If the job result includes a machine id, read that machine. Summarize the result.",
+        session_context={"session_id": "condition-false-machine-branch"},
+    )
+
+    requirements = result.state.requirement_ledger.requirements
+    branches = result.state.requirement_ledger.conditional_branches
+    answer_instructions = result.state.requirement_ledger.answer_instructions
+    evidence = result.state.evidence_ledger.evidence
+    response_diagnostics = result.state.response_document_context.diagnostics
+
+    assert [call["tool_name"] for call in executor.calls] == ["get__jobs_{id}"]
+    assert executor.calls[0]["args"]["id"] == "JOB-SEED-001"
+    assert evidence[0].normalized_result["fields"]["job_id"] == "JOB-SEED-001"
+    assert "machine_id" not in evidence[0].normalized_result["fields"]
+    assert "active_machine_id" not in evidence[0].normalized_result["fields"]
+    assert len(branches) == 1
+    assert branches[0].status == "skipped"
+    assert branches[0].skipped_reason == "conditional_branch_not_triggered"
+    assert branches[0].parent_requirement_id == "req-001"
+    assert branches[0].condition.get("field_any") == ["machine_id", "active_machine_id"]
+    assert answer_instructions
+    assert [item.text for item in answer_instructions] == ["Summarize the result."]
+    assert all(requirement.parent_requirement_id is None for requirement in requirements)
+    assert [requirement.id for requirement in requirements] == ["req-001"]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert not any(call["tool_name"] == "get__machines_{id}" for call in executor.calls)
+    assert not any(
+        decision.decision_kind == "choose_tool"
+        and any(call.tool_name == "get__machines_{id}" for call in [decision.selected_tool_call, *decision.selected_tool_calls] if call is not None)
+        for decision in result.state.planner_decisions
+    )
+    assert response_diagnostics["response_evidence_refs"] == [evidence[0].id]
+    assert response_diagnostics["child_requirement_lineage"] == []
+    assert "Job JOB-SEED-001 was retrieved." in response_diagnostics["summary"]
+    assert "No machine id" in response_diagnostics["summary"]
+
+
+@pytest.mark.asyncio
+async def test_job_requirement_prefers_entity_matched_single_read_over_machine_candidate():
+    executor = JobWithoutMachineThenMachineExecutor()
+    selector = RecordingSelector(["get__machines_{id}", "get__jobs_{id}"])
+
+    result = await _graph(
         tools_by_name={
             "get__machines_{id}": _machine_status_tool(),
             "get__jobs_{id}": _job_status_tool(),
-            "get__jobs": _job_collection_tool(),
+        },
+        selector=selector,
+        http_executor=executor,
+        max_replans=0,
+    ).run(
+        "Read job JOB-SEED-001. If the job result includes a machine id, read that machine. Summarize the result.",
+        session_context={"session_id": "condition-false-job-candidate-order"},
+    )
+
+    choose = next(
+        decision
+        for decision in result.state.planner_decisions
+        if decision.decision_kind == "choose_tool" and decision.requirement_id == "req-001"
+    )
+
+    assert choose.selected_tool_call is not None
+    assert choose.selected_tool_call.tool_name == "get__jobs_{id}"
+    assert [call["tool_name"] for call in executor.calls] == ["get__jobs_{id}"]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+def test_answer_instruction_does_not_become_executable_requirement():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result.",
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
         },
     )
 
@@ -858,8 +945,8 @@ def test_answer_instruction_does_not_become_executable_requirement():
     capability_needs = state.execution_trace.diagnostics["capability_needs"]
 
     assert [requirement.id for requirement in requirements] == ["req-001"]
-    assert all("explain the cause" not in requirement.goal.lower() for requirement in requirements)
-    assert [instruction.text for instruction in answer_instructions] == ["explain the cause."]
+    assert all("summarize the result" not in requirement.goal.lower() for requirement in requirements)
+    assert [instruction.text for instruction in answer_instructions] == ["Summarize the result."]
     assert [need["requirement_id"] for need in capability_needs] == ["req-001"]
     assert not any(need["source_of_truth"] == "unknown" for need in capability_needs)
 

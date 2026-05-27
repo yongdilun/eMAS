@@ -2008,6 +2008,23 @@ def _replan_limit_summary(session: Any) -> str | None:
     return summary or None
 
 
+def _planner_owned_completed_answer_summary(
+    *,
+    session: Any,
+    terminal_event: TimelineEventResponse | None,
+    plan: PlanRow | None,
+) -> str | None:
+    context = getattr(session, "replan_context", None)
+    if isinstance(context, dict):
+        response_diagnostics = _response_document_diagnostics_from_replan_context(context)
+        graph_summary = str(response_diagnostics.get("summary") or "").strip()
+        if graph_summary:
+            return graph_summary
+    if terminal_event and terminal_event.content:
+        return terminal_event.content
+    return plan.plan_explanation if plan else None
+
+
 def _typed_blocked_reason(session: Any, *, default: str = "session_blocked") -> str:
     if _replan_limit_reached(session):
         return "replan_limit_reached"
@@ -2284,7 +2301,11 @@ def _derive_snapshot_presentation(
             kind="answer",
             state="completed",
             operation_id=operation_id,
-            summary=terminal_event.content if terminal_event else (plan.plan_explanation if plan else None),
+            summary=_planner_owned_completed_answer_summary(
+                session=session,
+                terminal_event=terminal_event,
+                plan=plan,
+            ),
             rows=step_rows,
             sources=sources,
             diagnostics=_planner_owned_response_contract_diagnostics(session, reason="completed_answer"),

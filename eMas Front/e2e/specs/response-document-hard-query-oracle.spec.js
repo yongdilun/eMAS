@@ -7,6 +7,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-01',
     'HQ-05',
     'HQ-3S-01',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
@@ -56,6 +57,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   const byId = Object.fromEntries(hardQueryScenarios.map((scenario) => [scenario.id, scenario]))
   const requiredIds = [
     'HQ-9-READ',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -69,6 +71,24 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
 
   for (const id of requiredIds) expect(byId[id], `${id} exists`).toBeTruthy()
 
+  const conditionTrue = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE']
+  expect(conditionTrue.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    conditionType: 'active_parent_evidence_has_any_field',
+  })
+  expect(conditionTrue.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childEntity: 'product',
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+    requireFinalParentAndChildEvidence: true,
+  })
+  expect(conditionTrue.expected.stepSequence.map((step) => step.toolName)).toEqual([
+    'get__jobs_{id}',
+    'get__products_{id}',
+  ])
+
   const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
   expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({
     status: 'skipped',
@@ -79,11 +99,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     expectNoChildLineage: true,
   })
   expect(conditionFalse.expected.forbiddenStepSequence[0]).toMatchObject({
-    toolName: 'get__jobs',
-    emptyArgs: true,
-  })
-  expect(conditionFalse.expected.forbiddenStepSequence[1]).toMatchObject({
-    toolName: 'get__jobs_{id}',
+    toolName: 'get__machines_{id}',
   })
 
   const hardRead = byId['HQ-9-READ']

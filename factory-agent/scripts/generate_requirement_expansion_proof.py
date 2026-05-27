@@ -45,23 +45,23 @@ def _active_evidence(evidence: Any) -> bool:
 
 async def _build_proof() -> dict[str, Any]:
     helpers = _load_graph_helpers()
-    executor = helpers.MachineCauseThenJobExecutor()
+    executor = helpers.JobProductThenProductExecutor()
     selector = helpers.SequentialRecordingSelector(
         [
-            ["get__machines_{id}"],
             ["get__jobs_{id}"],
+            ["get__products_{id}"],
         ]
     )
 
     result = await helpers._graph(
         tools_by_name={
-            "get__machines_{id}": helpers._machine_status_tool(),
             "get__jobs_{id}": helpers._job_status_tool(),
+            "get__products_{id}": helpers._product_status_tool(),
         },
         selector=selector,
         http_executor=executor,
     ).run(
-        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
+        "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result.",
         session_context={"session_id": "browser-requirement-expansion-proof"},
     )
 
@@ -107,10 +107,10 @@ async def _build_proof() -> dict[str, Any]:
             for branch in conditional_branches
         ),
         "child_requirement_lineage_present": bool(child_requirements),
-        "child_created_from_parent_active_job_id": bool(parent_evidence)
+        "child_created_from_parent_product_id": bool(parent_evidence)
         and bool(child_requirements)
-        and child_requirements[0].constraints.get("job_id")
-        == parent_evidence.normalized_result.get("fields", {}).get("active_job_id")
+        and child_requirements[0].constraints.get("product_id")
+        == parent_evidence.normalized_result.get("fields", {}).get("product_id")
         and child_requirements[0].derived_from_evidence_refs == [parent_evidence.id],
         "child_used_fresh_retrieval": bool(child_requirement_ids)
         and set(child_requirement_ids).issubset({window.requirement_id for window in state.candidate_tool_windows})
@@ -133,8 +133,8 @@ async def _build_proof() -> dict[str, Any]:
         "browser_validation": "planner_owned_requirement_expansion",
         "reproducible_by": "python factory-agent/scripts/generate_requirement_expansion_proof.py",
         "seeded_fixture_feasibility": {
-            "feasible": False,
-            "reason": "canonical seeded M-CNC-01 returns running machine evidence without active_job_id, so no grounded child expansion is available in chromium-seeded hard-query data",
+            "feasible": True,
+            "reason": "canonical seeded JOB-SEED-001 returns product_id P-001, so condition-true child expansion can run against seeded data",
         },
         "final_validation_status": state.final_validation_result.status if state.final_validation_result else None,
         "lineage": helpers.requirement_child_lineage(state.requirement_ledger)
