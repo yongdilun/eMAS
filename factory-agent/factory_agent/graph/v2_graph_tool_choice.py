@@ -124,6 +124,13 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
         for card in cards:
             if bool(card.requires_approval) or not bool(card.is_read_only):
                 return card
+    if getattr(requirement, "requirement_type", None) == "single_entity_status":
+        for card in cards:
+            if _card_supports_single_entity_read(card, requirement):
+                return card
+        for card in cards:
+            if _card_entity_matches_requirement(card, requirement) and not _card_supports_collection_read(card):
+                return card
     if getattr(requirement, "requirement_type", None) == "multi_entity_status":
         for card in cards:
             if _card_supports_collection_identity_read(card, requirement):
@@ -145,6 +152,28 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
             if "{id}" not in card.tool_name and "id" not in set(card.required_args):
                 return card
     return cards[0]
+
+
+def _card_supports_single_entity_read(card: HydratedToolCard, requirement: Any) -> bool:
+    if not bool(card.is_read_only) or bool(card.requires_approval):
+        return False
+    if not _card_entity_matches_requirement(card, requirement):
+        return False
+    actions = set(card.actions)
+    if not {"read_one", "read"}.intersection(actions):
+        return False
+    identity_args = set(card.path_params or []) | set(card.required_args or [])
+    if identity_args.intersection(_identity_arg_names(requirement)):
+        return True
+    return str(card.metadata.get("endpoint_shape") or "").strip().lower() == "item" and not _card_supports_collection_read(card)
+
+
+def _card_entity_matches_requirement(card: HydratedToolCard, requirement: Any) -> bool:
+    entity = str(getattr(requirement, "entity", "") or "").strip().lower()
+    if not entity:
+        return True
+    endpoint_root = str(card.metadata.get("endpoint_root") or "").strip().lower()
+    return endpoint_root == entity
 
 
 def _card_supports_collection_read(card: HydratedToolCard) -> bool:
@@ -314,15 +343,20 @@ def _hydrated_cards_for_requirement(state: PlannerOwnedAgentGraphState, requirem
 
 def _args_for_tool_call(card: HydratedToolCard, requirement: Any, capability_need: Any) -> dict[str, Any]:
     args: dict[str, Any] = {}
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
     for arg_name in dict.fromkeys([*card.required_args, *card.path_params]):
         value = _argument_value_for(arg_name, requirement, capability_need)
         if value not in (None, "", [], {}):
             args[arg_name] = value
-    for key, value in requirement.constraints.items():
+    for key, value in constraints.items():
         if key in card.query_params or key in card.input_schema.get("properties", {}):
             args.setdefault(key, value)
-    if card.supports_fields and requirement.requested_fields:
-        args.setdefault("fields", ",".join(requirement.requested_fields))
+    output_fields = list(getattr(requirement, "requested_fields", []) or [])
+    observation_fields = constraints.get("observation_fields")
+    if isinstance(observation_fields, list):
+        output_fields.extend(str(field) for field in observation_fields if str(field))
+    if card.supports_fields and output_fields:
+        args.setdefault("fields", ",".join(dict.fromkeys(output_fields)))
     return args
 
 

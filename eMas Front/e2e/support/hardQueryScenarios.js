@@ -241,6 +241,80 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
+    tags: ['hard query', 'requirement-expansion', 'conditional branch', 'response_document'],
+    prompt: 'Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 1,
+      maxStepCount: 3,
+      stepSequence: [
+        {
+          toolName: 'get__machines_{id}',
+          args: {
+            id: 'M-CNC-01',
+          },
+        },
+      ],
+      forbiddenStepSequence: [
+        {
+          toolName: 'get__jobs',
+          emptyArgs: true,
+        },
+        {
+          toolName: 'get__jobs_{id}',
+        },
+      ],
+      toolNames: ['get__machines_{id}'],
+      noMutation: true,
+      conditionalBranches: [
+        {
+          status: 'skipped',
+          skippedReason: 'conditional_branch_not_triggered',
+          conditionType: 'active_parent_evidence_has_any_field',
+          fieldAny: ['job_id', 'active_job_id'],
+        },
+      ],
+      requirementExpansion: {
+        expectNoChildLineage: true,
+      },
+      responseDocument: {
+        blockTypes: ['status_result'],
+        hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
+        blocks: [
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            readScope: 'status_only',
+            entityType: 'machine',
+            displayMode: 'compact_status_card',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          readScope: 'status_only',
+          displayMode: 'compact_status_card',
+          entityType: 'machine',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'machine running answer', pattern: /Machine\s+M-CNC-01\s+is\s+running/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'job cause claim', pattern: /cause\s+(?:was|is|:)/i },
+        { label: 'job read result', pattern: /Job\s+JOB-/i },
+        { label: 'attention state', pattern: /Run needs attention/i },
+        { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-9-READ',
     tags: ['hard query', 'phase9', 'multi-step read', 'conditional branch', 'response_document'],
     prompt: 'Show M-CNC-01 status, show JOB-SEED-001 and JOB-SEED-002 status, then list the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline. If any listed job is blocked, explain why before suggesting any update.',

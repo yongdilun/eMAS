@@ -22,6 +22,7 @@ from ..planning.v2_agent_state import (
 from ..planning.v2_capability_map import build_capability_needs_for_text
 from ..planning.v2_contracts import (
     CandidateToolWindow,
+    ConditionalBranchContract,
     EvidenceLedger,
     EvidenceLedgerEntry,
     HydratedToolCard,
@@ -1256,6 +1257,7 @@ class PlannerOwnedAgentGraph:
                     "source_of_truth": evidence_items[0].source_of_truth,
                 }
             )
+        _evaluate_conditional_branches_from_evidence(state, evidence_items)
         _expand_child_requirements_from_evidence(state, evidence_items)
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
@@ -1431,6 +1433,18 @@ class PlannerOwnedAgentGraph:
                 "response_evidence_refs": response_evidence_refs,
                 "historical_evidence_refs": historical_evidence_refs,
                 "child_requirement_lineage": child_lineage,
+                "conditional_branches": [
+                    branch.model_dump(mode="json")
+                    for branch in state.requirement_ledger.conditional_branches
+                ],
+                "answer_instructions": [
+                    instruction.model_dump(mode="json")
+                    for instruction in state.requirement_ledger.answer_instructions
+                ],
+                "clarification_needs": [
+                    need.model_dump(mode="json")
+                    for need in state.requirement_ledger.clarification_needs
+                ],
                 "stale_evidence_excluded_from_active_revision": bool(historical_evidence_refs),
                 "replan_limit_reached": bool(replan_spine.get("replan_limit_reached")),
                 "replan_spine": replan_spine,
@@ -1907,6 +1921,276 @@ def _apply_planner_proposed_requirement_ledger(
     }
 
 
+def _evaluate_conditional_branches_from_evidence(
+    state: PlannerOwnedAgentGraphState,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> None:
+    pending = [
+        branch
+        for branch in state.requirement_ledger.conditional_branches
+        if branch.status == "pending"
+    ]
+    if not pending:
+        return
+
+    for branch in pending:
+        parent_evidence = [
+            evidence
+            for evidence in evidence_items
+            if evidence.requirement_id == branch.parent_requirement_id
+            and _evidence_can_satisfy_active_revision(state, evidence)
+        ]
+        if not parent_evidence:
+            continue
+        triggered = _conditional_branch_trigger_value(branch, parent_evidence)
+        if triggered is None:
+            _skip_conditional_branch(state, branch, parent_evidence)
+            continue
+        evidence, value, source_field = triggered
+        _activate_conditional_branch(state, branch, evidence, value, source_field=source_field)
+
+
+def _conditional_branch_trigger_value(
+    branch: ConditionalBranchContract,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> tuple[EvidenceLedgerEntry, Any, str] | None:
+    condition = dict(branch.condition or {})
+    if condition.get("type") != "active_parent_evidence_has_any_field":
+        return None
+    field_any = [str(field) for field in condition.get("field_any", []) if str(field)]
+    if not field_any:
+        return None
+    for evidence in evidence_items:
+        values = _flatten_evidence_values(evidence.normalized_result)
+        for field in field_any:
+            for key, value in values:
+                if key != field or value in (None, "", [], {}):
+                    continue
+                return evidence, value, field
+    return None
+
+
+def _skip_conditional_branch(
+    state: PlannerOwnedAgentGraphState,
+    branch: ConditionalBranchContract,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> None:
+    evidence_refs = [evidence.id for evidence in evidence_items]
+    proposed = state.requirement_ledger.model_copy(deep=True)
+    previous_revision = proposed.revision
+    updated = _set_branch_status(
+        proposed,
+        branch.id,
+        status="skipped",
+        evidence_refs=evidence_refs,
+        skipped_reason="conditional_branch_not_triggered",
+        activated_child_requirement_ids=[],
+        diagnostics={
+            "condition": dict(branch.condition),
+            "source": "active_parent_evidence",
+            "reason": "condition_fields_absent_or_empty",
+        },
+    )
+    if not updated:
+        return
+
+    proposed.revision = previous_revision + 1
+    record = RequirementRevisionRecord(
+        revision=proposed.revision,
+        actor="system",
+        change_type="conditional_branch_skipped",
+        requirement_id=branch.parent_requirement_id,
+        reason="conditional_branch_not_triggered",
+        locked_constraints_preserved=True,
+        details={
+            "conditional_branch_id": branch.id,
+            "parent_requirement_id": branch.parent_requirement_id,
+            "derived_from_evidence_refs": evidence_refs,
+            "status": "skipped",
+            "skipped_reason": "conditional_branch_not_triggered",
+        },
+    )
+    proposed.revision_history.append(record)
+    decision = PlannerDecisionRecord(
+        decision_id=f"dec-branch-{len(state.planner_decisions) + 1:03d}",
+        decision_kind="revise_requirements",
+        author="system",
+        requirement_id=branch.parent_requirement_id,
+        ledger_revision=state.requirement_ledger.revision,
+        evidence_refs=evidence_refs,
+        reason="Mark non-triggered conditional branch as skipped.",
+        diagnostics={
+            "conditional_branch": {
+                "branch_id": branch.id,
+                "status": "skipped",
+                "reason": "conditional_branch_not_triggered",
+            }
+        },
+    )
+    record_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=proposed),
+    )
+    _apply_planner_proposed_requirement_ledger(state, proposed)
+    _record_conditional_branch_diagnostics(state)
+
+
+def _activate_conditional_branch(
+    state: PlannerOwnedAgentGraphState,
+    branch: ConditionalBranchContract,
+    evidence: EvidenceLedgerEntry,
+    value: Any,
+    *,
+    source_field: str,
+) -> None:
+    on_true = dict(branch.on_true or {})
+    entity = str(on_true.get("entity") or "").strip()
+    constraint_field = str(on_true.get("constraint_field") or (f"{entity}_id" if entity else "")).strip()
+    if not entity or not constraint_field or value in (None, "", [], {}):
+        _skip_conditional_branch(state, branch, [evidence])
+        return
+
+    proposed = state.requirement_ledger.model_copy(deep=True)
+    previous_revision = proposed.revision
+    existing_ids = [requirement.id for requirement in proposed.requirements]
+    try:
+        child_id = next_child_requirement_id(branch.parent_requirement_id, existing_ids)
+    except ValueError:
+        _skip_conditional_branch(state, branch, [evidence])
+        return
+
+    child = RequirementLedgerEntry(
+        id=child_id,
+        goal=f"Read {entity} {value} conditional follow-up evidence",
+        requirement_type="single_entity_status",
+        entity=entity,
+        intent_operation="report_status",
+        source_of_truth=evidence.source_of_truth,
+        constraints={constraint_field: value},
+        requested_fields=[],
+        locked_constraints=[constraint_field],
+        status="open",
+        parent_requirement_id=branch.parent_requirement_id,
+        expansion_reason="Conditional branch triggered by parent evidence.",
+        derived_from_evidence_refs=[evidence.id],
+        derived_from_missing_reasons=[],
+        depends_on=[evidence.id],
+    )
+    proposed.requirements.append(child)
+    _set_branch_status(
+        proposed,
+        branch.id,
+        status="activated",
+        evidence_refs=[evidence.id],
+        skipped_reason=None,
+        activated_child_requirement_ids=[child.id],
+        diagnostics={
+            "condition": dict(branch.condition),
+            "trigger_field": source_field,
+            "trigger_value": value,
+            "source": "active_parent_evidence",
+        },
+    )
+
+    proposed.revision = previous_revision + 1
+    record = RequirementRevisionRecord(
+        revision=proposed.revision,
+        actor="system",
+        change_type="add_child_requirements",
+        requirement_id=branch.parent_requirement_id,
+        reason="Conditional branch activated from parent evidence.",
+        locked_constraints_preserved=True,
+        details={
+            "conditional_branch_id": branch.id,
+            "conditional_branch_status": "activated",
+            "parent_requirement_id": branch.parent_requirement_id,
+            "parent_requirement_ids": [branch.parent_requirement_id],
+            "added_child_requirement_ids": [child.id],
+            "derived_from_evidence_refs": [evidence.id],
+            "derived_from_missing_reasons": [],
+            "locked_constraints_preserved": True,
+            "trigger_field": source_field,
+            "trigger_value": value,
+            "tool_state_policy": "child_requires_fresh_retrieval",
+        },
+    )
+    proposed.revision_history.append(record)
+    decision = PlannerDecisionRecord(
+        decision_id=f"dec-branch-{len(state.planner_decisions) + 1:03d}",
+        decision_kind="revise_requirements",
+        author="system",
+        requirement_id=branch.parent_requirement_id,
+        ledger_revision=state.requirement_ledger.revision,
+        evidence_refs=[evidence.id],
+        reason="Apply conditional branch child requirement from parent evidence.",
+        diagnostics={
+            "conditional_branch": {
+                "branch_id": branch.id,
+                "status": "activated",
+                "added_child_requirement_ids": [child.id],
+                "trigger_field": source_field,
+            }
+        },
+    )
+    record_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=proposed),
+    )
+    _apply_planner_proposed_requirement_ledger(state, proposed)
+    expansion = dict(state.execution_trace.diagnostics.get("requirement_expansion") or {})
+    expansion.update(
+        {
+            "status": "applied",
+            "conditional_branch_id": branch.id,
+            "conditional_branch_status": "activated",
+            "previous_revision": previous_revision,
+            "current_revision": proposed.revision,
+            "added_child_requirement_ids": [child.id],
+            "parent_requirement_ids": [branch.parent_requirement_id],
+            "derived_from_evidence_refs": [evidence.id],
+            "tool_state_policy": "child_requires_fresh_retrieval",
+            "trigger_field": source_field,
+        }
+    )
+    state.execution_trace.diagnostics["requirement_expansion"] = expansion
+    _record_conditional_branch_diagnostics(state)
+
+
+def _set_branch_status(
+    ledger: RequirementLedger,
+    branch_id: str,
+    *,
+    status: str,
+    evidence_refs: list[str],
+    skipped_reason: str | None,
+    activated_child_requirement_ids: list[str],
+    diagnostics: dict[str, Any],
+) -> bool:
+    for index, branch in enumerate(ledger.conditional_branches):
+        if branch.id != branch_id:
+            continue
+        merged_diagnostics = {**dict(branch.diagnostics), **diagnostics}
+        ledger.conditional_branches[index] = branch.model_copy(
+            update={
+                "status": status,
+                "derived_from_evidence_refs": list(dict.fromkeys(evidence_refs)),
+                "activated_child_requirement_ids": list(dict.fromkeys(activated_child_requirement_ids)),
+                "skipped_reason": skipped_reason,
+                "diagnostics": merged_diagnostics,
+            },
+            deep=True,
+        )
+        return True
+    return False
+
+
+def _record_conditional_branch_diagnostics(state: PlannerOwnedAgentGraphState) -> None:
+    state.execution_trace.diagnostics["conditional_branches"] = [
+        branch.model_dump(mode="json")
+        for branch in state.requirement_ledger.conditional_branches
+    ]
+
+
 def _expand_child_requirements_from_evidence(
     state: PlannerOwnedAgentGraphState,
     evidence_items: list[EvidenceLedgerEntry],
@@ -2025,6 +2309,8 @@ def _child_requirement_specs_from_evidence(
         parent = _requirement_by_id(state, evidence.requirement_id)
         if parent is None or parent.parent_requirement_id is not None or parent.status != "open":
             continue
+        if _is_unbounded_collection_evidence(parent, evidence):
+            continue
         if _child_count_for_parent(state, parent.id) >= 2:
             continue
         for key, value in _flatten_evidence_values(evidence.normalized_result):
@@ -2042,6 +2328,25 @@ def _child_requirement_specs_from_evidence(
             if _child_count_for_parent(state, parent.id) + sum(1 for spec in specs if spec[0].id == parent.id) >= 2:
                 break
     return specs
+
+
+def _is_unbounded_collection_evidence(
+    parent: RequirementLedgerEntry,
+    evidence: EvidenceLedgerEntry,
+) -> bool:
+    rows = evidence.normalized_result.get("rows")
+    if not isinstance(rows, list):
+        return False
+    constraints = dict(parent.constraints or {})
+    bounded_constraints = {
+        key: value
+        for key, value in constraints.items()
+        if key not in {"limit", "sort_by", "sort_dir", "requested_fields"}
+        and value not in (None, "", [], {})
+    }
+    if not bounded_constraints:
+        return True
+    return parent.requirement_type not in {"filtered_collection", "multi_entity_status"}
 
 
 def _readable_child_entities(state: PlannerOwnedAgentGraphState) -> set[str]:

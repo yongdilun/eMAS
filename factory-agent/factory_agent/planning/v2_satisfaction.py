@@ -38,6 +38,7 @@ _CONTROL_CONSTRAINTS = {
 _NON_FILTER_CONSTRAINTS = {
     *_CONTROL_CONSTRAINTS,
     "conditional_branches",
+    "observation_fields",
     "preview_before_apply",
     "requires_approval",
     "safety_constraints",
@@ -1032,7 +1033,17 @@ def _requested_fields_check(
             message="No explicit requested fields; typed fields must still be present.",
         )
     identity_extras = _identity_field_keys(requirement).difference(expected)
-    actual_for_pass = [field for field in actual if field not in identity_extras]
+    observation_fields = requirement.constraints.get("observation_fields")
+    observation_extras = (
+        {str(field) for field in observation_fields if str(field)}
+        if isinstance(observation_fields, list)
+        else set()
+    )
+    actual_for_pass = [
+        field
+        for field in actual
+        if field not in identity_extras and field not in observation_extras
+    ]
     return _check(
         "requested_fields",
         expected=expected,

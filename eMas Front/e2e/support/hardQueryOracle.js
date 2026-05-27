@@ -136,6 +136,13 @@ function stepMatches(step, expected) {
   return true
 }
 
+function forbiddenStepMatches(step, expected) {
+  if (expected.toolName && toolName(step) !== expected.toolName) return false
+  const args = step?.args || {}
+  if (expected.emptyArgs) return Object.keys(args).length === 0
+  return stepMatches(step, expected)
+}
+
 function addStepViolations(violations, snapshot, expected) {
   const steps = backendSteps(snapshot)
   if (Object.hasOwn(expected, 'minStepCount') && steps.length < expected.minStepCount) {
@@ -157,6 +164,12 @@ function addStepViolations(violations, snapshot, expected) {
       continue
     }
     cursor = found + 1
+  }
+  for (const forbiddenStep of asArray(expected.forbiddenStepSequence)) {
+    const found = steps.find((step) => forbiddenStepMatches(step, forbiddenStep))
+    if (found) {
+      violations.push(`backend step sequence unexpectedly included ${forbiddenStep.toolName} with args ${JSON.stringify(found.args || {})}`)
+    }
   }
   if (expected.noMutation) {
     const writeSteps = steps.filter((step) => WRITE_TOOL_RE.test(toolName(step)))
@@ -365,6 +378,46 @@ function selectedToolCalls(decision) {
   ]
 }
 
+function conditionalBranchesForPayload(payload, snapshot) {
+  const graphStateBranches = payload.graphState?.requirement_ledger?.conditional_branches
+  const v2Branches = payload.v2State?.requirement_ledger?.conditional_branches
+  const contractBranches = payload.intentContract?.conditional_branches
+  const contextBranches = payload.context?.conditional_branches
+  const responseBranches = snapshot?.response_document?.diagnostics?.conditional_branches
+  for (const candidate of [contractBranches, contextBranches, responseBranches, graphStateBranches, v2Branches]) {
+    if (Array.isArray(candidate)) return candidate
+  }
+  return []
+}
+
+function addConditionalBranchViolations(violations, snapshot, expected) {
+  const branchExpected = asArray(expected.conditionalBranches)
+  if (!branchExpected.length) return
+
+  const payload = plannerOwnedGraphPayload(snapshot)
+  const branches = conditionalBranchesForPayload(payload, snapshot)
+  if (!branches.length) {
+    violations.push('conditional_branch expected branch diagnostics but none were exposed')
+    return
+  }
+
+  for (const expectedBranch of branchExpected) {
+    const found = branches.find((branch) => {
+      const condition = branch?.condition || {}
+      if (expectedBranch.status && branch?.status !== expectedBranch.status) return false
+      if (expectedBranch.skippedReason && branch?.skipped_reason !== expectedBranch.skippedReason) return false
+      if (expectedBranch.conditionType && condition.type !== expectedBranch.conditionType) return false
+      if (expectedBranch.conditionField && condition.field !== expectedBranch.conditionField) return false
+      if (Object.hasOwn(expectedBranch, 'conditionValue') && String(condition.value ?? '') !== String(expectedBranch.conditionValue)) return false
+      if (expectedBranch.fieldAny && !arrayEquals(condition.field_any || [], expectedBranch.fieldAny)) return false
+      return true
+    })
+    if (!found) {
+      violations.push(`conditional_branch missing expected diagnostics ${JSON.stringify(expectedBranch)}`)
+    }
+  }
+}
+
 function addRequirementExpansionViolations(violations, snapshot, expected) {
   const expansionExpected = expected.requirementExpansion || {}
   if (!Object.keys(expansionExpected).length) return
@@ -395,6 +448,10 @@ function addRequirementExpansionViolations(violations, snapshot, expected) {
       .concat(asArray(payload.responseDocumentContext?.evidence_refs))
       .concat(asArray(snapshot?.response_document?.diagnostics?.response_evidence_refs)),
   )
+
+  if (expansionExpected.expectNoChildLineage && (lineage.length || childRequirements.length)) {
+    violations.push('requirement_expansion expected empty child lineage but found child requirements')
+  }
 
   if (expansionExpected.requireChildLineage && (!lineage.length || !childRequirements.length)) {
     violations.push('requirement_expansion missing child lineage in intent contract or response diagnostics')
@@ -624,6 +681,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
   addResponseDocumentViolations(violations, snapshot, expected)
   addPlannerOwnedGraphViolations(violations, snapshot, expected)
   addReplanSpineViolations(violations, snapshot, expected)
+  addConditionalBranchViolations(violations, snapshot, expected)
   addRequirementExpansionViolations(violations, snapshot, expected)
   addVisibleBlockViolations(violations, ui, expected)
   addApprovalViolations(violations, snapshot, pendingApprovals, expected)

@@ -61,7 +61,7 @@ async def _build_proof() -> dict[str, Any]:
         selector=selector,
         http_executor=executor,
     ).run(
-        "Explain why machine M-CNC-01 is stopped.",
+        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.",
         session_context={"session_id": "browser-requirement-expansion-proof"},
     )
 
@@ -72,6 +72,7 @@ async def _build_proof() -> dict[str, Any]:
     evidence_by_requirement = {item.requirement_id: item for item in evidence}
     parent_requirement_ids = list(dict.fromkeys(child.parent_requirement_id for child in child_requirements))
     child_requirement_ids = [child.id for child in child_requirements]
+    conditional_branches = list(state.requirement_ledger.conditional_branches)
     active_final_refs = list(state.response_document_context.diagnostics.get("active_final_evidence_refs") or [])
     response_refs = list(state.response_document_context.evidence_refs)
     child_choose = next(
@@ -90,6 +91,7 @@ async def _build_proof() -> dict[str, Any]:
         for call in _selected_tool_calls(decision)
     ]
     child_choose_calls = _selected_tool_calls(child_choose) if child_choose is not None else []
+    parent_evidence = evidence_by_requirement.get(parent_requirement_ids[0]) if parent_requirement_ids else None
     stale_or_failed_final_refs = [
         item.id
         for item in evidence
@@ -97,7 +99,19 @@ async def _build_proof() -> dict[str, Any]:
     ]
 
     checks = {
+        "conditional_branch_activated": len(conditional_branches) == 1
+        and conditional_branches[0].status == "activated"
+        and conditional_branches[0].activated_child_requirement_ids == child_requirement_ids,
+        "conditional_branch_not_skipped_in_true_path": all(
+            branch.status != "skipped" and branch.skipped_reason is None
+            for branch in conditional_branches
+        ),
         "child_requirement_lineage_present": bool(child_requirements),
+        "child_created_from_parent_active_job_id": bool(parent_evidence)
+        and bool(child_requirements)
+        and child_requirements[0].constraints.get("job_id")
+        == parent_evidence.normalized_result.get("fields", {}).get("active_job_id")
+        and child_requirements[0].derived_from_evidence_refs == [parent_evidence.id],
         "child_used_fresh_retrieval": bool(child_requirement_ids)
         and set(child_requirement_ids).issubset({window.requirement_id for window in state.candidate_tool_windows})
         and set(child_requirement_ids).issubset({cards.requirement_id for cards in state.hydrated_tool_cards})
@@ -129,6 +143,7 @@ async def _build_proof() -> dict[str, Any]:
         "active_final_evidence_refs": active_final_refs,
         "response_evidence_refs": response_refs,
         "requirements": [requirement.model_dump(mode="json") for requirement in requirements],
+        "conditional_branches": [branch.model_dump(mode="json") for branch in conditional_branches],
         "evidence": [item.model_dump(mode="json") for item in evidence],
         "candidate_window_requirement_ids": [window.requirement_id for window in state.candidate_tool_windows],
         "hydrated_card_requirement_ids": [cards.requirement_id for cards in state.hydrated_tool_cards],
@@ -140,6 +155,7 @@ async def _build_proof() -> dict[str, Any]:
         ],
         "child_choose_tool_call": child_choose_calls[0].model_dump(mode="json") if child_choose_calls else None,
         "requirement_expansion_diagnostics": state.execution_trace.diagnostics.get("requirement_expansion", {}),
+        "conditional_branch_diagnostics": state.execution_trace.diagnostics.get("conditional_branches", []),
         "stale_or_failed_final_evidence_refs": stale_or_failed_final_refs,
         "checks": checks,
     }

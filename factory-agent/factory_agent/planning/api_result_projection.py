@@ -66,6 +66,13 @@ def requested_output_fields(requirement: Any | None, *, entity: str | None = Non
         for field in (getattr(requirement, "requested_fields", []) or [])
         if str(field).strip()
     ]
+    observation_fields = constraints.get("observation_fields")
+    if isinstance(observation_fields, list):
+        requested_fields.extend(
+            canonical_output_key(str(field), normalized_entity)
+            for field in observation_fields
+            if str(field).strip()
+        )
     if constraints.get("sort_by") not in (None, "", [], {}):
         requested_fields.append(canonical_output_key(str(constraints.get("sort_by")), normalized_entity))
     for key in ("priority", "status"):

@@ -581,6 +581,14 @@ class PlannerOwnedGraphRuntimeAdapter:
         response_document_context = state.response_document_context.model_dump(mode="json")
         replan_spine = _intent_contract_replan_spine(state)
         child_lineage = requirement_child_lineage(state.requirement_ledger)
+        conditional_branches = [
+            branch.model_dump(mode="json")
+            for branch in state.requirement_ledger.conditional_branches
+        ]
+        answer_instructions = [
+            instruction.model_dump(mode="json")
+            for instruction in state.requirement_ledger.answer_instructions
+        ]
         context = dict(base_context or {})
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
@@ -594,6 +602,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "planner_owned_agent_graph_state": graph_state,
             "response_document_context": response_document_context,
             "child_requirement_lineage": child_lineage,
+            "conditional_branches": conditional_branches,
+            "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
         }
         context.pop("no_op_mutations", None)
@@ -612,6 +622,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "response_document_state": state.response_document_context.state,
             "response_document_context": response_document_context,
             "child_requirement_lineage": child_lineage,
+            "conditional_branches": conditional_branches,
+            "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,

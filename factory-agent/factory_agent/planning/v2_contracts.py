@@ -34,6 +34,13 @@ RequirementType = Literal[
     "safety_refusal",
     "diagnostic",
 ]
+RequirementClauseRole = Literal[
+    "required_requirement",
+    "conditional_branch",
+    "answer_instruction",
+    "formatting_instruction",
+    "clarification_need",
+]
 RequirementStatus = Literal[
     "open",
     "blocked",
@@ -99,6 +106,7 @@ UserInterruptType = Literal[
     "reject_approval",
     "approve_approval",
 ]
+ConditionalBranchStatus = Literal["pending", "activated", "skipped"]
 
 
 class V2ContractModel(BaseModel):
@@ -312,6 +320,50 @@ class RequirementOrigin(V2ContractModel):
     source_of_truth: str | None = None
 
 
+class RequirementIntakeClause(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    role: RequirementClauseRole
+    requirement_id: str | None = None
+    parent_requirement_id: str | None = None
+    branch_id: str | None = None
+    reason: str | None = None
+
+
+class ConditionalBranchContract(V2ContractModel):
+    id: str = Field(min_length=1)
+    parent_requirement_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    condition: dict[str, Any] = Field(default_factory=dict)
+    on_true: dict[str, Any] = Field(default_factory=dict)
+    status: ConditionalBranchStatus = "pending"
+    derived_from_evidence_refs: list[str] = Field(default_factory=list)
+    activated_child_requirement_ids: list[str] = Field(default_factory=list)
+    skipped_reason: str | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnswerInstruction(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    applies_to_requirement_ids: list[str] = Field(default_factory=list)
+    applies_to_branch_ids: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class FormattingInstruction(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    reason: str | None = None
+
+
+class ClarificationNeed(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    blocked_entity: str | None = None
+
+
 class RequirementSketchItem(V2ContractModel):
     id: str = Field(min_length=1)
     goal: str = Field(min_length=1)
@@ -330,6 +382,11 @@ class RequirementSketch(V2ContractModel):
     requirements: list[RequirementSketchItem] = Field(default_factory=list)
     field_aliases: FieldAliases = Field(default_factory=FieldAliases)
     tool_retrieval_slices: list[ToolRetrievalSlice] = Field(default_factory=list)
+    intake_clauses: list[RequirementIntakeClause] = Field(default_factory=list)
+    conditional_branches: list[ConditionalBranchContract] = Field(default_factory=list)
+    answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
+    formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
+    clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
 
 
 class SatisfactionCheck(V2ContractModel):
@@ -428,6 +485,11 @@ class AgendaPatch(V2ContractModel):
 class RequirementLedger(V2ContractModel):
     user_goal: str = Field(min_length=1)
     requirements: list[RequirementLedgerEntry] = Field(default_factory=list)
+    intake_clauses: list[RequirementIntakeClause] = Field(default_factory=list)
+    conditional_branches: list[ConditionalBranchContract] = Field(default_factory=list)
+    answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
+    formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
+    clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
     revision: int = Field(default=1, ge=1)
     revision_history: list[RequirementRevisionRecord] = Field(default_factory=list)
 

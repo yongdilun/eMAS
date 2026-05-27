@@ -23,15 +23,32 @@ def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str
 
 
 def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[dict[str, Any]]) -> str:
-    _ = state
     parts = [
         str(block.get("summary") or block.get("user_message") or "").strip()
         for block in blocks
         if str(block.get("summary") or block.get("user_message") or "").strip()
     ]
+    parts.extend(_conditional_branch_summary_parts(state))
     if not parts:
         return "No fulfilled read evidence was available for response rendering."
     return " ".join(dict.fromkeys(parts))
+
+
+def _conditional_branch_summary_parts(state: PlannerOwnedAgentGraphState) -> list[str]:
+    ledger = state.requirement_ledger
+    parts: list[str] = []
+    for branch in getattr(ledger, "conditional_branches", []) or []:
+        if getattr(branch, "status", None) != "skipped":
+            continue
+        if getattr(branch, "skipped_reason", None) != "conditional_branch_not_triggered":
+            continue
+        on_true = getattr(branch, "on_true", {}) or {}
+        entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
+        if entity and entity != "follow-up":
+            parts.append(f"No {entity} id was present, so the conditional {entity} follow-up was skipped.")
+        else:
+            parts.append("The conditional follow-up was skipped because its trigger was not present.")
+    return parts
 
 
 def _replan_limit_response_block(state: PlannerOwnedAgentGraphState, replan_spine: Mapping[str, Any]) -> dict[str, Any]:

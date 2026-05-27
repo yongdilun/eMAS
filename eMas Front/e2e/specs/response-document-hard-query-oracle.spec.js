@@ -7,6 +7,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-01',
     'HQ-05',
     'HQ-3S-01',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -55,6 +56,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   const byId = Object.fromEntries(hardQueryScenarios.map((scenario) => [scenario.id, scenario]))
   const requiredIds = [
     'HQ-9-READ',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
@@ -66,6 +68,23 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   ]
 
   for (const id of requiredIds) expect(byId[id], `${id} exists`).toBeTruthy()
+
+  const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
+  expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({
+    status: 'skipped',
+    skippedReason: 'conditional_branch_not_triggered',
+    conditionType: 'active_parent_evidence_has_any_field',
+  })
+  expect(conditionFalse.expected.requirementExpansion).toMatchObject({
+    expectNoChildLineage: true,
+  })
+  expect(conditionFalse.expected.forbiddenStepSequence[0]).toMatchObject({
+    toolName: 'get__jobs',
+    emptyArgs: true,
+  })
+  expect(conditionFalse.expected.forbiddenStepSequence[1]).toMatchObject({
+    toolName: 'get__jobs_{id}',
+  })
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({
