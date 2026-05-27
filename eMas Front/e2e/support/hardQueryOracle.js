@@ -564,6 +564,13 @@ function visibleBlockMatches(block, expectedBlock) {
   if (expectedBlock.readScope && block?.readScope !== expectedBlock.readScope) return false
   if (expectedBlock.displayMode && block?.displayMode !== expectedBlock.displayMode) return false
   if (expectedBlock.entityType && block?.entityType !== expectedBlock.entityType) return false
+  if (expectedBlock.title && !matches(block?.title || '', expectedBlock.title)) return false
+  for (const pattern of asArray(expectedBlock.textIncludes)) {
+    if (!matches(block?.text || '', pattern)) return false
+  }
+  for (const pattern of asArray(expectedBlock.forbiddenText)) {
+    if (matches(block?.text || '', pattern)) return false
+  }
   if (expectedBlock.requestedFields && !arrayEquals(block?.requestedFields || [], expectedBlock.requestedFields)) return false
   if (expectedBlock.statusFieldKeys && !arrayEquals(block?.statusFieldKeys || [], expectedBlock.statusFieldKeys)) return false
   if (expectedBlock.tableColumnKeys && !arrayEquals(block?.tableColumnKeys || [], expectedBlock.tableColumnKeys)) return false

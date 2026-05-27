@@ -1051,6 +1051,49 @@ test('FactoryAgentChatPanel renders read-only collection as one Results surface 
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel labels product record previews by product id before status', async () => {
+  const document = baseResponseDocument({
+    message: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+    summary: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+    blocks: [
+      {
+        id: 'message:conditional-product',
+        type: 'short_message',
+        message: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+        status: 'completed',
+      },
+      {
+        id: 'record-preview:conditional-product',
+        type: 'record_preview',
+        operation_id: 'op-conditional-product',
+        title: 'Read product status',
+        rows: [{ status: 'active', product_id: 'P-001' }],
+        read_scope: 'records',
+        display_mode: 'record_preview',
+        entity_type: 'product',
+        entity_count: 1,
+        preview_limit: 5,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-product-preview', name: 'Product preview', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-product-preview', name: 'Product preview', status: 'COMPLETED' }],
+    activeSessionName: 'Product preview',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Read product status/))
+  const chip = view.container.querySelector('[data-response-block-type="record_preview"] [data-affected-record-row]')
+  assert.equal(chip?.textContent, 'P-001')
+  assert.equal(chip?.getAttribute('data-record-id'), 'P-001')
+  assert.notEqual(chip?.textContent, 'active')
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders mixed read status blocks and collection table in order', async () => {
   const rows = [
     { job_id: 'JOB-LOW-001', priority: 'low', deadline: '2026-05-21' },

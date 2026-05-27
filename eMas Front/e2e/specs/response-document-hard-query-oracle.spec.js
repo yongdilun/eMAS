@@ -90,6 +90,11 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   ])
   expect(conditionTrue.expected.visibleTextIncludes.map((item) => item.label)).toContain('conditional relationship summary')
   expect(conditionTrue.expected.forbiddenVisibleText.map((item) => item.label)).toContain('shallow mixed-read counter')
+  expect(conditionTrue.expected.visibleSemanticBlocks[1]).toMatchObject({
+    entityType: 'product',
+    title: /Read product status/i,
+  })
+  expect(conditionTrue.expected.visibleSemanticBlocks[1].textIncludes).toEqual([/P-001/i])
 
   const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
   expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({

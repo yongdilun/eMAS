@@ -51,10 +51,15 @@ function clampNumber(value, min, max) {
 }
 
 function rowLabel(row, index) {
-  const keys = ['display_id', 'display_name', 'record_id', 'job_id', 'machine_id', 'id', 'name']
+  const keys = ['display_id', 'display_name', 'record_id', 'job_id', 'machine_id', 'product_id', 'material_id', 'inventory_id', 'entity_id', 'id', 'name']
   for (const key of keys) {
     if (row?.[key] != null && row[key] !== '') return String(row[key])
   }
+  const metadataIds = new Set(['operation_id', 'step_id', 'tool_id', 'approval_id', 'row_id'])
+  const identity = Object.entries(row || {}).find(([key, value]) => (
+    /_id$/i.test(key) && !metadataIds.has(key) && value != null && value !== ''
+  ))
+  if (identity) return String(identity[1])
   const first = Object.values(row || {}).find((value) => value != null && value !== '')
   return first == null ? `Record ${index + 1}` : String(first)
 }
