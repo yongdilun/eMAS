@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 import json
@@ -8,7 +9,7 @@ import httpx
 import pytest
 
 from factory_agent.config import get_settings, normalize_factory_agent_engine
-from factory_agent.planning.tool_selector import ToolSelector
+from factory_agent.planning.tool_selector import ToolSelectionResult, ToolSelector
 from factory_agent.rag.schemas import AnswerResult, SourceCitation
 from tests.test_api_endpoints import _make_app, _seed_tool
 
@@ -52,6 +53,22 @@ def _job_list_schema() -> dict[str, Any]:
         },
         "x-ai-entity": "job",
         "x-ai-response-contracts": ["result_collection_v1"],
+    }
+
+
+def _job_status_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+            "fields": {"type": "string"},
+        },
+        "required": ["id"],
+        "x-path-params": ["id"],
+        "x-query-params": ["fields"],
+        "x-param-sources": {"id": "path", "fields": "query"},
+        "x-ai-entity": "job",
+        "x-ai-response-contracts": ["entity_status_v1"],
     }
 
 
@@ -290,6 +307,213 @@ async def test_replan_spine_persists_attempts_and_active_evidence_in_intent_cont
     assert contract["response_document_context"]["evidence_refs"] == [evidence[-1]["id"]]
     assert evidence[0]["diagnostic_metadata"]["active_revision_satisfaction"] is False
     assert evidence[-1]["diagnostic_metadata"]["active_revision_satisfaction"] is True
+
+
+@pytest.mark.asyncio
+async def test_child_requirement_lineage_survives_api_snapshot_and_intent_contract(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    executor_calls: list[dict[str, Any]] = []
+    selector_calls: list[dict[str, Any]] = []
+
+    async def recording_select(self: ToolSelector, **kwargs: Any):
+        _ = self
+        selector_calls.append(kwargs)
+        adapter_request = kwargs.get("context", {}).get("v2_tool_selector_adapter_request", {})
+        requirement_id = str(adapter_request.get("requirement_id") or "")
+        tool_name = "get__jobs_{id}" if requirement_id.endswith(".a") else "get__machines_{id}"
+        return ToolSelectionResult([tool_name], backend_used="retrieval", llm_calls=0)
+
+    async def machine_then_job_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        executor_calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__machines_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 2,
+                "body": {
+                    "data": {
+                        "machine_id": args.get("id"),
+                        "status": "stopped",
+                        "active_job_id": "JOB-CAUSE-17",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "job_id": args.get("id"),
+                    "status": "waiting",
+                    "material_status": "short",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+    monkeypatch.setattr(ToolSelector, "select_tools", recording_select)
+    monkeypatch.setattr(
+        "factory_agent.planning.v2_graph_adapters._default_http_executor",
+        machine_then_job_http,
+    )
+    await _seed_tool(
+        db_session,
+        name="get__machines_{id}",
+        endpoint="/machines/{id}",
+        method="GET",
+        input_schema=_machine_status_schema(),
+        capability_tags=json.dumps(["machine", "lookup", "status"]),
+    )
+    await _seed_tool(
+        db_session,
+        name="get__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="GET",
+        input_schema=_job_status_schema(),
+        capability_tags=json.dumps(["job", "lookup", "status"]),
+    )
+    app, _event_bus = await _make_app(
+        sessionmaker_override,
+        min_healthy_tool_count=0,
+        tool_selector_backend="retrieval",
+        allow_offline_planner_proposer=True,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        session_id = await _create_prompt(client, "Explain why machine M-CNC-01 is stopped.")
+        created = await client.post(f"/sessions/{session_id}/plans", json={})
+        assert created.status_code == 200, created.text
+        session = (await client.get(f"/sessions/{session_id}")).json()
+        snapshot = (await client.get(f"/sessions/{session_id}/snapshot")).json()
+
+    contract = session["replan_context"]["intent_contract"]
+    ledger = contract["v2_state"]["requirement_ledger"]
+    requirements = ledger["requirements"]
+    child = next(requirement for requirement in requirements if requirement["parent_requirement_id"] == "req-001")
+    evidence = contract["v2_state"]["evidence_ledger"]["evidence"]
+    evidence_by_requirement = {item["requirement_id"]: item for item in evidence}
+    active_refs = contract["response_document_context"]["diagnostics"]["active_evidence_refs"]
+    response_refs = contract["response_document_context"]["evidence_refs"]
+    lineage = contract["child_requirement_lineage"]
+    response_document_diagnostics = snapshot["response_document"]["diagnostics"]
+
+    assert [call["tool_name"] for call in executor_calls] == [
+        "get__machines_{id}",
+        "get__jobs_{id}",
+    ]
+    assert [
+        call["context"]["v2_tool_selector_adapter_request"]["requirement_id"]
+        for call in selector_calls
+    ] == ["req-001", child["id"]]
+    assert child["id"] == "req-001.a"
+    assert child["constraints"] == {"job_id": "JOB-CAUSE-17"}
+    assert child["derived_from_evidence_refs"] == [evidence_by_requirement["req-001"]["id"]]
+    assert active_refs == [
+        evidence_by_requirement["req-001"]["id"],
+        evidence_by_requirement[child["id"]]["id"],
+    ]
+    assert response_refs == active_refs
+    assert lineage == response_document_diagnostics["child_requirement_lineage"]
+    assert response_document_diagnostics["active_final_evidence_refs"] == active_refs
+    assert response_document_diagnostics["response_evidence_refs"] == response_refs
+    assert lineage == [
+        {
+            "parent_requirement_id": "req-001",
+            "child_requirement_ids": [child["id"]],
+            "ledger_revision": ledger["revision"],
+            "children": [
+                {
+                    "requirement_id": child["id"],
+                    "status": "satisfied",
+                    "expansion_reason": child["expansion_reason"],
+                    "derived_from_evidence_refs": child["derived_from_evidence_refs"],
+                    "derived_from_missing_reasons": [],
+                    "evidence_refs": [evidence_by_requirement[child["id"]]["id"]],
+                }
+            ],
+            "expansion_reason": child["expansion_reason"],
+            "derived_from_evidence_refs": child["derived_from_evidence_refs"],
+            "derived_from_missing_reasons": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_snapshot_without_child_requirement_fields_still_renders(
+    sessionmaker_override,
+    db_session,
+):
+    from factory_agent.persistence.models import Message, Session
+
+    session_id = "sess-legacy-childless-contract"
+    now = datetime.utcnow()
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="COMPLETED",
+            current_intent="Show machine M-LEGACY-01 status.",
+            event_seq=2,
+            session_started_at=now,
+            created_at=now,
+            updated_at=now,
+            completed_at=now,
+            replan_context={
+                "intent_contract": {
+                    "engine_version": "v2",
+                    "response_document_context": {
+                        "state": "rendered",
+                        "evidence_refs": ["ev-legacy-parent"],
+                        "diagnostics": {
+                            "active_evidence_refs": ["ev-legacy-parent"],
+                            "response_evidence_refs": ["ev-legacy-parent"],
+                        },
+                    },
+                }
+            },
+        )
+    )
+    db_session.add_all(
+        [
+            Message(
+                message_id=f"{session_id}-user",
+                session_id=session_id,
+                role="user",
+                content="Show machine M-LEGACY-01 status.",
+                created_at=now,
+            ),
+            Message(
+                message_id=f"{session_id}-assistant",
+                session_id=session_id,
+                role="assistant",
+                content="Machine M-LEGACY-01 is running.",
+                tool_name="__plan__",
+                created_at=now,
+            ),
+        ]
+    )
+    await db_session.commit()
+    app, _event_bus = await _make_app(
+        sessionmaker_override,
+        min_healthy_tool_count=0,
+        allow_offline_planner_proposer=True,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    document = response.json()["response_document"]
+    assert document["state"] == "completed"
+    assert document["diagnostics"]["active_final_evidence_refs"] == ["ev-legacy-parent"]
+    assert document["diagnostics"]["response_evidence_refs"] == ["ev-legacy-parent"]
+    assert "child_requirement_lineage" not in document["diagnostics"]
 
 
 def test_phase8_runtime_has_no_second_parallel_tool_selector_retriever():

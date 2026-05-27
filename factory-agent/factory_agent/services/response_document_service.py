@@ -1220,6 +1220,8 @@ def _error_code(value: Any, *, fallback: str = "unknown_error") -> str:
 
 
 def _sanitize_diagnostic_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    if key == "child_requirement_lineage":
+        return _sanitize_child_requirement_lineage(value)
     if depth > 4:
         return "[truncated]"
     if key and _SENSITIVE_KEY_RE.search(key):
@@ -1236,6 +1238,38 @@ def _sanitize_diagnostic_value(value: Any, *, key: str = "", depth: int = 0) -> 
             return _error_code(value)
         return _redact_sensitive_text(value)
     return value
+
+
+def _sanitize_child_requirement_lineage(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    lineage: list[dict[str, Any]] = []
+    for item in value[:25]:
+        if not isinstance(item, dict):
+            continue
+        out: dict[str, Any] = {}
+        for key in (
+            "parent_requirement_id",
+            "child_requirement_ids",
+            "ledger_revision",
+            "expansion_reason",
+            "derived_from_evidence_refs",
+            "derived_from_missing_reasons",
+        ):
+            if key in item:
+                out[key] = _sanitize_diagnostic_value(item[key], key=key, depth=1)
+        children = item.get("children")
+        if isinstance(children, list):
+            out["children"] = [
+                {
+                    str(child_key): _sanitize_diagnostic_value(child_value, key=str(child_key), depth=1)
+                    for child_key, child_value in child.items()
+                }
+                for child in children[:25]
+                if isinstance(child, dict)
+            ]
+        lineage.append(out)
+    return lineage
 
 
 def _row_ids_by_status(rows: list[dict[str, Any]], status: str) -> list[str]:

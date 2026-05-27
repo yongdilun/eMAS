@@ -20,7 +20,7 @@ from factory_agent.graph.v2_agent_graph import (
 from factory_agent.observability.metrics import metrics
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import Session as SessionRow
-from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
+from factory_agent.planning.v2_contracts import EvidenceLedgerEntry, requirement_child_lineage
 from factory_agent.planning.v2_rag_tool import ensure_v2_rag_tool
 from factory_agent.schemas import PlanDraft, PlanResponse, PlanStepDraft, ToolInfo
 from factory_agent.services.session_revision import bump_session_revision
@@ -580,6 +580,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         graph_state = state.model_dump(mode="json")
         response_document_context = state.response_document_context.model_dump(mode="json")
         replan_spine = _intent_contract_replan_spine(state)
+        child_lineage = requirement_child_lineage(state.requirement_ledger)
         context = dict(base_context or {})
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
@@ -592,6 +593,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "v2_state": loop_state.model_dump(mode="json"),
             "planner_owned_agent_graph_state": graph_state,
             "response_document_context": response_document_context,
+            "child_requirement_lineage": child_lineage,
             "replan_spine": replan_spine,
         }
         context.pop("no_op_mutations", None)
@@ -609,6 +611,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "evidence_refs": [evidence.id for evidence in state.evidence_ledger.evidence],
             "response_document_state": state.response_document_context.state,
             "response_document_context": response_document_context,
+            "child_requirement_lineage": child_lineage,
             "replan_spine": replan_spine,
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,

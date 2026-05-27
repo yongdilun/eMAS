@@ -34,6 +34,7 @@ from ..planning.v2_contracts import (
     ToolRetrievalTrace,
     V2ContractModel,
     next_child_requirement_id,
+    requirement_child_lineage,
 )
 from ..planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
 from ..planning.v2_failed_tool_memory import (
@@ -1402,6 +1403,7 @@ class PlannerOwnedAgentGraph:
             if evidence.id not in set(active_evidence_refs)
         ]
         response_evidence_refs = [] if replan_limit_safe_failure else active_evidence_refs
+        child_lineage = requirement_child_lineage(state.requirement_ledger)
         state.response_document_context = ResponseDocumentContext(
             state="draft" if pending or validation_status == "deferred" else ("rendered" if validation_status == "passed" else "failed"),
             document_id=(
@@ -1425,8 +1427,10 @@ class PlannerOwnedAgentGraph:
                 "summary": response_summary,
                 "blocks": response_blocks,
                 "active_evidence_refs": active_evidence_refs,
+                "active_final_evidence_refs": active_evidence_refs,
                 "response_evidence_refs": response_evidence_refs,
                 "historical_evidence_refs": historical_evidence_refs,
+                "child_requirement_lineage": child_lineage,
                 "stale_evidence_excluded_from_active_revision": bool(historical_evidence_refs),
                 "replan_limit_reached": bool(replan_spine.get("replan_limit_reached")),
                 "replan_spine": replan_spine,

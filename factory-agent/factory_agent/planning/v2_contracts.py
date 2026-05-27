@@ -452,6 +452,58 @@ def next_child_requirement_id(
     raise ValueError(f"child requirement limit reached for {parent}")
 
 
+def requirement_child_lineage(ledger: RequirementLedger) -> list[dict[str, Any]]:
+    requirements = list(ledger.requirements)
+    by_parent: dict[str, list[RequirementLedgerEntry]] = {}
+    for requirement in requirements:
+        parent_id = requirement.parent_requirement_id
+        if not parent_id:
+            continue
+        by_parent.setdefault(parent_id, []).append(requirement)
+
+    lineage: list[dict[str, Any]] = []
+    for parent in requirements:
+        children = by_parent.get(parent.id)
+        if not children:
+            continue
+        child_rows = [
+            {
+                "requirement_id": child.id,
+                "status": child.status,
+                "expansion_reason": child.expansion_reason,
+                "derived_from_evidence_refs": list(child.derived_from_evidence_refs),
+                "derived_from_missing_reasons": list(child.derived_from_missing_reasons),
+                "evidence_refs": list(child.evidence_refs),
+            }
+            for child in children
+        ]
+        lineage.append(
+            {
+                "parent_requirement_id": parent.id,
+                "child_requirement_ids": [child.id for child in children],
+                "ledger_revision": ledger.revision,
+                "children": child_rows,
+                "expansion_reason": next(
+                    (child.expansion_reason for child in children if child.expansion_reason),
+                    None,
+                ),
+                "derived_from_evidence_refs": list(
+                    dict.fromkeys(
+                        ref
+                        for child in children
+                        for ref in child.derived_from_evidence_refs
+                    )
+                ),
+                "derived_from_missing_reasons": [
+                    reason
+                    for child in children
+                    for reason in child.derived_from_missing_reasons
+                ],
+            }
+        )
+    return lineage
+
+
 class EvidenceCitation(V2ContractModel):
     source_id: str = Field(min_length=1)
     title: str | None = None

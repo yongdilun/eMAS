@@ -1946,6 +1946,44 @@ def _response_document_context_from_replan_context(context: dict[str, Any]) -> d
     return {}
 
 
+def _planner_owned_response_contract_diagnostics(session: Any, *, reason: str) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {"reason": reason}
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return diagnostics
+
+    response_context = _response_document_context_from_replan_context(context)
+    response_diagnostics = (
+        response_context.get("diagnostics")
+        if isinstance(response_context.get("diagnostics"), dict)
+        else {}
+    )
+    for candidate in _replan_context_candidates(context):
+        lineage = candidate.get("child_requirement_lineage")
+        if isinstance(lineage, list):
+            diagnostics["child_requirement_lineage"] = [
+                dict(item) for item in lineage if isinstance(item, dict)
+            ]
+            break
+    if "child_requirement_lineage" not in diagnostics:
+        lineage = response_diagnostics.get("child_requirement_lineage")
+        if isinstance(lineage, list):
+            diagnostics["child_requirement_lineage"] = [
+                dict(item) for item in lineage if isinstance(item, dict)
+            ]
+
+    active_refs = (
+        response_diagnostics.get("active_final_evidence_refs")
+        or response_diagnostics.get("active_evidence_refs")
+    )
+    if isinstance(active_refs, list):
+        diagnostics["active_final_evidence_refs"] = list(active_refs)
+    response_refs = response_context.get("evidence_refs") or response_diagnostics.get("response_evidence_refs")
+    if isinstance(response_refs, list):
+        diagnostics["response_evidence_refs"] = list(response_refs)
+    return diagnostics
+
+
 def _response_document_diagnostics_from_replan_context(context: dict[str, Any]) -> dict[str, Any]:
     response_context = _response_document_context_from_replan_context(context)
     if not isinstance(response_context, dict):
@@ -2224,7 +2262,7 @@ def _derive_snapshot_presentation(
             summary=terminal_event.content if terminal_event else "Mutation completed.",
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "mutation_completed"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="mutation_completed"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 
@@ -2237,7 +2275,7 @@ def _derive_snapshot_presentation(
             summary=answer_summary,
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "source_backed_answer"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="source_backed_answer"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 
@@ -2249,7 +2287,7 @@ def _derive_snapshot_presentation(
             summary=terminal_event.content if terminal_event else (plan.plan_explanation if plan else None),
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "completed_answer"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="completed_answer"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 
