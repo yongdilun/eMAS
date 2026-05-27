@@ -400,6 +400,125 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
+    tags: ['hard query', 'requirement-expansion', 'conditional branch', 'for-each', 'response_document'],
+    prompt: 'Read jobs JOB-SEED-001 and JOB-SEED-002. For each job that includes a product id, read that product. Summarize each job with its product.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 3,
+      maxStepCount: 5,
+      stepSequence: [
+        {
+          toolName: 'get__jobs_{id}',
+          args: {
+            id: 'JOB-SEED-001',
+          },
+        },
+        {
+          toolName: 'get__jobs_{id}',
+          args: {
+            id: 'JOB-SEED-002',
+          },
+        },
+        {
+          toolName: 'get__products_{id}',
+          args: {
+            id: 'P-001',
+          },
+        },
+        {
+          toolName: 'get__products_{id}',
+          args: {
+            id: 'P-002',
+          },
+        },
+      ],
+      forbiddenStepSequence: [
+        {
+          toolName: 'get__jobs',
+          emptyArgs: true,
+        },
+        {
+          toolName: 'get__products',
+          emptyArgs: true,
+        },
+      ],
+      toolNames: ['get__jobs_{id}', 'get__products_{id}'],
+      noMutation: true,
+      conditionalBranches: [
+        {
+          status: 'activated',
+          conditionType: 'active_parent_evidence_has_any_field',
+          fieldAny: ['product_id', 'active_product_id'],
+          activatedChildCount: 2,
+          triggerValues: ['P-001', 'P-002'],
+        },
+      ],
+      requirementExpansion: {
+        requireChildLineage: true,
+        requireChildCount: 2,
+        parentRequirementId: 'req-001',
+        childEntity: 'product',
+        childConstraintKey: 'product_id',
+        childConstraintValues: ['P-001', 'P-002'],
+        requireFreshChildRetrieval: true,
+        childToolNames: ['get__products_{id}'],
+        parentToolNames: ['get__jobs_{id}'],
+        forbidParentToolExecutableReuse: true,
+        requireFinalParentAndChildEvidence: true,
+        forbidStaleFinalEvidence: true,
+      },
+      responseDocument: {
+        blockTypes: ['record_preview'],
+        hiddenBlockTypes: ['diagnostic', 'approval_required'],
+        minReadRunSteps: 3,
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'job',
+          textIncludes: [/JOB-SEED-001/i, /P-001/i],
+        },
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'job',
+          textIncludes: [/JOB-SEED-002/i, /P-002/i],
+        },
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'product',
+          textIncludes: [/P-001/i, /Status\s+active/i],
+        },
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'product',
+          textIncludes: [/P-002/i, /Status\s+active/i],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'first job product summary', pattern: /Job\s+JOB-SEED-001\s+included\s+product\s+id\s+P-001/i },
+        { label: 'second job product summary', pattern: /Job\s+JOB-SEED-002\s+included\s+product\s+id\s+P-002/i },
+        { label: 'first product status summary', pattern: /Product\s+P-001\s+is\s+active/i },
+        { label: 'second product status summary', pattern: /Product\s+P-002\s+is\s+active/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'attention state', pattern: /Run needs attention/i },
+        { label: 'fake id constraint', pattern: /\bproduct\s+id\s+ID\b/i },
+        { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-9-READ',
     tags: ['hard query', 'phase9', 'multi-step read', 'conditional branch', 'response_document'],
     prompt: 'Show M-CNC-01 status, show JOB-SEED-001 and JOB-SEED-002 status, then list the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline. If any listed job is blocked, explain why before suggesting any update.',

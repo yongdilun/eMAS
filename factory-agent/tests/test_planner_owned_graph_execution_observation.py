@@ -443,6 +443,75 @@ class JobProductThenProductExecutor:
         }
 
 
+class MultiJobProductsThenProductsExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            job_id = args.get("id")
+            product_id = {
+                "JOB-SEED-001": "P-001",
+                "JOB-SEED-002": "P-002",
+            }.get(job_id)
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "job_id": job_id,
+                        "product_id": product_id,
+                        "status": "scheduled",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        if tool.name == "get__jobs":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": [
+                        {
+                            "job_id": "JOB-SEED-001",
+                            "product_id": "P-001",
+                            "status": "scheduled",
+                        },
+                        {
+                            "job_id": "JOB-SEED-002",
+                            "product_id": "P-002",
+                            "status": "scheduled",
+                        },
+                    ]
+                },
+                "infrastructure_error": False,
+            }
+        if tool.name == "get__products_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {
+                    "data": {
+                        "product_id": args.get("id"),
+                        "status": "active",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {"data": {}},
+            "infrastructure_error": False,
+        }
+
+
 class JobWithoutMachineThenMachineExecutor:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -850,6 +919,119 @@ async def test_conditional_product_branch_creates_child_when_job_evidence_has_pr
 
 
 @pytest.mark.asyncio
+async def test_for_each_conditional_product_branch_fans_out_children_from_parent_rows():
+    executor = MultiJobProductsThenProductsExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs"],
+            ["get__products_{id}"],
+            ["get__products_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs": _job_collection_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Read jobs JOB-SEED-001 and JOB-SEED-002. "
+        "For each job that includes a product id, read that product. "
+        "Summarize each job with its product.",
+        session_context={"session_id": "for-each-product-branch-fanout"},
+    )
+
+    requirements = result.state.requirement_ledger.requirements
+    branches = result.state.requirement_ledger.conditional_branches
+    child_requirements = [
+        requirement
+        for requirement in requirements
+        if requirement.parent_requirement_id == "req-001"
+    ]
+    product_calls = [
+        call for call in executor.calls if call["tool_name"] == "get__products_{id}"
+    ]
+
+    assert [requirement.id for requirement in requirements] == [
+        "req-001",
+        "req-001.a",
+        "req-001.b",
+    ]
+    assert [child.constraints for child in child_requirements] == [
+        {"product_id": "P-001"},
+        {"product_id": "P-002"},
+    ]
+    assert len(branches) == 1
+    assert branches[0].status == "activated"
+    assert branches[0].activated_child_requirement_ids == ["req-001.a", "req-001.b"]
+    assert [call["args"]["id"] for call in product_calls] == ["P-001", "P-002"]
+    assert [window.requirement_id for window in result.state.candidate_tool_windows] == [
+        "req-001",
+        "req-001.a",
+        "req-001.b",
+    ]
+    summary = result.state.response_document_context.diagnostics["summary"]
+    assert "Job JOB-SEED-001 included product id P-001" in summary
+    assert "Job JOB-SEED-002 included product id P-002" in summary
+    assert "Product P-001 is active" in summary
+    assert "Product P-002 is active" in summary
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_for_each_conditional_product_branch_batches_parent_item_reads_for_multiple_ids():
+    executor = MultiJobProductsThenProductsExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__products_{id}"],
+            ["get__products_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Read jobs JOB-SEED-001 and JOB-SEED-002. "
+        "For each job that includes a product id, read that product. "
+        "Summarize each job with its product.",
+        session_context={"session_id": "for-each-product-branch-batched-parent-items"},
+    )
+
+    job_calls = [call for call in executor.calls if call["tool_name"] == "get__jobs_{id}"]
+    product_calls = [call for call in executor.calls if call["tool_name"] == "get__products_{id}"]
+    parent_choose = next(
+        decision
+        for decision in result.state.planner_decisions
+        if decision.decision_kind == "choose_tool" and decision.requirement_id == "req-001"
+    )
+
+    assert [call["args"]["id"] for call in job_calls] == ["JOB-SEED-001", "JOB-SEED-002"]
+    assert len(parent_choose.selected_tool_calls) == 2
+    assert any(
+        decision.decision_kind == "execute_parallel_read_batch"
+        and decision.requirement_id == "req-001"
+        for decision in result.state.planner_decisions
+    )
+    assert [call["args"]["id"] for call in product_calls] == ["P-001", "P-002"]
+    assert result.state.requirement_ledger.conditional_branches[0].activated_child_requirement_ids == [
+        "req-001.a",
+        "req-001.b",
+    ]
+    summary = result.state.response_document_context.diagnostics["summary"]
+    assert "Job JOB-SEED-001 included product id P-001" in summary
+    assert "Job JOB-SEED-002 included product id P-002" in summary
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_conditional_machine_branch_skips_when_job_evidence_has_no_machine_id():
     executor = JobWithoutMachineThenMachineExecutor()
     selector = SequentialRecordingSelector(
@@ -952,6 +1134,42 @@ def test_answer_instruction_does_not_become_executable_requirement():
     assert [instruction.text for instruction in answer_instructions] == ["Summarize the result."]
     assert [need["requirement_id"] for need in capability_needs] == ["req-001"]
     assert not any(need["source_of_truth"] == "unknown" for need in capability_needs)
+
+
+def test_for_each_dependent_read_becomes_conditional_branch_not_required_requirement():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Read jobs JOB-SEED-001 and JOB-SEED-002. "
+        "For each job that includes a product id, read that product. "
+        "Summarize each job with its product.",
+        tools_by_name={
+            "get__jobs": _job_collection_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+    )
+
+    requirements = state.requirement_ledger.requirements
+    intake_roles = [clause.role for clause in state.requirement_ledger.intake_clauses]
+    branches = state.requirement_ledger.conditional_branches
+    answer_instructions = state.requirement_ledger.answer_instructions
+    capability_needs = state.execution_trace.diagnostics["capability_needs"]
+
+    assert [requirement.id for requirement in requirements] == ["req-001"]
+    assert requirements[0].constraints["job_id"] == ["JOB-SEED-001", "JOB-SEED-002"]
+    assert requirements[0].constraints["observation_fields"] == ["product_id", "active_product_id"]
+    assert intake_roles == ["required_requirement", "conditional_branch", "answer_instruction"]
+    assert len(branches) == 1
+    assert branches[0].parent_requirement_id == "req-001"
+    assert branches[0].condition.get("field_any") == ["product_id", "active_product_id"]
+    assert branches[0].on_true.get("entity") == "product"
+    assert [instruction.text for instruction in answer_instructions] == [
+        "Summarize each job with its product."
+    ]
+    assert [need["requirement_id"] for need in capability_needs] == ["req-001"]
+    assert not any(
+        requirement.constraints.get("product_id") == "ID"
+        for requirement in requirements
+    )
 
 
 @pytest.mark.asyncio

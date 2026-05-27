@@ -1022,8 +1022,20 @@ def _conditional_branch_for_clause(
         clause,
         re.IGNORECASE | re.DOTALL,
     )
+    for_each_dependent_read = re.search(
+        r"\bfor\s+(?:each|every)\b.+?\b(?:that|which|where)\s+"
+        r"(?:includes?|has|contains)\s+(?:a|an|the)?\s*"
+        r"(?P<entity>[a-z][a-z0-9_-]*)\s+id\b"
+        r".+?\bread\s+that\s+(?P=entity)\b",
+        clause,
+        re.IGNORECASE | re.DOTALL,
+    )
+    dependent_read = dependent_read or for_each_dependent_read
     if dependent_read:
-        branch_entity = _normalize_phrase(dependent_read.group("entity")).replace(" ", "_")
+        branch_entity = _conditional_branch_entity_for_phrase(
+            dependent_read.group("entity"),
+            capability_map=capability_map,
+        )
         if not branch_entity:
             branch_entity = entity or ""
         if not branch_entity:
@@ -1040,12 +1052,20 @@ def _conditional_branch_for_clause(
                 "entity": branch_entity,
                 "constraint_field": f"{branch_entity}_id",
                 "value_from_field_any": field_any,
+                "fan_out": "all_unique_values"
+                if for_each_dependent_read
+                else "first_value",
                 "requirement_type": "single_entity_status",
                 "intent_operation": "report_status",
             },
             "diagnostics": {
                 "role": "conditional_branch",
                 "non_executable_until_condition_true": True,
+                **(
+                    {"fan_out": "all_unique_values"}
+                    if for_each_dependent_read
+                    else {}
+                ),
             },
         }
 
@@ -1086,6 +1106,21 @@ def _conditional_branch_for_clause(
     }
 
 
+def _conditional_branch_entity_for_phrase(phrase: str, *, capability_map: CapabilityMap) -> str:
+    entity = _normalize_phrase(phrase).replace(" ", "_")
+    if not entity:
+        return ""
+    known_entities = {
+        str(capability.entity or "").strip()
+        for capability in capability_map.capabilities
+        if str(capability.entity or "").strip()
+    }
+    candidates = [entity]
+    if entity.endswith("s") and len(entity) > 1:
+        candidates.append(entity[:-1])
+    return next((candidate for candidate in candidates if candidate in known_entities), candidates[0])
+
+
 def _conditional_identifier_fields(capability_map: CapabilityMap, entity: str) -> list[str]:
     primary = f"{entity}_id"
     fields: list[str] = [primary]
@@ -1108,6 +1143,9 @@ def _answer_instruction_for_clause(
 ) -> str | None:
     if not previous_requirements and not conditional_branches:
         return None
+    if re.search(r"^\s*(?:summari[sz]e|explain|describe)\b", clause, re.IGNORECASE):
+        if not any(values for values in frame.normalized_entities.values()):
+            return "answer_composition_instruction"
     if frame.entity or source != "unknown":
         return None
     if re.search(r"\b(?:explain|why|cause|reason|summari[sz]e)\b", clause, re.IGNORECASE):

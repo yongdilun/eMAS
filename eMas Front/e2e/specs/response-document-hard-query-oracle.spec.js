@@ -9,6 +9,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-3S-01',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
+    'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -59,6 +60,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'HQ-9-READ',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
+    'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
@@ -108,6 +110,29 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   expect(conditionFalse.expected.forbiddenStepSequence[0]).toMatchObject({
     toolName: 'get__machines_{id}',
   })
+
+  const forEachProduct = byId['HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT']
+  expect(forEachProduct.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 2,
+    triggerValues: ['P-001', 'P-002'],
+  })
+  expect(forEachProduct.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    requireChildCount: 2,
+    childConstraintKey: 'product_id',
+    childConstraintValues: ['P-001', 'P-002'],
+    requireFreshChildRetrieval: true,
+  })
+  expect(forEachProduct.expected.stepSequence.map((step) => step.toolName)).toEqual([
+    'get__jobs_{id}',
+    'get__jobs_{id}',
+    'get__products_{id}',
+    'get__products_{id}',
+  ])
+  expect(forEachProduct.expected.visibleTextIncludes.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['first job product summary', 'second job product summary']),
+  )
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({

@@ -699,8 +699,13 @@ def _validate_deterministic_guard_authority(
         return
 
     if kind == "choose_tool":
-        if not _state_proves_single_document_tool_choice(state, decision):
-            errors.append("deterministic choose_tool guard requires exactly one bounded document tool choice")
+        if not (
+            _state_proves_single_document_tool_choice(state, decision)
+            or _state_proves_bounded_read_batch_tool_choice(state, decision)
+        ):
+            errors.append(
+                "deterministic choose_tool guard requires a bounded document tool choice or read batch"
+            )
         return
 
     if kind == "execute_tool":
@@ -955,6 +960,83 @@ def _state_proves_single_document_tool_choice(
         and card.source_of_truth == "document_knowledge"
         and card.is_read_only
         and not card.requires_approval
+    )
+
+
+def _state_proves_bounded_read_batch_tool_choice(
+    state: PlannerOwnedAgentGraphState,
+    decision: PlannerDecisionRecord,
+) -> bool:
+    calls = _selected_tool_calls(decision)
+    if len(calls) <= 1:
+        return False
+    requirement_ids = {call.requirement_id for call in calls}
+    if len(requirement_ids) != 1:
+        return False
+    requirement = _requirement_by_id(state, calls[0].requirement_id)
+    if requirement is None or not requirement.required or requirement.status != "open":
+        return False
+    if requirement.requirement_type != "multi_entity_status":
+        return False
+    expected_values = _multi_entity_identity_value_keys(requirement, decision.capability_need)
+    if len(expected_values) <= 1:
+        return False
+    actual_values = {_json_key(_call_identity_value(call, requirement)) for call in calls}
+    if actual_values != expected_values:
+        return False
+    tool_names = {call.tool_name for call in calls}
+    if len(tool_names) != 1:
+        return False
+    for call in calls:
+        card = _hydrated_card_for_call(state, call)
+        if card is None or not card.is_read_only or card.requires_approval:
+            return False
+    return True
+
+
+def _multi_entity_identity_value_keys(
+    requirement: RequirementLedgerEntry,
+    capability_need: CapabilityNeed | None,
+) -> set[str]:
+    constraints = dict(requirement.constraints or {})
+    if capability_need is not None:
+        constraints.update(capability_need.known_args or {})
+    for key in _identity_arg_names(requirement):
+        value = constraints.get(key)
+        if isinstance(value, list):
+            return {_json_key(item) for item in value if item not in (None, "", [], {})}
+    return set()
+
+
+def _call_identity_value(call: GraphToolCall, requirement: RequirementLedgerEntry) -> Any:
+    for key in _identity_arg_names(requirement):
+        value = call.args.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _identity_arg_names(requirement: RequirementLedgerEntry) -> set[str]:
+    entity = str(requirement.entity or "").strip()
+    names = {"id", "entity_id", "record_id"}
+    if entity:
+        names.update({f"{entity}_id", f"{entity}_ref"})
+    return names
+
+
+def _hydrated_card_for_call(
+    state: PlannerOwnedAgentGraphState,
+    call: GraphToolCall,
+) -> HydratedToolCard | None:
+    return next(
+        (
+            card
+            for group in state.hydrated_tool_cards
+            if group.requirement_id == call.requirement_id
+            for card in group.cards
+            if card.tool_name == call.tool_name
+        ),
+        None,
     )
 
 

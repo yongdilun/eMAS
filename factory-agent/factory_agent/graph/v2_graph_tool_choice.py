@@ -69,6 +69,53 @@ def _deterministic_choose_tool_if_state_proves_single_document_tool(
     )
 
 
+def _deterministic_choose_tool_if_state_proves_bounded_read_batch(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    retrieve_decision: PlannerDecisionRecord,
+    candidate_tool_calls: list[GraphToolCall],
+    decision_id: str,
+) -> PlannerDecisionRecord | None:
+    requirement = _requirement_by_id(state, retrieve_decision.requirement_id)
+    if getattr(requirement, "requirement_type", None) != "multi_entity_status":
+        return None
+    expected_values = {_stable_value_key(value) for value in _multi_entity_identity_values(requirement, retrieve_decision.capability_need)}
+    if len(expected_values) <= 1:
+        return None
+
+    grouped: dict[str, list[GraphToolCall]] = {}
+    for call in candidate_tool_calls:
+        if call.kind != "api_tool" or call.requirement_id != retrieve_decision.requirement_id:
+            continue
+        card = _hydrated_card_for_tool_call(state, call)
+        if card is None or not bool(card.is_read_only) or bool(card.requires_approval):
+            continue
+        identity_value = _call_identity_value(call, requirement)
+        if _stable_value_key(identity_value) not in expected_values:
+            continue
+        grouped.setdefault(call.tool_name, []).append(call)
+
+    for calls in grouped.values():
+        call_values = {_stable_value_key(_call_identity_value(call, requirement)) for call in calls}
+        if call_values == expected_values:
+            return PlannerDecisionRecord(
+                decision_id=decision_id,
+                decision_kind="choose_tool",
+                author="deterministic_guard",
+                requirement_id=retrieve_decision.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=retrieve_decision.capability_need,
+                selected_tool_calls=list(calls),
+                reason="Choose the bounded read batch proven by the multi-entity requirement.",
+                diagnostics={
+                    "tool_choice_policy": "bounded_multi_entity_read_batch",
+                    "selected_tool_name": calls[0].tool_name if calls else None,
+                    "bounded_identity_count": len(expected_values),
+                },
+            )
+    return None
+
+
 def _tool_choice_requires_graph_approval(
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
@@ -195,6 +242,18 @@ def _multi_entity_identity_values(requirement: Any, capability_need: Any) -> lis
         if isinstance(value, list):
             return list(value)
     return []
+
+
+def _call_identity_value(call: GraphToolCall, requirement: Any) -> Any:
+    for key in _identity_arg_names(requirement):
+        value = call.args.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _stable_value_key(value: Any) -> str:
+    return str(value)
 
 
 def _hydrated_card_for_tool_call(

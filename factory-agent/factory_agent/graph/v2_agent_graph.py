@@ -112,6 +112,7 @@ from .v2_graph_tool_choice import (
     _candidate_tool_calls_for_requirement,
     _capability_need_for_requirement,
     _card_supports_collection_read,
+    _deterministic_choose_tool_if_state_proves_bounded_read_batch,
     _deterministic_choose_tool_if_state_proves_single_document_tool,
     _has_candidate_window_for_requirement,
     _has_choice_for_requirement,
@@ -943,12 +944,19 @@ class PlannerOwnedAgentGraph:
                 candidate_tool_calls=candidate_tool_calls,
             )
             decision_id = f"dec-choose-{len(state.planner_decisions) + 1:03d}"
-            decision = _deterministic_choose_tool_if_state_proves_single_document_tool(
+            decision = _deterministic_choose_tool_if_state_proves_bounded_read_batch(
                 state=state,
                 retrieve_decision=retrieve_decision,
                 candidate_tool_calls=candidate_tool_calls,
                 decision_id=decision_id,
             )
+            if decision is None:
+                decision = _deterministic_choose_tool_if_state_proves_single_document_tool(
+                    state=state,
+                    retrieve_decision=retrieve_decision,
+                    candidate_tool_calls=candidate_tool_calls,
+                    decision_id=decision_id,
+                )
             if decision is not None:
                 validation = validate_planner_decision(state, decision)
                 if validation.accepted:
@@ -1942,32 +1950,42 @@ def _evaluate_conditional_branches_from_evidence(
         ]
         if not parent_evidence:
             continue
-        triggered = _conditional_branch_trigger_value(branch, parent_evidence)
-        if triggered is None:
+        triggers = _conditional_branch_trigger_values(branch, parent_evidence)
+        if not triggers:
             _skip_conditional_branch(state, branch, parent_evidence)
             continue
-        evidence, value, source_field = triggered
-        _activate_conditional_branch(state, branch, evidence, value, source_field=source_field)
+        _activate_conditional_branch(state, branch, triggers)
 
 
-def _conditional_branch_trigger_value(
+def _conditional_branch_trigger_values(
     branch: ConditionalBranchContract,
     evidence_items: list[EvidenceLedgerEntry],
-) -> tuple[EvidenceLedgerEntry, Any, str] | None:
+) -> list[tuple[EvidenceLedgerEntry, Any, str]]:
     condition = dict(branch.condition or {})
     if condition.get("type") != "active_parent_evidence_has_any_field":
-        return None
+        return []
     field_any = [str(field) for field in condition.get("field_any", []) if str(field)]
     if not field_any:
-        return None
+        return []
+    fan_out = dict(branch.on_true or {}).get("fan_out") == "all_unique_values"
+    triggers: list[tuple[EvidenceLedgerEntry, Any, str]] = []
+    seen_values: set[str] = set()
     for evidence in evidence_items:
         values = _flatten_evidence_values(evidence.normalized_result)
         for field in field_any:
             for key, value in values:
                 if key != field or value in (None, "", [], {}):
                     continue
-                return evidence, value, field
-    return None
+                value_key = _stable_json_key(value)
+                if value_key in seen_values:
+                    continue
+                seen_values.add(value_key)
+                triggers.append((evidence, value, field))
+                if not fan_out:
+                    return triggers
+                if len(triggers) >= 2:
+                    return triggers
+    return triggers
 
 
 def _skip_conditional_branch(
@@ -2038,56 +2056,81 @@ def _skip_conditional_branch(
 def _activate_conditional_branch(
     state: PlannerOwnedAgentGraphState,
     branch: ConditionalBranchContract,
-    evidence: EvidenceLedgerEntry,
-    value: Any,
-    *,
-    source_field: str,
+    triggers: list[tuple[EvidenceLedgerEntry, Any, str]],
 ) -> None:
     on_true = dict(branch.on_true or {})
     entity = str(on_true.get("entity") or "").strip()
     constraint_field = str(on_true.get("constraint_field") or (f"{entity}_id" if entity else "")).strip()
-    if not entity or not constraint_field or value in (None, "", [], {}):
-        _skip_conditional_branch(state, branch, [evidence])
+    evidence_items = [evidence for evidence, _value, _source_field in triggers]
+    if not entity or not constraint_field:
+        _skip_conditional_branch(state, branch, evidence_items)
         return
 
     proposed = state.requirement_ledger.model_copy(deep=True)
     previous_revision = proposed.revision
     existing_ids = [requirement.id for requirement in proposed.requirements]
-    try:
-        child_id = next_child_requirement_id(branch.parent_requirement_id, existing_ids)
-    except ValueError:
-        _skip_conditional_branch(state, branch, [evidence])
+    existing_child_keys = _existing_child_constraint_keys(state)
+    added_children: list[RequirementLedgerEntry] = []
+    child_evidence_refs: list[str] = []
+    trigger_fields: list[str] = []
+    trigger_values: list[Any] = []
+    max_children = 2
+
+    for evidence, value, source_field in triggers:
+        if value in (None, "", [], {}):
+            continue
+        if _child_count_for_parent(state, branch.parent_requirement_id) + len(added_children) >= max_children:
+            break
+        signature = (branch.parent_requirement_id, constraint_field, _stable_json_key(value))
+        if signature in existing_child_keys:
+            continue
+        try:
+            child_id = next_child_requirement_id(branch.parent_requirement_id, existing_ids)
+        except ValueError:
+            break
+        existing_ids.append(child_id)
+        existing_child_keys.add(signature)
+        child = RequirementLedgerEntry(
+            id=child_id,
+            goal=f"Read {entity} {value} conditional follow-up evidence",
+            requirement_type="single_entity_status",
+            entity=entity,
+            intent_operation="report_status",
+            source_of_truth=evidence.source_of_truth,
+            constraints={constraint_field: value},
+            requested_fields=[],
+            locked_constraints=[constraint_field],
+            status="open",
+            parent_requirement_id=branch.parent_requirement_id,
+            expansion_reason="Conditional branch triggered by parent evidence.",
+            derived_from_evidence_refs=[evidence.id],
+            derived_from_missing_reasons=[],
+            depends_on=[evidence.id],
+        )
+        added_children.append(child)
+        child_evidence_refs.append(evidence.id)
+        trigger_fields.append(source_field)
+        trigger_values.append(value)
+
+    if not added_children:
+        _skip_conditional_branch(state, branch, evidence_items)
         return
 
-    child = RequirementLedgerEntry(
-        id=child_id,
-        goal=f"Read {entity} {value} conditional follow-up evidence",
-        requirement_type="single_entity_status",
-        entity=entity,
-        intent_operation="report_status",
-        source_of_truth=evidence.source_of_truth,
-        constraints={constraint_field: value},
-        requested_fields=[],
-        locked_constraints=[constraint_field],
-        status="open",
-        parent_requirement_id=branch.parent_requirement_id,
-        expansion_reason="Conditional branch triggered by parent evidence.",
-        derived_from_evidence_refs=[evidence.id],
-        derived_from_missing_reasons=[],
-        depends_on=[evidence.id],
-    )
-    proposed.requirements.append(child)
+    evidence_refs = list(dict.fromkeys(child_evidence_refs))
+    proposed.requirements.extend(added_children)
     _set_branch_status(
         proposed,
         branch.id,
         status="activated",
-        evidence_refs=[evidence.id],
+        evidence_refs=evidence_refs,
         skipped_reason=None,
-        activated_child_requirement_ids=[child.id],
+        activated_child_requirement_ids=[child.id for child in added_children],
         diagnostics={
             "condition": dict(branch.condition),
-            "trigger_field": source_field,
-            "trigger_value": value,
+            "trigger_field": trigger_fields[0] if trigger_fields else None,
+            "trigger_fields": list(dict.fromkeys(trigger_fields)),
+            "trigger_value": trigger_values[0] if trigger_values else None,
+            "trigger_values": trigger_values,
             "source": "active_parent_evidence",
         },
     )
@@ -2105,12 +2148,14 @@ def _activate_conditional_branch(
             "conditional_branch_status": "activated",
             "parent_requirement_id": branch.parent_requirement_id,
             "parent_requirement_ids": [branch.parent_requirement_id],
-            "added_child_requirement_ids": [child.id],
-            "derived_from_evidence_refs": [evidence.id],
+            "added_child_requirement_ids": [child.id for child in added_children],
+            "derived_from_evidence_refs": evidence_refs,
             "derived_from_missing_reasons": [],
             "locked_constraints_preserved": True,
-            "trigger_field": source_field,
-            "trigger_value": value,
+            "trigger_field": trigger_fields[0] if trigger_fields else None,
+            "trigger_fields": list(dict.fromkeys(trigger_fields)),
+            "trigger_value": trigger_values[0] if trigger_values else None,
+            "trigger_values": trigger_values,
             "tool_state_policy": "child_requires_fresh_retrieval",
         },
     )
@@ -2121,14 +2166,14 @@ def _activate_conditional_branch(
         author="system",
         requirement_id=branch.parent_requirement_id,
         ledger_revision=state.requirement_ledger.revision,
-        evidence_refs=[evidence.id],
+        evidence_refs=evidence_refs,
         reason="Apply conditional branch child requirement from parent evidence.",
         diagnostics={
             "conditional_branch": {
                 "branch_id": branch.id,
                 "status": "activated",
-                "added_child_requirement_ids": [child.id],
-                "trigger_field": source_field,
+                "added_child_requirement_ids": [child.id for child in added_children],
+                "trigger_field": trigger_fields[0] if trigger_fields else None,
             }
         },
     )
@@ -2145,11 +2190,12 @@ def _activate_conditional_branch(
             "conditional_branch_status": "activated",
             "previous_revision": previous_revision,
             "current_revision": proposed.revision,
-            "added_child_requirement_ids": [child.id],
+            "added_child_requirement_ids": [child.id for child in added_children],
             "parent_requirement_ids": [branch.parent_requirement_id],
-            "derived_from_evidence_refs": [evidence.id],
+            "derived_from_evidence_refs": evidence_refs,
             "tool_state_policy": "child_requires_fresh_retrieval",
-            "trigger_field": source_field,
+            "trigger_field": trigger_fields[0] if trigger_fields else None,
+            "trigger_fields": list(dict.fromkeys(trigger_fields)),
         }
     )
     state.execution_trace.diagnostics["requirement_expansion"] = expansion

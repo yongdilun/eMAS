@@ -413,6 +413,15 @@ function addConditionalBranchViolations(violations, snapshot, expected) {
         const actualFields = new Set(asArray(condition.field_any))
         if (!expectedBranch.fieldAny.every((field) => actualFields.has(field))) return false
       }
+      if (Object.hasOwn(expectedBranch, 'activatedChildCount')) {
+        const childIds = asArray(branch?.activated_child_requirement_ids)
+        if (childIds.length !== Number(expectedBranch.activatedChildCount)) return false
+      }
+      if (expectedBranch.triggerValues) {
+        const diagnostics = branch?.diagnostics || {}
+        const actualValues = new Set(asArray(diagnostics.trigger_values || diagnostics.trigger_value).map((value) => String(value)))
+        if (!expectedBranch.triggerValues.every((value) => actualValues.has(String(value)))) return false
+      }
       return true
     })
     if (!found) {
@@ -460,6 +469,13 @@ function addRequirementExpansionViolations(violations, snapshot, expected) {
     violations.push('requirement_expansion missing child lineage in intent contract or response diagnostics')
   }
 
+  if (
+    Object.hasOwn(expansionExpected, 'requireChildCount')
+    && childRequirements.length !== Number(expansionExpected.requireChildCount)
+  ) {
+    violations.push(`requirement_expansion expected ${expansionExpected.requireChildCount} child requirements but saw ${childRequirements.length}`)
+  }
+
   for (const parentId of asArray(expansionExpected.parentRequirementIds || expansionExpected.parentRequirementId)) {
     if (!parentRequirementIds.has(parentId)) {
       violations.push(`requirement_expansion missing child under parent ${parentId}`)
@@ -478,6 +494,16 @@ function addRequirementExpansionViolations(violations, snapshot, expected) {
       violations.push(
         `requirement_expansion child ${child.id} constraint ${expansionExpected.childConstraintKey} expected ${expansionExpected.childConstraintValue}`,
       )
+    }
+  }
+
+  if (expansionExpected.childConstraintValues) {
+    const key = expansionExpected.childConstraintKey
+    const actualValues = new Set(childRequirements.map((child) => String(child.constraints?.[key] ?? '')))
+    for (const value of asArray(expansionExpected.childConstraintValues)) {
+      if (!actualValues.has(String(value))) {
+        violations.push(`requirement_expansion missing child constraint ${key}=${value}`)
+      }
     }
   }
 
