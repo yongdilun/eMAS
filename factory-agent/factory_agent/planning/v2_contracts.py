@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -357,6 +358,10 @@ class RequirementLedgerEntry(V2ContractModel):
     depends_on: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     superseded_by: str | None = None
+    parent_requirement_id: str | None = None
+    expansion_reason: str | None = None
+    derived_from_evidence_refs: list[str] = Field(default_factory=list)
+    derived_from_missing_reasons: list[dict[str, Any]] = Field(default_factory=list)
     satisfaction_checks: list[SatisfactionCheck] = Field(default_factory=list)
     origin: RequirementOrigin = Field(default_factory=RequirementOrigin)
 
@@ -425,6 +430,26 @@ class RequirementLedger(V2ContractModel):
     requirements: list[RequirementLedgerEntry] = Field(default_factory=list)
     revision: int = Field(default=1, ge=1)
     revision_history: list[RequirementRevisionRecord] = Field(default_factory=list)
+
+
+def next_child_requirement_id(
+    parent_requirement_id: str,
+    existing_requirement_ids: Iterable[str],
+    *,
+    max_children: int = 2,
+) -> str:
+    """Return the next bounded child id for a parent requirement."""
+
+    parent = parent_requirement_id.strip()
+    if not parent:
+        raise ValueError("parent requirement id is required")
+    max_count = max(1, min(int(max_children), 26))
+    existing = {str(requirement_id).strip() for requirement_id in existing_requirement_ids}
+    for index in range(max_count):
+        candidate = f"{parent}.{chr(ord('a') + index)}"
+        if candidate not in existing:
+            return candidate
+    raise ValueError(f"child requirement limit reached for {parent}")
 
 
 class EvidenceCitation(V2ContractModel):
