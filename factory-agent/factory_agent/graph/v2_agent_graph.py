@@ -27,11 +27,13 @@ from ..planning.v2_contracts import (
     HydratedToolCard,
     HydratedToolCards,
     RequirementLedger,
+    RequirementLedgerEntry,
     RequirementRevisionRecord,
     RequirementSatisfactionState,
     SatisfactionCheck,
     ToolRetrievalTrace,
     V2ContractModel,
+    next_child_requirement_id,
 )
 from ..planning.v2_evidence_aggregation import aggregate_multi_entity_status_evidence
 from ..planning.v2_failed_tool_memory import (
@@ -46,6 +48,7 @@ from ..planning.v2_graph_adapters import (
 )
 from ..planning.v2_interrupts import apply_user_interrupt_to_v2_state, classify_user_interrupt
 from ..planning.v2_planner_decisions import (
+    PlannerDecisionSubmission,
     PlannerDecisionValidationError,
     record_planner_decision,
     validate_planner_decision,
@@ -714,6 +717,8 @@ class PlannerOwnedAgentGraph:
         replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
         if isinstance(replan, Mapping) and replan.get("route") == "planner_decision_node":
             return "replan"
+        if _open_requirements_need_fresh_retrieval(state):
+            return "replan"
         return "continue"
 
     async def _semantic_intake_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -1250,6 +1255,7 @@ class PlannerOwnedAgentGraph:
                     "source_of_truth": evidence_items[0].source_of_truth,
                 }
             )
+        _expand_child_requirements_from_evidence(state, evidence_items)
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
 
@@ -1895,6 +1901,208 @@ def _apply_planner_proposed_requirement_ledger(
         "author": "planner",
         "accepted_through_proposer": True,
     }
+
+
+def _expand_child_requirements_from_evidence(
+    state: PlannerOwnedAgentGraphState,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> None:
+    child_specs = _child_requirement_specs_from_evidence(state, evidence_items)
+    if not child_specs:
+        return
+
+    proposed = state.requirement_ledger.model_copy(deep=True)
+    previous_revision = proposed.revision
+    added_children: list[RequirementLedgerEntry] = []
+    existing_ids = [requirement.id for requirement in proposed.requirements]
+    for parent, evidence, entity, entity_id in child_specs:
+        try:
+            child_id = next_child_requirement_id(parent.id, existing_ids)
+        except ValueError:
+            continue
+        constraint_key = f"{entity}_id"
+        child = RequirementLedgerEntry(
+            id=child_id,
+            goal=f"Read {entity} {entity_id} follow-up evidence",
+            requirement_type="single_entity_status",
+            entity=entity,
+            intent_operation="report_status",
+            source_of_truth=evidence.source_of_truth,
+            constraints={constraint_key: entity_id},
+            requested_fields=[],
+            locked_constraints=[constraint_key],
+            status="open",
+            parent_requirement_id=parent.id,
+            expansion_reason="Parent evidence exposed a bounded follow-up entity id.",
+            derived_from_evidence_refs=[evidence.id],
+            derived_from_missing_reasons=[],
+            depends_on=[evidence.id],
+        )
+        proposed.requirements.append(child)
+        existing_ids.append(child.id)
+        added_children.append(child)
+
+    if not added_children:
+        return
+
+    proposed.revision = previous_revision + 1
+    parent_ids = list(dict.fromkeys(child.parent_requirement_id for child in added_children if child.parent_requirement_id))
+    evidence_refs = list(
+        dict.fromkeys(ref for child in added_children for ref in child.derived_from_evidence_refs)
+    )
+    record = RequirementRevisionRecord(
+        revision=proposed.revision,
+        actor="system",
+        change_type="add_child_requirements",
+        requirement_id=parent_ids[0] if len(parent_ids) == 1 else None,
+        reason="Evidence-driven child requirement expansion.",
+        locked_constraints_preserved=True,
+        details={
+            "parent_requirement_id": parent_ids[0] if len(parent_ids) == 1 else None,
+            "parent_requirement_ids": parent_ids,
+            "added_child_requirement_ids": [child.id for child in added_children],
+            "derived_from_evidence_refs": evidence_refs,
+            "derived_from_missing_reasons": [],
+            "locked_constraints_preserved": True,
+            "max_child_depth": 1,
+            "max_children_per_parent": 2,
+        },
+    )
+    proposed.revision_history.append(record)
+    decision = PlannerDecisionRecord(
+        decision_id=f"dec-expand-{len(state.planner_decisions) + 1:03d}",
+        decision_kind="revise_requirements",
+        author="system",
+        requirement_id=parent_ids[0] if len(parent_ids) == 1 else None,
+        ledger_revision=state.requirement_ledger.revision,
+        evidence_refs=evidence_refs,
+        reason="Apply bounded child requirements justified by parent evidence.",
+        diagnostics={
+            "requirement_expansion": {
+                "system_child_expansion": True,
+                "added_child_requirement_ids": [child.id for child in added_children],
+                "derived_from_evidence_refs": evidence_refs,
+            }
+        },
+    )
+    record_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=proposed),
+    )
+    _apply_planner_proposed_requirement_ledger(state, proposed)
+    stale_decision_ids = _stale_planner_decision_ids_for_replan(state, parent_ids)
+    expansion = dict(state.execution_trace.diagnostics.get("requirement_expansion") or {})
+    expansion.update(
+        {
+            "status": "applied",
+            "previous_revision": previous_revision,
+            "current_revision": proposed.revision,
+            "added_child_requirement_ids": [child.id for child in added_children],
+            "parent_requirement_ids": parent_ids,
+            "derived_from_evidence_refs": evidence_refs,
+            "stale_planner_decision_ids": stale_decision_ids,
+            "tool_state_policy": "child_requires_fresh_retrieval",
+        }
+    )
+    state.execution_trace.diagnostics["requirement_expansion"] = expansion
+
+
+def _child_requirement_specs_from_evidence(
+    state: PlannerOwnedAgentGraphState,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> list[tuple[RequirementLedgerEntry, EvidenceLedgerEntry, str, Any]]:
+    specs: list[tuple[RequirementLedgerEntry, EvidenceLedgerEntry, str, Any]] = []
+    existing_child_keys = _existing_child_constraint_keys(state)
+    readable_entities = _readable_child_entities(state)
+    if not readable_entities:
+        return specs
+
+    for evidence in evidence_items:
+        parent = _requirement_by_id(state, evidence.requirement_id)
+        if parent is None or parent.parent_requirement_id is not None or parent.status != "open":
+            continue
+        if _child_count_for_parent(state, parent.id) >= 2:
+            continue
+        for key, value in _flatten_evidence_values(evidence.normalized_result):
+            if value in (None, "", [], {}):
+                continue
+            entity = _entity_for_related_id_key(key, readable_entities)
+            if not entity or entity == parent.entity:
+                continue
+            constraint_key = f"{entity}_id"
+            signature = (parent.id, constraint_key, _stable_json_key(value))
+            if signature in existing_child_keys:
+                continue
+            specs.append((parent, evidence, entity, value))
+            existing_child_keys.add(signature)
+            if _child_count_for_parent(state, parent.id) + sum(1 for spec in specs if spec[0].id == parent.id) >= 2:
+                break
+    return specs
+
+
+def _readable_child_entities(state: PlannerOwnedAgentGraphState) -> set[str]:
+    entities: set[str] = set()
+    for capability in state.capability_map.capabilities:
+        entity = str(capability.entity or "").strip()
+        if not entity:
+            continue
+        if capability.source_of_truth != "operational_state":
+            continue
+        if set(capability.actions).intersection({"read", "read_one", "read_many", "list", "search_documents"}):
+            entities.add(entity)
+    return entities
+
+
+def _entity_for_related_id_key(key: str, readable_entities: set[str]) -> str | None:
+    normalized = str(key or "").strip().lower()
+    for entity in sorted(readable_entities, key=len, reverse=True):
+        if normalized == f"{entity}_id" or normalized.endswith(f"_{entity}_id"):
+            return entity
+    return None
+
+
+def _existing_child_constraint_keys(state: PlannerOwnedAgentGraphState) -> set[tuple[str, str, str]]:
+    keys: set[tuple[str, str, str]] = set()
+    for requirement in state.requirement_ledger.requirements:
+        parent_id = requirement.parent_requirement_id
+        if not parent_id:
+            continue
+        for key, value in requirement.constraints.items():
+            keys.add((parent_id, str(key), _stable_json_key(value)))
+    return keys
+
+
+def _child_count_for_parent(state: PlannerOwnedAgentGraphState, parent_id: str) -> int:
+    return sum(
+        1
+        for requirement in state.requirement_ledger.requirements
+        if requirement.parent_requirement_id == parent_id
+    )
+
+
+def _flatten_evidence_values(value: Any) -> list[tuple[str, Any]]:
+    if isinstance(value, Mapping):
+        flattened: list[tuple[str, Any]] = []
+        for key, child in value.items():
+            child_key = str(key)
+            if isinstance(child, Mapping):
+                flattened.extend(_flatten_evidence_values(child))
+            elif isinstance(child, list):
+                for item in child:
+                    flattened.extend(_flatten_evidence_values(item))
+            else:
+                flattened.append((child_key, child))
+        return flattened
+    return []
+
+
+def _stable_json_key(value: Any) -> str:
+    try:
+        import json
+
+        return json.dumps(value, sort_keys=True, default=str)
+    except Exception:
+        return str(value)
 
 
 def _explicit_carried_forward_evidence_refs(
@@ -2642,6 +2850,15 @@ def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
         for requirement in state.requirement_ledger.requirements
         if requirement.status == "open" and requirement.id not in evidence_requirement_ids
     ]
+
+
+def _open_requirements_need_fresh_retrieval(state: PlannerOwnedAgentGraphState) -> bool:
+    return any(
+        requirement.status == "open"
+        and not _has_evidence_for_requirement(state, requirement.id)
+        and not _has_decision_for_requirement(state, "retrieve_tools", requirement.id)
+        for requirement in state.requirement_ledger.requirements
+    )
 
 
 def _has_evidence_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> bool:
