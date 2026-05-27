@@ -1151,7 +1151,10 @@ async def test_phase10_5_parallel_read_batch_guard_authorizes_each_selected_call
         ),
         adapter="phase10_5_batch_mock_proposer",
     ).submission.decision
-    assert record_planner_decision(state, choose).accepted is True
+    assert record_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=choose, candidate_tool_calls=calls),
+    ).accepted is True
     execute_batch = PlannerDecisionRecord(
         decision_id="dec-execute-002",
         decision_kind="execute_parallel_read_batch",

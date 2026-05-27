@@ -544,7 +544,7 @@ def _state_with_persisted_choice():
             }
         },
     )
-    record_planner_decision(state, choose)
+    record_planner_decision(state, PlannerDecisionSubmission(decision=choose, candidate_tool_calls=[call]))
     return state, requirement, need, call
 
 

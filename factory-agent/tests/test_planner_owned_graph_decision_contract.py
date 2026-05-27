@@ -9,6 +9,7 @@ from factory_agent.planning.v2_agent_state import (
     PlannerDecisionRecord,
     build_initial_planner_owned_agent_graph_state,
 )
+from factory_agent.graph.v2_graph_interrupts import _planner_decision_is_active_for_graph_revision
 from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
@@ -468,6 +469,115 @@ def test_requirement_expansion_rejects_child_addition_without_evidence_or_missin
         )
 
 
+def test_requirement_expansion_rejects_child_addition_from_invented_missing_evidence_reason():
+    state, requirement, _need = _machine_state()
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Planner invented an unobserved missing-evidence gap.",
+        derived_from_missing_reasons=[
+            {
+                "requirement_id": requirement.id,
+                "status": "open",
+                "reason": "missing related job evidence",
+                "job_id": "JOB-CAUSE-17",
+            }
+        ],
+    )
+    decision = _revise_decision("dec-child-invented-missing-reason", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="missing-evidence reason is not current"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
+
+
+def test_requirement_expansion_accepts_current_grounded_missing_evidence_reason():
+    state, requirement, _need = _machine_state()
+    missing_reason = {
+        "requirement_id": requirement.id,
+        "status": "open",
+        "reason": "missing related job evidence",
+        "retriable": True,
+        "constraints": {"job_id": "JOB-CAUSE-17"},
+        "evidence_refs": [],
+        "failed_checks": [],
+    }
+    state.execution_trace.diagnostics["satisfaction"] = {
+        "status": "applied",
+        "missing_evidence_reasons": [missing_reason],
+    }
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Current diagnostics exposed a child evidence gap.",
+        derived_from_missing_reasons=[missing_reason],
+    )
+    decision = _revise_decision("dec-child-grounded-missing-reason", requirement.id)
+
+    result = validate_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+    )
+
+    assert result.accepted is True
+
+
+def test_requirement_expansion_rejects_current_missing_evidence_reason_without_child_support():
+    state, requirement, _need = _machine_state()
+    missing_reason = {
+        "requirement_id": requirement.id,
+        "status": "open",
+        "reason": "missing unrelated operator evidence",
+        "retriable": True,
+        "constraints": {"operator_id": "OP-9"},
+        "evidence_refs": [],
+        "failed_checks": [],
+    }
+    state.execution_trace.diagnostics["satisfaction"] = {
+        "status": "applied",
+        "missing_evidence_reasons": [missing_reason],
+    }
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Current diagnostics did not expose this child evidence gap.",
+        derived_from_missing_reasons=[missing_reason],
+    )
+    decision = _revise_decision("dec-child-unsupported-missing-reason", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="not supported by current evidence gap"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
+
+
 def test_requirement_expansion_accepts_valid_child_requirement_addition():
     state, requirement, _need = _machine_state()
     state.evidence_ledger.evidence.append(_active_job_evidence(requirement.id))
@@ -494,6 +604,41 @@ def test_requirement_expansion_accepts_valid_child_requirement_addition():
     )
 
     assert result.accepted is True
+
+
+def test_requirement_expansion_rejects_child_addition_from_stale_parent_evidence():
+    state, requirement, _need = _machine_state()
+    stale_evidence = _active_job_evidence(requirement.id)
+    stale_evidence.diagnostic_metadata.update(
+        {
+            "active_revision_satisfaction": False,
+            "stale_after_graph_replan": True,
+            "superseded_reason": "replan_spine_retry",
+        }
+    )
+    state.evidence_ledger.evidence.append(stale_evidence)
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id(requirement.id, [item.id for item in state.requirement_ledger.requirements]),
+        goal="Read active job JOB-CAUSE-17 status",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id=requirement.id,
+        expansion_reason="Planner tried to branch from stale parent evidence.",
+        derived_from_evidence_refs=[stale_evidence.id],
+        depends_on=[stale_evidence.id],
+    )
+    decision = _revise_decision("dec-child-stale-parent-evidence", requirement.id)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement evidence is not active"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, proposed_requirement_ledger=_child_revision_ledger(state, child)),
+        )
 
 
 def test_requirement_expansion_rejects_child_addition_with_missing_parent():
@@ -603,7 +748,7 @@ def test_requirement_expansion_rejects_old_revision_selected_tool_call_after_exp
         reason="Planner selected the original machine reader.",
         diagnostics=_planner_diagnostics("dec-old-choose"),
     )
-    record_planner_decision(state, old_choose)
+    record_planner_decision(state, PlannerDecisionSubmission(decision=old_choose, candidate_tool_calls=[old_call]))
     state.requirement_ledger.revision += 1
     old_call = old_call.model_copy(update={"decision_id": old_choose.decision_id}, deep=True)
     decision = PlannerDecisionRecord(
@@ -618,6 +763,138 @@ def test_requirement_expansion_rejects_old_revision_selected_tool_call_after_exp
 
     with pytest.raises(PlannerDecisionValidationError, match="selected tool call comes from a previous ledger revision"):
         validate_planner_decision(state, decision)
+
+
+def test_requirement_expansion_rejects_provenance_less_selected_tool_call_with_old_args():
+    state, requirement, need = _state_with_hydrated_machine_window()
+    current_call = _machine_call(call_id="call-current-candidate")
+    old_call = _machine_call(call_id="call-old-copied-without-decision").model_copy(
+        update={"args": {"id": "M-LTH-77", "fields": "temperature"}},
+        deep=True,
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-provenance-less-old-call",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=old_call,
+        reason="Planner copied an old selected call without carrying decision provenance.",
+        diagnostics=_planner_diagnostics("dec-choose-provenance-less-old-call"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="does not match current candidate tool calls"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[current_call]),
+        )
+
+
+def test_requirement_expansion_rejects_provenance_less_selected_tool_calls_batch_with_old_args():
+    state, requirement, need = _state_with_hydrated_machine_window()
+    current_call = _machine_call(call_id="call-current-candidate")
+    old_call = _machine_call(call_id="call-old-batch-copied-without-decision").model_copy(
+        update={"args": {"id": "M-LTH-77", "fields": "temperature"}},
+        deep=True,
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-provenance-less-old-batch",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_calls=[old_call, current_call],
+        reason="Planner batched an old selected call with the current candidate.",
+        diagnostics=_planner_diagnostics("dec-choose-provenance-less-old-batch", batch_size=2),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="does not match current candidate tool calls"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[current_call]),
+        )
+
+
+def test_requirement_expansion_rejects_selected_tool_call_args_that_contradict_locked_identity():
+    state, requirement, need = _state_with_hydrated_machine_window()
+    wrong_identity_call = _machine_call(call_id="call-wrong-locked-identity").model_copy(
+        update={"args": {"id": "M-OTHER-77", "fields": "status"}},
+        deep=True,
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-locked-identity-conflict",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=wrong_identity_call,
+        reason="Planner selected args that contradict the locked machine identity.",
+        diagnostics=_planner_diagnostics("dec-choose-locked-identity-conflict"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="contradict locked identity constraint"):
+        validate_planner_decision(state, decision)
+
+
+def test_requirement_expansion_stale_planner_decisions_are_inactive_in_shared_graph_filter():
+    state, requirement, need = _state_with_hydrated_machine_window()
+    call = _machine_call()
+    decisions = [
+        PlannerDecisionRecord(
+            decision_id="dec-stale-retrieve",
+            decision_kind="retrieve_tools",
+            requirement_id=requirement.id,
+            ledger_revision=state.requirement_ledger.revision,
+            capability_need=need,
+            reason="Stale retrieve decision.",
+            diagnostics=_planner_diagnostics("dec-stale-retrieve"),
+        ),
+        PlannerDecisionRecord(
+            decision_id="dec-stale-choose",
+            decision_kind="choose_tool",
+            requirement_id=requirement.id,
+            ledger_revision=state.requirement_ledger.revision,
+            capability_need=need,
+            selected_tool_call=call,
+            reason="Stale choose decision.",
+            diagnostics=_planner_diagnostics("dec-stale-choose"),
+        ),
+        PlannerDecisionRecord(
+            decision_id="dec-stale-execute",
+            decision_kind="execute_tool",
+            author="deterministic_guard",
+            requirement_id=requirement.id,
+            ledger_revision=state.requirement_ledger.revision,
+            capability_need=need,
+            selected_tool_call=call,
+            reason="Stale execute decision.",
+        ),
+        PlannerDecisionRecord(
+            decision_id="dec-stale-finalize",
+            decision_kind="finalize",
+            author="deterministic_guard",
+            ledger_revision=state.requirement_ledger.revision,
+            reason="Stale finalize decision.",
+        ),
+    ]
+    active_decision = PlannerDecisionRecord(
+        decision_id="dec-active-retrieve",
+        decision_kind="retrieve_tools",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        reason="Current retrieve decision.",
+        diagnostics=_planner_diagnostics("dec-active-retrieve"),
+    )
+    state.execution_trace.diagnostics["requirement_expansion"] = {
+        "stale_planner_decision_ids": [decision.decision_id for decision in decisions],
+    }
+
+    assert [
+        _planner_decision_is_active_for_graph_revision(state, decision)
+        for decision in decisions
+    ] == [False, False, False, False]
+    assert _planner_decision_is_active_for_graph_revision(state, active_decision) is True
 
 
 def test_phase2_rejects_choosing_tool_outside_hydrated_candidate_window():
@@ -886,7 +1163,7 @@ def test_phase2_deterministic_execute_guard_is_accepted_only_when_state_proves_p
         reason="Planner selected the hydrated machine status reader.",
         diagnostics=_planner_diagnostics("dec-choose-machine-tool"),
     )
-    record_planner_decision(state, choose_decision)
+    record_planner_decision(state, PlannerDecisionSubmission(decision=choose_decision, candidate_tool_calls=[call]))
 
     result = validate_planner_decision(state, guard_decision)
 

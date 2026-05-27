@@ -390,6 +390,13 @@ def _planner_decision_is_active_for_graph_revision(
             for decision_id in replan.get("stale_planner_decision_ids", [])
             if str(decision_id)
         )
+    expansion = state.execution_trace.diagnostics.get("requirement_expansion")
+    if isinstance(expansion, Mapping):
+        stale_ids.update(
+            str(decision_id)
+            for decision_id in expansion.get("stale_planner_decision_ids", [])
+            if str(decision_id)
+        )
     if not stale_ids:
         return True
     return decision.decision_id not in stale_ids

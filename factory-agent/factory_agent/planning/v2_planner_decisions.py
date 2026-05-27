@@ -362,8 +362,38 @@ def _child_justifying_evidence(
         if evidence.requirement_id != parent.id:
             errors.append(f"child requirement evidence does not belong to parent: {ref}")
             continue
+        if not _evidence_can_justify_child_expansion(state, evidence):
+            errors.append(f"child requirement evidence is not active for current ledger revision: {ref}")
+            continue
         evidence_items.append(evidence)
     return evidence_items
+
+
+def _evidence_can_justify_child_expansion(
+    state: PlannerOwnedAgentGraphState,
+    evidence: EvidenceLedgerEntry,
+) -> bool:
+    metadata = dict(evidence.diagnostic_metadata or {})
+    if metadata.get("active_revision_satisfaction") is False:
+        return False
+    if (
+        metadata.get("stale_after_graph_revision") is True
+        or metadata.get("stale_after_graph_replan") is True
+        or metadata.get("stale_after_user_interrupt") is True
+    ):
+        return False
+    requirement = _requirement_by_id(state, evidence.requirement_id)
+    if requirement is None or requirement.status == "superseded":
+        return False
+
+    current_revision = state.requirement_ledger.revision
+    carried_to = _coerce_positive_int(metadata.get("carried_forward_to_ledger_revision"))
+    if carried_to == current_revision:
+        return True
+    superseded_by = _coerce_positive_int(metadata.get("superseded_by_ledger_revision"))
+    if superseded_by is not None and superseded_by <= current_revision:
+        return False
+    return True
 
 
 def _child_justifying_missing_reasons(
@@ -385,10 +415,11 @@ def _child_justifying_missing_reasons(
         if str(reason.get("requirement_id") or "") != parent.id:
             errors.append(f"child requirement missing-evidence reason does not belong to parent: {child.id}")
             continue
-        if known and not any(_json_equal(reason, known_reason) for known_reason in known):
+        known_match = next((known_reason for known_reason in known if _json_equal(reason, known_reason)), None)
+        if known_match is None:
             errors.append(f"child requirement missing-evidence reason is not current: {child.id}")
             continue
-        matched.append(reason)
+        matched.append(known_match)
     return matched
 
 
@@ -415,7 +446,7 @@ def _child_supported_by_justification(
     if child.source_of_truth not in {parent.source_of_truth, "unknown"}:
         if not any(evidence.source_of_truth == child.source_of_truth for evidence in evidence_items):
             return False
-    if child.entity == parent.entity and child.source_of_truth == parent.source_of_truth:
+    if evidence_items and child.entity == parent.entity and child.source_of_truth == parent.source_of_truth:
         return True
     if any(_evidence_supports_child_requirement(evidence, child) for evidence in evidence_items):
         return True
@@ -446,7 +477,8 @@ def _missing_reason_supports_child_requirement(
             continue
         if _constraint_value_supported_by_values(key, value, reason_values):
             return True
-    return bool(reason.get("reason"))
+    entity = str(child.entity or "").strip()
+    return bool(entity and any(key.endswith(f"{entity}_id") for key, _value in reason_values))
 
 
 def _constraint_value_supported_by_values(
@@ -498,7 +530,13 @@ def _validate_kind_specific_transition(
             return
         cards_by_call_id: dict[str, HydratedToolCard | None] = {}
         for call in calls:
-            cards_by_call_id[call.call_id] = _validate_tool_call_from_hydrated_window(state, call, errors)
+            cards_by_call_id[call.call_id] = _validate_tool_call_from_hydrated_window(
+                state,
+                call,
+                errors,
+                candidate_tool_calls=submission.candidate_tool_calls,
+                require_current_candidates=decision.author == "planner",
+            )
         requirement = _requirement_by_id(state, calls[0].requirement_id)
         if (
             requirement is not None
@@ -521,7 +559,13 @@ def _validate_kind_specific_transition(
     if kind == "execute_tool":
         call = _single_selected_tool_call(decision, errors)
         if call is not None:
-            _validate_tool_call_from_hydrated_window(state, call, errors)
+            _validate_tool_call_from_hydrated_window(
+                state,
+                call,
+                errors,
+                candidate_tool_calls=submission.candidate_tool_calls,
+                require_current_candidates=False,
+            )
         return
 
     if kind == "execute_parallel_read_batch":
@@ -530,7 +574,13 @@ def _validate_kind_specific_transition(
             errors.append("execute_parallel_read_batch decision requires selected_tool_calls")
             return
         for call in calls:
-            card = _validate_tool_call_from_hydrated_window(state, call, errors)
+            card = _validate_tool_call_from_hydrated_window(
+                state,
+                call,
+                errors,
+                candidate_tool_calls=submission.candidate_tool_calls,
+                require_current_candidates=False,
+            )
             if card is not None and (not card.is_read_only or card.requires_approval):
                 errors.append(f"parallel read batch cannot include mutating or approval tool: {call.tool_name}")
         return
@@ -538,7 +588,13 @@ def _validate_kind_specific_transition(
     if kind == "request_approval":
         call = _single_selected_tool_call(decision, errors)
         if call is not None:
-            card = _validate_tool_call_from_hydrated_window(state, call, errors)
+            card = _validate_tool_call_from_hydrated_window(
+                state,
+                call,
+                errors,
+                candidate_tool_calls=submission.candidate_tool_calls,
+                require_current_candidates=False,
+            )
             if card is not None and card.is_read_only and not card.requires_approval:
                 errors.append(f"request_approval requires an approval-gated tool call: {call.tool_name}")
         return
@@ -700,12 +756,22 @@ def _validate_tool_call_from_hydrated_window(
     state: PlannerOwnedAgentGraphState,
     call: GraphToolCall,
     errors: list[str],
+    *,
+    candidate_tool_calls: list[GraphToolCall] | None = None,
+    require_current_candidates: bool = False,
 ) -> HydratedToolCard | None:
     requirement = _requirement_by_id(state, call.requirement_id)
     if requirement is None:
         errors.append(f"selected tool call targets missing requirement: {call.requirement_id}")
     elif requirement.status != "open":
         errors.append(f"selected tool call targets non-open requirement: {call.requirement_id}")
+
+    _validate_tool_call_matches_current_candidates(
+        call,
+        candidate_tool_calls or [],
+        errors,
+        require_current_candidates=require_current_candidates,
+    )
 
     if call.decision_id:
         previous = next(
@@ -740,6 +806,8 @@ def _validate_tool_call_from_hydrated_window(
         return None
 
     card = hydrated_cards[0]
+    if requirement is not None:
+        _validate_tool_call_locked_identity_args(call, requirement, card, errors)
     expected_call_kind = "rag_tool" if card.source_of_truth == "document_knowledge" else "api_tool"
     if call.kind != expected_call_kind:
         errors.append(
@@ -747,6 +815,97 @@ def _validate_tool_call_from_hydrated_window(
             f"({call.kind} != {expected_call_kind})"
         )
     return card
+
+
+def _validate_tool_call_matches_current_candidates(
+    call: GraphToolCall,
+    candidate_tool_calls: list[GraphToolCall],
+    errors: list[str],
+    *,
+    require_current_candidates: bool,
+) -> None:
+    if not candidate_tool_calls:
+        if require_current_candidates:
+            errors.append("planner choose_tool decision requires current candidate_tool_calls")
+        return
+    current_candidates = [
+        candidate for candidate in candidate_tool_calls if candidate.requirement_id == call.requirement_id
+    ]
+    if not current_candidates:
+        errors.append(
+            "selected tool call has no current candidate tool calls for requirement: "
+            f"{call.requirement_id}"
+        )
+        return
+    if any(_same_current_candidate_call(call, candidate) for candidate in current_candidates):
+        return
+    errors.append(f"selected tool call does not match current candidate tool calls: {call.tool_name}")
+
+
+def _same_current_candidate_call(selected: GraphToolCall, candidate: GraphToolCall) -> bool:
+    if not same_tool_call_signature(selected, candidate):
+        return False
+    if (
+        selected.candidate_window_id not in (None, "")
+        and candidate.candidate_window_id not in (None, "")
+        and selected.candidate_window_id != candidate.candidate_window_id
+    ):
+        return False
+    return True
+
+
+def _validate_tool_call_locked_identity_args(
+    call: GraphToolCall,
+    requirement: RequirementLedgerEntry,
+    card: HydratedToolCard,
+    errors: list[str],
+) -> None:
+    for locked in requirement.locked_constraints:
+        if locked == "requested_fields" or locked not in requirement.constraints:
+            continue
+        if not _locked_constraint_is_identity(locked):
+            continue
+        expected = requirement.constraints.get(locked)
+        if expected in (None, "", [], {}):
+            continue
+        candidate_arg_names = _call_arg_names_for_locked_identity(locked)
+        selected_arg_names = [name for name in candidate_arg_names if name in call.args]
+        for arg_name in selected_arg_names:
+            actual = call.args.get(arg_name)
+            if not _locked_identity_value_matches(actual, expected):
+                errors.append(
+                    "selected tool call args contradict locked identity constraint "
+                    f"{requirement.id}:{locked} expected={expected!r} actual={actual!r}"
+                )
+                return
+        card_identity_args = set(card.required_args) | set(card.path_params)
+        if card_identity_args.intersection(candidate_arg_names) and not selected_arg_names:
+            errors.append(
+                "selected tool call args omit locked identity constraint "
+                f"{requirement.id}:{locked}"
+            )
+
+
+def _locked_constraint_is_identity(locked: str) -> bool:
+    normalized = str(locked or "").strip()
+    return normalized in {"id", "entity_id", "record_id"} or normalized.endswith("_id") or normalized.endswith("_ref")
+
+
+def _locked_identity_value_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        if isinstance(actual, list):
+            return all(any(_json_equal(item, expected_item) for expected_item in expected) for item in actual)
+        return any(_json_equal(actual, expected_item) for expected_item in expected)
+    if isinstance(actual, list):
+        return any(_json_equal(item, expected) for item in actual)
+    return _json_equal(actual, expected)
+
+
+def _call_arg_names_for_locked_identity(locked: str) -> set[str]:
+    names = {locked}
+    if locked.endswith("_id") or locked.endswith("_ref"):
+        names.add("id")
+    return names
 
 
 def _state_proves_retrieval_needed(
@@ -858,17 +1017,29 @@ def _json_key(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if coerced > 0 else None
+
+
 def _decision_is_not_stale_after_graph_interrupt(
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
 ) -> bool:
     diagnostics = getattr(state.execution_trace, "diagnostics", {}) or {}
-    stale = diagnostics.get("phase9_stale_work") if isinstance(diagnostics, Mapping) else None
-    if not isinstance(stale, Mapping):
+    if not isinstance(diagnostics, Mapping):
         return True
-    stale_ids = {
-        str(decision_id)
-        for decision_id in stale.get("stale_planner_decision_ids", [])
-        if str(decision_id)
-    }
+    stale_ids: set[str] = set()
+    for key in ("phase9_stale_work", "replan_spine", "requirement_expansion"):
+        stale = diagnostics.get(key)
+        if not isinstance(stale, Mapping):
+            continue
+        stale_ids.update(
+            str(decision_id)
+            for decision_id in stale.get("stale_planner_decision_ids", [])
+            if str(decision_id)
+        )
     return decision.decision_id not in stale_ids

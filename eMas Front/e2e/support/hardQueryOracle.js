@@ -120,7 +120,7 @@ function plannerOwnedGraphPayload(snapshot) {
   const graphEvidence = graphState.evidence_ledger?.evidence
   const v2Evidence = v2State.evidence_ledger?.evidence
   const evidence = Array.isArray(graphEvidence) ? graphEvidence : Array.isArray(v2Evidence) ? v2Evidence : []
-  return { context: graphContext, intentContract, executionTrace, evidence, responseDocumentContext, replanSpine }
+  return { context: graphContext, intentContract, executionTrace, graphState, v2State, evidence, responseDocumentContext, replanSpine }
 }
 
 function toolName(step) {
@@ -346,6 +346,158 @@ function addReplanSpineViolations(violations, snapshot, expected) {
   }
 }
 
+function evidenceIsActiveForFinalAnswer(evidence) {
+  const metadata = evidence?.diagnostic_metadata && typeof evidence.diagnostic_metadata === 'object'
+    ? evidence.diagnostic_metadata
+    : {}
+  return (
+    metadata.active_revision_satisfaction !== false
+    && metadata.stale_after_graph_revision !== true
+    && metadata.stale_after_graph_replan !== true
+    && metadata.stale_after_user_interrupt !== true
+  )
+}
+
+function selectedToolCalls(decision) {
+  return [
+    ...(decision?.selected_tool_call ? [decision.selected_tool_call] : []),
+    ...(Array.isArray(decision?.selected_tool_calls) ? decision.selected_tool_calls : []),
+  ]
+}
+
+function addRequirementExpansionViolations(violations, snapshot, expected) {
+  const expansionExpected = expected.requirementExpansion || {}
+  if (!Object.keys(expansionExpected).length) return
+
+  const payload = plannerOwnedGraphPayload(snapshot)
+  const graphState = payload.graphState || {}
+  const v2State = payload.v2State || {}
+  const ledger = graphState.requirement_ledger || v2State.requirement_ledger || {}
+  const requirements = Array.isArray(ledger.requirements) ? ledger.requirements : []
+  const lineage = Array.isArray(payload.intentContract.child_requirement_lineage)
+    ? payload.intentContract.child_requirement_lineage
+    : Array.isArray(payload.context.child_requirement_lineage)
+      ? payload.context.child_requirement_lineage
+      : Array.isArray(snapshot?.response_document?.diagnostics?.child_requirement_lineage)
+        ? snapshot.response_document.diagnostics.child_requirement_lineage
+        : []
+  const childRequirements = requirements.filter((requirement) => requirement?.parent_requirement_id)
+  const parentRequirementIds = new Set(childRequirements.map((requirement) => requirement.parent_requirement_id))
+  const childRequirementIds = new Set(childRequirements.map((requirement) => requirement.id))
+  const candidateRequirementIds = new Set(asArray(graphState.candidate_tool_windows || v2State.candidate_tool_windows).map((window) => window?.requirement_id))
+  const hydratedRequirementIds = new Set(asArray(graphState.hydrated_tool_cards || v2State.hydrated_tool_cards).map((cards) => cards?.requirement_id))
+  const decisions = Array.isArray(graphState.planner_decisions) ? graphState.planner_decisions : []
+  const chooseDecisions = decisions.filter((decision) => decision?.decision_kind === 'choose_tool')
+  const evidence = payload.evidence
+  const evidenceById = new Map(evidence.map((entry) => [entry?.id, entry]))
+  const responseEvidenceRefs = new Set(
+    asArray(snapshot?.response_document?.evidence_refs)
+      .concat(asArray(payload.responseDocumentContext?.evidence_refs))
+      .concat(asArray(snapshot?.response_document?.diagnostics?.response_evidence_refs)),
+  )
+
+  if (expansionExpected.requireChildLineage && (!lineage.length || !childRequirements.length)) {
+    violations.push('requirement_expansion missing child lineage in intent contract or response diagnostics')
+  }
+
+  for (const parentId of asArray(expansionExpected.parentRequirementIds || expansionExpected.parentRequirementId)) {
+    if (!parentRequirementIds.has(parentId)) {
+      violations.push(`requirement_expansion missing child under parent ${parentId}`)
+    }
+  }
+
+  for (const child of childRequirements) {
+    if (expansionExpected.childEntity && child.entity !== expansionExpected.childEntity) {
+      violations.push(`requirement_expansion child ${child.id} entity expected ${expansionExpected.childEntity} but saw ${child.entity || '<missing>'}`)
+    }
+    if (
+      expansionExpected.childConstraintKey
+      && Object.hasOwn(expansionExpected, 'childConstraintValue')
+      && String(child.constraints?.[expansionExpected.childConstraintKey] ?? '') !== String(expansionExpected.childConstraintValue)
+    ) {
+      violations.push(
+        `requirement_expansion child ${child.id} constraint ${expansionExpected.childConstraintKey} expected ${expansionExpected.childConstraintValue}`,
+      )
+    }
+  }
+
+  if (expansionExpected.requireFreshChildRetrieval) {
+    for (const childId of childRequirementIds) {
+      if (!candidateRequirementIds.has(childId)) violations.push(`requirement_expansion child ${childId} missing child-scoped candidate window`)
+      if (!hydratedRequirementIds.has(childId)) violations.push(`requirement_expansion child ${childId} missing child-scoped hydrated cards`)
+      const childChoices = chooseDecisions.filter((decision) => decision.requirement_id === childId)
+      if (!childChoices.length) violations.push(`requirement_expansion child ${childId} missing child-scoped choose_tool decision`)
+      for (const call of childChoices.flatMap(selectedToolCalls)) {
+        if (call.requirement_id !== childId) {
+          violations.push(`requirement_expansion child ${childId} selected tool call targeted ${call.requirement_id || '<missing>'}`)
+        }
+        if (!call.candidate_window_id) {
+          violations.push(`requirement_expansion child ${childId} selected tool call missing candidate_window_id`)
+        }
+      }
+    }
+  }
+
+  for (const toolName of asArray(expansionExpected.childToolNames)) {
+    const childToolNames = chooseDecisions
+      .filter((decision) => childRequirementIds.has(decision.requirement_id))
+      .flatMap(selectedToolCalls)
+      .map((call) => call.tool_name)
+    if (!childToolNames.includes(toolName)) {
+      violations.push(`requirement_expansion child choices missing tool ${toolName}`)
+    }
+  }
+
+  if (expansionExpected.forbidParentToolExecutableReuse) {
+    const parentCallIds = new Set(
+      chooseDecisions
+        .filter((decision) => parentRequirementIds.has(decision.requirement_id))
+        .flatMap(selectedToolCalls)
+        .map((call) => call.call_id)
+        .filter(Boolean),
+    )
+    const parentToolNames = new Set(asArray(expansionExpected.parentToolNames))
+    for (const childCall of chooseDecisions.filter((decision) => childRequirementIds.has(decision.requirement_id)).flatMap(selectedToolCalls)) {
+      if (parentCallIds.has(childCall.call_id)) {
+        violations.push(`requirement_expansion child reused parent executable call id ${childCall.call_id}`)
+      }
+      if (parentToolNames.has(childCall.tool_name)) {
+        violations.push(`requirement_expansion child reused parent executable tool ${childCall.tool_name}`)
+      }
+    }
+  }
+
+  if (expansionExpected.requireFinalParentAndChildEvidence) {
+    for (const requirement of requirements.filter((item) => parentRequirementIds.has(item.id) || childRequirementIds.has(item.id))) {
+      const refs = asArray(requirement.evidence_refs)
+      if (!refs.length) violations.push(`requirement_expansion requirement ${requirement.id} missing evidence_refs`)
+      for (const ref of refs) {
+        const item = evidenceById.get(ref)
+        if (!item) {
+          violations.push(`requirement_expansion evidence ref ${ref} missing from ledger`)
+          continue
+        }
+        if (!evidenceIsActiveForFinalAnswer(item)) {
+          violations.push(`requirement_expansion evidence ref ${ref} is not active for final answer`)
+        }
+        if (!responseEvidenceRefs.has(ref)) {
+          violations.push(`requirement_expansion active evidence ref ${ref} missing from final response refs`)
+        }
+      }
+    }
+  }
+
+  if (expansionExpected.forbidStaleFinalEvidence) {
+    const staleFinalRefs = evidence
+      .filter((item) => !evidenceIsActiveForFinalAnswer(item))
+      .map((item) => item?.id)
+      .filter((ref) => ref && responseEvidenceRefs.has(ref))
+    if (staleFinalRefs.length) {
+      violations.push(`requirement_expansion stale or failed evidence leaked into final response refs: ${staleFinalRefs.join(', ')}`)
+    }
+  }
+}
+
 function visibleBlockMatches(block, expectedBlock) {
   if (expectedBlock.type && block?.type !== expectedBlock.type) return false
   if (expectedBlock.contract && block?.contract !== expectedBlock.contract) return false
@@ -472,6 +624,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
   addResponseDocumentViolations(violations, snapshot, expected)
   addPlannerOwnedGraphViolations(violations, snapshot, expected)
   addReplanSpineViolations(violations, snapshot, expected)
+  addRequirementExpansionViolations(violations, snapshot, expected)
   addVisibleBlockViolations(violations, ui, expected)
   addApprovalViolations(violations, snapshot, pendingApprovals, expected)
   addForbiddenTextViolations(violations, snapshot, ui, expected)
@@ -539,6 +692,20 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
         ),
         activeFinalEvidenceRefs: asArray(graphPayload.replanSpine.active_final_evidence_refs),
         historicalEvidenceRefs: asArray(graphPayload.replanSpine.historical_evidence_refs),
+      },
+      requirementExpansion: {
+        lineageCount: asArray(graphPayload.intentContract.child_requirement_lineage || graphPayload.context.child_requirement_lineage).length,
+        childRequirementIds: asArray(
+          graphPayload.graphState?.requirement_ledger?.requirements || graphPayload.v2State?.requirement_ledger?.requirements,
+        )
+          .filter((requirement) => requirement?.parent_requirement_id)
+          .map((requirement) => requirement.id),
+        candidateRequirementIds: asArray(
+          graphPayload.graphState?.candidate_tool_windows || graphPayload.v2State?.candidate_tool_windows,
+        ).map((window) => window?.requirement_id),
+        hydratedRequirementIds: asArray(
+          graphPayload.graphState?.hydrated_tool_cards || graphPayload.v2State?.hydrated_tool_cards,
+        ).map((cards) => cards?.requirement_id),
       },
       pendingApprovals,
       violations,
