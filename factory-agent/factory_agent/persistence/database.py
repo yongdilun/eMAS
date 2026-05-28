@@ -1,4 +1,5 @@
-﻿import os
+﻿import asyncio
+import os
 import time
 
 from dotenv import load_dotenv
@@ -67,6 +68,28 @@ def _after_cursor_execute(conn, cursor, statement, parameters, context, executem
 
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         yield session
+    finally:
+        await _close_session_after_cancellation(session)
+
+
+async def _close_session_after_cancellation(session: AsyncSession) -> None:
+    # Request cancellation can arrive while FastAPI is finalizing dependencies; let
+    # the DB close finish so SQLAlchemy/aiomysql do not log interrupted cleanup.
+    close_task = asyncio.create_task(session.close())
+    try:
+        await asyncio.shield(close_task)
+    except asyncio.CancelledError:
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+        try:
+            await close_task
+        except (Exception, asyncio.CancelledError):
+            pass
+        raise
 
