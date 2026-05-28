@@ -519,6 +519,239 @@ export const hardQueryScenarios = Object.freeze([
     },
   },
   {
+    id: 'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
+    tags: ['hard query', 'semantic-intake', 'conditional branch', 'response_document'],
+    prompt: 'Check machine M-CNC-01 status. If the machine result includes a job id, read that job and explain the cause.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 1,
+      maxStepCount: 2,
+      stepSequence: [
+        {
+          toolName: 'get__machines_{id}',
+          args: {
+            id: 'M-CNC-01',
+            fields: ['status', 'job_id', 'active_job_id'],
+          },
+        },
+      ],
+      forbiddenStepSequence: [
+        {
+          toolName: 'get__jobs',
+          emptyArgs: true,
+        },
+        {
+          toolName: 'get__jobs_{id}',
+        },
+        {
+          toolName: 'get__settings_get',
+        },
+      ],
+      toolNames: ['get__machines_{id}'],
+      noMutation: true,
+      conditionalBranches: [
+        {
+          status: 'skipped',
+          skippedReason: 'conditional_branch_not_triggered',
+          conditionType: 'active_parent_evidence_has_any_field',
+          fieldAny: ['job_id', 'active_job_id'],
+        },
+      ],
+      requirementExpansion: {
+        expectNoChildLineage: true,
+      },
+      responseDocument: {
+        contracts: ['entity_status_v1'],
+        blockTypes: ['status_result'],
+        hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
+        blocks: [
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            entityType: 'machine',
+            displayMode: 'compact_status_card',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          entityType: 'machine',
+          displayMode: 'compact_status_card',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'machine running answer', pattern: /Machine\s+M-CNC-01\s+is\s+running/i },
+        { label: 'conditional no job explanation', pattern: /No\s+job\s+id/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'broad jobs result', pattern: /Found\s+\d+\s+jobs/i },
+        { label: 'settings lookup failure', pattern: /settings|404/i },
+        { label: 'raw planner no action', pattern: /planner_no_action/i },
+        { label: 'request start failure', pattern: /Request could not start/i },
+      ],
+    },
+  },
+  {
+    id: 'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
+    tags: ['hard query', 'semantic-intake', 'conditional branch', 'response_document'],
+    prompt: 'Read job JOB-SEED-001. If it has a product, read that product too and summarize both.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 2,
+      maxStepCount: 3,
+      stepSequence: [
+        {
+          toolName: 'get__jobs_{id}',
+          args: {
+            id: 'JOB-SEED-001',
+          },
+        },
+        {
+          toolName: 'get__products_{id}',
+          args: {
+            id: 'P-001',
+          },
+        },
+      ],
+      forbiddenStepSequence: [
+        {
+          toolName: 'get__products',
+          emptyArgs: true,
+        },
+      ],
+      toolNames: ['get__jobs_{id}', 'get__products_{id}'],
+      noMutation: true,
+      conditionalBranches: [
+        {
+          status: 'activated',
+          conditionType: 'active_parent_evidence_has_any_field',
+          fieldAny: ['product_id', 'active_product_id'],
+          activatedChildCount: 1,
+          triggerValues: ['P-001'],
+        },
+      ],
+      requirementExpansion: {
+        requireChildLineage: true,
+        parentRequirementId: 'req-001',
+        childEntity: 'product',
+        childConstraintKey: 'product_id',
+        childConstraintValue: 'P-001',
+        requireFreshChildRetrieval: true,
+        childToolNames: ['get__products_{id}'],
+        parentToolNames: ['get__jobs_{id}'],
+        forbidParentToolExecutableReuse: true,
+        requireFinalParentAndChildEvidence: true,
+        forbidStaleFinalEvidence: true,
+      },
+      responseDocument: {
+        blockTypes: ['record_preview'],
+        hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
+        blocks: [
+          {
+            type: 'record_preview',
+            readScope: 'records',
+            entityType: 'job',
+            displayMode: 'record_preview',
+          },
+          {
+            type: 'record_preview',
+            readScope: 'records',
+            entityType: 'product',
+            displayMode: 'record_preview',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'job',
+        },
+        {
+          type: 'record_preview',
+          readScope: 'records',
+          displayMode: 'record_preview',
+          entityType: 'product',
+          title: /Read product status/i,
+          textIncludes: [/P-001/i, /Status\s+active/i],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'job product referent summary', pattern: /Job\s+JOB-SEED-001\s+included\s+product\s+id\s+P-001/i },
+        { label: 'product answer', pattern: /Product\s+P-001\s+is\s+active/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'attention state', pattern: /Run needs attention/i },
+        { label: 'raw JSON', pattern: /["'](?:error|traceback|requirement_ledger)["']\s*:/i },
+      ],
+    },
+  },
+  {
+    id: 'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
+    tags: ['hard query', 'semantic-intake', 'answer instruction', 'response_document'],
+    prompt: 'Show machine M-CNC-01 status and explain what it means.',
+    expected: {
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
+      approvalCount: 0,
+      minStepCount: 1,
+      maxStepCount: 2,
+      stepSequence: [
+        {
+          toolName: 'get__machines_{id}',
+          args: {
+            id: 'M-CNC-01',
+            fields: ['status'],
+          },
+        },
+      ],
+      forbiddenStepSequence: [
+        {
+          toolName: 'get__settings_get',
+        },
+      ],
+      toolNames: ['get__machines_{id}'],
+      noMutation: true,
+      responseDocument: {
+        contracts: ['entity_status_v1'],
+        blockTypes: ['status_result'],
+        hiddenBlockTypes: ['result_table', 'diagnostic', 'approval_required'],
+        blocks: [
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            entityType: 'machine',
+            displayMode: 'compact_status_card',
+          },
+        ],
+      },
+      visibleSemanticBlocks: [
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          entityType: 'machine',
+          displayMode: 'compact_status_card',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
+      ],
+      visibleTextIncludes: [
+        { label: 'machine status answer', pattern: /Machine\s+M-CNC-01\s+is\s+running/i },
+      ],
+      forbiddenVisibleText: [
+        { label: 'settings lookup failure', pattern: /settings|404/i },
+        { label: 'request start failure', pattern: /Request could not start/i },
+      ],
+    },
+  },
+  {
     id: 'HQ-9-READ',
     tags: ['hard query', 'phase9', 'multi-step read', 'conditional branch', 'response_document'],
     prompt: 'Show M-CNC-01 status, show JOB-SEED-001 and JOB-SEED-002 status, then list the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline. If any listed job is blocked, explain why before suggesting any update.',

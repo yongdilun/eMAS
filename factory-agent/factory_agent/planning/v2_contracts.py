@@ -40,6 +40,7 @@ RequirementClauseRole = Literal[
     "answer_instruction",
     "formatting_instruction",
     "clarification_need",
+    "mutation_or_approval_request",
 ]
 RequirementStatus = Literal[
     "open",
@@ -387,6 +388,7 @@ class RequirementSketch(V2ContractModel):
     answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
     formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
     clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
+    intake_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SatisfactionCheck(V2ContractModel):
@@ -490,6 +492,7 @@ class RequirementLedger(V2ContractModel):
     answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
     formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
     clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
+    intake_diagnostics: dict[str, Any] = Field(default_factory=dict)
     revision: int = Field(default=1, ge=1)
     revision_history: list[RequirementRevisionRecord] = Field(default_factory=list)
 

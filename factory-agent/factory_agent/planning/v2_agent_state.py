@@ -5,11 +5,12 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .v2_capability_map import (
-    build_capability_needs_for_text,
+    build_capability_needs_from_sketch,
     build_requirement_ledger_from_sketch,
     build_requirement_sketch_for_text,
     build_v2_capability_map,
 )
+from .semantic_intake import SemanticIntakeProposer
 from .v2_contracts import (
     CapabilityMap,
     CapabilityNeed,
@@ -175,13 +176,18 @@ def build_initial_planner_owned_agent_graph_state(
     original_query: str,
     *,
     tools_by_name: dict[str, Any] | None = None,
+    semantic_intake_proposer: SemanticIntakeProposer | None = None,
 ) -> PlannerOwnedAgentGraphState:
     """Build Phase 1 graph state through intake and ledger creation only."""
 
     capability_map = build_v2_capability_map(tools_by_name or {})
-    requirement_sketch = build_requirement_sketch_for_text(original_query, capability_map=capability_map)
+    requirement_sketch = build_requirement_sketch_for_text(
+        original_query,
+        capability_map=capability_map,
+        semantic_intake_proposer=semantic_intake_proposer,
+    )
     requirement_ledger = build_requirement_ledger_from_sketch(requirement_sketch)
-    capability_needs = build_capability_needs_for_text(original_query, capability_map=capability_map)
+    capability_needs = build_capability_needs_from_sketch(requirement_sketch)
     trace = ExecutionTrace(
         engine_version="v2",
         generated_by=PLANNER_OWNED_AGENT_GRAPH_TRACE_ID,
@@ -201,6 +207,7 @@ def build_initial_planner_owned_agent_graph_state(
     )
     trace.diagnostics["capability_needs"] = [need.model_dump(mode="json") for need in capability_needs]
     trace.diagnostics["graph_state_phase"] = "phase1_contracts_only"
+    trace.diagnostics["semantic_intake"] = dict(requirement_ledger.intake_diagnostics)
 
     return PlannerOwnedAgentGraphState(
         original_query=original_query,

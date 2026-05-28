@@ -145,8 +145,13 @@ async def test_phase8_normal_api_path_records_v2_engine_without_legacy_authority
 
     contract = session["replan_context"]["intent_contract"]
     trace = contract["execution_trace"]
+    ledger = contract["v2_state"]["requirement_ledger"]
+    intake_diagnostics = ledger["intake_diagnostics"]
     assert contract["engine_version"] == "v2"
     assert trace["generated_by"] == "planner_owned_agent_graph"
+    assert trace["diagnostics"]["semantic_intake"]["compiler_authority"] == "deterministic"
+    assert intake_diagnostics["compiler_authority"] == "deterministic"
+    assert intake_diagnostics["raw_llm_output_executes_tools"] is False
     assert trace["detectors"]["legacy_rag_shortcut"]["used"] is False
     assert trace["detectors"]["legacy_working_intent_execution"]["used"] is False
     assert trace["detectors"]["legacy_whole_query_tool_scope"]["used"] is False

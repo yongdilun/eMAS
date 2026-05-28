@@ -61,6 +61,7 @@ from ..planning.v2_planner_proposer import (
     PlannerDecisionProposerError,
     build_planner_decision_proposer,
 )
+from ..planning.semantic_intake import build_semantic_intake_proposer
 from ..planning.v2_rag_tool import ensure_v2_rag_tool
 from ..planning.v2_satisfaction import V2RepeatedRetrievalGuard, apply_deterministic_evidence_satisfaction
 from ..planning.v2_tool_retriever import V2CapabilityToolRetriever
@@ -487,6 +488,7 @@ class PlannerOwnedAgentGraph:
         state = build_initial_planner_owned_agent_graph_state(
             user_message,
             tools_by_name=getattr(self._adapters, "tools_by_name", {}),
+            semantic_intake_proposer=build_semantic_intake_proposer(self._settings),
         )
         return await self.run_state(state, session_context=session_context, options=options)
 

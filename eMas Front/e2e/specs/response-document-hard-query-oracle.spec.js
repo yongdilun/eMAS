@@ -10,6 +10,9 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
+    'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -61,6 +64,9 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
     'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
     'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
+    'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
@@ -133,6 +139,34 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   expect(forEachProduct.expected.visibleTextIncludes.map((item) => item.label)).toEqual(
     expect.arrayContaining(['first job product summary', 'second job product summary']),
   )
+
+  const semanticFalse = byId['HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE']
+  expect(semanticFalse.expected.conditionalBranches[0]).toMatchObject({
+    status: 'skipped',
+    skippedReason: 'conditional_branch_not_triggered',
+    fieldAny: ['job_id', 'active_job_id'],
+  })
+  expect(semanticFalse.expected.forbiddenStepSequence.map((step) => step.toolName)).toEqual(
+    expect.arrayContaining(['get__jobs', 'get__jobs_{id}', 'get__settings_get']),
+  )
+
+  const semanticTrue = byId['HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE']
+  expect(semanticTrue.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 1,
+    triggerValues: ['P-001'],
+  })
+  expect(semanticTrue.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+  })
+
+  const semanticAnswer = byId['HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION']
+  expect(semanticAnswer.expected.forbiddenStepSequence[0]).toMatchObject({
+    toolName: 'get__settings_get',
+  })
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({
