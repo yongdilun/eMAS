@@ -407,6 +407,8 @@ async def test_child_requirement_lineage_survives_api_snapshot_and_intent_contra
     response_refs = contract["response_document_context"]["evidence_refs"]
     lineage = contract["child_requirement_lineage"]
     response_document_diagnostics = snapshot["response_document"]["diagnostics"]
+    dependency_plan = contract["dependency_plan"]
+    dependency_history = contract["dependency_plan_history"]
 
     assert [call["tool_name"] for call in executor_calls] == [
         "get__machines_{id}",
@@ -427,6 +429,19 @@ async def test_child_requirement_lineage_survives_api_snapshot_and_intent_contra
     assert lineage == response_document_diagnostics["child_requirement_lineage"]
     assert response_document_diagnostics["active_final_evidence_refs"] == active_refs
     assert response_document_diagnostics["response_evidence_refs"] == response_refs
+    assert dependency_plan == contract["execution_trace"]["diagnostics"]["dependency_plan"]
+    assert dependency_plan == response_document_diagnostics["dependency_plan"]
+    assert dependency_history == response_document_diagnostics["dependency_plan_history"]
+    assert dependency_plan["ledger_revision"] == ledger["revision"]
+    assert {
+        item["requirement_id"]: item["label"]
+        for item in dependency_plan["requirements"]
+    } == {"req-001": "satisfied_or_terminal", child["id"]: "satisfied_or_terminal"}
+    assert any(
+        entry["labels"].get(child["id"]) == "independent_read"
+        and child["id"] in entry["ready_requirement_ids"]
+        for entry in dependency_history
+    )
     assert lineage == [
         {
             "parent_requirement_id": "req-001",

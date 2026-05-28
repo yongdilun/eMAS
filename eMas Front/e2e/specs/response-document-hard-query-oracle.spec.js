@@ -14,6 +14,9 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
     'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
     'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
+    'HQ-DEPENDENCY-INDEPENDENT-READ-BATCH',
+    'HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS',
+    'HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -69,6 +72,9 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
     'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
     'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
+    'HQ-DEPENDENCY-INDEPENDENT-READ-BATCH',
+    'HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS',
+    'HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
@@ -183,6 +189,34 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     requireFreshChildRetrieval: true,
   })
   expect(semanticIfPresent.expected.forbiddenVisibleText.map((item) => item.label)).toContain('fake product id if')
+
+  const dependencyBatch = byId['HQ-DEPENDENCY-INDEPENDENT-READ-BATCH']
+  expect(dependencyBatch.expected.dependencyPlan.readyGroup).toMatchObject({
+    mode: 'parallel_read_batch',
+    maxBatchSize: 3,
+    minRequirementCount: 2,
+  })
+  expect(dependencyBatch.expected.dependencyPlan.parallelBatch).toMatchObject({
+    readOnlyApiOnly: true,
+    sameSourceOfTruth: 'operational_state',
+  })
+
+  const dependencyChild = byId['HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS']
+  expect(dependencyChild.expected.dependencyPlan).toMatchObject({
+    childWaitsForParent: true,
+  })
+  expect(dependencyChild.expected.dependencyPlan.historyLabels.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['independent_read']),
+  )
+
+  const dependencyApproval = byId['HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ']
+  expect(dependencyApproval.expected.sessionStatus).toBe('WAITING_APPROVAL')
+  expect(dependencyApproval.expected.dependencyPlan).toMatchObject({
+    approvalWaitsForRead: true,
+  })
+  expect(dependencyApproval.expected.dependencyPlan.historyLabels.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['sequential_read', 'approval_required']),
+  )
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({

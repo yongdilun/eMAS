@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -50,6 +51,13 @@ from ..planning.v2_graph_adapters import (
     GraphToolHttpExecutor,
     execute_graph_tool_call,
     observe_graph_tool_result,
+)
+from ..planning.v2_dependency_scheduler import (
+    attach_dependency_plan_diagnostics,
+    build_dependency_plan,
+    dependency_allows_requirement_action,
+    dependency_allows_tool_call,
+    dependency_rejection_reason,
 )
 from ..planning.v2_interrupts import apply_user_interrupt_to_v2_state, classify_user_interrupt
 from ..planning.v2_planner_decisions import (
@@ -190,6 +198,26 @@ def _trace_source_types(state: PlannerOwnedAgentGraphState) -> list[str]:
         if source_type and source_type not in source_types:
             source_types.append(source_type)
     return source_types
+
+
+def _graph_tool_action_event(
+    decision: PlannerDecisionRecord,
+    execution: GraphToolExecutionResult,
+) -> dict[str, Any]:
+    return {
+        "decision_id": decision.decision_id,
+        "tool_call_id": execution.tool_call.call_id,
+        "tool_call_kind": execution.tool_call.kind,
+        "tool_name": execution.tool_call.tool_name,
+        "requirement_id": execution.tool_call.requirement_id,
+        "source_type": execution.source_type,
+        "source_of_truth": execution.source_of_truth,
+        "graph_tool_action": execution.diagnostic_metadata.get(
+            "graph_tool_action",
+            execution.tool_call.kind,
+        ),
+        "legacy_shortcut_used": False,
+    }
 
 
 def _graph_recursion_limit(settings: Settings) -> int:
@@ -770,9 +798,11 @@ class PlannerOwnedAgentGraph:
                 "requirement_ids": [requirement.id for requirement in state.requirement_ledger.requirements],
             }
         )
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         state.execution_trace.planner.diagnostics["requirement_ledger_node"] = {
             "requirement_count": len(state.requirement_ledger.requirements),
             "ledger_revision": state.requirement_ledger.revision,
+            "dependency_label_counts": dependency_plan.diagnostics.get("label_counts", {}),
         }
         return _state_update(state)
 
@@ -822,13 +852,26 @@ class PlannerOwnedAgentGraph:
 
     async def _planner_decision_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "planner_decision_node", self._tracer)
+        dependency_plan = attach_dependency_plan_diagnostics(state)
+        blocked_by_dependency_plan = [
+            {
+                "requirement_id": requirement.id,
+                "reason": dependency_rejection_reason(dependency_plan, requirement.id),
+            }
+            for requirement in _open_requirements_without_evidence(state)
+            if not dependency_allows_requirement_action(dependency_plan, requirement.id)
+        ]
         requirements = [
             requirement
             for requirement in _open_requirements_without_evidence(state)
+            if dependency_allows_requirement_action(dependency_plan, requirement.id)
             if not _has_decision_for_requirement(state, "retrieve_tools", requirement.id)
         ]
         if not requirements:
-            state.execution_trace.planner.diagnostics["planner_decision_node"] = {"decision": "none"}
+            state.execution_trace.planner.diagnostics["planner_decision_node"] = {
+                "decision": "none",
+                "blocked_by_dependency_plan": blocked_by_dependency_plan,
+            }
             return _state_update(state)
 
         decisions: list[PlannerDecisionRecord] = []
@@ -864,6 +907,7 @@ class PlannerOwnedAgentGraph:
             "decision_ids": [decision.decision_id for decision in decisions],
             "decision_kinds": [decision.decision_kind for decision in decisions],
             "requirement_ids": [decision.requirement_id for decision in decisions],
+            "blocked_by_dependency_plan": blocked_by_dependency_plan,
         }
         if len(decisions) == 1:
             state.execution_trace.planner.diagnostics["planner_decision_node"].update(
@@ -876,17 +920,32 @@ class PlannerOwnedAgentGraph:
 
     async def _tool_retrieval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "tool_retrieval_node", self._tracer)
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         decisions = [
             decision
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
             and _planner_decision_is_active_for_graph_revision(state, decision)
             and decision.requirement_id is not None
+            and dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
             and not _has_candidate_window_for_requirement(state, decision.requirement_id)
             and not _has_evidence_for_requirement(state, decision.requirement_id)
         ]
         if not decisions:
-            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {"status": "no_decision"}
+            state.execution_trace.tool_retrieval.diagnostics["phase4_retrieval"] = {
+                "status": "no_decision",
+                "blocked_by_dependency_plan": [
+                    {
+                        "decision_id": decision.decision_id,
+                        "requirement_id": decision.requirement_id,
+                        "reason": dependency_rejection_reason(dependency_plan, decision.requirement_id),
+                    }
+                    for decision in state.planner_decisions
+                    if decision.decision_kind == "retrieve_tools"
+                    and decision.requirement_id is not None
+                    and not dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
+                ],
+            }
             return _state_update(state)
 
         retrievals: list[PlannerOwnedGraphRetrieval] = []
@@ -947,18 +1006,33 @@ class PlannerOwnedAgentGraph:
 
     async def _planner_choose_tool_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "planner_choose_tool_node", self._tracer)
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         retrieve_decisions = [
             decision
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
             and _planner_decision_is_active_for_graph_revision(state, decision)
             and decision.requirement_id is not None
+            and dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
             and _has_candidate_window_for_requirement(state, decision.requirement_id)
             and not _has_choice_for_requirement(state, decision.requirement_id)
             and not _has_evidence_for_requirement(state, decision.requirement_id)
         ]
         if not retrieve_decisions:
-            state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {"decision": "none"}
+            state.execution_trace.planner.diagnostics["planner_choose_tool_node"] = {
+                "decision": "none",
+                "blocked_by_dependency_plan": [
+                    {
+                        "decision_id": decision.decision_id,
+                        "requirement_id": decision.requirement_id,
+                        "reason": dependency_rejection_reason(dependency_plan, decision.requirement_id),
+                    }
+                    for decision in state.planner_decisions
+                    if decision.decision_kind == "retrieve_tools"
+                    and decision.requirement_id is not None
+                    and not dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
+                ],
+            }
             return _state_update(state)
 
         decisions: list[PlannerDecisionRecord] = []
@@ -1055,6 +1129,7 @@ class PlannerOwnedAgentGraph:
 
     async def _tool_execution_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "tool_execution_node", self._tracer)
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         if state.pending_approval.status == "pending":
             state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
                 "status": "paused_for_approval",
@@ -1090,52 +1165,86 @@ class PlannerOwnedAgentGraph:
 
         executions: list[GraphToolExecutionResult] = []
         action_events: list[dict[str, Any]] = []
+        rejected_by_dependency_plan: list[dict[str, Any]] = []
+        pending_calls_by_requirement: dict[str, list[GraphToolCall]] = {}
         for choose_decision in choose_decisions:
             selected_calls = [
                 tool_call
                 for tool_call in _planner_decision_selected_tool_calls(choose_decision)
                 if not _has_execution_decision_for_call(state, tool_call)
             ]
-            if not selected_calls:
-                continue
-            if len(selected_calls) > 1:
-                guard_decision = PlannerDecisionRecord(
-                    decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
-                    decision_kind="execute_parallel_read_batch",
-                    author="deterministic_guard",
-                    requirement_id=choose_decision.requirement_id,
-                    ledger_revision=state.requirement_ledger.revision,
-                    capability_need=choose_decision.capability_need,
-                    selected_tool_calls=selected_calls,
-                    reason="Execute the persisted planner-selected read batch.",
-                )
-                record_planner_decision(state, guard_decision)
-                for selected_call in selected_calls:
-                    execution_decision = guard_decision.model_copy(
-                        update={"selected_tool_call": selected_call, "selected_tool_calls": []}
-                    )
-                    execution = await _maybe_await(self._adapters.execute_tool(state, execution_decision))
-                    _attach_graph_work_identity(state, execution)
-                    executions.append(execution)
-                    action_events.append(
+            for selected_call in selected_calls:
+                if dependency_allows_tool_call(dependency_plan, selected_call):
+                    pending_calls_by_requirement.setdefault(selected_call.requirement_id, []).append(selected_call)
+                else:
+                    rejected_by_dependency_plan.append(
                         {
-                            "decision_id": guard_decision.decision_id,
-                            "tool_call_id": execution.tool_call.call_id,
-                            "tool_call_kind": execution.tool_call.kind,
-                            "tool_name": execution.tool_call.tool_name,
-                            "requirement_id": execution.tool_call.requirement_id,
-                            "source_type": execution.source_type,
-                            "source_of_truth": execution.source_of_truth,
-                            "graph_tool_action": execution.diagnostic_metadata.get(
-                                "graph_tool_action",
-                                execution.tool_call.kind,
-                            ),
-                            "legacy_shortcut_used": False,
+                            "decision_id": choose_decision.decision_id,
+                            "tool_call_id": selected_call.call_id,
+                            "tool_name": selected_call.tool_name,
+                            "requirement_id": selected_call.requirement_id,
+                            "reason": dependency_rejection_reason(dependency_plan, selected_call.requirement_id),
                         }
                     )
-                continue
 
-            selected_call = selected_calls[0]
+        executed_call_ids: set[str] = set()
+        batch_events: list[dict[str, Any]] = []
+        for group in dependency_plan.ready_groups:
+            selected_calls: list[GraphToolCall] = []
+            for requirement_id in group.requirement_ids:
+                selected_calls.extend(pending_calls_by_requirement.get(requirement_id, []))
+            selected_calls = [
+                call
+                for call in selected_calls
+                if call.call_id not in executed_call_ids
+            ][: group.max_batch_size]
+            if len(selected_calls) <= 1:
+                continue
+            batch_requirement_ids = {call.requirement_id for call in selected_calls}
+            batch_requirement_id = selected_calls[0].requirement_id if len(batch_requirement_ids) == 1 else None
+            guard_decision = PlannerDecisionRecord(
+                decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
+                decision_kind="execute_parallel_read_batch",
+                author="deterministic_guard",
+                requirement_id=batch_requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                selected_tool_calls=selected_calls,
+                reason="Execute dependency-scheduler ready read batch.",
+                diagnostics={
+                    "dependency_group_id": group.group_id,
+                    "dependency_batch_key": group.batch_key,
+                    "max_batch_size": group.max_batch_size,
+                },
+            )
+            record_planner_decision(state, guard_decision)
+
+            async def _execute_batch_call(selected_call: GraphToolCall) -> GraphToolExecutionResult:
+                execution_decision = guard_decision.model_copy(
+                    update={"selected_tool_call": selected_call, "selected_tool_calls": []}
+                )
+                return await _maybe_await(self._adapters.execute_tool(state, execution_decision))
+
+            batch_results = await asyncio.gather(*[_execute_batch_call(call) for call in selected_calls])
+            for execution in batch_results:
+                _attach_graph_work_identity(state, execution)
+                executions.append(execution)
+                executed_call_ids.add(execution.tool_call.call_id)
+                event = _graph_tool_action_event(guard_decision, execution)
+                event["dependency_group_id"] = group.group_id
+                event["dependency_batch_key"] = group.batch_key
+                batch_events.append(event)
+                action_events.append(event)
+
+        for choose_decision in choose_decisions:
+            selected_calls = [
+                tool_call
+                for tool_call in _planner_decision_selected_tool_calls(choose_decision)
+                if not _has_execution_decision_for_call(state, tool_call)
+                and tool_call.call_id not in executed_call_ids
+                and dependency_allows_tool_call(dependency_plan, tool_call)
+            ]
+            if not selected_calls:
+                continue
             if _tool_choice_requires_graph_approval(state, choose_decision):
                 await self._stage_write_approval(state, choose_decision)
                 if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
@@ -1145,40 +1254,36 @@ class PlannerOwnedAgentGraph:
                     continue
                 return _state_update(state)
 
-            guard_decision = PlannerDecisionRecord(
-                decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
-                decision_kind="execute_tool",
-                author="deterministic_guard",
-                requirement_id=choose_decision.requirement_id,
-                ledger_revision=state.requirement_ledger.revision,
-                capability_need=choose_decision.capability_need,
-                selected_tool_call=selected_call,
-                reason="Execute the persisted planner-selected read action.",
-            )
-            record_planner_decision(state, guard_decision)
-            execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
-            _attach_graph_work_identity(state, execution)
-            executions.append(execution)
-            action_events.append(
-                {
-                    "decision_id": guard_decision.decision_id,
-                    "tool_call_id": execution.tool_call.call_id,
-                    "tool_call_kind": execution.tool_call.kind,
-                    "tool_name": execution.tool_call.tool_name,
-                    "requirement_id": execution.tool_call.requirement_id,
-                    "source_type": execution.source_type,
-                    "source_of_truth": execution.source_of_truth,
-                    "graph_tool_action": execution.diagnostic_metadata.get(
-                        "graph_tool_action",
-                        execution.tool_call.kind,
-                    ),
-                    "legacy_shortcut_used": False,
-                }
-            )
+            for selected_call in selected_calls:
+                guard_decision = PlannerDecisionRecord(
+                    decision_id=f"dec-execute-{len(state.planner_decisions) + 1:03d}",
+                    decision_kind="execute_tool",
+                    author="deterministic_guard",
+                    requirement_id=selected_call.requirement_id,
+                    ledger_revision=state.requirement_ledger.revision,
+                    capability_need=choose_decision.capability_need,
+                    selected_tool_call=selected_call,
+                    reason="Execute the persisted planner-selected read action.",
+                )
+                record_planner_decision(state, guard_decision)
+                execution = await _maybe_await(self._adapters.execute_tool(state, guard_decision))
+                _attach_graph_work_identity(state, execution)
+                executions.append(execution)
+                executed_call_ids.add(execution.tool_call.call_id)
+                action_events.append(_graph_tool_action_event(guard_decision, execution))
+
+        if not executions:
+            state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
+                "status": "blocked_by_dependency_plan" if rejected_by_dependency_plan else "no_tool_choice",
+                "rejected_by_dependency_plan": rejected_by_dependency_plan,
+            }
+            return _state_update(state)
 
         state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
             "status": "observed_by_next_node",
             "execution_results": [execution.model_dump(mode="json") for execution in executions],
+            "dependency_read_batches": batch_events,
+            "rejected_by_dependency_plan": rejected_by_dependency_plan,
         }
         previous_actions = list(state.execution_trace.diagnostics.get("graph_tool_actions") or [])
         state.execution_trace.diagnostics["graph_tool_actions"] = [*previous_actions, *action_events]
@@ -1297,6 +1402,7 @@ class PlannerOwnedAgentGraph:
             )
         _evaluate_conditional_branches_from_evidence(state, evidence_items)
         _expand_child_requirements_from_evidence(state, evidence_items)
+        attach_dependency_plan_diagnostics(state)
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
 
@@ -1351,6 +1457,7 @@ class PlannerOwnedAgentGraph:
         )
         _retain_replan_missing_evidence_reason_history(state)
         _refresh_replan_evidence_diagnostics(state)
+        attach_dependency_plan_diagnostics(state)
         return _state_update(state)
 
     async def _approval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
@@ -1419,6 +1526,7 @@ class PlannerOwnedAgentGraph:
 
     async def _response_document_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
         _record_node_visit(state, "response_document_node", self._tracer)
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         validation_status = state.final_validation_result.status if state.final_validation_result else "deferred"
         response_blocks = _phase6_response_blocks(state)
         replan_spine = _response_replan_spine_diagnostics(state)
@@ -1515,6 +1623,10 @@ class PlannerOwnedAgentGraph:
                 "preview_blocks": 0,
                 "approval_blocks": 1 if pending else 0,
                 "pending_approval": state.pending_approval.payload if pending else None,
+                "dependency_plan": dependency_plan.model_dump(mode="json"),
+                "dependency_plan_history": list(
+                    state.execution_trace.diagnostics.get("dependency_plan_history") or []
+                ),
                 "stale_response_context_reused": False,
             },
         )
@@ -3254,8 +3366,10 @@ def _open_requirements_without_evidence(state: PlannerOwnedAgentGraphState):
 
 
 def _open_requirements_need_fresh_retrieval(state: PlannerOwnedAgentGraphState) -> bool:
+    dependency_plan = build_dependency_plan(state)
     return any(
         requirement.status == "open"
+        and dependency_allows_requirement_action(dependency_plan, requirement.id)
         and not _has_evidence_for_requirement(state, requirement.id)
         and not _has_decision_for_requirement(state, "retrieve_tools", requirement.id)
         and not _has_planner_proposer_rejection_for_requirement(

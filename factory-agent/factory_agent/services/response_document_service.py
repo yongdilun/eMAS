@@ -11,6 +11,10 @@ from factory_agent.graph.noop_mutations import (
     NO_OP_MUTATION_STATUS,
     normalize_no_op_mutation,
 )
+from factory_agent.planning.v2_dependency_scheduler import (
+    DEPENDENCY_PLAN_DIAGNOSTIC_KEY,
+    DEPENDENCY_PLAN_HISTORY_DIAGNOSTIC_KEY,
+)
 from factory_agent.planning.query_shape import parse_fields_arg
 from factory_agent.rag.source_metadata import (
     insufficient_context_answer,
@@ -88,6 +92,12 @@ SOURCE_LOCATOR_CONTRACT = "source_locator_v1"
 READ_DISPLAY_PREVIEW_LIMIT = 5
 READ_SCOPE_STATUS_ONLY = "status_only"
 READ_SCOPE_DETAILS = "details"
+_PLANNER_OWNED_RESPONSE_DIAGNOSTIC_KEYS = frozenset(
+    {
+        DEPENDENCY_PLAN_DIAGNOSTIC_KEY,
+        DEPENDENCY_PLAN_HISTORY_DIAGNOSTIC_KEY,
+    }
+)
 READ_SCOPE_RECORDS = "records"
 DISPLAY_MODE_COMPACT_STATUS_CARD = "compact_status_card"
 DISPLAY_MODE_DETAIL_STATUS_CARD = "detail_status_card"
@@ -3804,6 +3814,17 @@ def _planner_owned_response_diagnostics(session: Any) -> dict[str, Any]:
     return {}
 
 
+def _planner_owned_response_document_diagnostics(session: Any) -> dict[str, Any]:
+    diagnostics = _planner_owned_response_diagnostics(session)
+    if not diagnostics:
+        return {}
+    return {
+        key: _sanitize_diagnostic_value(diagnostics[key], key=key)
+        for key in _PLANNER_OWNED_RESPONSE_DIAGNOSTIC_KEYS
+        if key in diagnostics
+    }
+
+
 def _planner_owned_composed_summary(session: Any, presentation: PresentationResponse) -> str | None:
     summary = _trimmed(presentation.summary)
     if not summary:
@@ -4997,6 +5018,7 @@ def compose_response_document(
 
     read_shape = "status" if status_result else _read_result_shape(read_rows) if read_rows or presentation.kind == "answer" else None
     diagnostics = _sanitize_diagnostic_value(dict(presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}))
+    diagnostics.update(_planner_owned_response_document_diagnostics(session))
     if presentation.kind == "answer" and state == "completed" and not read_rows and not sources and not mutation_groups:
         diagnostics["reason"] = "no_results"
     if failure_profile is not None:
@@ -5008,6 +5030,7 @@ def compose_response_document(
             "next_action": failure_profile.next_action,
             "retry_safety": failure_profile.retry_safety,
         }
+        diagnostics.update(_planner_owned_response_document_diagnostics(session))
     changed_mutation_groups = [group for group in mutation_groups if not _is_no_op_group(group)]
     no_op_mutation_groups = [group for group in mutation_groups if _is_no_op_group(group)]
     invariants = {

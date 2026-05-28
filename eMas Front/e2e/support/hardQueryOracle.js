@@ -378,6 +378,178 @@ function selectedToolCalls(decision) {
   ]
 }
 
+function plannerDecisionsForPayload(payload) {
+  const graphDecisions = payload.graphState?.planner_decisions
+  const v2Decisions = payload.v2State?.planner_decisions
+  return Array.isArray(graphDecisions) ? graphDecisions : Array.isArray(v2Decisions) ? v2Decisions : []
+}
+
+function requirementsForPayload(payload) {
+  const graphRequirements = payload.graphState?.requirement_ledger?.requirements
+  const v2Requirements = payload.v2State?.requirement_ledger?.requirements
+  return Array.isArray(graphRequirements) ? graphRequirements : Array.isArray(v2Requirements) ? v2Requirements : []
+}
+
+function dependencyPlanForPayload(payload, snapshot) {
+  const candidates = [
+    payload.intentContract?.dependency_plan,
+    payload.context?.dependency_plan,
+    payload.executionTrace?.diagnostics?.dependency_plan,
+    payload.responseDocumentContext?.diagnostics?.dependency_plan,
+    snapshot?.response_document?.diagnostics?.dependency_plan,
+  ]
+  return candidates.find((candidate) => candidate && typeof candidate === 'object' && Array.isArray(candidate.requirements)) || {}
+}
+
+function dependencyHistoryForPayload(payload, snapshot) {
+  const candidates = [
+    payload.intentContract?.dependency_plan_history,
+    payload.context?.dependency_plan_history,
+    payload.executionTrace?.diagnostics?.dependency_plan_history,
+    payload.responseDocumentContext?.diagnostics?.dependency_plan_history,
+    snapshot?.response_document?.diagnostics?.dependency_plan_history,
+  ]
+  return candidates.find((candidate) => Array.isArray(candidate)) || []
+}
+
+function dependencyLabelsForEntry(entry) {
+  if (entry?.labels && typeof entry.labels === 'object') return entry.labels
+  if (Array.isArray(entry?.requirements)) {
+    return Object.fromEntries(
+      entry.requirements
+        .filter((item) => item?.requirement_id && item?.label)
+        .map((item) => [item.requirement_id, item.label]),
+    )
+  }
+  return {}
+}
+
+function dependencyLabelSnapshots(plan, history) {
+  const snapshots = asArray(history).map((entry) => dependencyLabelsForEntry(entry)).filter((labels) => Object.keys(labels).length)
+  const finalLabels = dependencyLabelsForEntry(plan)
+  if (Object.keys(finalLabels).length) snapshots.push(finalLabels)
+  return snapshots
+}
+
+function dependencyReadyGroups(plan, history) {
+  return [
+    ...asArray(plan?.ready_groups),
+    ...asArray(history).flatMap((entry) => asArray(entry?.ready_groups)),
+  ]
+}
+
+function dependencyItemsByRequirement(plan) {
+  return new Map(asArray(plan?.requirements).map((item) => [item?.requirement_id, item]))
+}
+
+function decisionIndexForRequirement(decisions, requirementId, kinds) {
+  return decisions.findIndex((decision) => {
+    if (!asArray(kinds).includes(decision?.decision_kind)) return false
+    if (decision?.requirement_id === requirementId) return true
+    return selectedToolCalls(decision).some((call) => call?.requirement_id === requirementId)
+  })
+}
+
+function addDependencyPlanViolations(violations, snapshot, expected) {
+  const dependencyExpected = expected.dependencyPlan || {}
+  if (!Object.keys(dependencyExpected).length) return
+
+  const payload = plannerOwnedGraphPayload(snapshot)
+  const plan = dependencyPlanForPayload(payload, snapshot)
+  const history = dependencyHistoryForPayload(payload, snapshot)
+  const labelSnapshots = dependencyLabelSnapshots(plan, history)
+  const readyGroups = dependencyReadyGroups(plan, history)
+  const decisions = plannerDecisionsForPayload(payload)
+  const requirements = requirementsForPayload(payload)
+  const itemsByRequirement = dependencyItemsByRequirement(plan)
+
+  if (!Array.isArray(plan.requirements)) {
+    violations.push('dependency_plan missing from intent contract, execution trace, or response snapshot')
+    return
+  }
+
+  for (const labelExpected of asArray(dependencyExpected.historyLabels)) {
+    const count = labelSnapshots.filter((labels) => Object.values(labels).includes(labelExpected.label)).length
+    if (count < Number(labelExpected.minSnapshots || 1)) {
+      violations.push(`dependency_plan history missing label ${labelExpected.label}`)
+    }
+  }
+
+  for (const labelExpected of asArray(dependencyExpected.finalLabels)) {
+    const count = asArray(plan.requirements).filter((item) => item?.label === labelExpected.label).length
+    if (count < Number(labelExpected.minCount || 1)) {
+      violations.push(`dependency_plan final labels expected ${labelExpected.label} at least ${labelExpected.minCount || 1} time(s) but saw ${count}`)
+    }
+  }
+
+  const groupExpected = dependencyExpected.readyGroup || null
+  if (groupExpected) {
+    const found = readyGroups.find((group) => {
+      if (groupExpected.mode && group?.mode !== groupExpected.mode) return false
+      if (groupExpected.batchKey && group?.batch_key !== groupExpected.batchKey) return false
+      if (Object.hasOwn(groupExpected, 'maxBatchSize') && Number(group?.max_batch_size) !== Number(groupExpected.maxBatchSize)) return false
+      if (Object.hasOwn(groupExpected, 'minRequirementCount') && asArray(group?.requirement_ids).length < Number(groupExpected.minRequirementCount)) return false
+      return true
+    })
+    if (!found) violations.push(`dependency_plan missing ready group ${JSON.stringify(groupExpected)}`)
+  }
+
+  const batchExpected = dependencyExpected.parallelBatch || null
+  if (batchExpected) {
+    const batchDecisions = decisions.filter((decision) => decision?.decision_kind === 'execute_parallel_read_batch')
+    const found = batchDecisions.find((decision) => {
+      const calls = selectedToolCalls(decision)
+      if (Object.hasOwn(batchExpected, 'minCalls') && calls.length < Number(batchExpected.minCalls)) return false
+      if (Object.hasOwn(batchExpected, 'maxCalls') && calls.length > Number(batchExpected.maxCalls)) return false
+      if (batchExpected.readOnlyApiOnly) {
+        if (calls.some((call) => call?.kind !== 'api_tool' || WRITE_TOOL_RE.test(call?.tool_name || '') || /search.*documents|rag/i.test(call?.tool_name || ''))) return false
+      }
+      if (batchExpected.sameSourceOfTruth) {
+        const sources = new Set(calls.map((call) => itemsByRequirement.get(call?.requirement_id)?.source_of_truth).filter(Boolean))
+        if (sources.size !== 1 || !sources.has(batchExpected.sameSourceOfTruth)) return false
+      }
+      return true
+    })
+    if (!found) violations.push(`dependency_plan missing safe parallel read batch ${JSON.stringify(batchExpected)}`)
+  }
+
+  if (dependencyExpected.childWaitsForParent) {
+    const childRequirements = requirements.filter((requirement) => requirement?.parent_requirement_id)
+    if (!childRequirements.length) {
+      violations.push('dependency_plan child wait expected child requirements but none were found')
+    }
+    for (const child of childRequirements) {
+      const labels = labelSnapshots.map((snapshotLabels) => snapshotLabels[child.id]).filter(Boolean)
+      const dependentIndex = labels.indexOf('depends_on_evidence')
+      const readyIndex = labels.findIndex((label, index) => index > dependentIndex && ['independent_read', 'sequential_read', 'approval_required', 'satisfied_or_terminal'].includes(label))
+      const childWasCreatedFromParentEvidence = asArray(child.derived_from_evidence_refs).length > 0
+      if (!childWasCreatedFromParentEvidence && (dependentIndex < 0 || readyIndex < 0)) {
+        violations.push(`dependency_plan child ${child.id} did not wait for parent evidence before readiness`)
+      }
+      const parentExecuteIndex = decisionIndexForRequirement(decisions, child.parent_requirement_id, ['execute_tool', 'execute_parallel_read_batch'])
+      const childExecuteIndex = decisionIndexForRequirement(decisions, child.id, ['execute_tool', 'execute_parallel_read_batch'])
+      if (parentExecuteIndex >= 0 && childExecuteIndex >= 0 && childExecuteIndex <= parentExecuteIndex) {
+        violations.push(`dependency_plan child ${child.id} executed before parent ${child.parent_requirement_id}`)
+      }
+    }
+  }
+
+  if (dependencyExpected.approvalWaitsForRead) {
+    const hasApprovalLabel = labelSnapshots.some((labels) => Object.values(labels).includes('approval_required'))
+    const requestApprovalIndex = decisions.findIndex((decision) => decision?.decision_kind === 'request_approval')
+    const readExecuteIndexes = decisions
+      .map((decision, index) => ({ decision, index }))
+      .filter(({ decision }) => ['execute_tool', 'execute_parallel_read_batch'].includes(decision?.decision_kind))
+      .filter(({ decision }) => selectedToolCalls(decision).some((call) => call?.kind === 'api_tool' && !WRITE_TOOL_RE.test(call?.tool_name || '')))
+      .map(({ index }) => index)
+    if (!hasApprovalLabel) violations.push('dependency_plan approval wait expected approval_required label')
+    if (requestApprovalIndex < 0) violations.push('dependency_plan approval wait expected request_approval decision')
+    if (readExecuteIndexes.length && requestApprovalIndex >= 0 && requestApprovalIndex <= Math.max(...readExecuteIndexes)) {
+      violations.push('dependency_plan request_approval occurred before prerequisite reads completed')
+    }
+  }
+}
+
 function conditionalBranchesForPayload(payload, snapshot) {
   const graphStateBranches = payload.graphState?.requirement_ledger?.conditional_branches
   const v2Branches = payload.v2State?.requirement_ledger?.conditional_branches
@@ -717,6 +889,7 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
   addResponseDocumentViolations(violations, snapshot, expected)
   addPlannerOwnedGraphViolations(violations, snapshot, expected)
   addReplanSpineViolations(violations, snapshot, expected)
+  addDependencyPlanViolations(violations, snapshot, expected)
   addConditionalBranchViolations(violations, snapshot, expected)
   addRequirementExpansionViolations(violations, snapshot, expected)
   addVisibleBlockViolations(violations, ui, expected)
@@ -786,6 +959,26 @@ function evaluateHardQueryProbe({ snapshot, ui, pendingApprovals, scenario }) {
         ),
         activeFinalEvidenceRefs: asArray(graphPayload.replanSpine.active_final_evidence_refs),
         historicalEvidenceRefs: asArray(graphPayload.replanSpine.historical_evidence_refs),
+      },
+      dependencyPlan: {
+        labels: dependencyLabelsForEntry(dependencyPlanForPayload(graphPayload, snapshot)),
+        readyGroups: dependencyReadyGroups(
+          dependencyPlanForPayload(graphPayload, snapshot),
+          dependencyHistoryForPayload(graphPayload, snapshot),
+        ).map((group) => ({
+          mode: group?.mode,
+          requirementIds: group?.requirement_ids,
+          batchKey: group?.batch_key,
+          maxBatchSize: group?.max_batch_size,
+        })),
+        parallelBatchDecisions: plannerDecisionsForPayload(graphPayload)
+          .filter((decision) => decision?.decision_kind === 'execute_parallel_read_batch')
+          .map((decision) => ({
+            requirementId: decision?.requirement_id || null,
+            callCount: selectedToolCalls(decision).length,
+            toolNames: selectedToolCalls(decision).map((call) => call?.tool_name),
+            requirementIds: selectedToolCalls(decision).map((call) => call?.requirement_id),
+          })),
       },
       requirementExpansion: {
         lineageCount: asArray(graphPayload.intentContract.child_requirement_lineage || graphPayload.context.child_requirement_lineage).length,

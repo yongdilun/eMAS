@@ -108,6 +108,15 @@ UserInterruptType = Literal[
     "approve_approval",
 ]
 ConditionalBranchStatus = Literal["pending", "activated", "skipped"]
+DependencyExecutionLabel = Literal[
+    "independent_read",
+    "depends_on_evidence",
+    "approval_required",
+    "sequential_read",
+    "blocked",
+    "satisfied_or_terminal",
+]
+DependencyReadyGroupMode = Literal["parallel_read_batch"]
 
 
 class V2ContractModel(BaseModel):
@@ -312,6 +321,39 @@ class HydratedToolCards(V2ContractModel):
         if len(self.cards) > self.max_cards:
             raise ValueError("hydrated tool cards cannot exceed max_cards")
         return self
+
+
+class DependencyRequirementPlan(V2ContractModel):
+    requirement_id: str = Field(min_length=1)
+    label: DependencyExecutionLabel
+    ready: bool = False
+    can_batch: bool = False
+    depends_on_requirement_ids: list[str] = Field(default_factory=list)
+    depends_on_evidence_refs: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    batch_key: str | None = None
+    source_of_truth: SourceOfTruth = "unknown"
+    action: CapabilityAction | None = None
+    tool_names: list[str] = Field(default_factory=list)
+    estimated_tool_call_count: int = Field(default=1, ge=0)
+    diagnostic_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyReadyGroup(V2ContractModel):
+    group_id: str = Field(min_length=1)
+    mode: DependencyReadyGroupMode
+    requirement_ids: list[str] = Field(default_factory=list)
+    batch_key: str = Field(min_length=1)
+    max_batch_size: int = Field(default=3, ge=1)
+    diagnostic_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyPlan(V2ContractModel):
+    ledger_revision: int = Field(ge=1)
+    requirements: list[DependencyRequirementPlan] = Field(default_factory=list)
+    ready_groups: list[DependencyReadyGroup] = Field(default_factory=list)
+    blocked: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class RequirementOrigin(V2ContractModel):

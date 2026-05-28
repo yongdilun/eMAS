@@ -11,16 +11,27 @@ from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.semantic_intake import StaticSemanticIntakeProposer
 from factory_agent.planning.tool_selector import ToolSelectionResult
-from factory_agent.planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord, build_initial_planner_owned_agent_graph_state
+from factory_agent.planning.v2_agent_state import (
+    GraphToolCall,
+    PlannerDecisionRecord,
+    PlannerOwnedAgentGraphState,
+    build_initial_planner_owned_agent_graph_state,
+)
 from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
     CapabilityNeed,
     HydratedToolCard,
     HydratedToolCards,
+    RequirementLedger,
+    RequirementLedgerEntry,
 )
 from factory_agent.planning.v2_graph_adapters import GraphExecutionAuthorizationError, execute_graph_api_tool_call
-from factory_agent.planning.v2_planner_decisions import PlannerDecisionSubmission, record_planner_decision
+from factory_agent.planning.v2_planner_decisions import (
+    PlannerDecisionSubmission,
+    PlannerDecisionValidationError,
+    record_planner_decision,
+)
 from factory_agent.planning.v2_planner_proposer import (
     OfflineStructuredPlannerDecisionProposer,
     PlannerDecisionProposalResult,
@@ -636,6 +647,40 @@ class AlwaysTimeoutExecutor:
         }
 
 
+class MachineAndJobExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__machines_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "machine_id": args.get("id"),
+                        "status": "running",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "job_id": args.get("id"),
+                    "status": "scheduled",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 def _graph(
     *,
     tools_by_name: dict[str, ToolInfo] | None = None,
@@ -660,6 +705,39 @@ def _graph(
         adapters=adapters,
         proposer=proposer or OfflineStructuredPlannerDecisionProposer(),
         checkpointer=None,
+    )
+
+
+def _independent_machine_and_job_state() -> PlannerOwnedAgentGraphState:
+    return PlannerOwnedAgentGraphState(
+        original_query="Read machine M-CNC-01 and job JOB-SEED-001.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Read machine M-CNC-01 and job JOB-SEED-001.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="Read machine M-CNC-01 status",
+                    requirement_type="single_entity_status",
+                    entity="machine",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"machine_id": "M-CNC-01"},
+                    requested_fields=["status"],
+                    locked_constraints=["machine_id", "requested_fields"],
+                ),
+                RequirementLedgerEntry(
+                    id="req-002",
+                    goal="Read job JOB-SEED-001 status",
+                    requirement_type="single_entity_status",
+                    entity="job",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"job_id": "JOB-SEED-001"},
+                    requested_fields=["status"],
+                    locked_constraints=["job_id", "requested_fields"],
+                ),
+            ],
+        ),
     )
 
 
@@ -733,6 +811,160 @@ class RepeatFailedFullSelectedCallProposer:
                 reason="Select from the bounded candidate window.",
             ),
             adapter="repeat_failed_full_selected_call_proposer",
+    )
+
+
+@pytest.mark.asyncio
+async def test_dependency_plan_exposes_and_executes_independent_read_batch():
+    executor = MachineAndJobExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__machines_{id}"],
+            ["get__jobs_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__machines_{id}": _machine_status_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run_state(
+        _independent_machine_and_job_state(),
+        session_context={"session_id": "dependency-independent-read-batch"},
+    )
+
+    dependency_plan = result.state.execution_trace.diagnostics["dependency_plan"]
+    labels = {
+        item["requirement_id"]: item["label"]
+        for item in dependency_plan["requirements"]
+    }
+    parallel_decisions = [
+        decision
+        for decision in result.state.planner_decisions
+        if decision.decision_kind == "execute_parallel_read_batch"
+    ]
+    evidence_by_requirement = {
+        evidence.requirement_id: evidence
+        for evidence in result.state.evidence_ledger.evidence
+    }
+
+    assert labels == {"req-001": "satisfied_or_terminal", "req-002": "satisfied_or_terminal"}
+    assert any(
+        group["mode"] == "parallel_read_batch"
+        and group["requirement_ids"] == ["req-001", "req-002"]
+        for group in result.state.execution_trace.diagnostics["dependency_plan_history"][-2]["ready_groups"]
+    )
+    assert len(parallel_decisions) == 1
+    assert {
+        call.requirement_id
+        for call in parallel_decisions[0].selected_tool_calls
+    } == {"req-001", "req-002"}
+    assert [call["tool_name"] for call in executor.calls] == [
+        "get__machines_{id}",
+        "get__jobs_{id}",
+    ]
+    assert set(evidence_by_requirement) == {"req-001", "req-002"}
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+def test_decision_gate_rejects_tool_for_requirement_waiting_on_evidence():
+    state = PlannerOwnedAgentGraphState(
+        original_query="Read a child product after parent job evidence.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Read a child product after parent job evidence.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="Read job JOB-SEED-001",
+                    requirement_type="single_entity_status",
+                    entity="job",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"job_id": "JOB-SEED-001"},
+                ),
+                RequirementLedgerEntry(
+                    id="req-001.a",
+                    goal="Read product P-001",
+                    requirement_type="single_entity_status",
+                    entity="product",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"product_id": "P-001"},
+                    parent_requirement_id="req-001",
+                    derived_from_evidence_refs=["ev-parent"],
+                ),
+            ],
+        ),
+        candidate_tool_windows=[
+            CandidateToolWindow(
+                requirement_id="req-001.a",
+                capability_need=CapabilityNeed(
+                    requirement_id="req-001.a",
+                    source_of_truth="operational_state",
+                    entity="product",
+                    action="read_one",
+                    known_args={"product_id": "P-001"},
+                    constraints={"product_id": "P-001"},
+                ),
+                candidates=[
+                    CandidateTool(
+                        tool_name="get__products_{id}",
+                        rank=1,
+                        source_of_truth="operational_state",
+                        actions=["read_one", "read"],
+                    )
+                ],
+            )
+        ],
+        hydrated_tool_cards=[
+            HydratedToolCards(
+                requirement_id="req-001.a",
+                cards=[
+                    HydratedToolCard(
+                        tool_name="get__products_{id}",
+                        source_of_truth="operational_state",
+                        actions=["read_one", "read"],
+                        required_args=["id"],
+                        path_params=["id"],
+                        metadata={"endpoint_shape": "item", "side_effect_level": "NONE"},
+                    )
+                ],
+            )
+        ],
+    )
+    call = GraphToolCall(
+        call_id="call-dependent-child",
+        kind="api_tool",
+        tool_name="get__products_{id}",
+        args={"id": "P-001"},
+        requirement_id="req-001.a",
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="not dependency-ready"):
+        record_planner_decision(
+            state,
+            PlannerDecisionSubmission(
+                decision=PlannerDecisionRecord(
+                    decision_id="dec-choose-dependent-child",
+                    decision_kind="choose_tool",
+                    requirement_id="req-001.a",
+                    ledger_revision=state.requirement_ledger.revision,
+                    selected_tool_call=call,
+                    reason="Planner tries to choose a dependent read too early.",
+                    diagnostics={
+                        "planner_proposer": {
+                            "proposer_seam": True,
+                            "adapter": "dependency_gate_test",
+                            "bounded_state_view": True,
+                            "full_openapi_catalog_visible": False,
+                        }
+                    },
+                ),
+                candidate_tool_calls=[call],
+            ),
         )
 
 

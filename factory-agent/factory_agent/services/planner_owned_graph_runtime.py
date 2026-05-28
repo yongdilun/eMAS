@@ -580,6 +580,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         graph_state = state.model_dump(mode="json")
         response_document_context = state.response_document_context.model_dump(mode="json")
         replan_spine = _intent_contract_replan_spine(state)
+        dependency_plan = state.execution_trace.diagnostics.get("dependency_plan")
+        dependency_plan_history = state.execution_trace.diagnostics.get("dependency_plan_history")
         child_lineage = requirement_child_lineage(state.requirement_ledger)
         conditional_branches = [
             branch.model_dump(mode="json")
@@ -601,6 +603,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "v2_state": loop_state.model_dump(mode="json"),
             "planner_owned_agent_graph_state": graph_state,
             "response_document_context": response_document_context,
+            "dependency_plan": dependency_plan,
+            "dependency_plan_history": dependency_plan_history,
             "child_requirement_lineage": child_lineage,
             "conditional_branches": conditional_branches,
             "answer_instructions": answer_instructions,
@@ -621,6 +625,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "evidence_refs": [evidence.id for evidence in state.evidence_ledger.evidence],
             "response_document_state": state.response_document_context.state,
             "response_document_context": response_document_context,
+            "dependency_plan": dependency_plan,
+            "dependency_plan_history": dependency_plan_history,
             "child_requirement_lineage": child_lineage,
             "conditional_branches": conditional_branches,
             "answer_instructions": answer_instructions,

@@ -21,6 +21,14 @@ from .v2_contracts import (
     RequirementLedgerEntry,
     V2ContractModel,
 )
+from .v2_dependency_scheduler import (
+    MAX_PARALLEL_READ_BATCH_SIZE,
+    build_dependency_plan,
+    dependency_allows_requirement_action,
+    dependency_allows_tool_call,
+    dependency_rejection_reason,
+    requirement_ids_for_parallel_read_batch,
+)
 from .v2_failed_tool_memory import (
     failed_tool_calls_for_requirement,
     same_tool_call_signature,
@@ -45,7 +53,6 @@ _DECISION_KINDS_REQUIRING_REQUIREMENT = {
     "retrieve_tools",
     "choose_tool",
     "execute_tool",
-    "execute_parallel_read_batch",
     "request_approval",
     "request_clarification",
 }
@@ -105,6 +112,7 @@ def validate_planner_decision(
     _validate_planner_author_has_proposer_diagnostics(normalized, errors)
     _validate_locked_constraints_preserved(state, normalized, errors)
     _validate_kind_specific_transition(state, normalized, errors)
+    _validate_dependency_plan_readiness(state, normalized, errors, error_diagnostics)
     _validate_failed_tool_memory_filtered_selection(state, normalized, errors, error_diagnostics)
     _validate_deterministic_guard_authority(state, normalized, errors)
 
@@ -620,6 +628,84 @@ def _validate_kind_specific_transition(
 
     if kind == "fail" and not decision.reason:
         errors.append("fail decision requires a reason")
+
+
+def _validate_dependency_plan_readiness(
+    state: PlannerOwnedAgentGraphState,
+    submission: PlannerDecisionSubmission,
+    errors: list[str],
+    diagnostics: dict[str, Any],
+) -> None:
+    decision = submission.decision
+    if decision.decision_kind not in {
+        "retrieve_tools",
+        "choose_tool",
+        "execute_tool",
+        "execute_parallel_read_batch",
+        "request_approval",
+    }:
+        return
+
+    plan = build_dependency_plan(state)
+    rejected: list[dict[str, Any]] = []
+    if decision.decision_kind == "retrieve_tools":
+        if not dependency_allows_requirement_action(plan, decision.requirement_id):
+            rejected.append(
+                {
+                    "requirement_id": decision.requirement_id,
+                    "reason": dependency_rejection_reason(plan, decision.requirement_id),
+                }
+            )
+    else:
+        for call in _selected_tool_calls(decision):
+            if dependency_allows_tool_call(plan, call):
+                continue
+            rejected.append(
+                {
+                    "requirement_id": call.requirement_id,
+                    "tool_name": call.tool_name,
+                    "reason": dependency_rejection_reason(plan, call.requirement_id),
+                }
+            )
+
+    if decision.decision_kind == "execute_parallel_read_batch":
+        calls = _selected_tool_calls(decision)
+        parallel_requirement_ids = requirement_ids_for_parallel_read_batch(plan)
+        if len(calls) > MAX_PARALLEL_READ_BATCH_SIZE:
+            rejected.append(
+                {
+                    "requirement_id": decision.requirement_id,
+                    "reason": (
+                        "parallel read batch exceeds dependency plan max size "
+                        f"({len(calls)} > {MAX_PARALLEL_READ_BATCH_SIZE})"
+                    ),
+                }
+            )
+        for call in calls:
+            if call.requirement_id not in parallel_requirement_ids:
+                rejected.append(
+                    {
+                        "requirement_id": call.requirement_id,
+                        "tool_name": call.tool_name,
+                        "reason": (
+                            "parallel read batch requires a dependency plan ready group "
+                            f"for requirement {call.requirement_id}"
+                        ),
+                    }
+                )
+
+    if not rejected:
+        return
+
+    diagnostics["dependency_plan"] = {
+        "ledger_revision": plan.ledger_revision,
+        "rejected": rejected,
+        "requirements": [item.model_dump(mode="json") for item in plan.requirements],
+    }
+    errors.append(
+        "planner decision selected work that is not dependency-ready: "
+        + "; ".join(item["reason"] for item in rejected)
+    )
 
 
 def _validate_failed_tool_memory_filtered_selection(
