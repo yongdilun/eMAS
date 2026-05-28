@@ -181,9 +181,43 @@ def build_initial_planner_owned_agent_graph_state(
     """Build Phase 1 graph state through intake and ledger creation only."""
 
     capability_map = build_v2_capability_map(tools_by_name or {})
-    requirement_sketch = build_requirement_sketch_for_text(
+    return compile_planner_owned_agent_graph_state_semantic_intake(
+        _base_planner_owned_agent_graph_state(
+            original_query,
+            capability_map=capability_map,
+            graph_state_phase="phase1_contracts_only",
+            semantic_intake_status="precompiled",
+        ),
+        semantic_intake_proposer=semantic_intake_proposer,
+    )
+
+
+def build_uncompiled_planner_owned_agent_graph_state(
+    original_query: str,
+    *,
+    tools_by_name: dict[str, Any] | None = None,
+) -> PlannerOwnedAgentGraphState:
+    """Build a graph entry state whose semantic intake will run inside LangGraph."""
+
+    capability_map = build_v2_capability_map(tools_by_name or {})
+    return _base_planner_owned_agent_graph_state(
         original_query,
         capability_map=capability_map,
+        graph_state_phase="phase0_pending_semantic_intake",
+        semantic_intake_status="pending_langgraph_node",
+    )
+
+
+def compile_planner_owned_agent_graph_state_semantic_intake(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    semantic_intake_proposer: SemanticIntakeProposer | None = None,
+) -> PlannerOwnedAgentGraphState:
+    """Compile semantic intake into the executable graph state."""
+
+    requirement_sketch = build_requirement_sketch_for_text(
+        state.original_query,
+        capability_map=state.capability_map,
         semantic_intake_proposer=semantic_intake_proposer,
     )
     requirement_ledger = build_requirement_ledger_from_sketch(requirement_sketch)
@@ -210,9 +244,9 @@ def build_initial_planner_owned_agent_graph_state(
     trace.diagnostics["semantic_intake"] = dict(requirement_ledger.intake_diagnostics)
 
     return PlannerOwnedAgentGraphState(
-        original_query=original_query,
+        original_query=state.original_query,
         requirement_ledger=requirement_ledger,
-        capability_map=capability_map,
+        capability_map=state.capability_map,
         revision_history=list(requirement_ledger.revision_history),
         execution_trace=trace,
         response_document_context=ResponseDocumentContext(
@@ -220,6 +254,50 @@ def build_initial_planner_owned_agent_graph_state(
             revision=requirement_ledger.revision,
             requirement_ids=[requirement.id for requirement in requirement_ledger.requirements],
         ),
+    )
+
+
+def _base_planner_owned_agent_graph_state(
+    original_query: str,
+    *,
+    capability_map: CapabilityMap,
+    graph_state_phase: str,
+    semantic_intake_status: str,
+) -> PlannerOwnedAgentGraphState:
+    trace = ExecutionTrace(
+        engine_version="v2",
+        generated_by=PLANNER_OWNED_AGENT_GRAPH_TRACE_ID,
+        tool_retrieval=ToolRetrievalTrace(call_count=0),
+    )
+    trace.planner.call_count = 0
+    trace.planner.diagnostics.update(
+        {
+            "planner_kind": "planner_owned_agent_graph_pending_semantic_intake",
+            "saw_original_query": True,
+            "saw_requirement_ledger": False,
+            "saw_high_level_capability_map": True,
+            "received_full_tool_catalog_before_need": False,
+            "execution_started": False,
+            "capability_need_count": 0,
+        }
+    )
+    trace.diagnostics["capability_needs"] = []
+    trace.diagnostics["graph_state_phase"] = graph_state_phase
+    trace.diagnostics["semantic_intake"] = {
+        "status": semantic_intake_status,
+        "runs_inside_langgraph_node": semantic_intake_status == "pending_langgraph_node",
+        "compiler_authority": "deterministic",
+        "raw_llm_output_executes_tools": False,
+    }
+    return PlannerOwnedAgentGraphState(
+        original_query=original_query,
+        requirement_ledger=RequirementLedger(
+            user_goal=original_query,
+            intake_diagnostics=dict(trace.diagnostics["semantic_intake"]),
+        ),
+        capability_map=capability_map,
+        execution_trace=trace,
+        response_document_context=ResponseDocumentContext(state="not_started"),
     )
 
 

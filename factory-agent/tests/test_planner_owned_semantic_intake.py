@@ -120,9 +120,12 @@ class _FakeMessage:
 class _FakeModel:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
+        self.configs: list[dict[str, Any]] = []
 
-    def invoke(self, prompt: str) -> _FakeMessage:
+    def invoke(self, prompt: str, *, config: dict[str, Any] | None = None) -> _FakeMessage:
         assert "JSON object" in prompt
+        if config is not None:
+            self.configs.append(config)
         return _FakeMessage(json.dumps(self._payload))
 
 
@@ -258,6 +261,42 @@ def test_semantic_intake_proposer_reclassifies_unbound_dependent_read_as_clarifi
 
     assert [item.role for item in result.items] == ["clarification_need"]
     assert result.items[0].diagnostics["blocked_entity"] == "job"
+
+
+def test_semantic_intake_proposer_names_langsmith_run_and_metadata():
+    model = _FakeModel(
+        {
+            "items": [
+                {
+                    "id": "1",
+                    "role": "required_requirement",
+                    "text": "Show machine M-CNC-01 status.",
+                }
+            ]
+        }
+    )
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=model,
+        parent_run_config={
+            "configurable": {"thread_id": "parent-trace"},
+            "tags": ["langgraph_parent"],
+            "metadata": {"parent_component": "langgraph"},
+        },
+    )
+
+    proposer.propose("Show machine M-CNC-01 status.")
+
+    assert model.configs
+    config = model.configs[0]
+    assert config["run_name"] == "semantic_intake_proposer"
+    assert config["configurable"]["thread_id"] == "parent-trace"
+    assert "langgraph_parent" in config["tags"]
+    assert "semantic_intake" in config["tags"]
+    assert config["metadata"]["parent_component"] == "langgraph"
+    assert config["metadata"]["component"] == "semantic_intake"
+    assert config["metadata"]["compiler_authority"] == "deterministic"
+    assert config["metadata"]["raw_llm_output_executes_tools"] is False
 
 
 def test_semantic_intake_classifies_conditional_job_branch():

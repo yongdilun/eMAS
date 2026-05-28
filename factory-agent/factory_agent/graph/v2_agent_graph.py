@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from pydantic import Field
 
@@ -17,6 +18,8 @@ from ..planning.v2_agent_state import (
     PlannerOwnedAgentGraphState,
     ResponseDocumentContext,
     build_initial_planner_owned_agent_graph_state,
+    build_uncompiled_planner_owned_agent_graph_state,
+    compile_planner_owned_agent_graph_state_semantic_intake,
     validate_graph_state_final_state,
 )
 from ..planning.v2_capability_map import build_capability_needs_for_text
@@ -485,10 +488,9 @@ class PlannerOwnedAgentGraph:
         session_context: Mapping[str, Any] | Any | None = None,
         options: PlannerOwnedAgentGraphRunOptions | Mapping[str, Any] | None = None,
     ) -> PlannerOwnedGraphResult:
-        state = build_initial_planner_owned_agent_graph_state(
+        state = build_uncompiled_planner_owned_agent_graph_state(
             user_message,
             tools_by_name=getattr(self._adapters, "tools_by_name", {}),
-            semantic_intake_proposer=build_semantic_intake_proposer(self._settings),
         )
         return await self.run_state(state, session_context=session_context, options=options)
 
@@ -726,7 +728,33 @@ class PlannerOwnedAgentGraph:
             return "replan"
         return "continue"
 
-    async def _semantic_intake_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _semantic_intake_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
+        if _semantic_intake_should_compile_in_node(state):
+            prior_diagnostics = dict(state.execution_trace.diagnostics)
+            compiled_state = compile_planner_owned_agent_graph_state_semantic_intake(
+                state,
+                semantic_intake_proposer=build_semantic_intake_proposer(
+                    self._settings,
+                    parent_run_config=config,
+                ),
+            )
+            _preserve_preinvoke_graph_diagnostics(compiled_state, prior_diagnostics)
+            semantic_diagnostics = compiled_state.execution_trace.diagnostics.get("semantic_intake")
+            if isinstance(semantic_diagnostics, dict):
+                semantic_diagnostics["status"] = "compiled_in_langgraph_node"
+                semantic_diagnostics["runs_inside_langgraph_node"] = True
+            _record_node_visit(compiled_state, "semantic_intake_node", self._tracer)
+            compiled_state.execution_trace.planner.diagnostics["semantic_intake"] = {
+                "original_query_present": bool(compiled_state.original_query.strip()),
+                "phase": "phase5_execution_observation",
+                "compiled_in_langgraph_node": True,
+            }
+            return _state_update(compiled_state)
+
         _record_node_visit(state, "semantic_intake_node", self._tracer)
         state.execution_trace.planner.diagnostics["semantic_intake"] = {
             "original_query_present": bool(state.original_query.strip()),
@@ -2490,6 +2518,22 @@ def _explicit_carried_forward_evidence_refs(
         elif isinstance(value, (list, tuple, set)):
             refs.update(str(item).strip() for item in value if str(item).strip())
     return refs
+
+
+def _semantic_intake_should_compile_in_node(state: PlannerOwnedAgentGraphState) -> bool:
+    semantic_diagnostics = state.execution_trace.diagnostics.get("semantic_intake")
+    if not isinstance(semantic_diagnostics, Mapping):
+        return False
+    return semantic_diagnostics.get("status") == "pending_langgraph_node"
+
+
+def _preserve_preinvoke_graph_diagnostics(
+    state: PlannerOwnedAgentGraphState,
+    prior_diagnostics: Mapping[str, Any],
+) -> None:
+    for key in ("graph_checkpoint_identity",):
+        if key in prior_diagnostics:
+            state.execution_trace.diagnostics[key] = prior_diagnostics[key]
 
 
 def _record_node_visit(

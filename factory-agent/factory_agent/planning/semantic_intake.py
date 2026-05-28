@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping
 from typing import Any, Literal, Protocol
 
+from langchain_core.runnables.config import merge_configs
 from pydantic import Field, ValidationError
 
 from ..config import Settings
@@ -197,9 +199,16 @@ class DeterministicFallbackSemanticIntakeProposer:
 class OpenAICompatibleSemanticIntakeProposer:
     proposer_name = "openai_compatible_semantic_intake_proposer"
 
-    def __init__(self, settings: Settings, *, model: Any | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        model: Any | None = None,
+        parent_run_config: Mapping[str, Any] | None = None,
+    ) -> None:
         self._settings = settings
         self._model = model
+        self._parent_run_config = parent_run_config
 
     def propose(
         self,
@@ -220,7 +229,14 @@ class OpenAICompatibleSemanticIntakeProposer:
             prompt_chars=len(prompt),
             prepared_clause_count=len(effective_clauses),
         )
-        raw_response = model.invoke(prompt)
+        run_config = _semantic_intake_run_config(
+            settings=self._settings,
+            prompt=prompt,
+            prepared_clause_count=len(effective_clauses),
+        )
+        if self._parent_run_config is not None:
+            run_config = merge_configs(self._parent_run_config, run_config)
+        raw_response = _invoke_semantic_intake_model(model, prompt, config=run_config)
         content = _message_content_text(raw_response)
         parsed = _extract_json_object(content)
         diagnostics = {
@@ -259,9 +275,20 @@ class OpenAICompatibleSemanticIntakeProposer:
         return result
 
 
-def build_semantic_intake_proposer(settings: Settings) -> SemanticIntakeProposer:
-    if settings.planner_openai_base_url or settings.openai_api_key:
-        return OpenAICompatibleSemanticIntakeProposer(settings)
+def build_semantic_intake_proposer(
+    settings: Settings,
+    *,
+    parent_run_config: Mapping[str, Any] | None = None,
+) -> SemanticIntakeProposer:
+    if (
+        settings.semantic_intake_openai_base_url
+        or settings.planner_openai_base_url
+        or settings.openai_api_key
+    ):
+        return OpenAICompatibleSemanticIntakeProposer(
+            settings,
+            parent_run_config=parent_run_config,
+        )
     return DeterministicFallbackSemanticIntakeProposer()
 
 
@@ -491,6 +518,40 @@ def _build_semantic_intake_prompt(text: str, *, prepared_clauses: list[str] | No
         "No tool names. "
         f"{json.dumps(payload, ensure_ascii=True)}"
     )
+
+
+def _semantic_intake_run_config(
+    *,
+    settings: Settings,
+    prompt: str,
+    prepared_clause_count: int,
+) -> dict[str, Any]:
+    return {
+        "run_name": "semantic_intake_proposer",
+        "tags": [
+            "factory_agent",
+            "semantic_intake",
+            "requirement_intake",
+            "llm_proposer",
+        ],
+        "metadata": {
+            "component": "semantic_intake",
+            "adapter": OpenAICompatibleSemanticIntakeProposer.proposer_name,
+            "model_name": settings.semantic_intake_model,
+            "base_url_configured": bool(settings.semantic_intake_openai_base_url),
+            "compiler_authority": "deterministic",
+            "raw_llm_output_executes_tools": False,
+            "prompt_chars": len(prompt),
+            "prepared_clause_count": prepared_clause_count,
+        },
+    }
+
+
+def _invoke_semantic_intake_model(model: Any, prompt: str, *, config: dict[str, Any]) -> Any:
+    try:
+        return model.invoke(prompt, config=config)
+    except TypeError:
+        return model.invoke(prompt)
 
 
 def _normalize_llm_items(value: Any) -> list[dict[str, Any]]:

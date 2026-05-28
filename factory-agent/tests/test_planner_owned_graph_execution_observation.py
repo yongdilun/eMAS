@@ -6,8 +6,10 @@ from typing import Any
 
 import pytest
 
+import factory_agent.graph.v2_agent_graph as v2_agent_graph_module
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
+from factory_agent.planning.semantic_intake import StaticSemanticIntakeProposer
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord, build_initial_planner_owned_agent_graph_state
 from factory_agent.planning.v2_contracts import (
@@ -698,6 +700,47 @@ class RepeatFailedFullSelectedCallProposer:
             ),
             adapter="repeat_failed_full_selected_call_proposer",
         )
+
+
+@pytest.mark.asyncio
+async def test_semantic_intake_llm_config_is_created_inside_langgraph_node(monkeypatch):
+    captured_parent_configs: list[Any] = []
+
+    def fake_build_semantic_intake_proposer(settings, *, parent_run_config=None):
+        _ = settings
+        captured_parent_configs.append(parent_run_config)
+        return StaticSemanticIntakeProposer(
+            {
+                "user_goal": "Show machine M-CNC-01 status.",
+                "source": "test_fake",
+                "proposer": "test_fake",
+                "items": [
+                    {
+                        "id": "intake-001",
+                        "role": "required_requirement",
+                        "text": "Show machine M-CNC-01 status.",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(
+        v2_agent_graph_module,
+        "build_semantic_intake_proposer",
+        fake_build_semantic_intake_proposer,
+    )
+
+    result = await _graph().run(
+        "Show machine M-CNC-01 status.",
+        options={"thread_id": "semantic-intake-trace-test"},
+    )
+
+    assert captured_parent_configs
+    assert captured_parent_configs[-1] is not None
+    assert captured_parent_configs[-1]["configurable"]["thread_id"] == "semantic-intake-trace-test"
+    semantic_diagnostics = result.state.execution_trace.diagnostics["semantic_intake"]
+    assert semantic_diagnostics["status"] == "compiled_in_langgraph_node"
+    assert semantic_diagnostics["runs_inside_langgraph_node"] is True
 
 
 def _state_with_persisted_choice():
