@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from factory_agent.config import get_settings
+from factory_agent.planning.semantic_intake import OpenAICompatibleSemanticIntakeProposer
 from factory_agent.planning.v2_agent_state import build_initial_planner_owned_agent_graph_state
 from factory_agent.schemas import ToolInfo
 
@@ -107,6 +110,154 @@ def _product_status_tool() -> ToolInfo:
         entity="product",
         response_contract="entity_status_v1",
     )
+
+
+class _FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _FakeModel:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def invoke(self, prompt: str) -> _FakeMessage:
+        assert "JSON object" in prompt
+        return _FakeMessage(json.dumps(self._payload))
+
+
+def test_semantic_intake_proposer_normalizes_small_model_optional_container_fields():
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "intake-001",
+                        "role": "required_requirement",
+                        "text": "Show machine M-CNC-01 status.",
+                        "condition": None,
+                        "child_intent": "read the machine status",
+                        "applies_to_item_ids": None,
+                        "diagnostics": "small model prose",
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = proposer.propose("Show machine M-CNC-01 status.")
+
+    assert result.items[0].condition == {}
+    assert result.items[0].child_intent == {}
+    assert result.items[0].applies_to_item_ids == []
+    assert result.items[0].diagnostics == {}
+
+
+def test_semantic_intake_proposer_accepts_single_item_object_from_small_model():
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "id": "intake-001",
+                "role": "required_requirement",
+                "text": "Show machine M-CNC-01 status.",
+            }
+        ),
+    )
+
+    result = proposer.propose("Show machine M-CNC-01 status.")
+
+    assert [item.role for item in result.items] == ["required_requirement"]
+    assert result.items[0].text == "Show machine M-CNC-01 status."
+
+
+def test_semantic_intake_proposer_normalizes_small_model_role_aliases_and_formatting():
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "read/show/check/get/list/status",
+                        "text": "Show job JOB-SEED-001 status in a short table.",
+                    },
+                    {
+                        "id": "2",
+                        "role": "summarize",
+                        "text": "summarize both.",
+                    },
+                ]
+            }
+        ),
+    )
+
+    result = proposer.propose("Show job JOB-SEED-001 status in a short table. Summarize both.")
+
+    assert [item.role for item in result.items] == [
+        "required_requirement",
+        "formatting_instruction",
+        "answer_instruction",
+    ]
+    assert result.items[0].text == "Show job JOB-SEED-001 status"
+    assert result.items[1].text == "in a short table."
+
+
+def test_semantic_intake_proposer_recovers_answer_instruction_from_small_model_tail_text():
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "required_requirement",
+                        "text": "Read job JOB-SEED-001.",
+                    },
+                    {
+                        "id": "2",
+                        "role": "conditional_branch",
+                        "text": "If it has a product, read that product too",
+                        "child_intent": "summarize both.",
+                    },
+                ]
+            }
+        ),
+    )
+
+    result = proposer.propose(
+        "Read job JOB-SEED-001. If it has a product, read that product too and summarize both."
+    )
+
+    assert [item.role for item in result.items] == [
+        "required_requirement",
+        "conditional_branch",
+        "answer_instruction",
+    ]
+    assert result.items[-1].text == "summarize both."
+
+
+def test_semantic_intake_proposer_reclassifies_unbound_dependent_read_as_clarification():
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "read",
+                        "text": "Read that job.",
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = proposer.propose("Read that job.")
+
+    assert [item.role for item in result.items] == ["clarification_need"]
+    assert result.items[0].diagnostics["blocked_entity"] == "job"
 
 
 def test_semantic_intake_classifies_conditional_job_branch():

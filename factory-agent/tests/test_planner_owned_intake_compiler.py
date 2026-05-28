@@ -121,6 +121,31 @@ def test_compiler_overrides_bad_required_role_for_answer_instruction():
     ]
 
 
+def test_compiler_reclassifies_answer_instruction_with_concrete_entity_as_required():
+    user_goal = "Explain why machine M-CNC-01 is stopped."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=_machine_job_capability_map(),
+        semantic_intake=_intake(
+            user_goal,
+            [
+                {
+                    "id": "intake-001",
+                    "role": "answer_instruction",
+                    "text": "Explain why machine M-CNC-01 is stopped.",
+                    "reason": "small_model_answer_alias",
+                }
+            ],
+        ),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [requirement.entity for requirement in ledger.requirements] == ["machine"]
+    assert ledger.requirements[0].constraints["machine_id"] == "M-CNC-01"
+    assert ledger.answer_instructions == []
+    assert [clause.role for clause in ledger.intake_clauses] == ["required_requirement"]
+
+
 def test_compiler_keeps_conditional_branch_non_executable_until_evidence():
     user_goal = "Check machine status, then conditionally read the job."
     sketch = build_requirement_sketch_for_text(

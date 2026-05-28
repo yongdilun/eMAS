@@ -34,6 +34,29 @@ def build_planner_chat_model(settings: Settings, *, json_mode: bool = False):
     return ChatOpenAI(**kwargs)
 
 
+def build_semantic_intake_chat_model(settings: Settings, *, json_mode: bool = True):
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception as exc:
+        raise PlannerLLMError("Semantic intake proposer requires langchain-openai.") from exc
+
+    kwargs: dict[str, Any] = {
+        "model": settings.semantic_intake_model,
+        "temperature": 0,
+        "timeout": settings.semantic_intake_timeout_s,
+        "max_retries": 0,
+        "max_tokens": settings.semantic_intake_max_tokens,
+    }
+    if json_mode:
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+    if settings.semantic_intake_openai_base_url:
+        kwargs["base_url"] = settings.semantic_intake_openai_base_url
+        kwargs["api_key"] = settings.openai_api_key or "local"
+    elif settings.openai_api_key:
+        kwargs["api_key"] = settings.openai_api_key
+    return ChatOpenAI(**kwargs)
+
+
 def build_rag_reranker_chat_model(settings: Settings, *, json_mode: bool = True):
     try:
         from langchain_openai import ChatOpenAI

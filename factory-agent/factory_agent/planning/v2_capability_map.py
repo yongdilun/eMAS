@@ -239,6 +239,16 @@ def build_requirement_sketch_for_text(
         frame = semantic_frame_for_text(clause)
         source = _source_for_frame(frame, clause)
         entity = _entity_for_hint(frame, clause, source)
+        if intake_item.role == "answer_instruction" and _answer_instruction_requires_retrieval(
+            frame,
+            source=source,
+        ):
+            intake_item = intake_item.model_copy(
+                update={
+                    "role": "required_requirement",
+                    "reason": "answer_instruction_contains_retrieval_target",
+                }
+            )
         clause_id = f"clause-{index:03d}"
 
         previous_modifier = _previous_requirement_modifier_for_clause(clause)
@@ -1306,6 +1316,16 @@ def _source_for_frame(frame: SemanticFrame, clause: str) -> SourceOfTruth:
     if _DOC_HINT_RE.search(clause):
         return "document_knowledge"
     return "unknown"
+
+
+def _answer_instruction_requires_retrieval(frame: SemanticFrame, *, source: SourceOfTruth) -> bool:
+    if source == "unknown":
+        return False
+    if source == "document_knowledge":
+        return True
+    if frame.entity or frame.domain_intent or frame.route.startswith("tool."):
+        return True
+    return any(values for values in frame.normalized_entities.values())
 
 
 def _entity_for_hint(frame: SemanticFrame, clause: str, source: SourceOfTruth) -> str | None:

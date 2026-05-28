@@ -8,7 +8,7 @@ from typing import Any, Literal, Protocol
 from pydantic import Field, ValidationError
 
 from ..config import Settings
-from ..llm.models import build_planner_chat_model
+from ..llm.models import build_semantic_intake_chat_model
 from ..observability.telemetry import log_event
 from .intent import semantic_frame_for_text, split_user_intents
 from .v2_contracts import RequirementClauseRole, V2ContractModel
@@ -207,15 +207,18 @@ class OpenAICompatibleSemanticIntakeProposer:
         *,
         prepared_clauses: list[str] | None = None,
     ) -> SemanticIntakeResult:
-        prompt = _build_semantic_intake_prompt(text, prepared_clauses=prepared_clauses)
-        model = self._model or build_planner_chat_model(self._settings, json_mode=True)
+        effective_clauses = prepared_clauses
+        if effective_clauses is None:
+            effective_clauses = [item.description for item in split_user_intents(text)]
+        prompt = _build_semantic_intake_prompt(text, prepared_clauses=effective_clauses)
+        model = self._model or build_semantic_intake_chat_model(self._settings, json_mode=True)
         started = time.perf_counter()
         log_event(
             "semantic_intake_proposer_llm_start",
             adapter=self.proposer_name,
-            model_name=self._settings.planner_model,
+            model_name=self._settings.semantic_intake_model,
             prompt_chars=len(prompt),
-            prepared_clause_count=len(prepared_clauses or []),
+            prepared_clause_count=len(effective_clauses),
         )
         raw_response = model.invoke(prompt)
         content = _message_content_text(raw_response)
@@ -234,7 +237,7 @@ class OpenAICompatibleSemanticIntakeProposer:
             result = SemanticIntakeResult.model_validate(
                 {
                     "user_goal": text,
-                    "items": parsed.get("items") or parsed.get("roles") or [],
+                    "items": _normalize_llm_items(_llm_items_payload(parsed)),
                     "source": "llm",
                     "proposer": self.proposer_name,
                     "diagnostics": {
@@ -248,7 +251,7 @@ class OpenAICompatibleSemanticIntakeProposer:
         log_event(
             "semantic_intake_proposer_llm_complete",
             adapter=self.proposer_name,
-            model_name=self._settings.planner_model,
+            model_name=self._settings.semantic_intake_model,
             duration_ms=diagnostics["duration_ms"],
             content_chars=len(content),
             role_counts=_role_counts(result.items),
@@ -470,27 +473,148 @@ def _role_counts(items: list[SemanticIntakeItem]) -> dict[str, int]:
 
 
 def _build_semantic_intake_prompt(text: str, *, prepared_clauses: list[str] | None) -> str:
-    payload = {
-        "user_query": text,
-        "deterministic_clauses": prepared_clauses or [],
-        "allowed_roles": [
-            "required_requirement",
-            "conditional_branch",
-            "answer_instruction",
-            "formatting_instruction",
-            "clarification_need",
-            "mutation_or_approval_request",
-        ],
-    }
+    effective_clauses = prepared_clauses
+    if effective_clauses is None:
+        effective_clauses = [item.description for item in split_user_intents(text)]
+    payload = {"clauses": effective_clauses}
     return (
-        "Classify the user's factory-agent request into semantic intake items. "
-        "Return JSON only with an items array. Each item needs id, role, text, and optional "
-        "parent_item_id, condition, child_intent, applies_to_item_ids, reason, diagnostics. "
-        "Conditional branches must stay non-executable and should describe the evidence fields "
-        "needed before a child read can activate. Answer and formatting instructions must not "
-        "request tools. Do not include tool names.\n\n"
+        "You are only a clause labeler. Do not answer the factory request. "
+        'Input clauses are already split; return one JSON object {"items":[...]} with one item per clause, same order. '
+        "Each item: id, role, text, parent_item_id, condition, child_intent, applies_to_item_ids, reason, diagnostics. "
+        "Use {} for condition/child_intent/diagnostics and [] for applies_to_item_ids when empty. "
+        "Roles: read/show/check/get/list/status with an entity or id => required_requirement. "
+        "if/when clause that says read that/this/the referenced entity => conditional_branch. "
+        "explain/summarize/what it means/cause/reason only => answer_instruction. "
+        "table/bullets/brief only => formatting_instruction. "
+        "change/update/delete/cancel/approve => mutation_or_approval_request. "
+        'For conditional_branch set condition.field_any to ["<entity>_id","active_<entity>_id"] and child_intent.entity. '
+        "No tool names. "
         f"{json.dumps(payload, ensure_ascii=True)}"
     )
+
+
+def _normalize_llm_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        payload = dict(item)
+        payload["id"] = str(payload.get("id") or f"intake-{index:03d}")
+        payload["role"] = _normalize_llm_role(payload.get("role"), text=str(payload.get("text") or ""))
+        payload["text"] = str(payload.get("text") or payload.get("description") or payload["role"]).strip()
+        if payload["role"] == "required_requirement":
+            clarification = _clarification_need_payload(
+                payload["text"],
+                frame=semantic_frame_for_text(payload["text"]),
+            )
+            if clarification is not None:
+                payload["role"] = "clarification_need"
+                payload["reason"] = clarification["reason"]
+                payload["diagnostics"] = {"blocked_entity": clarification.get("entity")}
+        recovered_answer_text = None
+        if payload["role"] != "answer_instruction":
+            recovered_answer_text = _answer_instruction_text_from_value(payload.get("child_intent"))
+            recovered_answer_text = recovered_answer_text or _answer_instruction_text_from_value(payload.get("reason"))
+            recovered_answer_text = recovered_answer_text or _answer_instruction_text_from_value(payload["text"])
+        if not isinstance(payload.get("condition"), dict):
+            payload["condition"] = {}
+        if not isinstance(payload.get("child_intent"), dict):
+            payload["child_intent"] = {}
+        if not isinstance(payload.get("applies_to_item_ids"), list):
+            payload["applies_to_item_ids"] = []
+        else:
+            payload["applies_to_item_ids"] = [str(item_id) for item_id in payload["applies_to_item_ids"] if item_id]
+        if not isinstance(payload.get("diagnostics"), dict):
+            payload["diagnostics"] = {}
+        required_text, formatting_text = _split_formatting_suffix(payload["text"])
+        if payload["role"] == "required_requirement" and required_text != payload["text"]:
+            payload["text"] = required_text
+            normalized.append(payload)
+            normalized.append(
+                {
+                    "id": f"{payload['id']}.format",
+                    "role": "formatting_instruction",
+                    "text": formatting_text,
+                    "parent_item_id": payload["id"],
+                    "condition": {},
+                    "child_intent": {},
+                    "applies_to_item_ids": [payload["id"]],
+                    "reason": "formatting_instruction",
+                    "diagnostics": {},
+                }
+            )
+        else:
+            normalized.append(payload)
+        if recovered_answer_text:
+            normalized.append(
+                {
+                    "id": f"{payload['id']}.answer",
+                    "role": "answer_instruction",
+                    "text": recovered_answer_text,
+                    "parent_item_id": payload["id"],
+                    "condition": {},
+                    "child_intent": {},
+                    "applies_to_item_ids": [payload["id"]],
+                    "reason": "answer_composition_instruction",
+                    "diagnostics": {},
+                }
+            )
+    return normalized
+
+
+def _answer_instruction_text_from_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = _normalize_space(value).strip(" .")
+    match = re.search(
+        r"\b(?P<answer>(?:and\s+)?(?:summari[sz]e|explain|describe)\b.+)$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match and re.search(r"\b(?:what\s+it\s+means|cause|reason)\b", normalized, re.IGNORECASE):
+        match = re.search(r"(?P<answer>.+)$", normalized, re.IGNORECASE)
+    if not match:
+        return None
+    answer = re.sub(r"^\s*and\s+", "", match.group("answer").strip(), flags=re.IGNORECASE)
+    return answer if answer.endswith(".") else f"{answer}."
+
+
+def _normalize_llm_role(value: Any, *, text: str) -> RequirementClauseRole:
+    raw = _normalize_space(str(value or "")).lower()
+    text_normalized = _normalize_space(text).lower()
+    haystack = f"{raw} {text_normalized}"
+    allowed: set[RequirementClauseRole] = {
+        "required_requirement",
+        "conditional_branch",
+        "answer_instruction",
+        "formatting_instruction",
+        "clarification_need",
+        "mutation_or_approval_request",
+    }
+    if raw in allowed:
+        return raw  # type: ignore[return-value]
+    if re.search(r"\b(?:conditional|if|when|whenever)\b", haystack):
+        return "conditional_branch"
+    if re.search(r"\b(?:change|update|delete|cancel|approve|approval|mutat(?:e|ion))\b", haystack):
+        return "mutation_or_approval_request"
+    if re.search(r"\b(?:summari[sz]e|explain|answer|cause|reason|what\s+it\s+means)\b", haystack):
+        return "answer_instruction"
+    if re.search(r"\b(?:read|show|check|get|lookup|look\s+up|status|list)\b", haystack):
+        return "required_requirement"
+    if re.search(r"\b(?:format|table|bullet|brief|concise|list)\b", raw):
+        return "formatting_instruction"
+    return "clarification_need"
+
+
+def _llm_items_payload(parsed: dict[str, Any]) -> Any:
+    items = parsed.get("items") or parsed.get("roles")
+    if items is not None:
+        return items
+    if parsed.get("role") and (parsed.get("text") or parsed.get("description")):
+        return [parsed]
+    return []
 
 
 def _message_content_text(message: Any) -> str:
