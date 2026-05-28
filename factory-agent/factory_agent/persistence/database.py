@@ -72,10 +72,10 @@ async def get_db():
     try:
         yield session
     finally:
-        await _close_session_after_cancellation(session)
+        await close_session_after_cancellation(session)
 
 
-async def _close_session_after_cancellation(session: AsyncSession) -> None:
+async def close_session_after_cancellation(session: AsyncSession) -> None:
     # Request cancellation can arrive while FastAPI is finalizing dependencies; let
     # the DB close finish so SQLAlchemy/aiomysql do not log interrupted cleanup.
     close_task = asyncio.create_task(session.close())

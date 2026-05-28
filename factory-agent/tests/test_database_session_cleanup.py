@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import anyio
 import pytest
 
 from factory_agent.persistence import database
@@ -41,5 +42,32 @@ async def test_get_db_finishes_session_close_when_dependency_cleanup_is_cancelle
 
     with pytest.raises(asyncio.CancelledError):
         await cleanup_task
+
+    assert fake_session.close_finished is True
+
+
+@pytest.mark.asyncio
+async def test_get_db_finishes_session_close_when_anyio_cancel_scope_is_cancelled(monkeypatch):
+    close_started = asyncio.Event()
+    close_continue = asyncio.Event()
+
+    class FakeSession:
+        close_finished = False
+
+        async def close(self):
+            close_started.set()
+            await close_continue.wait()
+            self.close_finished = True
+
+    fake_session = FakeSession()
+
+    async def close_from_request_scope():
+        await database.close_session_after_cancellation(fake_session)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(close_from_request_scope)
+        await close_started.wait()
+        task_group.cancel_scope.cancel()
+        close_continue.set()
 
     assert fake_session.close_finished is True
