@@ -71,3 +71,28 @@ async def test_get_db_finishes_session_close_when_anyio_cancel_scope_is_cancelle
         close_continue.set()
 
     assert fake_session.close_finished is True
+
+
+def test_aiomysql_pool_termination_force_closes_when_graceful_termination_is_cancelled():
+    class FakeDialect:
+        driver = "aiomysql"
+
+        def do_terminate(self, dbapi_connection):
+            dbapi_connection.terminate()
+
+    class FakeConnection:
+        force_closed = False
+
+        def terminate(self):
+            raise asyncio.CancelledError
+
+        def _terminate_force_close(self):
+            self.force_closed = True
+
+    dialect = FakeDialect()
+    database.configure_aiomysql_cancel_safe_termination(dialect)
+    connection = FakeConnection()
+
+    dialect.do_terminate(connection)
+
+    assert connection.force_closed is True

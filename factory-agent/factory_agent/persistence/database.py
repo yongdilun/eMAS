@@ -32,7 +32,30 @@ else:
         }
     )
 
+
+def configure_aiomysql_cancel_safe_termination(dialect) -> None:
+    if getattr(dialect, "driver", None) != "aiomysql":
+        return
+    if getattr(dialect, "_factory_agent_cancel_safe_termination", False):
+        return
+    original_do_terminate = dialect.do_terminate
+
+    def do_terminate(dbapi_connection):
+        try:
+            original_do_terminate(dbapi_connection)
+        except asyncio.CancelledError:
+            force_close = getattr(dbapi_connection, "_terminate_force_close", None)
+            if callable(force_close):
+                force_close()
+                return
+            raise
+
+    dialect.do_terminate = do_terminate
+    dialect._factory_agent_cancel_safe_termination = True
+
+
 engine = create_async_engine(DATABASE_URL, **engine_kwargs)
+configure_aiomysql_cancel_safe_termination(engine.sync_engine.dialect)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
