@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -73,3 +74,19 @@ async def test_readiness_reports_not_ready_when_required_tool_registry_is_not_lo
     assert status_code == 503
     assert payload["status"] == "not_ready"
     assert payload["checks"]["tool_registry"]["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_lifespan_shutdown_helper_suppresses_task_cancelled_error():
+    started = asyncio.Event()
+
+    async def long_running_task():
+        started.set()
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(long_running_task())
+    await started.wait()
+
+    await main._cancel_and_await_task(task)
+
+    assert task.cancelled()
