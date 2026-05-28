@@ -445,6 +445,40 @@ class JobProductThenProductExecutor:
         }
 
 
+class JobWithoutProductThenProductExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "job_id": args.get("id"),
+                        "status": "scheduled",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {
+                "data": {
+                    "product_id": args.get("id"),
+                    "status": "active",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 class MultiJobProductsThenProductsExecutor:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -958,6 +992,91 @@ async def test_conditional_product_branch_creates_child_when_job_evidence_has_pr
     assert "Job JOB-SEED-001 included product id P-001" in response_diagnostics["summary"]
     assert "Product P-001 is active." in response_diagnostics["summary"]
     assert "Found 1 job" not in response_diagnostics["summary"]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_if_present_product_explanation_activates_child_after_job_evidence():
+    executor = JobProductThenProductExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__products_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Check job JOB-SEED-001 then explain its product if present.",
+        session_context={"session_id": "condition-true-product-if-present"},
+    )
+
+    requirements = result.state.requirement_ledger.requirements
+    branch = result.state.requirement_ledger.conditional_branches[0]
+    child = next(requirement for requirement in requirements if requirement.parent_requirement_id == "req-001")
+    evidence_by_requirement = {
+        evidence.requirement_id: evidence
+        for evidence in result.state.evidence_ledger.evidence
+    }
+
+    assert [call["tool_name"] for call in executor.calls] == [
+        "get__jobs_{id}",
+        "get__products_{id}",
+    ]
+    assert executor.calls[0]["args"]["id"] == "JOB-SEED-001"
+    assert executor.calls[1]["args"]["id"] == "P-001"
+    assert not any(call["args"].get("id") == "IF" for call in executor.calls)
+    assert branch.status == "activated"
+    assert branch.parent_requirement_id == "req-001"
+    assert branch.activated_child_requirement_ids == [child.id]
+    assert branch.derived_from_evidence_refs == [evidence_by_requirement["req-001"].id]
+    assert child.entity == "product"
+    assert child.constraints == {"product_id": "P-001"}
+    assert child.derived_from_evidence_refs == [evidence_by_requirement["req-001"].id]
+    assert [window.requirement_id for window in result.state.candidate_tool_windows] == ["req-001", child.id]
+    assert selector.calls[0]["context"]["v2_tool_selector_adapter_request"]["requirement_id"] == "req-001"
+    assert selector.calls[1]["context"]["v2_tool_selector_adapter_request"]["requirement_id"] == child.id
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_if_present_product_explanation_skips_child_when_job_has_no_product_id():
+    executor = JobWithoutProductThenProductExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__products_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Check job JOB-NO-PRODUCT then explain its product if present.",
+        session_context={"session_id": "condition-false-product-if-present"},
+    )
+
+    branch = result.state.requirement_ledger.conditional_branches[0]
+
+    assert [call["tool_name"] for call in executor.calls] == ["get__jobs_{id}"]
+    assert executor.calls[0]["args"]["id"] == "JOB-NO-PRODUCT"
+    assert branch.status == "skipped"
+    assert branch.skipped_reason == "conditional_branch_not_triggered"
+    assert branch.activated_child_requirement_ids == []
+    assert [requirement.id for requirement in result.state.requirement_ledger.requirements] == ["req-001"]
+    assert [window.requirement_id for window in result.state.candidate_tool_windows] == ["req-001"]
+    assert len(selector.calls) == 1
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 

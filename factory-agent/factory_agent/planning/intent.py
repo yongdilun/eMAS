@@ -56,6 +56,22 @@ _USE_MACHINE_RE = re.compile(
 )
 _MACHINE_NAME_RE = re.compile(r"\bmachine\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
 _PRODUCT_RE = re.compile(r"\bproduct\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
+_UNBOUND_REFERENT_ID_TOKENS = {
+    "A",
+    "AN",
+    "APPLICABLE",
+    "IF",
+    "IT",
+    "ITS",
+    "ON",
+    "ONE",
+    "PRESENT",
+    "RELATED",
+    "THAT",
+    "THE",
+    "THIS",
+    "TOO",
+}
 _MATERIAL_REF_RE = re.compile(
     r"\bmaterial\s+(?:id\s+)?([A-Z0-9][A-Z0-9-]*)\b",
     re.IGNORECASE,
@@ -408,6 +424,8 @@ def _extract_constraints(clause: str) -> list[ExplicitConstraint]:
         )
     for m in _PRODUCT_RE.finditer(clause):
         cap = m.group(1).upper()
+        if cap in _UNBOUND_REFERENT_ID_TOKENS:
+            continue
         if cap in {"TYPE", "TYPES"} and re.search(r"\bproduct\s+types?\b", clause, re.IGNORECASE):
             continue
         out.append(

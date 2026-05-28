@@ -15,6 +15,7 @@ from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
 from tests.test_planner_owned_semantic_intake import (
     _job_status_tool,
     _machine_status_tool,
+    _product_status_tool,
 )
 
 
@@ -35,6 +36,34 @@ def _machine_job_capability_map():
             "get__jobs_{id}": _job_status_tool(),
         }
     )
+
+
+def _job_product_capability_map():
+    return build_v2_capability_map(
+        {
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        }
+    )
+
+
+def _identity_values_from_sketch(sketch) -> set[str]:
+    values: set[str] = set()
+    for requirement in sketch.requirements:
+        for key, value in requirement.constraints.items():
+            if key.endswith("_id") or key == "id":
+                if isinstance(value, list):
+                    values.update(str(item).upper() for item in value)
+                else:
+                    values.add(str(value).upper())
+    for retrieval_slice in sketch.tool_retrieval_slices:
+        for key, value in retrieval_slice.constraints.items():
+            if key.endswith("_id") or key == "id":
+                if isinstance(value, list):
+                    values.update(str(item).upper() for item in value)
+                else:
+                    values.add(str(value).upper())
+    return values
 
 
 def test_compiler_rejects_singular_dependent_read_without_referent():
@@ -60,6 +89,88 @@ def test_compiler_rejects_singular_dependent_read_without_referent():
     assert len(ledger.clarification_needs) == 1
     assert ledger.clarification_needs[0].reason == "dependent_singular_read_missing_bound_entity"
     assert ledger.clarification_needs[0].blocked_entity == "job"
+
+
+def test_unbound_when_you_see_product_on_that_job_is_not_executable():
+    user_goal = "When you see a product on that job, pull the product too."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=_job_product_capability_map(),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert ledger.requirements == []
+    assert sketch.tool_retrieval_slices == []
+    assert len(ledger.clarification_needs) == 1
+    assert ledger.clarification_needs[0].reason in {
+        "conditional_branch_missing_active_parent_or_referent",
+        "dependent_singular_read_missing_bound_entity",
+    }
+    assert ledger.clarification_needs[0].blocked_entity in {"product", "job"}
+    assert {"ON", "TOO"}.isdisjoint(_identity_values_from_sketch(sketch))
+
+
+def test_only_check_product_if_there_is_one_is_not_executable_without_parent():
+    user_goal = "Only check the product if there is one."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=_job_product_capability_map(),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert ledger.requirements == []
+    assert sketch.tool_retrieval_slices == []
+    assert len(ledger.clarification_needs) == 1
+    assert ledger.clarification_needs[0].reason in {
+        "conditional_branch_missing_active_parent_or_referent",
+        "dependent_singular_read_missing_bound_entity",
+    }
+    assert ledger.clarification_needs[0].blocked_entity == "product"
+    assert "IF" not in _identity_values_from_sketch(sketch)
+
+
+def test_explain_product_if_present_after_job_read_becomes_conditional_not_fake_product_read():
+    user_goal = "Check job JOB-SEED-001 then explain its product if present."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=_job_product_capability_map(),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [(requirement.entity, requirement.constraints) for requirement in ledger.requirements] == [
+        ("job", {"job_id": "JOB-SEED-001", "observation_fields": ["product_id", "active_product_id"]})
+    ]
+    assert sketch.tool_retrieval_slices[0].entity == "job"
+    assert sketch.tool_retrieval_slices[0].constraints["job_id"] == "JOB-SEED-001"
+    assert len(ledger.conditional_branches) == 1
+    branch = ledger.conditional_branches[0]
+    assert branch.parent_requirement_id == "req-001"
+    assert branch.status == "pending"
+    assert branch.condition["field_any"] == ["product_id", "active_product_id"]
+    assert branch.on_true["entity"] == "product"
+    assert [instruction.text for instruction in ledger.answer_instructions] == [
+        "explain its product if present."
+    ]
+    assert "IF" not in _identity_values_from_sketch(sketch)
+
+
+def test_dependent_singular_read_never_uses_stopwords_as_identity_constraints():
+    examples = [
+        ("if", "Only check the product if there is one."),
+        ("on", "When you see a product on that job, pull it."),
+        ("too", "Pull the product too when it appears."),
+        ("present", "Explain the product present if applicable."),
+        ("one", "Check the product one only if it exists."),
+        ("applicable", "Check the product applicable only if present."),
+        ("related", "Check the product related to that job."),
+    ]
+
+    for stopword, user_goal in examples:
+        sketch = build_requirement_sketch_for_text(
+            user_goal,
+            capability_map=_job_product_capability_map(),
+        )
+        assert stopword.upper() not in _identity_values_from_sketch(sketch), user_goal
 
 
 def test_compiler_does_not_compile_answer_instruction_to_tool_requirement():

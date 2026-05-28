@@ -13,6 +13,7 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
     'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
+    'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
@@ -67,6 +68,7 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
     'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
     'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
+    'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
@@ -167,6 +169,20 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   expect(semanticAnswer.expected.forbiddenStepSequence[0]).toMatchObject({
     toolName: 'get__settings_get',
   })
+
+  const semanticIfPresent = byId['HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT']
+  expect(semanticIfPresent.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 1,
+    triggerValues: ['P-001'],
+  })
+  expect(semanticIfPresent.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+  })
+  expect(semanticIfPresent.expected.forbiddenVisibleText.map((item) => item.label)).toContain('fake product id if')
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({
