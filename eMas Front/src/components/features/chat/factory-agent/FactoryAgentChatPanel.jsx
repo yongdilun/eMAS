@@ -37,6 +37,8 @@ const STARTER_PROMPTS = Object.freeze([
   'Change all low priority job to medium, then change all medium priority job to high',
   'Find all low priority jobs',
   'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
+  'Read jobs JOB-SEED-001 and JOB-SEED-002. For each job that includes a product id, read that product. Summarize each job with its product.',
+  'Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003.',
 ])
 
 function isProgressSummary(text) {
@@ -782,20 +784,56 @@ function isBackendUnavailableError(error) {
   )
 }
 
-function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRetryConnection }) {
+function isTerminalAttentionStatus(status) {
+  return status === FACTORY_AGENT_STATUS.FAILED || status === FACTORY_AGENT_STATUS.BLOCKED
+}
+
+function responseDocumentIsTerminal(document) {
+  const state = String(document?.state || document?.status || '').toLowerCase()
+  return ['blocked', 'failed', 'completed', 'cancelled', 'rejected', 'expired'].includes(state)
+}
+
+function latestTurnHasTerminalResponseDocument(turns = []) {
+  const rows = Array.isArray(turns) ? turns : []
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const normalized = normalizeResponseDocument(rows[i]?.responseDocument)
+    if (normalized.status === 'absent') continue
+    return responseDocumentIsTerminal(normalized.document)
+  }
+  return false
+}
+
+function FactoryAgentDiagnostics({
+  error,
+  sessionStatus,
+  streamDiagnostics = [],
+  retrying,
+  onRetryConnection,
+  terminalResponseDocumentAvailable = false,
+  runStarted = false,
+}) {
   const diagnostics = Array.isArray(streamDiagnostics) ? streamDiagnostics.filter((item) => item?.message) : []
-  if (!error && diagnostics.length === 0) return null
-  const backendUnavailable = isBackendUnavailableError(error)
+  const candidateError = terminalResponseDocumentAvailable ? null : error
+  const backendUnavailable = isBackendUnavailableError(candidateError)
+  const terminalAttention = !backendUnavailable && isTerminalAttentionStatus(sessionStatus)
+  const visibleError = runStarted && !backendUnavailable && !terminalAttention ? null : candidateError
+  if (!visibleError && diagnostics.length === 0) return null
+  const title = backendUnavailable
+    ? 'Factory Agent is disconnected'
+    : terminalAttention
+      ? 'Run needs attention'
+      : 'Factory Agent chat could not start'
+  const retryLabel = terminalAttention ? 'Refresh run status' : 'Try starting chat again'
 
   return (
     <div className="border-b border-hairline bg-surface-2 px-4 py-2 text-sm text-ink-muted">
-      {error ? (
+      {visibleError ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-semibold text-ink">
-              {backendUnavailable ? 'Factory Agent is disconnected' : 'Factory Agent chat could not start'}
+              {title}
             </div>
-            <div className="mt-0.5">{error}</div>
+            <div className="mt-0.5">{visibleError}</div>
           </div>
           {onRetryConnection ? (
             <button
@@ -804,7 +842,7 @@ function FactoryAgentDiagnostics({ error, streamDiagnostics = [], retrying, onRe
               disabled={retrying}
               className="rounded-md border border-hairline bg-surface-1 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
             >
-              {retrying ? 'Retrying...' : 'Try starting chat again'}
+              {retrying ? 'Retrying...' : retryLabel}
             </button>
           ) : null}
         </div>
@@ -984,7 +1022,8 @@ const FactoryAgentChatPanel = ({
       isSending ||
       sessionShowsActiveProgress),
   )
-  const canCancel = Boolean(session?.session_id) && [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION, FACTORY_AGENT_STATUS.BLOCKED].includes(effectiveSessionStatus)
+  const terminalResponseDocumentAvailable = latestTurnHasTerminalResponseDocument(turns)
+  const canCancel = Boolean(session?.session_id) && sessionShowsActiveProgress && !terminalResponseDocumentAvailable
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
   let placeholder = 'Ask factory agent...'
@@ -994,6 +1033,14 @@ const FactoryAgentChatPanel = ({
   const displayStatus =
     displayStatusFromActivity(activitySteps, effectiveSessionStatus) ||
     friendlySessionStatus(effectiveSessionStatus, isSending)
+  const runStartedWithProgress = Boolean(
+    session?.session_id &&
+    sessionShowsActiveProgress &&
+    (
+      (Array.isArray(activitySteps) && activitySteps.length > 0) ||
+      (Array.isArray(turns) && turns.some((turn) => normalizeResponseDocument(turn?.responseDocument).status !== 'absent'))
+    ),
+  )
 
   return (
     <div className="flex h-full relative">
@@ -1104,9 +1151,12 @@ const FactoryAgentChatPanel = ({
 
         <FactoryAgentDiagnostics
           error={error}
+          sessionStatus={effectiveSessionStatus}
           streamDiagnostics={streamDiagnostics}
           retrying={isRetryingConnection}
           onRetryConnection={retryConnection}
+          terminalResponseDocumentAvailable={terminalResponseDocumentAvailable}
+          runStarted={runStartedWithProgress}
         />
 
         <div className="flex min-h-0 flex-1 bg-canvas" data-chatbot-workspace="">

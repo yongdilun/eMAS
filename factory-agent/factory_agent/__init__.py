@@ -1,2 +1,4 @@
-# Factory Agent core modules (Phase 1 scaffolding)
+from .platform_compat import guard_blocking_windows_platform_queries
+
+guard_blocking_windows_platform_queries()
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from factory_agent.api.dependencies import require_session_owner
 from factory_agent.observability.metrics import metrics
-from factory_agent.persistence.database import get_db
+from factory_agent.persistence.database import close_session_after_cancellation, get_db
 from factory_agent.schemas import ActivityStepResponse, SessionSnapshotResponse, TimelineEventResponse
 from factory_agent.testing.fault_injection import SseFaultInjectionAdapter, build_sse_fault_injection_adapter
 
@@ -64,7 +64,7 @@ def build_events_router(
         if initial_for_auth is not None:
             require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-        await db.close()
+        await close_session_after_cancellation(db)
 
         async def _event_gen():
             heartbeat_s = 12
@@ -192,7 +192,7 @@ def build_events_router(
         if initial_for_auth is not None:
             require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-        await db.close()
+        await close_session_after_cancellation(db)
 
         async def _event_gen():
             heartbeat_s = 12
@@ -298,7 +298,7 @@ def build_events_router(
         if initial_for_auth is not None:
             require_session_owner(initial_for_auth.session, user)
         session_factory = sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-        await db.close()
+        await close_session_after_cancellation(db)
 
         async def _event_gen():
             heartbeat_s = 15

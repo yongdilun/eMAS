@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -32,6 +33,14 @@ RequirementType = Literal[
     "clarification_request",
     "safety_refusal",
     "diagnostic",
+]
+RequirementClauseRole = Literal[
+    "required_requirement",
+    "conditional_branch",
+    "answer_instruction",
+    "formatting_instruction",
+    "clarification_need",
+    "mutation_or_approval_request",
 ]
 RequirementStatus = Literal[
     "open",
@@ -98,6 +107,16 @@ UserInterruptType = Literal[
     "reject_approval",
     "approve_approval",
 ]
+ConditionalBranchStatus = Literal["pending", "activated", "skipped"]
+DependencyExecutionLabel = Literal[
+    "independent_read",
+    "depends_on_evidence",
+    "approval_required",
+    "sequential_read",
+    "blocked",
+    "satisfied_or_terminal",
+]
+DependencyReadyGroupMode = Literal["parallel_read_batch"]
 
 
 class V2ContractModel(BaseModel):
@@ -304,11 +323,88 @@ class HydratedToolCards(V2ContractModel):
         return self
 
 
+class DependencyRequirementPlan(V2ContractModel):
+    requirement_id: str = Field(min_length=1)
+    label: DependencyExecutionLabel
+    ready: bool = False
+    can_batch: bool = False
+    depends_on_requirement_ids: list[str] = Field(default_factory=list)
+    depends_on_evidence_refs: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    batch_key: str | None = None
+    source_of_truth: SourceOfTruth = "unknown"
+    action: CapabilityAction | None = None
+    tool_names: list[str] = Field(default_factory=list)
+    estimated_tool_call_count: int = Field(default=1, ge=0)
+    diagnostic_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyReadyGroup(V2ContractModel):
+    group_id: str = Field(min_length=1)
+    mode: DependencyReadyGroupMode
+    requirement_ids: list[str] = Field(default_factory=list)
+    batch_key: str = Field(min_length=1)
+    max_batch_size: int = Field(default=3, ge=1)
+    diagnostic_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyPlan(V2ContractModel):
+    ledger_revision: int = Field(ge=1)
+    requirements: list[DependencyRequirementPlan] = Field(default_factory=list)
+    ready_groups: list[DependencyReadyGroup] = Field(default_factory=list)
+    blocked: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
 class RequirementOrigin(V2ContractModel):
     goal: str | None = None
     constraints: str | None = None
     fields: str | None = None
     source_of_truth: str | None = None
+
+
+class RequirementIntakeClause(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    role: RequirementClauseRole
+    requirement_id: str | None = None
+    parent_requirement_id: str | None = None
+    branch_id: str | None = None
+    reason: str | None = None
+
+
+class ConditionalBranchContract(V2ContractModel):
+    id: str = Field(min_length=1)
+    parent_requirement_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    condition: dict[str, Any] = Field(default_factory=dict)
+    on_true: dict[str, Any] = Field(default_factory=dict)
+    status: ConditionalBranchStatus = "pending"
+    derived_from_evidence_refs: list[str] = Field(default_factory=list)
+    activated_child_requirement_ids: list[str] = Field(default_factory=list)
+    skipped_reason: str | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnswerInstruction(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    applies_to_requirement_ids: list[str] = Field(default_factory=list)
+    applies_to_branch_ids: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class FormattingInstruction(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    reason: str | None = None
+
+
+class ClarificationNeed(V2ContractModel):
+    id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    blocked_entity: str | None = None
 
 
 class RequirementSketchItem(V2ContractModel):
@@ -321,6 +417,7 @@ class RequirementSketchItem(V2ContractModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     requested_fields: list[str] = Field(default_factory=list)
     locked_constraints: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
     origin: RequirementOrigin = Field(default_factory=RequirementOrigin)
 
 
@@ -329,6 +426,12 @@ class RequirementSketch(V2ContractModel):
     requirements: list[RequirementSketchItem] = Field(default_factory=list)
     field_aliases: FieldAliases = Field(default_factory=FieldAliases)
     tool_retrieval_slices: list[ToolRetrievalSlice] = Field(default_factory=list)
+    intake_clauses: list[RequirementIntakeClause] = Field(default_factory=list)
+    conditional_branches: list[ConditionalBranchContract] = Field(default_factory=list)
+    answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
+    formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
+    clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
+    intake_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SatisfactionCheck(V2ContractModel):
@@ -357,6 +460,10 @@ class RequirementLedgerEntry(V2ContractModel):
     depends_on: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     superseded_by: str | None = None
+    parent_requirement_id: str | None = None
+    expansion_reason: str | None = None
+    derived_from_evidence_refs: list[str] = Field(default_factory=list)
+    derived_from_missing_reasons: list[dict[str, Any]] = Field(default_factory=list)
     satisfaction_checks: list[SatisfactionCheck] = Field(default_factory=list)
     origin: RequirementOrigin = Field(default_factory=RequirementOrigin)
 
@@ -423,8 +530,86 @@ class AgendaPatch(V2ContractModel):
 class RequirementLedger(V2ContractModel):
     user_goal: str = Field(min_length=1)
     requirements: list[RequirementLedgerEntry] = Field(default_factory=list)
+    intake_clauses: list[RequirementIntakeClause] = Field(default_factory=list)
+    conditional_branches: list[ConditionalBranchContract] = Field(default_factory=list)
+    answer_instructions: list[AnswerInstruction] = Field(default_factory=list)
+    formatting_instructions: list[FormattingInstruction] = Field(default_factory=list)
+    clarification_needs: list[ClarificationNeed] = Field(default_factory=list)
+    intake_diagnostics: dict[str, Any] = Field(default_factory=dict)
     revision: int = Field(default=1, ge=1)
     revision_history: list[RequirementRevisionRecord] = Field(default_factory=list)
+
+
+def next_child_requirement_id(
+    parent_requirement_id: str,
+    existing_requirement_ids: Iterable[str],
+    *,
+    max_children: int = 2,
+) -> str:
+    """Return the next bounded child id for a parent requirement."""
+
+    parent = parent_requirement_id.strip()
+    if not parent:
+        raise ValueError("parent requirement id is required")
+    max_count = max(1, min(int(max_children), 26))
+    existing = {str(requirement_id).strip() for requirement_id in existing_requirement_ids}
+    for index in range(max_count):
+        candidate = f"{parent}.{chr(ord('a') + index)}"
+        if candidate not in existing:
+            return candidate
+    raise ValueError(f"child requirement limit reached for {parent}")
+
+
+def requirement_child_lineage(ledger: RequirementLedger) -> list[dict[str, Any]]:
+    requirements = list(ledger.requirements)
+    by_parent: dict[str, list[RequirementLedgerEntry]] = {}
+    for requirement in requirements:
+        parent_id = requirement.parent_requirement_id
+        if not parent_id:
+            continue
+        by_parent.setdefault(parent_id, []).append(requirement)
+
+    lineage: list[dict[str, Any]] = []
+    for parent in requirements:
+        children = by_parent.get(parent.id)
+        if not children:
+            continue
+        child_rows = [
+            {
+                "requirement_id": child.id,
+                "status": child.status,
+                "expansion_reason": child.expansion_reason,
+                "derived_from_evidence_refs": list(child.derived_from_evidence_refs),
+                "derived_from_missing_reasons": list(child.derived_from_missing_reasons),
+                "evidence_refs": list(child.evidence_refs),
+            }
+            for child in children
+        ]
+        lineage.append(
+            {
+                "parent_requirement_id": parent.id,
+                "child_requirement_ids": [child.id for child in children],
+                "ledger_revision": ledger.revision,
+                "children": child_rows,
+                "expansion_reason": next(
+                    (child.expansion_reason for child in children if child.expansion_reason),
+                    None,
+                ),
+                "derived_from_evidence_refs": list(
+                    dict.fromkeys(
+                        ref
+                        for child in children
+                        for ref in child.derived_from_evidence_refs
+                    )
+                ),
+                "derived_from_missing_reasons": [
+                    reason
+                    for child in children
+                    for reason in child.derived_from_missing_reasons
+                ],
+            }
+        )
+    return lineage
 
 
 class EvidenceCitation(V2ContractModel):

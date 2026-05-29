@@ -16,8 +16,20 @@ from .v2_agent_state import (
     PlannerOwnedAgentGraphState,
     PlannerOwnedGraphDecisionKind,
 )
-from .v2_contracts import CapabilityNeed, HydratedToolCard, RequirementLedger, RequirementLedgerEntry, V2ContractModel
+from .v2_contracts import (
+    CapabilityNeed,
+    HydratedToolCard,
+    RequirementLedger,
+    RequirementLedgerEntry,
+    RequirementRevisionRecord,
+    V2ContractModel,
+)
 from .v2_planner_decisions import PlannerDecisionSubmission
+from .v2_tool_card_selection import (
+    card_entity_matches_requirement as _card_entity_matches_requirement,
+    card_supports_collection_read as _card_supports_collection_read,
+    card_supports_single_entity_read as _card_supports_single_entity_read,
+)
 
 
 class PlannerDecisionProposerError(RuntimeError):
@@ -185,7 +197,38 @@ def _offline_selected_tool_call(
             card = _tool_card_for_call(state, call)
             if card is not None and (card.requires_approval or not card.is_read_only):
                 return call
+    single_entity_call = _offline_single_entity_tool_call(state=state, context=context)
+    if single_entity_call is not None:
+        return single_entity_call
     return context.candidate_tool_calls[0]
+
+
+def _offline_single_entity_tool_call(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+) -> GraphToolCall | None:
+    requirement = _requirement_for_context(state=state, context=context)
+    if getattr(requirement, "requirement_type", None) != "single_entity_status":
+        return None
+    for call in context.candidate_tool_calls:
+        card = _tool_card_for_call(state, call)
+        if card is not None and _card_supports_single_entity_read(card, requirement):
+            return call
+    for call in context.candidate_tool_calls:
+        card = _tool_card_for_call(state, call)
+        if card is not None and _card_entity_matches_requirement(card, requirement) and not _card_supports_collection_read(card):
+            return call
+    return None
+
+
+def _requirement_for_context(
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+) -> RequirementLedgerEntry | None:
+    if context.requirement_id is None:
+        return None
+    return next((item for item in state.requirement_ledger.requirements if item.id == context.requirement_id), None)
 
 
 class OpenAICompatibleQwenPlannerDecisionProposer:
@@ -406,6 +449,7 @@ def _with_proposer_diagnostics(
         submission=PlannerDecisionSubmission(
             decision=updated_decision,
             proposed_requirement_ledger=submission.proposed_requirement_ledger,
+            candidate_tool_calls=list(context.candidate_tool_calls),
         ),
         diagnostics=proposer_diagnostics,
     )
@@ -431,6 +475,10 @@ def _build_planner_decision_prompt(
             "For non-approval choose_tool decisions, do not choose a tool call with missing_required_args unless every candidate has missing required args.",
             "Do not include proposed_requirement_ledger unless decision_kind is revise_requirements.",
             "Do not drop locked constraints in proposed_requirement_ledger.",
+            "For revise_requirements, proposed_requirement_ledger must be complete and preserve existing locked constraints.",
+            "Child requirements are allowed only when active evidence or missing-evidence reasons justify the expansion.",
+            "Child requirements must include parent_requirement_id, expansion_reason, and derived evidence or missing-reason refs.",
+            "Do not propose mutation child requirements unless they remain approval-gated.",
         ],
         "response_contract": _response_contract_for_context(
             state=state,
@@ -548,6 +596,28 @@ def _bounded_decision_state(
             state.final_validation_result.status if state.final_validation_result is not None else None
         )
         base["evidence_summary"] = _evidence_summary(state, requirement_id=None)
+    if requested_kind == "revise_requirements":
+        base["active_evidence_summary"] = _evidence_summary(state, requirement_id=context.requirement_id)
+        base["missing_evidence_reasons"] = _missing_evidence_reasons_for_prompt(state)
+        base["failed_tool_memory"] = _failed_tool_memory_for_prompt(state)
+        base["candidate_source_of_truth_hints"] = _capability_map_summary(state)
+        base["child_expansion_rules"] = {
+            "max_child_depth": 1,
+            "max_children_per_parent": 2,
+            "id_pattern": "{parent_requirement_id}.a then {parent_requirement_id}.b",
+            "allowed_initial_child_actions": ["read", "read_one", "read_many", "list", "search_documents"],
+            "mutation_child_policy": "approval-gated or rejected",
+            "lineage_required_fields": [
+                "parent_requirement_id",
+                "expansion_reason",
+                "derived_from_evidence_refs",
+                "derived_from_missing_reasons",
+            ],
+            "complete_ledger_required": True,
+            "preserve_locked_constraints": True,
+            "do_not_contradict_parent_locked_constraints": True,
+            "children_must_use_fresh_requirement_scoped_tool_retrieval": True,
+        }
     return base
 
 
@@ -602,6 +672,29 @@ def _evidence_summary(
         }
         for evidence in evidence_items
     ]
+
+
+def _missing_evidence_reasons_for_prompt(state: PlannerOwnedAgentGraphState) -> list[dict[str, Any]]:
+    reasons: list[dict[str, Any]] = []
+    diagnostics = state.execution_trace.diagnostics
+    for key in ("satisfaction", "replan_spine"):
+        section = diagnostics.get(key)
+        if not isinstance(section, Mapping):
+            continue
+        raw = section.get("missing_evidence_reasons")
+        if isinstance(raw, list):
+            reasons.extend(dict(reason) for reason in raw if isinstance(reason, Mapping))
+    return reasons
+
+
+def _failed_tool_memory_for_prompt(state: PlannerOwnedAgentGraphState) -> list[dict[str, Any]]:
+    replan = state.execution_trace.diagnostics.get("replan_spine")
+    if not isinstance(replan, Mapping):
+        return []
+    raw = replan.get("failed_tool_calls")
+    if not isinstance(raw, list):
+        return []
+    return [dict(call) for call in raw if isinstance(call, Mapping)]
 
 
 def _tool_call_summaries(
@@ -843,11 +936,116 @@ def _normalize_submission_payload(
     if kind != "revise_requirements":
         proposed = None
     if proposed is not None and not isinstance(proposed, RequirementLedger):
-        proposed = dict(proposed) if isinstance(proposed, Mapping) else proposed
+        proposed = _normalize_proposed_requirement_ledger_payload(
+            dict(proposed) if isinstance(proposed, Mapping) else proposed,
+            state=state,
+        )
+    elif isinstance(proposed, RequirementLedger):
+        proposed = _normalize_proposed_requirement_ledger_payload(
+            proposed.model_dump(mode="json"),
+            state=state,
+        )
     return {
         "decision": decision,
         "proposed_requirement_ledger": proposed,
     }
+
+
+def _normalize_proposed_requirement_ledger_payload(
+    proposed: Any,
+    *,
+    state: PlannerOwnedAgentGraphState,
+) -> Any:
+    if not isinstance(proposed, Mapping):
+        return proposed
+    data = dict(proposed)
+    raw_requirements = data.get("requirements")
+    if not isinstance(raw_requirements, list):
+        return data
+
+    current_ids = {requirement.id for requirement in state.requirement_ledger.requirements}
+    requirements = [dict(requirement) for requirement in raw_requirements if isinstance(requirement, Mapping)]
+    added_children = [
+        requirement
+        for requirement in requirements
+        if str(requirement.get("id") or "") not in current_ids
+        and str(requirement.get("parent_requirement_id") or "").strip()
+    ]
+    if not added_children:
+        return data
+
+    revision = int(data.get("revision") or state.requirement_ledger.revision + 1)
+    revision_history = [
+        dict(record)
+        for record in data.get("revision_history", [])
+        if isinstance(record, Mapping)
+    ]
+    added_ids = [str(child.get("id")) for child in added_children if str(child.get("id") or "")]
+    if _revision_history_covers_child_ids(revision_history, added_ids):
+        data["revision_history"] = revision_history
+        return data
+
+    parent_ids = list(
+        dict.fromkeys(
+            str(child.get("parent_requirement_id"))
+            for child in added_children
+            if str(child.get("parent_requirement_id") or "")
+        )
+    )
+    evidence_refs = list(
+        dict.fromkeys(
+            str(ref)
+            for child in added_children
+            for ref in child.get("derived_from_evidence_refs", [])
+            if str(ref)
+        )
+    )
+    missing_reasons = [
+        dict(reason)
+        for child in added_children
+        for reason in child.get("derived_from_missing_reasons", [])
+        if isinstance(reason, Mapping)
+    ]
+    record = RequirementRevisionRecord(
+        revision=revision,
+        actor="planner",
+        change_type="add_child_requirements",
+        requirement_id=parent_ids[0] if len(parent_ids) == 1 else None,
+        reason="Planner proposed bounded child requirement expansion.",
+        locked_constraints_preserved=True,
+        details={
+            "parent_requirement_id": parent_ids[0] if len(parent_ids) == 1 else None,
+            "parent_requirement_ids": parent_ids,
+            "added_child_requirement_ids": added_ids,
+            "derived_from_evidence_refs": evidence_refs,
+            "derived_from_missing_reasons": missing_reasons,
+            "locked_constraints_preserved": True,
+        },
+    )
+    revision_history.append(record.model_dump(mode="json"))
+    data["revision_history"] = revision_history
+    return data
+
+
+def _revision_history_covers_child_ids(
+    revision_history: list[dict[str, Any]],
+    child_ids: list[str],
+) -> bool:
+    if not child_ids:
+        return True
+    expected = set(child_ids)
+    for record in revision_history:
+        details = record.get("details")
+        if not isinstance(details, Mapping):
+            continue
+        covered = {
+            str(child_id)
+            for child_id in details.get("added_child_requirement_ids", [])
+            if str(child_id)
+        }
+        if expected.issubset(covered):
+            return True
+    return False
 
 
 def _normalized_selected_tool_call(

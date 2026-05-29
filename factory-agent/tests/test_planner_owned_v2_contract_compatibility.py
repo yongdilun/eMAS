@@ -41,6 +41,7 @@ from factory_agent.planning.v2_contracts import (
     ToolRetrievalSlice,
     ToolRetrievalTrace,
     ToolSelectorAdapterRequest,
+    next_child_requirement_id,
 )
 
 
@@ -304,6 +305,82 @@ def test_phase2_requirement_vocabulary_stays_separate_from_capability_and_tool_a
             entity="machine",
             actions=["single_entity_status"],
         )
+
+
+def test_requirement_expansion_child_contract_round_trips_with_lineage():
+    child = RequirementLedgerEntry(
+        id=next_child_requirement_id("req-001", []),
+        goal="Read active job JOB-CAUSE-17",
+        requirement_type="single_entity_status",
+        entity="job",
+        intent_operation="report_status",
+        source_of_truth="operational_state",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        requested_fields=["status", "material_status"],
+        locked_constraints=["job_id", "requested_fields"],
+        parent_requirement_id="req-001",
+        expansion_reason="Parent machine evidence exposed an active job follow-up.",
+        derived_from_evidence_refs=["ev-api-req-001"],
+        derived_from_missing_reasons=[],
+        depends_on=["ev-api-req-001"],
+    )
+
+    dumped = child.model_dump(mode="json")
+    restored = RequirementLedgerEntry.model_validate(dumped)
+
+    assert dumped["id"] == "req-001.a"
+    assert dumped["parent_requirement_id"] == "req-001"
+    assert dumped["expansion_reason"] == "Parent machine evidence exposed an active job follow-up."
+    assert dumped["derived_from_evidence_refs"] == ["ev-api-req-001"]
+    assert restored == child
+
+
+def test_requirement_expansion_revision_record_captures_child_creation_audit_details():
+    parent = _status_requirement(id="req-001", constraints={"machine_id": "M-CNC-01"})
+    child_id = next_child_requirement_id(parent.id, [parent.id])
+    child = _status_requirement(
+        id=child_id,
+        goal="Read active job JOB-CAUSE-17",
+        entity="job",
+        constraints={"job_id": "JOB-CAUSE-17"},
+        locked_constraints=["job_id"],
+        parent_requirement_id=parent.id,
+        expansion_reason="Parent evidence exposed an active job follow-up.",
+        derived_from_evidence_refs=["ev-api-req-001"],
+        depends_on=["ev-api-req-001"],
+    )
+    record = RequirementRevisionRecord(
+        revision=2,
+        actor="planner",
+        change_type="add_child_requirements",
+        requirement_id=parent.id,
+        reason="Bounded evidence-driven requirement expansion.",
+        locked_constraints_preserved=True,
+        details={
+            "parent_requirement_id": parent.id,
+            "added_child_requirement_ids": [child.id],
+            "derived_from_evidence_refs": ["ev-api-req-001"],
+            "derived_from_missing_reasons": [],
+            "locked_constraints_preserved": True,
+        },
+    )
+    ledger = RequirementLedger(
+        user_goal="Explain why machine M-CNC-01 is stopped.",
+        requirements=[parent, child],
+        revision=2,
+        revision_history=[record],
+    )
+
+    dumped = ledger.model_dump(mode="json")
+    restored = RequirementLedger.model_validate(dumped)
+
+    assert dumped["revision_history"][0]["change_type"] == "add_child_requirements"
+    assert dumped["revision_history"][0]["details"]["parent_requirement_id"] == "req-001"
+    assert dumped["revision_history"][0]["details"]["added_child_requirement_ids"] == ["req-001.a"]
+    assert dumped["revision_history"][0]["details"]["derived_from_evidence_refs"] == ["ev-api-req-001"]
+    assert dumped["revision_history"][0]["locked_constraints_preserved"] is True
+    assert restored == ledger
+
 
 def test_phase2_agenda_patch_contract_preserves_locked_constraints():
     original = _status_requirement()

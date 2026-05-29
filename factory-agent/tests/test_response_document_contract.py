@@ -15,7 +15,7 @@ from factory_agent.persistence.models import Approval, Message, Plan, PlanStep, 
 from factory_agent.rag.source_metadata import insufficient_context_answer
 from factory_agent.registry.tool_registry import ToolRegistry
 from factory_agent.schemas import PresentationResponse, ResponseDocument
-from factory_agent.services import response_document_service
+from factory_agent.services import response_document_service, session_snapshot_service
 from factory_agent.services.response_document_service import (
     BUSINESS_CHANGE_CONTRACT,
     ENTITY_STATUS_CONTRACT,
@@ -230,6 +230,146 @@ def test_read_evidence_collection_summary_surfaces_business_rule_rows():
     assert summary == "Rule Applied: found 2 low-priority jobs."
 
 
+def test_planner_owned_completed_answer_summary_prefers_graph_response_summary():
+    created_at = datetime(2026, 5, 27, 12, 0, 0)
+    session = _session(
+        session_id="rd-conditional-summary",
+        plan_id="plan-rd-conditional-summary",
+        created_at=created_at,
+        event_seq=3,
+        status="COMPLETED",
+        replan_context={
+            "intent_contract": {
+                "response_document_context": {
+                    "diagnostics": {
+                        "summary": (
+                            "Job JOB-SEED-001 was retrieved. "
+                            "No machine id was present, so the conditional machine follow-up was skipped."
+                        )
+                    }
+                }
+            }
+        },
+    )
+    plan = _plan(
+        session_id=session.session_id,
+        plan_id=session.plan_id,
+        created_at=created_at,
+    )
+    terminal = type("TerminalEvent", (), {"content": "Job JOB-SEED-001 was retrieved."})()
+
+    summary = session_snapshot_service._planner_owned_completed_answer_summary(
+        session=session,
+        terminal_event=terminal,
+        plan=plan,
+    )
+
+    assert summary == (
+        "Job JOB-SEED-001 was retrieved. "
+        "No machine id was present, so the conditional machine follow-up was skipped."
+    )
+
+
+@pytest.mark.asyncio
+async def test_planner_owned_conditional_summary_overrides_mixed_read_counter(db_session):
+    created_at = datetime(2026, 5, 27, 14, 35, 0)
+    session_id = "rd-conditional-product-summary"
+    plan_id = "rd-conditional-product-summary-plan"
+    prompt = "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result."
+    planner_summary = (
+        "Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. "
+        "Product P-001 is active."
+    )
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=6,
+                status="COMPLETED",
+                current_intent=prompt,
+                replan_context={
+                    "intent_contract": {
+                        "response_document_context": {
+                            "diagnostics": {
+                                "summary": planner_summary,
+                                "conditional_branches": [
+                                    {
+                                        "id": "branch-001",
+                                        "status": "activated",
+                                        "parent_requirement_id": "req-001",
+                                        "activated_child_requirement_ids": ["req-001.a"],
+                                        "diagnostics": {
+                                            "trigger_field": "product_id",
+                                            "trigger_value": "P-001",
+                                        },
+                                    }
+                                ],
+                                "answer_instructions": [
+                                    {"id": "answer-001", "text": "Summarize the result."}
+                                ],
+                            }
+                        }
+                    }
+                },
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-conditional-job",
+                completed_at=created_at + timedelta(seconds=2),
+                rows=[],
+                summary="Job JOB-SEED-001 was retrieved.",
+                tool_name="get__jobs_{id}",
+                args={"id": "JOB-SEED-001"},
+                result={
+                    "success": True,
+                    "data": {
+                        "job_id": "JOB-SEED-001",
+                        "product_id": "P-001",
+                    },
+                },
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-conditional-product",
+                completed_at=created_at + timedelta(seconds=3),
+                rows=[],
+                summary="Product P-001 is active.",
+                tool_name="get__products_{id}",
+                args={"id": "P-001"},
+                result={
+                    "success": True,
+                    "data": {
+                        "product_id": "P-001",
+                        "status": "active",
+                    },
+                },
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content="Found 1 job. Found 1 product.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=4),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+
+    assert document["state"] == "completed"
+    assert document["message"] == planner_summary
+    assert document["summary"] == planner_summary
+    assert "Found 1 job. Found 1 product." not in json.dumps(document)
+    completion = next(step for step in document["run_steps"] if step["kind"] == "completed")
+    assert completion["summary"] == planner_summary
+
+
 def _write_step(
     *,
     session_id: str,
@@ -276,6 +416,7 @@ def _read_step(
     session_id: str,
     plan_id: str,
     step_id: str,
+    step_index: int = 0,
     completed_at: datetime,
     rows: list[dict[str, Any]],
     summary: str,
@@ -287,7 +428,7 @@ def _read_step(
         step_id=step_id,
         plan_id=plan_id,
         session_id=session_id,
-        step_index=0,
+        step_index=step_index,
         tool_name=tool_name,
         args=args if args is not None else {"fields": "job_id,priority,status"},
         bindings=[],
@@ -2465,6 +2606,146 @@ async def test_hard_query_collection_requested_fields_project_result_table(db_se
     assert "priority" not in serialized_rows
     assert "product_id" not in serialized_rows
     assert "status" not in serialized_rows
+
+
+@pytest.mark.asyncio
+async def test_parallel_read_response_document_preserves_step_order_over_completion_order(db_session):
+    created_at = datetime(2026, 5, 29, 18, 49, 0)
+    session_id = "rd-parallel-job-read-order"
+    plan_id = "rd-parallel-job-read-order-plan"
+    prompt = "Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003."
+    job_ids = ["JOB-SEED-001", "JOB-SEED-002", "JOB-SEED-003"]
+    completion_offsets = {
+        "JOB-SEED-001": 30,
+        "JOB-SEED-002": 10,
+        "JOB-SEED-003": 20,
+    }
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=8,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            *[
+                _read_step(
+                    session_id=session_id,
+                    plan_id=plan_id,
+                    step_id=f"rd-parallel-job-read-order-step-{index}",
+                    step_index=index,
+                    completed_at=created_at + timedelta(seconds=completion_offsets[job_id]),
+                    rows=[],
+                    summary=f"Found job {job_id}.",
+                    tool_name="get__jobs_{id}",
+                    args={"id": job_id},
+                    result={
+                        "success": True,
+                        "data": {
+                            "job_id": job_id,
+                            "product_id": f"P-00{index + 1}",
+                            "priority": "high" if index != 1 else "medium",
+                            "status": "planned",
+                        },
+                    },
+                )
+                for index, job_id in enumerate(job_ids)
+            ],
+            _assistant_message(
+                session_id=session_id,
+                content="Found 1 job. Found 1 job. Found 1 job.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=31),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    read_blocks = [
+        block
+        for block in document["blocks"]
+        if block["type"] in {"record_preview", "result_table", "status_result"}
+    ]
+    rendered_job_ids: list[str] = []
+    for block in read_blocks:
+        if block["type"] == "status_result":
+            rendered_job_ids.append(block["entity_id"])
+            continue
+        rendered_job_ids.extend(
+            row["job_id"]
+            for row in block.get("rows", [])
+            if row.get("job_id")
+        )
+
+    assert rendered_job_ids == job_ids
+    read_steps = [step for step in document["run_steps"] if step["kind"] == "read"]
+    assert len(read_steps) == 1
+    assert read_steps[0]["title"] == "Read 3 job records"
+    assert read_steps[0]["summary"] == "Found 3 jobs."
+    assert read_steps[0]["record_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_mixed_parallel_status_blocks_preserve_step_order_over_completion_order(db_session):
+    created_at = datetime(2026, 5, 29, 19, 4, 0)
+    session_id = "rd-mixed-parallel-status-order"
+    plan_id = "rd-mixed-parallel-status-order-plan"
+    prompt = "Read machine M-CNC-01 status and job JOB-SEED-001 status."
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=8,
+                status="COMPLETED",
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-mixed-parallel-status-order-step-0",
+                step_index=0,
+                completed_at=created_at + timedelta(seconds=20),
+                rows=[],
+                summary="Machine M-CNC-01 is running.",
+                tool_name="get__machines_{id}",
+                args={"id": "M-CNC-01"},
+                result={"success": True, "data": {"machine_id": "M-CNC-01", "status": "running"}},
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-mixed-parallel-status-order-step-1",
+                step_index=1,
+                completed_at=created_at + timedelta(seconds=10),
+                rows=[],
+                summary="Job JOB-SEED-001 is planned.",
+                tool_name="get__jobs_{id}",
+                args={"id": "JOB-SEED-001"},
+                result={"success": True, "data": {"job_id": "JOB-SEED-001", "status": "planned"}},
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content="Machine M-CNC-01 is running. Job JOB-SEED-001 is planned.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=21),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    status_blocks = [block for block in document["blocks"] if block["type"] == "status_result"]
+
+    assert [block["entity_id"] for block in status_blocks] == ["M-CNC-01", "JOB-SEED-001"]
 
 
 @pytest.mark.asyncio

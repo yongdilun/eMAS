@@ -56,6 +56,114 @@ test('ActivityTimeline expands active multi-step runs and marks the current row'
   await view.unmount()
 })
 
+test('ActivityTimeline marks only the newest retry activity as current', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'research',
+          label: 'Running selected tool',
+          detail: 'Running the selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'response',
+          label: 'Checking evidence',
+          detail: 'Evidence from machine records needs another attempt',
+          state: 'success',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Replanning',
+          detail: 'Preparing another safe attempt',
+          state: 'success',
+        },
+        {
+          id: 'step-4',
+          timestamp: 4,
+          group: 'research',
+          label: 'Retrying tool',
+          detail: 'Running the next selected read',
+          state: 'running',
+        },
+      ],
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const currentBadges = Array.from(view.container.querySelectorAll('span'))
+    .filter((node) => node.textContent.trim() === 'Current')
+  assert.equal(currentBadges.length, 1)
+  const currentRow = currentBadges[0].closest('li')
+  assert.match(currentRow?.textContent || '', /Retrying tool/)
+  assert.doesNotMatch(currentRow?.textContent || '', /Running selected tool/)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline keeps a terminal retry story expanded', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'research',
+          label: 'Running selected tool',
+          detail: 'Attempt 1 of 3 - Running the selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'response',
+          label: 'Checking evidence',
+          detail: 'Attempt 1 of 3 - Previous read timed out',
+          state: 'success',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Replanning after timeout',
+          detail: 'Attempt 2 of 3 - Previous read timed out',
+          state: 'success',
+        },
+        {
+          id: 'step-4',
+          timestamp: 4,
+          group: 'research',
+          label: 'Retrying machine status read',
+          detail: 'Attempt 2 of 3 - Running the next selected read',
+          state: 'success',
+        },
+        {
+          id: 'step-5',
+          timestamp: 5,
+          group: 'response',
+          label: 'Run complete',
+          detail: 'Attempt 2 of 3 - Completed with verified evidence',
+          state: 'complete',
+        },
+      ],
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Replanning after timeout/))
+  assert.match(view.text(), /Retrying machine status read/)
+  assert.match(view.text(), /Attempt 2 of 3/)
+
+  await view.unmount()
+})
+
 test('ActivityTimeline renders completed runs as a collapsed latest-step summary', async () => {
   const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
   const view = await render(
@@ -190,6 +298,180 @@ test('ActivityTimeline respects manual collapse while active rows refresh', asyn
   await flushEffects()
 
   assert.doesNotMatch(view.text(), /Understanding your request/)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline marks only newly appended rows for gentle entry animation', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const activeSteps = [
+    {
+      id: 'step-1',
+      timestamp: 1,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing recent context',
+      state: 'success',
+    },
+    {
+      id: 'step-2',
+      timestamp: 2,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Attempt 1 of 6 - Running the selected read',
+      state: 'success',
+    },
+  ]
+  const view = await render(React.createElement(ActivityTimeline, { steps: activeSteps }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.equal(view.container.querySelector('[data-activity-entry="appended"]'), null)
+
+  await view.rerender(React.createElement(ActivityTimeline, {
+    steps: [
+      ...activeSteps,
+      {
+        id: 'step-3',
+        timestamp: 3,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Attempt 1 of 6 - Previous read failed',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => {
+    const appended = view.container.querySelector('[data-step-id="step-3"]')
+    assert.equal(appended?.getAttribute('data-activity-entry'), 'appended')
+  })
+  assert.equal(view.container.querySelector('[data-step-id="step-1"]')?.getAttribute('data-activity-entry'), null)
+  assert.equal(view.container.querySelector('[data-step-id="step-2"]')?.getAttribute('data-activity-entry'), null)
+  assert.match(view.container.querySelector('[data-step-id="step-3"]')?.className || '', /activity-timeline-row--new/)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline does not entry-animate replacement rows', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'first-run-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing recent context',
+        state: 'success',
+      },
+      {
+        id: 'first-run-2',
+        timestamp: 2,
+        group: 'research',
+        label: 'Running selected tool',
+        detail: 'Attempt 1 of 6 - Running the selected read',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+
+  await view.rerender(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'second-run-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing recent context',
+        state: 'success',
+      },
+      {
+        id: 'second-run-2',
+        timestamp: 2,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await flushEffects()
+  assert.equal(view.container.querySelector('[data-activity-entry="appended"]'), null)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline gives long expanded captions wrapping classes', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const longLabel = 'Reading 3 job records with prerequisite read evidence ready before approval scheduling continues'
+  const longDetail = 'Attempt 2 of 3 - Previous read timed out while dependent child requirement waited for parent evidence'
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'step-1',
+        timestamp: 1,
+        group: 'research',
+        label: 'Reading job records',
+        detail: 'Checking job records',
+        state: 'success',
+      },
+      {
+        id: 'step-2',
+        timestamp: 2,
+        group: 'research',
+        label: longLabel,
+        detail: longDetail,
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const currentRow = view.container.querySelector('[data-step-id="step-2"]')
+  assert.ok(currentRow)
+  const labelNode = Array.from(currentRow.querySelectorAll('span'))
+    .find((node) => node.textContent === longLabel)
+  const detailNode = Array.from(currentRow.querySelectorAll('span'))
+    .find((node) => node.textContent === longDetail)
+
+  assert.match(labelNode?.className || '', /break-words/)
+  assert.match(detailNode?.className || '', /break-words/)
+
+  await view.unmount()
+})
+
+test('ActivityTimeline renders stale in-flight rows as settled when a newer row is current', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'step-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Selecting safe action',
+        detail: 'Selecting a safe action',
+        state: 'running',
+      },
+      {
+        id: 'step-2',
+        timestamp: 2,
+        group: 'response',
+        label: 'Rendering response',
+        detail: 'Rendering the response',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const stale = view.container.querySelector('[data-step-id="step-1"]')
+  const current = view.container.querySelector('[data-step-id="step-2"]')
+  assert.doesNotMatch(stale?.innerHTML || '', /animate-spin/)
+  assert.match(current?.innerHTML || '', /animate-spin/)
+  assert.equal((view.text().match(/Current/g) || []).length, 1)
 
   await view.unmount()
 })

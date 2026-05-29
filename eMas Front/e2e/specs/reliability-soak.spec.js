@@ -8,6 +8,8 @@ import {
   reliabilityLongStreamAnswer,
   reliabilityLongStreamPrompt,
   reliabilityLongStreamStepCount,
+  reliabilityStartedTimeoutAnswer,
+  reliabilityStartedTimeoutPrompt,
   reliabilitySlowTimeoutPrompt,
 } from '../support/reliabilityScenarios.js'
 import {
@@ -169,24 +171,42 @@ test.describe('Phase 15 reliability, scale, and soak hardening @reliability', ()
     expect(await dialogDoesNotOverflow(page)).toBe(true)
   })
 
-  test('scenario 94: slow response shows progress, times out, and keeps retry/cancel controls usable', async ({ page }) => {
+  test('scenario 94: slow response with visible progress does not show startup-failure timeout UX', async ({ page }) => {
     await openChat(page)
     await sendPrompt(page, reliabilitySlowTimeoutPrompt)
 
     await expect(page.getByText(/Understanding your request|slow-response fixture accepted/i).first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Cancel current run' })).toBeVisible()
-    await expect(page.getByText(/Factory Agent request timed out/i).first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByRole('button', { name: 'Retry connection' })).toBeVisible()
+    await page.waitForTimeout(1800)
+    await expect(page.getByText(/Factory Agent request timed out/i)).toHaveCount(0)
+    await expect(page.getByText(/Factory Agent chat could not start/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Retry connection' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Cancel current run' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Retry connection' }).click()
-    await expect(page.getByRole('button', { name: 'Cancel current run' })).toBeVisible()
     await page.getByRole('button', { name: 'Cancel current run' }).click()
     await expect(page.getByText('Run cancelled by operator request.').first()).toBeVisible()
     await expectComposerReady(page)
   })
 
-  test('scenario 95: repeated soak runner completes mocked, seeded, and release smoke suites without leaked ports', async ({}, testInfo) => {
+  test('scenario 96: started active timeout reaches terminal answer without stale stop control', async ({ page }) => {
+    await openChat(page)
+    await sendPrompt(page, reliabilityStartedTimeoutPrompt)
+
+    await expect(page.getByText('Running selected tool')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel current run' })).toBeVisible()
+    await page.waitForTimeout(1800)
+    await expect(page.getByText(/Factory Agent request timed out/i)).toHaveCount(0)
+    await expect(page.getByText(/Factory Agent chat could not start/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
+
+    await expect(page.getByText(reliabilityStartedTimeoutAnswer).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Run complete')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel current run' })).toHaveCount(0)
+    await expectComposerReady(page)
+  })
+
+  test('scenario 97: repeated soak runner completes mocked, seeded, and release smoke suites without leaked ports', async ({}, testInfo) => {
     test.setTimeout(360_000)
     const repeat = Number(process.env.PLAYWRIGHT_RELIABILITY_SOAK_REPEAT || 1)
     const summary = await runReliabilitySoak({

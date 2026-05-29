@@ -55,6 +55,24 @@ def test_development_mode_prefers_development_scoped_override(monkeypatch):
     assert settings.planner_model == "dev-scoped-planner"
 
 
+def test_semantic_intake_uses_dedicated_small_model_settings(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "development")
+    monkeypatch.setenv("PLANNER_MODEL", "planner-large")
+    monkeypatch.setenv("PLANNER_OPENAI_BASE_URL", "http://127.0.0.1:900/v1")
+    monkeypatch.setenv("SEMANTIC_INTAKE_MODEL", "semantic-small")
+    monkeypatch.setenv("SEMANTIC_INTAKE_OPENAI_BASE_URL", "http://127.0.0.1:901/v1")
+    monkeypatch.setenv("SEMANTIC_INTAKE_MAX_TOKENS", "640")
+    monkeypatch.setenv("SEMANTIC_INTAKE_TIMEOUT_S", "8")
+
+    settings = get_settings()
+
+    assert settings.planner_model == "planner-large"
+    assert settings.semantic_intake_model == "semantic-small"
+    assert settings.semantic_intake_openai_base_url == "http://127.0.0.1:901/v1"
+    assert settings.semantic_intake_max_tokens == 640
+    assert settings.semantic_intake_timeout_s == 8.0
+
+
 def test_startup_schema_compatibility_flag_defaults_disabled(monkeypatch):
     monkeypatch.setenv("APP_MODE", "development")
     monkeypatch.delenv("ENABLE_STARTUP_SCHEMA_COMPAT", raising=False)

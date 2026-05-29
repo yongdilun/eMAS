@@ -38,6 +38,7 @@ _CONTROL_CONSTRAINTS = {
 _NON_FILTER_CONSTRAINTS = {
     *_CONTROL_CONSTRAINTS,
     "conditional_branches",
+    "observation_fields",
     "preview_before_apply",
     "requires_approval",
     "safety_constraints",
@@ -315,8 +316,58 @@ def apply_deterministic_evidence_satisfaction(state: PlannerOwnedLoopV2State) ->
         "status": "applied",
         "changes": changes,
         "open_requirement_ids": open_ids,
+        "missing_evidence_reasons": _missing_evidence_reasons(ledger.requirements),
     }
     return state
+
+
+def _missing_evidence_reasons(requirements: Sequence[RequirementLedgerEntry]) -> list[dict[str, Any]]:
+    reasons: list[dict[str, Any]] = []
+    for requirement in requirements:
+        if requirement.status not in {"open", "blocked", "failed"}:
+            continue
+        failed_checks = [
+            {
+                "check": check.check,
+                "expected": check.expected,
+                "actual": check.actual,
+                "evidence_ref": check.evidence_ref,
+            }
+            for check in requirement.satisfaction_checks
+            if not check.passed
+        ]
+        reason = requirement.blockers[-1] if requirement.blockers else "missing_active_evidence"
+        reasons.append(
+            {
+                "requirement_id": requirement.id,
+                "status": requirement.status,
+                "reason": reason,
+                "retriable": _missing_evidence_reason_is_retriable(requirement, reason=reason),
+                "evidence_refs": list(requirement.evidence_refs),
+                "failed_checks": failed_checks,
+            }
+        )
+    return reasons
+
+
+def _missing_evidence_reason_is_retriable(
+    requirement: RequirementLedgerEntry,
+    *,
+    reason: str,
+) -> bool:
+    if requirement.status == "open":
+        return True
+    if requirement.requirement_type in {"mutation_request", "approval_request"}:
+        return False
+    if reason in {
+        "failed",
+        "failure",
+        "error",
+        "write_or_approval_requires_planner",
+        "source_of_truth_unclear",
+    }:
+        return False
+    return requirement.status in {"blocked", "failed"}
 
 
 def validate_v2_final_state(state: PlannerOwnedLoopV2State) -> FinalValidationResult:
@@ -982,7 +1033,17 @@ def _requested_fields_check(
             message="No explicit requested fields; typed fields must still be present.",
         )
     identity_extras = _identity_field_keys(requirement).difference(expected)
-    actual_for_pass = [field for field in actual if field not in identity_extras]
+    observation_fields = requirement.constraints.get("observation_fields")
+    observation_extras = (
+        {str(field) for field in observation_fields if str(field)}
+        if isinstance(observation_fields, list)
+        else set()
+    )
+    actual_for_pass = [
+        field
+        for field in actual
+        if field not in identity_extras and field not in observation_extras
+    ]
     return _check(
         "requested_fields",
         expected=expected,
@@ -1302,6 +1363,16 @@ def _validate_typed_evidence(
     evidence: EvidenceLedgerEntry,
     issues: list[FinalValidationIssue],
 ) -> None:
+    if _evidence_marked_stale(evidence):
+        issues.append(
+            FinalValidationIssue(
+                issue="stale_evidence_not_finalizable",
+                requirement_id=requirement.id,
+                evidence_ref=evidence.id,
+                expected="active_revision_evidence",
+                actual=evidence.diagnostic_metadata,
+            )
+        )
     if requirement.status == "satisfied" and evidence.confidence != "deterministic":
         issues.append(
             FinalValidationIssue(
@@ -1336,6 +1407,16 @@ def _validate_typed_evidence(
                 evidence_ref=evidence.id,
             )
         )
+
+
+def _evidence_marked_stale(evidence: EvidenceLedgerEntry) -> bool:
+    metadata = evidence.diagnostic_metadata or {}
+    return (
+        metadata.get("active_revision_satisfaction") is False
+        or metadata.get("stale_after_graph_revision") is True
+        or metadata.get("stale_after_graph_replan") is True
+        or metadata.get("stale_after_user_interrupt") is True
+    )
 
 
 def _final_validation_result(

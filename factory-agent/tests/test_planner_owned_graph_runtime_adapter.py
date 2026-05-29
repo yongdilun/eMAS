@@ -18,6 +18,7 @@ from factory_agent.planning.v2_agent_state import build_initial_planner_owned_ag
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.schemas import PlanResponse, ToolInfo
 from factory_agent.services.plan_creation_service import PlanCreationService
+from factory_agent.services import planner_owned_graph_runtime as runtime_module
 from factory_agent.services.planner_owned_graph_runtime import LiveGraphActivityRecorder, PlannerOwnedGraphRuntimeAdapter
 
 
@@ -271,6 +272,253 @@ async def test_phase10_graph_runtime_records_live_activity_for_activity_sse(sess
     ]
     assert live_steps[1]["detail"] == "Searching retrieved documents"
     assert row.event_seq > 3
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_refreshes_session_context_after_live_activity_flush(sessionmaker_override, db_session):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    sess = Session(
+        session_id="phase10-live-activity-refresh",
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="Read jobs and products",
+        session_started_at=created_at,
+        created_at=created_at,
+        updated_at=created_at,
+        replan_context={},
+        event_seq=3,
+    )
+    db_session.add(sess)
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-refresh",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "semantic_intake_node",
+            "ledger_revision": 1,
+        }
+    )
+    await recorder.flush()
+
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+
+    assert sess.replan_context == {}
+    await adapter._refresh_session_live_activity_context(db=db_session, sess=sess)
+
+    assert sess.replan_context["live_activity_steps"][0]["label"] == "Understood request"
+
+
+@pytest.mark.asyncio
+async def test_live_activity_preserves_graph_progress_order_when_nodes_share_timestamp(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+
+    class FrozenDateTime:
+        @staticmethod
+        def utcnow():
+            return created_at
+
+    monkeypatch.setattr(runtime_module, "datetime", FrozenDateTime)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-order",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Find low priority jobs",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-order",
+    )
+    for node in [
+        "requirement_ledger_node",
+        "planner_decision_node",
+        "tool_execution_node",
+        "evidence_observation_node",
+    ]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-order")
+            )
+        ).scalar_one()
+
+    assert [step["detail"] for step in row.replan_context["live_activity_steps"]] == [
+        "Structuring the request",
+        "Choosing the next backend action",
+        "Checking relevant records",
+        "Checking tool evidence",
+    ]
+    assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
+        "Structuring request",
+        "Choosing next action",
+        "Running selected tool",
+        "Checking result",
+    ]
+    assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_live_activity_labels_do_not_duplicate_distinct_result_and_response_nodes(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-distinct-labels",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Summarize two jobs and products",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-distinct-labels",
+    )
+    for node in [
+        "evidence_observation_node",
+        "satisfaction_node",
+        "finalize_node",
+        "response_document_node",
+    ]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-distinct-labels")
+            )
+        ).scalar_one()
+
+    labels = [step["label"] for step in row.replan_context["live_activity_steps"]]
+
+    assert labels == [
+        "Checking result",
+        "Verifying result",
+        "Preparing response",
+        "Rendering response",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_activity_persists_active_replan_spine_for_retry_story(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-replan-spine",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Find low priority jobs",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "attempts": [
+            {
+                "attempt": 1,
+                "missing_evidence_reasons": [{"reason": "tool_error", "evidence_refs": ["ev-1"]}],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        ],
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__jobs",
+                "args": {"priority": "low"},
+                "reason": "tool_error",
+                "error_type": "timeout",
+                "attempt": 1,
+            }
+        ],
+    }
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-replan-spine",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "planner_decision_node",
+            "ledger_revision": 2,
+            "replan_spine": replan_spine,
+        }
+    )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-replan-spine")
+            )
+        ).scalar_one()
+
+    assert row.replan_context["live_replan_spine"] == replan_spine
+    assert row.replan_context["live_replan_spine_revision"] == 1
+    assert "_replan_spine" not in row.replan_context["live_activity_steps"][0]
 
 
 def test_phase10_static_approval_resume_uses_native_graph_checkpoint_before_historical_direct_resume():
@@ -532,3 +780,195 @@ def test_phase10_graph_runtime_keeps_no_record_preview_out_of_executable_tool_ou
             "reason": "no_matching_records",
         }
     ]
+
+
+def test_graph_runtime_preserves_live_activity_history_before_clearing_transient_rows():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Read jobs and their products.",
+        tools_by_name={"get__machines_{id}": _tool()},
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["semantic_intake_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "phase10-session"}},
+    )
+    base_context = {
+        "live_activity_steps": [
+            {
+                "id": "graph:000001:semantic_intake_node",
+                "timestamp": 1770000001,
+                "order": 1,
+                "group": "planning",
+                "label": "Understood request",
+                "detail": "Reviewing your request and recent context",
+                "state": "success",
+                "unsafe_extra": {"tool_name": "get__jobs_{id}"},
+            },
+            {
+                "id": "graph:000002:response_document_node",
+                "timestamp": 1770000002,
+                "order": 2,
+                "group": "response",
+                "label": "Rendering response",
+                "detail": "Rendering the response",
+                "state": "running",
+            },
+        ],
+        "live_activity_revision": 12,
+    }
+
+    context = adapter._graph_context(result=result, intent="Read jobs and their products.", base_context=base_context)
+
+    assert "live_activity_steps" not in context
+    assert "live_activity_revision" not in context
+    assert context["activity_graph_steps"] == [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": 1770000001,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:response_document_node",
+            "timestamp": 1770000002,
+            "order": 2,
+            "group": "response",
+            "label": "Rendering response",
+            "detail": "Rendering the response",
+            "state": "running",
+        },
+    ]
+    assert context["intent_contract"]["activity_graph_steps"] == context["activity_graph_steps"]
+    assert context["planner_owned_agent_graph"]["activity_graph_steps"] == context["activity_graph_steps"]
+    assert context["intent_contract"]["activity_caption_context"]["activity_graph_steps"] == context["activity_graph_steps"]
+
+
+def test_graph_runtime_keeps_failed_tool_evidence_out_of_plan_steps_but_in_tool_outputs():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show machine status.",
+        tools_by_name={},
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-failed-read",
+            requirement_id=state.requirement_ledger.requirements[0].id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__processes_{id}_steps",
+            args={"id": "M-CNC-01", "fields": "status"},
+            normalized_result={
+                "status": "tool_failed",
+                "error": {"code": "tool_error", "detail": "controlled timeout"},
+            },
+            diagnostic_metadata={"graph_authorized_execution": True, "reason": "tool_error"},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-failed-read"]
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "failed-tool-session"}},
+    )
+
+    draft, tool_outputs = adapter._plan_artifacts(
+        result,
+        tools_by_name={
+            "get__processes_{id}_steps": ToolInfo(
+                name="get__processes_{id}_steps",
+                description="Read process steps",
+                endpoint="/processes/{id}/steps",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "pattern": "^PRC-[A-Za-z0-9-]+$"}},
+                    "required": ["id"],
+                },
+                output_schema={"type": "object"},
+                path_params=["id"],
+                is_read_only=True,
+                capability_tags=["process", "step", "read"],
+            )
+        },
+    )
+
+    assert tool_outputs[0]["status"] == "FAILED"
+    assert tool_outputs[0]["tool_name"] == "get__processes_{id}_steps"
+    assert draft.steps == []
+
+
+def test_graph_runtime_keeps_invalid_successful_tool_args_out_of_plan_steps():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show machine status.",
+        tools_by_name={},
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-invalid-read",
+            requirement_id=state.requirement_ledger.requirements[0].id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__job-steps_{id}_slots",
+            args={"id": "M-CNC-01"},
+            normalized_result={"rows": [{"slot_id": "slot-1"}]},
+            satisfies=["operational_state_tool_result"],
+            diagnostic_metadata={"graph_authorized_execution": True},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-invalid-read"]
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "invalid-tool-session"}},
+    )
+
+    draft, tool_outputs = adapter._plan_artifacts(
+        result,
+        tools_by_name={
+            "get__job-steps_{id}_slots": ToolInfo(
+                name="get__job-steps_{id}_slots",
+                description="Read job step slots",
+                endpoint="/job-steps/{id}/slots",
+                method="GET",
+                input_schema={
+                    "type": "object",
+                    "properties": {"id": {"type": "string", "pattern": "^JOB-[A-Za-z0-9-]+$"}},
+                    "required": ["id"],
+                },
+                output_schema={"type": "object"},
+                path_params=["id"],
+                is_read_only=True,
+                capability_tags=["job", "slots", "read"],
+            )
+        },
+    )
+
+    assert tool_outputs[0]["status"] == "DONE"
+    assert tool_outputs[0]["tool_name"] == "get__job-steps_{id}_slots"
+    assert draft.steps == []

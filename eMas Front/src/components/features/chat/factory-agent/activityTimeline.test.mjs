@@ -7,6 +7,7 @@ import {
   buildActivityStepsFromSnapshot,
   buildActivityStepsFromTimeline,
   coalesceActivitySteps,
+  compareActivitySteps,
   mergeActivityStep,
   normalizeActivityStep,
   shouldAutoCollapseActivity,
@@ -38,6 +39,45 @@ test('assistantAnswerAllowed: defers until activity terminal when steps exist', 
     }),
     true,
   )
+})
+
+test('activity ordering uses backend order even when timestamps arrive out of order', () => {
+  const ordered = [
+    {
+      id: 'graph:aaa-last',
+      timestamp: 1770000001,
+      order: 3,
+      label: 'Checking result',
+      detail: 'Checking tool evidence',
+      group: 'response',
+      state: 'running',
+    },
+    {
+      id: 'graph:zzz-first',
+      timestamp: 1770000003,
+      order: 1,
+      label: 'Understood request',
+      detail: 'Structuring the request',
+      group: 'planning',
+      state: 'success',
+    },
+    {
+      id: 'graph:mmm-second',
+      timestamp: 1770000002,
+      order: 2,
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      group: 'research',
+      state: 'success',
+    },
+  ].sort(compareActivitySteps)
+
+  assert.deepEqual(ordered.map((step) => step.detail), [
+    'Structuring the request',
+    'Checking relevant records',
+    'Checking tool evidence',
+  ])
+  assert.equal(normalizeActivityStep(ordered[0]).order, 1)
 })
 
 test('assistantAnswerAllowed: active sessions do not unlock on activity terminal before final snapshot', () => {
@@ -271,6 +311,46 @@ test('coalesces duplicate timeline and live graph activity rows by visible meani
   assert.deepEqual(rows.map((step) => step.label), ['Understood request', 'Checking result'])
   assert.equal(rows[0].id, 'graph:semantic_intake_node')
   assert.equal(rows[0].state, 'success')
+})
+
+test('keeps repeated graph occurrences in backend order', () => {
+  const rows = coalesceActivitySteps([
+    {
+      id: 'graph:000001:planner_choose_tool_node',
+      timestamp: 1770000003,
+      order: 1,
+      group: 'planning',
+      label: 'Selecting safe action',
+      detail: 'Selecting a safe action',
+      state: 'success',
+    },
+    {
+      id: 'graph:000002:tool_execution_node',
+      timestamp: 1770000002,
+      order: 2,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      state: 'success',
+    },
+    {
+      id: 'graph:000003:planner_choose_tool_node',
+      timestamp: 1770000001,
+      order: 3,
+      group: 'planning',
+      label: 'Selecting safe action',
+      detail: 'Selecting a safe action',
+      state: 'running',
+    },
+  ])
+
+  assert.deepEqual(rows.map((step) => step.id), [
+    'graph:000001:planner_choose_tool_node',
+    'graph:000002:tool_execution_node',
+    'graph:000003:planner_choose_tool_node',
+  ])
+  assert.deepEqual(rows.map((step) => step.order), [1, 2, 3])
+  assert.equal(rows[2].state, 'running')
 })
 
 test('completed activity remains available as a collapsed summary', () => {
@@ -665,6 +745,397 @@ test('uses full operation-scoped timeline across turns when operation_id matches
   assert.ok(labels.includes('Updating job records'))
   assert.ok(labels.includes('Verifying result'))
   assert.ok(labels.includes('Run complete'))
+})
+
+test('retry and replan timeline remains append-only with distinct activity rows', () => {
+  const initialTimeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'execution_started',
+      content: 'execute selected read',
+      created_at: '2026-05-18T09:00:02.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'tool_result',
+      content: 'read timed out',
+      created_at: '2026-05-18T09:00:03.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      tool_name: 'get__machines_{id}',
+      status: 'FAILED',
+      details: { reason: 'tool_timeout' },
+    },
+  ]
+  const retriedTimeline = [
+    ...initialTimeline,
+    {
+      event_type: 'replan_requested',
+      content: 'retry with updated evidence memory',
+      created_at: '2026-05-18T09:00:04.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      details: { reason: 'tool_timeout' },
+    },
+    {
+      event_type: 'execution_started',
+      content: 'retry selected read',
+      created_at: '2026-05-18T09:00:05.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+    {
+      event_type: 'tool_result',
+      content: 'read succeeded',
+      created_at: '2026-05-18T09:00:06.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+      tool_name: 'get__machines_{id}',
+      status: 'DONE',
+    },
+    {
+      event_type: 'session_completed',
+      content: 'done',
+      created_at: '2026-05-18T09:00:07.000Z',
+      turn_id: 't1',
+      operation_id: 'op-retry',
+    },
+  ]
+
+  const beforeRetry = buildActivityStepsFromTimeline(initialTimeline, {
+    mode: 'operational',
+    sessionStatus: 'EXECUTING',
+  }).map((step) => step.label)
+  const afterRetry = buildActivityStepsFromTimeline(retriedTimeline, {
+    mode: 'operational',
+    sessionStatus: 'COMPLETED',
+  }).map((step) => step.label)
+
+  assert.deepEqual(beforeRetry, [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+  ])
+  assert.deepEqual(afterRetry.slice(0, beforeRetry.length), beforeRetry)
+  assert.deepEqual(afterRetry, [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+    'Replanning',
+    'Retrying tool',
+    'Checking evidence',
+    'Run complete',
+  ])
+  assert.equal(afterRetry.includes('Preparing changes'), false)
+})
+
+test('replan spine snapshot timeline shows attempt numbers and retry reason from diagnostics', () => {
+  const steps = buildActivityStepsFromSnapshot({
+    session: {
+      status: 'COMPLETED',
+      operation_id: 'op-retry-story',
+      replan_context: {
+        intent_contract: {
+          replan_spine: {
+            attempt_count: 1,
+            max_attempts: 2,
+            attempts: [
+              {
+                attempt: 1,
+                missing_evidence_reasons: [
+                  {
+                    reason: 'tool_error',
+                    requirement_id: 'req-machine-status',
+                    evidence_refs: ['ev-timeout'],
+                    retriable: true,
+                  },
+                ],
+                failed_tool_calls: [
+                  {
+                    tool_name: 'get__machines_{id}',
+                    args: { id: 'M-001', fields: 'status' },
+                    requirement_id: 'req-machine-status',
+                    evidence_ref: 'ev-timeout',
+                    reason: 'tool_error',
+                    attempt: 1,
+                  },
+                ],
+              },
+            ],
+            missing_evidence_reasons: [
+              {
+                reason: 'tool_error',
+                requirement_id: 'req-machine-status',
+                evidence_refs: ['ev-timeout'],
+                retriable: true,
+              },
+            ],
+          },
+        },
+      },
+    },
+    timeline: [
+      {
+        event_type: 'user_message',
+        content: 'show machine status',
+        created_at: '2026-05-18T09:00:00.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'plan_created',
+        content: 'plan',
+        created_at: '2026-05-18T09:00:01.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'execution_started',
+        content: 'execute selected read',
+        created_at: '2026-05-18T09:00:02.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: '2026-05-18T09:00:03.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            status_code: 504,
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry with updated evidence memory',
+        created_at: '2026-05-18T09:00:04.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        details: { reason: 'tool_error' },
+      },
+      {
+        event_type: 'execution_started',
+        content: 'retry selected read',
+        created_at: '2026-05-18T09:00:05.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read succeeded',
+        created_at: '2026-05-18T09:00:06.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+        tool_name: 'get__machines_{id}',
+        status: 'DONE',
+        details: { args: { id: 'M-001', fields: 'status' } },
+      },
+      {
+        event_type: 'session_completed',
+        content: 'done',
+        created_at: '2026-05-18T09:00:07.000Z',
+        turn_id: 't1',
+        operation_id: 'op-retry-story',
+      },
+    ],
+  })
+
+  assert.deepEqual(steps.map((step) => step.label), [
+    'Understood request',
+    'Running selected tool',
+    'Checking evidence',
+    'Replanning after timeout',
+    'Retrying machine status read',
+    'Checking new evidence',
+    'Run complete',
+  ])
+  assert.match(steps[1].detail, /Attempt 1 of 3/)
+  assert.match(steps[2].detail, /Previous read timed out/)
+  assert.match(steps[3].detail, /Attempt 2 of 3/)
+  assert.match(steps.at(-1).detail, /Attempt 2 of 3/)
+})
+
+test('replan spine timeline collapses older retry attempts when retry budget is noisy', () => {
+  const timeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+  ]
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    timeline.push(
+      {
+        event_type: 'execution_started',
+        content: `attempt ${attempt}`,
+        created_at: `2026-05-18T09:00:${String(1 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: `2026-05-18T09:00:${String(2 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry',
+        created_at: `2026-05-18T09:00:${String(3 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-noisy-retry',
+      },
+    )
+  }
+  timeline.push(
+    {
+      event_type: 'execution_started',
+      content: 'final retry',
+      created_at: '2026-05-18T09:00:20.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+    {
+      event_type: 'session_blocked',
+      content: 'blocked',
+      created_at: '2026-05-18T09:00:21.000Z',
+      operation_id: 'op-noisy-retry',
+    },
+  )
+
+  const steps = buildActivityStepsFromTimeline(timeline, {
+    mode: 'operational',
+    sessionStatus: 'BLOCKED',
+    replanSpine: {
+      attempt_count: 5,
+      max_attempts: 5,
+      replan_limit_reached: true,
+      attempts: [1, 2, 3, 4, 5].map((attempt) => ({
+        attempt,
+        missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: [`ev-${attempt}`], retriable: true }],
+      })),
+      missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: ['ev-1'], retriable: true }],
+    },
+  })
+
+  const labels = steps.map((step) => step.label)
+  assert.ok(labels.includes('Earlier retry attempts'))
+  assert.match(steps.find((step) => step.label === 'Earlier retry attempts')?.detail || '', /4 earlier attempts collapsed/)
+  assert.equal(labels.filter((label) => label.startsWith('Replanning')).length, 1)
+  assert.match(steps.at(-2).detail || '', /Attempt 6 of 6/)
+  assert.equal(steps.at(-1).label, 'Something needs attention')
+})
+
+test('active replan spine fallback keeps retry attempts uncollapsed while executing', () => {
+  const timeline = [
+    {
+      event_type: 'user_message',
+      content: 'show machine status',
+      created_at: '2026-05-18T09:00:00.000Z',
+      operation_id: 'op-active-retry',
+    },
+    {
+      event_type: 'plan_created',
+      content: 'plan',
+      created_at: '2026-05-18T09:00:01.000Z',
+      operation_id: 'op-active-retry',
+    },
+  ]
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    timeline.push(
+      {
+        event_type: 'execution_started',
+        content: `attempt ${attempt}`,
+        created_at: `2026-05-18T09:00:${String(1 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+      },
+      {
+        event_type: 'tool_result',
+        content: 'read timed out',
+        created_at: `2026-05-18T09:00:${String(2 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+        tool_name: 'get__machines_{id}',
+        status: 'FAILED',
+        details: {
+          args: { id: 'M-001', fields: 'status' },
+          result: {
+            status: 'tool_failed',
+            error: { code: 'tool_error', error_type: 'timeout' },
+          },
+        },
+      },
+      {
+        event_type: 'replan_requested',
+        content: 'retry',
+        created_at: `2026-05-18T09:00:${String(3 + attempt * 3).padStart(2, '0')}.000Z`,
+        operation_id: 'op-active-retry',
+      },
+    )
+  }
+  timeline.push({
+    event_type: 'execution_started',
+    content: 'current retry',
+    created_at: '2026-05-18T09:00:18.000Z',
+    operation_id: 'op-active-retry',
+  })
+
+  const steps = buildActivityStepsFromTimeline(timeline, {
+    mode: 'operational',
+    sessionStatus: 'EXECUTING',
+    replanSpine: {
+      attempt_count: 4,
+      max_attempts: 5,
+      attempts: [1, 2, 3, 4].map((attempt) => ({
+        attempt,
+        missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: [`ev-${attempt}`], retriable: true }],
+      })),
+      missing_evidence_reasons: [{ reason: 'tool_error', evidence_refs: ['ev-1'], retriable: true }],
+    },
+  })
+
+  const labels = steps.map((step) => step.label)
+  const details = steps.map((step) => step.detail || '')
+  assert.equal(labels.includes('Earlier retry attempts'), false)
+  assert.equal(labels.includes('Earlier activity'), false)
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    assert.ok(details.some((detail) => detail.startsWith(`Attempt ${attempt} of 6`)))
+  }
+  assert.equal(steps.at(-1).state, 'running')
 })
 
 test('completed approval snapshot uses post-approval progress when tool events are projected from plan steps', () => {

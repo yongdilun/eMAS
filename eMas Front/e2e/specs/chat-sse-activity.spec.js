@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { chatSelectors } from '../fixtures/selectors.js'
 import {
+  activityActiveRetryStoryPrompt,
+  activityRetryCollapseHandoffPrompt,
   activitySseAnswer,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
   activitySsePrompt,
   activitySseResponseDocumentPrompt,
+  activitySharedTimestampOrderPrompt,
 } from '../fixtures/factoryAgentFixtures.js'
 
 const mockBaseUrl = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_FACTORY_AGENT_PORT || 8015)}`
@@ -298,5 +301,108 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(page.getByText('Run complete')).toBeVisible()
     await expect(page.getByText("I'm working on the request and waiting for the next backend update.")).toHaveCount(0)
     await expect(page.getByText('Working on response-document activity stream.')).toHaveCount(0)
+  })
+
+  test('active activity rows keep graph order when backend timestamps collide', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySharedTimestampOrderPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Checking tool evidence' }).first()
+    await expect(activityList.getByText('Structuring request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Structuring the request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing the next backend action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Checking relevant records', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Checking tool evidence', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Preparing next action', { exact: true })).toHaveCount(0)
+
+    const activityText = await activityList.innerText()
+    expect(activityText.indexOf('Structuring the request')).toBeLessThan(
+      activityText.indexOf('Choosing the next backend action'),
+    )
+    expect(activityText.indexOf('Choosing the next backend action')).toBeLessThan(
+      activityText.indexOf('Checking relevant records'),
+    )
+    expect(activityText.indexOf('Checking relevant records')).toBeLessThan(
+      activityText.indexOf('Checking tool evidence'),
+    )
+    await expect(page.getByText(/Factory Agent chat could not start/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Try starting chat again/i })).toHaveCount(0)
+  })
+
+  test('active retry story keeps graph prelude and appends attempts below the failed check', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activityActiveRetryStoryPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Attempt 3 of 6' }).first()
+    await expect(activityList.getByText('Structuring request', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Finding information path', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 1 of 6 - Running the selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 1 of 6 - Previous read timed out', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 2 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Replanning after timeout', { exact: true })).toHaveCount(2)
+
+    const initialText = await activityList.innerText()
+    expect(initialText.indexOf('Structuring request')).toBeLessThan(
+      initialText.indexOf('Choosing next action'),
+    )
+    expect(initialText.indexOf('Choosing next action')).toBeLessThan(
+      initialText.indexOf('Finding information path'),
+    )
+    expect(initialText.indexOf('Finding information path')).toBeLessThan(
+      initialText.indexOf('Selecting safe action'),
+    )
+    expect(initialText.indexOf('Selecting safe action')).toBeLessThan(
+      initialText.indexOf('Attempt 1 of 6 - Running the selected read'),
+    )
+    expect(initialText.indexOf('Attempt 1 of 6 - Running the selected read')).toBeLessThan(
+      initialText.indexOf('Attempt 1 of 6 - Previous read timed out'),
+    )
+    expect(initialText.indexOf('Attempt 1 of 6 - Previous read timed out')).toBeLessThan(
+      initialText.indexOf('Attempt 2 of 6 - Running the next selected read'),
+    )
+    expect(initialText.indexOf('Attempt 2 of 6 - Running the next selected read')).toBeLessThan(
+      initialText.indexOf('Attempt 3 of 6 - Running the next selected read'),
+    )
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await sseEventsFor({
+          scenario: 'activityActiveRetryStory',
+          stream: 'activity',
+          event: 'activity',
+        })
+        return activityFrames.map((entry) => entry.data?.label)
+      })
+      .toEqual(['Selecting safe action', 'Finding information path', 'Choosing next action'])
+
+    await expect(activityList.getByText('Finding information path', { exact: true })).toHaveCount(1)
+    await expect(activityList.getByText('Selecting safe action', { exact: true })).toHaveCount(1)
+    await expect(activityList.getByText('Choosing next action', { exact: true })).toHaveCount(1)
+    const currentCount = await activityList.getByText('Current', { exact: true }).count()
+    expect(currentCount).toBe(1)
+  })
+
+  test('active retry snapshots keep the full story stable until terminal', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activityRetryCollapseHandoffPrompt)
+
+    await expect(page.getByText('Session activity')).toBeVisible()
+    const activityList = page.locator('ol').filter({ hasText: 'Attempt 1 of 6' }).first()
+    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+
+    await expect(activityList.getByText('Attempt 6 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Earlier retry attempts', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('4 earlier attempts collapsed', { exact: true })).toHaveCount(0)
+    await expect(activityList.getByText('Attempt 3 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 4 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    await expect(activityList.getByText('Attempt 5 of 6 - Running the next selected read', { exact: true })).toBeVisible()
+    const progressIcons = await activityList.locator('[data-icon="progress_activity"]').count()
+    expect(progressIcons).toBe(1)
   })
 })

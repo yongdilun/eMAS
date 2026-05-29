@@ -5,6 +5,12 @@ from typing import Any
 from ..planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord, PlannerOwnedAgentGraphState
 from ..planning.v2_capability_map import build_capability_needs_for_text
 from ..planning.v2_contracts import CapabilityNeed, HydratedToolCard
+from ..planning.v2_tool_card_selection import (
+    card_entity_matches_requirement as _card_entity_matches_requirement,
+    card_supports_collection_read as _card_supports_collection_read,
+    card_supports_single_entity_read as _card_supports_single_entity_read,
+    identity_arg_names as _identity_arg_names,
+)
 from .v2_graph_interrupts import _planner_decision_is_active_for_graph_revision
 
 
@@ -61,6 +67,53 @@ def _deterministic_choose_tool_if_state_proves_single_document_tool(
         selected_tool_call=call,
         reason="Choose the only bounded document-knowledge tool call proven by retrieval.",
     )
+
+
+def _deterministic_choose_tool_if_state_proves_bounded_read_batch(
+    *,
+    state: PlannerOwnedAgentGraphState,
+    retrieve_decision: PlannerDecisionRecord,
+    candidate_tool_calls: list[GraphToolCall],
+    decision_id: str,
+) -> PlannerDecisionRecord | None:
+    requirement = _requirement_by_id(state, retrieve_decision.requirement_id)
+    if getattr(requirement, "requirement_type", None) != "multi_entity_status":
+        return None
+    expected_values = {_stable_value_key(value) for value in _multi_entity_identity_values(requirement, retrieve_decision.capability_need)}
+    if len(expected_values) <= 1:
+        return None
+
+    grouped: dict[str, list[GraphToolCall]] = {}
+    for call in candidate_tool_calls:
+        if call.kind != "api_tool" or call.requirement_id != retrieve_decision.requirement_id:
+            continue
+        card = _hydrated_card_for_tool_call(state, call)
+        if card is None or not bool(card.is_read_only) or bool(card.requires_approval):
+            continue
+        identity_value = _call_identity_value(call, requirement)
+        if _stable_value_key(identity_value) not in expected_values:
+            continue
+        grouped.setdefault(call.tool_name, []).append(call)
+
+    for calls in grouped.values():
+        call_values = {_stable_value_key(_call_identity_value(call, requirement)) for call in calls}
+        if call_values == expected_values:
+            return PlannerDecisionRecord(
+                decision_id=decision_id,
+                decision_kind="choose_tool",
+                author="deterministic_guard",
+                requirement_id=retrieve_decision.requirement_id,
+                ledger_revision=state.requirement_ledger.revision,
+                capability_need=retrieve_decision.capability_need,
+                selected_tool_calls=list(calls),
+                reason="Choose the bounded read batch proven by the multi-entity requirement.",
+                diagnostics={
+                    "tool_choice_policy": "bounded_multi_entity_read_batch",
+                    "selected_tool_name": calls[0].tool_name if calls else None,
+                    "bounded_identity_count": len(expected_values),
+                },
+            )
+    return None
 
 
 def _tool_choice_requires_graph_approval(
@@ -124,6 +177,13 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
         for card in cards:
             if bool(card.requires_approval) or not bool(card.is_read_only):
                 return card
+    if getattr(requirement, "requirement_type", None) == "single_entity_status":
+        for card in cards:
+            if _card_supports_single_entity_read(card, requirement):
+                return card
+        for card in cards:
+            if _card_entity_matches_requirement(card, requirement) and not _card_supports_collection_read(card):
+                return card
     if getattr(requirement, "requirement_type", None) == "multi_entity_status":
         for card in cards:
             if _card_supports_collection_identity_read(card, requirement):
@@ -145,16 +205,6 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
             if "{id}" not in card.tool_name and "id" not in set(card.required_args):
                 return card
     return cards[0]
-
-
-def _card_supports_collection_read(card: HydratedToolCard) -> bool:
-    if card.path_params:
-        return False
-    if "{id}" in card.tool_name or "id" in set(card.required_args):
-        return False
-    if "list" in set(card.actions):
-        return True
-    return bool(card.supports_filters or card.supports_sort or card.supports_limit)
 
 
 def _card_supports_collection_identity_read(card: HydratedToolCard, requirement: Any) -> bool:
@@ -184,14 +234,6 @@ def _batch_identity_arg(card: HydratedToolCard, requirement: Any) -> str | None:
     return path_or_required[0]
 
 
-def _identity_arg_names(requirement: Any) -> set[str]:
-    entity = str(getattr(requirement, "entity", "") or "").strip()
-    names = {"id", "entity_id", "record_id"}
-    if entity:
-        names.update({f"{entity}_id", f"{entity}_ref"})
-    return names
-
-
 def _multi_entity_identity_values(requirement: Any, capability_need: Any) -> list[Any]:
     constraints = dict(getattr(requirement, "constraints", {}) or {})
     constraints.update(getattr(capability_need, "known_args", {}) or {})
@@ -200,6 +242,18 @@ def _multi_entity_identity_values(requirement: Any, capability_need: Any) -> lis
         if isinstance(value, list):
             return list(value)
     return []
+
+
+def _call_identity_value(call: GraphToolCall, requirement: Any) -> Any:
+    for key in _identity_arg_names(requirement):
+        value = call.args.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _stable_value_key(value: Any) -> str:
+    return str(value)
 
 
 def _hydrated_card_for_tool_call(
@@ -314,15 +368,20 @@ def _hydrated_cards_for_requirement(state: PlannerOwnedAgentGraphState, requirem
 
 def _args_for_tool_call(card: HydratedToolCard, requirement: Any, capability_need: Any) -> dict[str, Any]:
     args: dict[str, Any] = {}
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
     for arg_name in dict.fromkeys([*card.required_args, *card.path_params]):
         value = _argument_value_for(arg_name, requirement, capability_need)
         if value not in (None, "", [], {}):
             args[arg_name] = value
-    for key, value in requirement.constraints.items():
+    for key, value in constraints.items():
         if key in card.query_params or key in card.input_schema.get("properties", {}):
             args.setdefault(key, value)
-    if card.supports_fields and requirement.requested_fields:
-        args.setdefault("fields", ",".join(requirement.requested_fields))
+    output_fields = list(getattr(requirement, "requested_fields", []) or [])
+    observation_fields = constraints.get("observation_fields")
+    if isinstance(observation_fields, list):
+        output_fields.extend(str(field) for field in observation_fields if str(field))
+    if card.supports_fields and output_fields:
+        args.setdefault("fields", ",".join(dict.fromkeys(output_fields)))
     return args
 
 

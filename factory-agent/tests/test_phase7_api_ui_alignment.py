@@ -290,6 +290,871 @@ def test_phase7_activity_adapter_sanitizes_tool_and_runtime_details():
     _assert_no_activity_leaks(steps)
 
 
+def test_replan_spine_activity_steps_show_attempt_numbers_and_retry_reason():
+    created_at = datetime(2026, 5, 13, 9, 30, 0)
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 2,
+        "attempts": [
+            {
+                "attempt": 1,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": ["ev-timeout"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": "ev-timeout",
+                        "reason": "tool_error",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        ],
+        "missing_evidence_reasons": [
+            {
+                "reason": "tool_error",
+                "requirement_id": "req-machine-status",
+                "evidence_refs": ["ev-timeout"],
+                "retriable": True,
+            }
+        ],
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-001", "fields": "status"},
+                "requirement_id": "req-machine-status",
+                "evidence_ref": "ev-timeout",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-story",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {
+                "intent_contract": {
+                    "replan_spine": replan_spine,
+                }
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-story",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="started:replan-story-1",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=2),
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+                details={"args": {"id": "M-001", "fields": "status"}},
+            ),
+            TimelineEventResponse(
+                event_id="result:replan-story-1",
+                event_type="tool_result",
+                content="Machine status API timed out.",
+                created_at=created_at + timedelta(seconds=3),
+                tool_name="get__machines_{id}",
+                status="FAILED",
+                details={
+                    "args": {"id": "M-001", "fields": "status"},
+                    "result": {
+                        "status": "tool_failed",
+                        "status_code": 504,
+                        "error": {"code": "tool_error", "error_type": "timeout"},
+                    },
+                },
+            ),
+            TimelineEventResponse(
+                event_id="replan:replan-story",
+                event_type="replan_requested",
+                content="Retry after missing evidence.",
+                created_at=created_at + timedelta(seconds=4),
+                status="PLANNING",
+                details={"reason": "tool_error"},
+            ),
+            TimelineEventResponse(
+                event_id="started:replan-story-2",
+                event_type="tool_started",
+                content="Tool started.",
+                created_at=created_at + timedelta(seconds=5),
+                tool_name="get__machines_{id}",
+                status="IN_PROGRESS",
+                details={"args": {"id": "M-001", "fields": "status"}},
+            ),
+            TimelineEventResponse(
+                event_id="result:replan-story-2",
+                event_type="tool_result",
+                content="Machine status checked.",
+                created_at=created_at + timedelta(seconds=6),
+                tool_name="get__machines_{id}",
+                status="DONE",
+                details={
+                    "args": {"id": "M-001", "fields": "status"},
+                    "result": {"data": {"machine_id": "M-001", "status": "running"}},
+                },
+            ),
+            TimelineEventResponse(
+                event_id="completed:replan-story",
+                event_type="session_completed",
+                content="Machine status is available.",
+                created_at=created_at + timedelta(seconds=7),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+
+    assert [step.label for step in steps] == [
+        "Understood request",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+        "Checking new evidence",
+        "Run complete",
+    ]
+    assert "Attempt 1 of 3" in (steps[1].detail or "")
+    assert "Previous read timed out" in (steps[2].detail or "")
+    assert "Attempt 2 of 3" in (steps[3].detail or "")
+    assert "Previous read timed out" in (steps[3].detail or "")
+    assert "Attempt 2 of 3" in (steps[5].detail or "")
+    assert "Attempt 2 of 3" in (steps[-1].detail or "")
+
+
+def test_replan_spine_activity_steps_collapse_noisy_retry_attempts():
+    created_at = datetime(2026, 5, 13, 9, 45, 0)
+    attempts = []
+    for attempt in range(1, 6):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": [f"ev-timeout-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": f"ev-timeout-{attempt}",
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 5,
+        "max_attempts": 5,
+        "replan_limit_reached": True,
+        "attempts": attempts,
+        "missing_evidence_reasons": [
+            {
+                "reason": "tool_error",
+                "requirement_id": "req-machine-status",
+                "evidence_refs": ["ev-timeout-5"],
+                "retriable": True,
+            }
+        ],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-replan-noisy",
+            "user_id": "u1",
+            "status": "BLOCKED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 5,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=30),
+            "replan_context": {
+                "intent_contract": {
+                    "replan_spine": replan_spine,
+                }
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:replan-noisy",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="blocked:replan-noisy",
+                event_type="session_blocked",
+                content="Evidence could not be verified.",
+                created_at=created_at + timedelta(seconds=29),
+                status="BLOCKED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert "Earlier retry attempts" in labels
+    assert (steps[labels.index("Earlier retry attempts")].detail or "") == "4 earlier attempts collapsed"
+    assert len([label for label in labels if label.startswith("Replanning")]) == 1
+    assert "Attempt 6 of 6" in (steps[-2].detail or "")
+    assert "needs attention" in steps[-1].label.lower()
+    assert "Attempt 6 of 6" in (steps[-1].detail or "")
+
+
+def test_active_replan_spine_activity_uses_attempt_story_instead_of_jumpy_live_graph_rows():
+    created_at = datetime(2026, 5, 13, 9, 50, 0)
+    attempts = []
+    for attempt in range(1, 3):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-machine-status",
+                        "evidence_refs": [f"ev-timeout-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__machines_{id}",
+                        "args": {"id": "M-001", "fields": "status"},
+                        "requirement_id": "req-machine-status",
+                        "evidence_ref": f"ev-timeout-{attempt}",
+                        "reason": "tool_error",
+                        "error_type": "timeout",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 2,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-story",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 2,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "live_replan_spine": replan_spine,
+                "live_activity_steps": [
+                    {
+                        "id": "graph:planner_choose_tool_node",
+                        "timestamp": timestamp,
+                        "order": 7,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:tool_retrieval_node",
+                        "timestamp": timestamp,
+                        "order": 6,
+                        "group": "planning",
+                        "label": "Finding information path",
+                        "detail": "Finding the right information path",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:planner_decision_node",
+                        "timestamp": timestamp,
+                        "order": 5,
+                        "group": "planning",
+                        "label": "Choosing next action",
+                        "detail": "Choosing the next backend action",
+                        "state": "running",
+                    },
+                ],
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-story",
+                event_type="plan_created",
+                content="Check machine status",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Choosing next action",
+        "Finding information path",
+        "Selecting safe action",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+        "Checking evidence",
+        "Replanning after timeout",
+        "Retrying machine status read",
+    ]
+    assert "Attempt 1 of 6" in (steps[4].detail or "")
+    assert "Attempt 2 of 6" in (steps[6].detail or "")
+    assert "Attempt 3 of 6" in (steps[-1].detail or "")
+    assert [step.replan_attempt for step in steps] == [None, None, None, None, 1, 1, 2, 2, 2, 3, 3]
+    assert "Previous read timed out" in (steps[5].detail or "")
+    assert "Previous read timed out" in (steps[8].detail or "")
+    assert [step.state for step in steps].count("running") == 1
+    assert steps[-1].state == "running"
+
+
+def test_active_replan_spine_activity_continues_from_existing_check_result():
+    created_at = datetime(2026, 5, 13, 9, 52, 0)
+    attempts = [
+        {
+            "attempt": 1,
+            "missing_evidence_reasons": [
+                {
+                    "reason": "tool_error",
+                    "requirement_id": "req-job-priority",
+                    "evidence_refs": ["ev-failed-1"],
+                    "retriable": True,
+                }
+            ],
+            "failed_tool_calls": [
+                {
+                    "tool_name": "get__jobs",
+                    "args": {"priority": "low"},
+                    "requirement_id": "req-job-priority",
+                    "evidence_ref": "ev-failed-1",
+                    "reason": "tool_error",
+                    "attempt": 1,
+                }
+            ],
+        }
+    ]
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-continuous",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {
+                "live_replan_spine": replan_spine,
+                "live_activity_steps": [
+                    {
+                        "id": "graph:requirement_ledger_node",
+                        "timestamp": timestamp,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Structuring request",
+                        "detail": "Structuring the request",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:planner_decision_node",
+                        "timestamp": timestamp,
+                        "order": 2,
+                        "group": "planning",
+                        "label": "Choosing next action",
+                        "detail": "Choosing the next backend action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:tool_retrieval_node",
+                        "timestamp": timestamp,
+                        "order": 3,
+                        "group": "planning",
+                        "label": "Finding information path",
+                        "detail": "Finding the right information path",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:planner_choose_tool_node",
+                        "timestamp": timestamp,
+                        "order": 4,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:tool_execution_node",
+                        "timestamp": timestamp,
+                        "order": 5,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:evidence_observation_node",
+                        "timestamp": timestamp,
+                        "order": 6,
+                        "group": "response",
+                        "label": "Checking result",
+                        "detail": "Checking tool evidence",
+                        "state": "running",
+                    },
+                ],
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-continuous",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Choosing next action",
+        "Finding information path",
+        "Selecting safe action",
+        "Running selected tool",
+        "Checking result",
+        "Replanning after failed read",
+        "Retrying job read",
+    ]
+    assert steps[5].detail == "Attempt 1 of 6 - Running the selected read"
+    assert steps[6].detail == "Attempt 1 of 6 - Previous read failed"
+    assert steps[7].detail == "Attempt 2 of 6 - Previous read failed"
+    assert steps[8].detail == "Attempt 2 of 6 - Running the next selected read"
+    assert [step.state for step in steps].count("running") == 1
+    assert steps[-1].state == "running"
+
+
+def test_completed_replan_spine_normalizes_live_check_result_to_evidence_story():
+    created_at = datetime(2026, 5, 13, 9, 53, 0)
+    attempts = [
+        {
+            "attempt": 1,
+            "missing_evidence_reasons": [
+                {
+                    "reason": "tool_error",
+                    "requirement_id": "req-job-priority",
+                    "evidence_refs": ["ev-failed-1"],
+                    "retriable": True,
+                }
+            ],
+            "failed_tool_calls": [
+                {
+                    "tool_name": "get__jobs",
+                    "args": {"priority": "low"},
+                    "requirement_id": "req-job-priority",
+                    "evidence_ref": "ev-failed-1",
+                    "reason": "tool_error",
+                    "attempt": 1,
+                }
+            ],
+        }
+    ]
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:requirement_ledger_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Structuring request",
+            "detail": "Structuring the request",
+            "state": "success",
+        },
+        {
+            "id": "graph:planner_decision_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "planning",
+            "label": "Choosing next action",
+            "detail": "Choosing the next backend action",
+            "state": "success",
+        },
+        {
+            "id": "graph:tool_retrieval_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "planning",
+            "label": "Finding information path",
+            "detail": "Finding the right information path",
+            "state": "success",
+        },
+        {
+            "id": "graph:planner_choose_tool_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 5,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 6,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-replan-normalized",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {
+                "activity_graph_steps": graph_rows,
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "replan_spine": replan_spine,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:completed-replan-normalized",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:completed-replan-normalized",
+                event_type="session_completed",
+                content="Found low priority jobs.",
+                created_at=created_at + timedelta(seconds=8),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Choosing next action",
+        "Finding information path",
+        "Selecting safe action",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after failed read",
+        "Retrying job read",
+        "Checking new evidence",
+        "Run complete",
+    ]
+    assert "Checking result" not in labels
+    assert steps[-1].state == "complete"
+
+
+def test_active_replan_spine_activity_is_uncollapsed_canonical_timeline():
+    created_at = datetime(2026, 5, 13, 9, 54, 0)
+    attempts = []
+    for attempt in range(1, 5):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-job-priority",
+                        "evidence_refs": [f"ev-failed-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "requirement_id": "req-job-priority",
+                        "evidence_ref": f"ev-failed-{attempt}",
+                        "reason": "tool_error",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 4,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-canonical-uncollapsed",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 4,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=15),
+            "replan_context": {
+                "live_replan_spine": replan_spine,
+                "live_activity_steps": [
+                    {
+                        "id": "graph:requirement_ledger_node",
+                        "timestamp": timestamp,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Structuring request",
+                        "detail": "Structuring the request",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:planner_decision_node",
+                        "timestamp": timestamp,
+                        "order": 2,
+                        "group": "planning",
+                        "label": "Choosing next action",
+                        "detail": "Choosing the next backend action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:tool_execution_node",
+                        "timestamp": timestamp,
+                        "order": 3,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:evidence_observation_node",
+                        "timestamp": timestamp,
+                        "order": 4,
+                        "group": "response",
+                        "label": "Checking result",
+                        "detail": "Checking tool evidence",
+                        "state": "running",
+                    },
+                ],
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-canonical-uncollapsed",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+    details = [step.detail or "" for step in steps]
+
+    assert "Earlier retry attempts" not in labels
+    assert "Earlier activity" not in labels
+    assert labels[:4] == [
+        "Understood request",
+        "Structuring request",
+        "Choosing next action",
+        "Running selected tool",
+    ]
+    for attempt in range(1, 6):
+        assert any(detail.startswith(f"Attempt {attempt} of 6") for detail in details)
+    assert details.index("Attempt 1 of 6 - Previous read failed") < details.index(
+        "Attempt 2 of 6 - Previous read failed"
+    )
+    assert details.index("Attempt 4 of 6 - Previous read failed") < details.index(
+        "Attempt 5 of 6 - Running the next selected read"
+    )
+    assert steps[-1].state == "running"
+    assert [step.state for step in steps].count("running") == 1
+
+
+def test_active_replan_spine_keeps_previous_attempt_before_current_retry_without_collapsing():
+    created_at = datetime(2026, 5, 13, 9, 55, 0)
+    attempts = []
+    for attempt in range(1, 4):
+        attempts.append(
+            {
+                "attempt": attempt,
+                "missing_evidence_reasons": [
+                    {
+                        "reason": "tool_error",
+                        "requirement_id": "req-job-priority",
+                        "evidence_refs": [f"ev-failed-{attempt}"],
+                        "retriable": True,
+                    }
+                ],
+                "failed_tool_calls": [
+                    {
+                        "tool_name": "get__jobs",
+                        "args": {"priority": "low"},
+                        "requirement_id": "req-job-priority",
+                        "evidence_ref": f"ev-failed-{attempt}",
+                        "reason": "tool_error",
+                        "attempt": attempt,
+                    }
+                ],
+            }
+        )
+    replan_spine = {
+        "attempt_count": 3,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-active-replan-collapse-previous",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 3,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=12),
+            "replan_context": {"live_replan_spine": replan_spine},
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:active-replan-collapse-previous",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    details = [step.detail or "" for step in steps]
+
+    assert "1 earlier attempt collapsed" not in details
+    assert "Earlier retry attempts" not in [step.label for step in steps]
+    assert any(detail.startswith("Attempt 2 of 6 - Running the next selected read") for detail in details)
+    assert any(detail.startswith("Attempt 3 of 6 - Previous read failed") for detail in details)
+    assert any(detail.startswith("Attempt 4 of 6 - Previous read failed") for detail in details)
+    assert any(detail.startswith("Attempt 4 of 6 - Running the next selected read") for detail in details)
+    previous_check_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 3 of 6 - Previous read failed")
+    )
+    current_replan_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 4 of 6 - Previous read failed")
+    )
+    current_retry_index = next(
+        idx for idx, detail in enumerate(details)
+        if detail.startswith("Attempt 4 of 6 - Running the next selected read")
+    )
+    assert previous_check_index < current_replan_index < current_retry_index
+    assert steps[current_retry_index].state == "running"
+    assert [step.state for step in steps].count("running") == 1
+
+
 def test_phase7_activity_adapter_uses_specific_server_stage_labels_for_tool_and_rag_runs():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
 
@@ -495,6 +1360,456 @@ def test_phase7_activity_adapter_uses_live_graph_activity_while_session_is_activ
         "Understood request",
         "Run complete",
     ]
+
+
+def test_live_graph_activity_exposes_serialized_order_when_timestamps_collide():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    timestamp = int(created_at.timestamp())
+    active_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-live-graph-order",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at,
+            "replan_context": {
+                "live_activity_steps": [
+                    {
+                        "id": "graph:aaa-evidence",
+                        "timestamp": timestamp,
+                        "order": 3,
+                        "group": "response",
+                        "label": "Checking result",
+                        "detail": "Checking tool evidence",
+                        "state": "running",
+                    },
+                    {
+                        "id": "graph:zzz-requirement",
+                        "timestamp": timestamp,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Structuring request",
+                        "detail": "Structuring the request",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:mmm-tool",
+                        "timestamp": timestamp,
+                        "order": 2,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                ]
+            },
+        },
+    )
+
+    steps = _activity_steps_for_snapshot(active_snapshot)
+    assert [step.label for step in steps] == [
+        "Structuring request",
+        "Running selected tool",
+        "Checking result",
+    ]
+    assert [step.order for step in steps] == [1, 2, 3]
+    assert [step.model_dump()["order"] for step in steps] == [1, 2, 3]
+
+
+def test_live_graph_activity_keeps_repeated_occurrences_in_backend_order_when_timestamps_differ():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    active_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-live-graph-repeated-occurrences",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=3),
+            "replan_context": {
+                "live_activity_steps": [
+                    {
+                        "id": "graph:000001:planner_choose_tool_node",
+                        "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:000002:tool_execution_node",
+                        "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+                        "order": 2,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:000003:planner_choose_tool_node",
+                        "timestamp": int((created_at + timedelta(seconds=1)).timestamp()),
+                        "order": 3,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "running",
+                    },
+                ]
+            },
+        },
+    )
+
+    steps = _activity_steps_for_snapshot(active_snapshot)
+    assert [step.id for step in steps] == [
+        "graph:000001:planner_choose_tool_node",
+        "graph:000002:tool_execution_node",
+        "graph:000003:planner_choose_tool_node",
+    ]
+    assert [step.order for step in steps] == [1, 2, 3]
+    assert [step.state for step in steps] == ["success", "success", "running"]
+
+
+def test_completed_graph_activity_keeps_preserved_live_history_as_canonical_timeline():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": int((created_at + timedelta(seconds=1)).timestamp()),
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:requirement_node",
+            "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+            "order": 2,
+            "group": "planning",
+            "label": "Structuring request",
+            "detail": "Structuring the request",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:tool_execution_node",
+            "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+            "order": 3,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:evidence_observation_node",
+            "timestamp": int((created_at + timedelta(seconds=4)).timestamp()),
+            "order": 4,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+        {
+            "id": "graph:000005:satisfaction_node",
+            "timestamp": int((created_at + timedelta(seconds=5)).timestamp()),
+            "order": 5,
+            "group": "response",
+            "label": "Verifying result",
+            "detail": "Verifying the result",
+            "state": "success",
+        },
+        {
+            "id": "graph:000006:planner_choose_tool_node",
+            "timestamp": int((created_at + timedelta(seconds=6)).timestamp()),
+            "order": 6,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:000007:tool_execution_node",
+            "timestamp": int((created_at + timedelta(seconds=7)).timestamp()),
+            "order": 7,
+            "group": "research",
+            "label": "Reading 2 product records",
+            "detail": "Parallel read batch scheduled",
+            "state": "success",
+        },
+        {
+            "id": "graph:000008:response_document_node",
+            "timestamp": int((created_at + timedelta(seconds=8)).timestamp()),
+            "order": 8,
+            "group": "response",
+            "label": "Rendering response",
+            "detail": "Rendering the response",
+            "state": "running",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-graph-history",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:completed-graph-history",
+                event_type="plan_created",
+                content="Read jobs and dependent products.",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:completed-graph-history",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=4),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+
+    assert [step.label for step in steps] == [
+        "Understood request",
+        "Structuring request",
+        "Running selected tool",
+        "Checking result",
+        "Verifying result",
+        "Selecting safe action",
+        "Reading 2 product records",
+        "Rendering response",
+        "Run complete",
+    ]
+    assert [step.state for step in steps[:-1]] == ["success"] * (len(steps) - 1)
+    assert steps[-1].state == "complete"
+    assert [step.order for step in steps] == list(range(1, len(steps) + 1))
+    assert "Earlier activity" not in [step.label for step in steps]
+    serialized = json.dumps([step.model_dump(exclude_none=True) for step in steps])
+    assert "get__" not in serialized
+    assert "tool_name" not in serialized
+    assert "unsafe_extra" not in serialized
+
+
+def test_completed_graph_activity_places_dependent_caption_after_parent_evidence():
+    created_at = datetime(2026, 5, 13, 9, 5, 0)
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:satisfaction_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "response",
+            "label": "Verifying result",
+            "detail": "Verifying the result",
+            "state": "success",
+        },
+        {
+            "id": "graph:000005:planner_decision_node",
+            "timestamp": timestamp,
+            "order": 5,
+            "group": "planning",
+            "label": "Choosing next action",
+            "detail": "Choosing the next backend action",
+            "state": "success",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-dependent-caption-order",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "activity_caption_context": {
+                        "activity_graph_steps": graph_rows,
+                        "conditional_branches": [
+                            {
+                                "branch_id": "branch-product",
+                                "status": "activated",
+                                "activated_child_requirement_ids": ["req-product"],
+                                "condition": {"field_any": ["product_id"]},
+                            }
+                        ],
+                    },
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="completed:dependent-caption-order",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=9),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels.index("Verifying result") < labels.index("Activated dependent read")
+    assert labels.index("Activated dependent read") < labels.index("Choosing next action")
+
+
+def test_completed_graph_activity_places_read_caption_after_safe_action():
+    created_at = datetime(2026, 5, 13, 9, 6, 0)
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:planner_choose_tool_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+    ]
+    caption_context = {
+        "activity_graph_steps": graph_rows,
+        "requirements": [
+            {
+                "id": "req-job-read",
+                "entity": "job",
+                "requirement_type": "filtered_collection",
+                "intent_operation": "filter_collection",
+                "source_of_truth": "operational_state",
+            }
+        ],
+        "evidence": [
+            {
+                "id": "ev-job-read",
+                "requirement_id": "req-job-read",
+                "source_type": "api_tool",
+            }
+        ],
+        "active_final_evidence_refs": ["ev-job-read"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-read-caption-order",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "activity_caption_context": caption_context,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="completed:read-caption-order",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=9),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels.index("Selecting safe action") < labels.index("Reading job records")
+    assert labels.index("Reading job records") < labels.index("Running selected tool")
 
 
 def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():

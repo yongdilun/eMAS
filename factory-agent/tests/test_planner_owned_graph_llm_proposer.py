@@ -16,13 +16,17 @@ from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
     CapabilityNeed,
+    EvidenceLedgerEntry,
     HydratedToolCard,
     HydratedToolCards,
     RequirementLedger,
     RequirementLedgerEntry,
+    RequirementRevisionRecord,
+    next_child_requirement_id,
 )
 from factory_agent.planning.v2_planner_decisions import (
     PlannerDecisionSubmission,
+    PlannerDecisionValidationError,
     record_planner_decision,
     validate_planner_decision,
 )
@@ -254,6 +258,70 @@ class StaticPlannerModel:
         return self.content
 
 
+def _child_expansion_state() -> PlannerOwnedAgentGraphState:
+    state = PlannerOwnedAgentGraphState(
+        original_query="Explain why machine M-LTH-77 is stopped.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Explain why machine M-LTH-77 is stopped.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="Read machine M-LTH-77 status",
+                    requirement_type="single_entity_status",
+                    entity="machine",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"machine_id": "M-LTH-77"},
+                    requested_fields=["status"],
+                    locked_constraints=["machine_id", "requested_fields"],
+                )
+            ],
+        ),
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-api-machine",
+            requirement_id="req-001",
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="get__machines_{id}",
+            normalized_result={
+                "entity": "machine",
+                "entity_id": "M-LTH-77",
+                "fields": {
+                    "machine_id": "M-LTH-77",
+                    "status": "stopped",
+                    "active_job_id": "JOB-CAUSE-17",
+                },
+            },
+        )
+    )
+    state.execution_trace.diagnostics["satisfaction"] = {
+        "missing_evidence_reasons": [
+            {
+                "requirement_id": "req-001",
+                "status": "blocked",
+                "reason": "needs_follow_up_entity",
+                "retriable": True,
+                "evidence_refs": ["ev-api-machine"],
+            }
+        ]
+    }
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": "get__machines_{id}",
+                "args": {"id": "M-LTH-77", "fields": "status"},
+                "requirement_id": "req-001",
+                "evidence_ref": "ev-api-machine",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    return state
+
+
 def _graph(proposer, executor: RecordingExecutor | None = None) -> tuple[PlannerOwnedAgentGraph, RecordingExecutor]:
     settings = _settings()
     executor = executor or RecordingExecutor()
@@ -463,6 +531,144 @@ def test_phase10_5_qwen_prompt_is_compact_and_decision_specific_for_choose_tool(
     assert len(prompt) < 6000
 
 
+def test_requirement_expansion_revise_prompt_includes_child_rules_and_bounded_context():
+    state = _child_expansion_state()
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id="req-001",
+        reason="Consider bounded child expansion after parent evidence.",
+    )
+
+    prompt = _build_planner_decision_prompt(state=state, context=context)
+    payload = json.loads(prompt)
+    decision_state = payload["decision_state"]
+
+    assert payload["response_contract"]["minimal_json"]["proposed_requirement_ledger"]["requirements"] == (
+        "complete revised requirement list preserving locked constraints"
+    )
+    assert decision_state["child_expansion_rules"]["max_child_depth"] == 1
+    assert decision_state["child_expansion_rules"]["max_children_per_parent"] == 2
+    assert decision_state["child_expansion_rules"]["allowed_initial_child_actions"] == [
+        "read",
+        "read_one",
+        "read_many",
+        "list",
+        "search_documents",
+    ]
+    assert decision_state["missing_evidence_reasons"][0]["evidence_refs"] == ["ev-api-machine"]
+    assert decision_state["failed_tool_memory"][0]["requirement_id"] == "req-001"
+    assert decision_state["candidate_source_of_truth_hints"]["matching_capabilities"] == []
+    assert "active_job_id" in json.dumps(decision_state["active_evidence_summary"])
+    assert decision_state["full_openapi_catalog_visible"] is False
+    assert "input_schema" not in json.dumps(decision_state)
+
+
+@pytest.mark.asyncio
+async def test_requirement_expansion_qwen_adapter_normalizes_valid_child_revision_record():
+    state = _child_expansion_state()
+    parent = state.requirement_ledger.requirements[0]
+    child_id = next_child_requirement_id(parent.id, [requirement.id for requirement in state.requirement_ledger.requirements])
+    proposed = state.requirement_ledger.model_dump(mode="json")
+    proposed["revision"] = state.requirement_ledger.revision + 1
+    proposed["requirements"].append(
+        {
+            "id": child_id,
+            "goal": "Read active job JOB-CAUSE-17 status",
+            "requirement_type": "single_entity_status",
+            "entity": "job",
+            "intent_operation": "report_status",
+            "source_of_truth": "operational_state",
+            "constraints": {"job_id": "JOB-CAUSE-17"},
+            "requested_fields": ["status"],
+            "locked_constraints": ["job_id", "requested_fields"],
+            "parent_requirement_id": parent.id,
+            "expansion_reason": "Machine evidence exposed the active job id.",
+            "derived_from_evidence_refs": ["ev-api-machine"],
+            "derived_from_missing_reasons": [],
+            "depends_on": ["ev-api-machine"],
+        }
+    )
+    proposed["revision_history"] = []
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id=parent.id,
+    )
+    model = StaticPlannerModel(
+        json.dumps(
+            {
+                "decision": {
+                    "decision_kind": "revise_requirements",
+                    "reason": "Add a bounded child requirement from parent evidence.",
+                },
+                "proposed_requirement_ledger": proposed,
+            }
+        )
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+    revision = result.submission.proposed_requirement_ledger.revision_history[-1]  # type: ignore[union-attr]
+
+    assert revision.change_type == "add_child_requirements"
+    assert revision.details["parent_requirement_id"] == parent.id
+    assert revision.details["added_child_requirement_ids"] == [child_id]
+    assert revision.details["derived_from_evidence_refs"] == ["ev-api-machine"]
+    assert validate_planner_decision(state, result.submission).accepted is True
+
+
+@pytest.mark.asyncio
+async def test_requirement_expansion_qwen_adapter_unjustified_child_ledger_is_rejected_by_gate():
+    state = _child_expansion_state()
+    parent = state.requirement_ledger.requirements[0]
+    child_id = next_child_requirement_id(parent.id, [requirement.id for requirement in state.requirement_ledger.requirements])
+    proposed = state.requirement_ledger.model_dump(mode="json")
+    proposed["revision"] = state.requirement_ledger.revision + 1
+    proposed["requirements"].append(
+        {
+            "id": child_id,
+            "goal": "Read unrelated job status",
+            "requirement_type": "single_entity_status",
+            "entity": "job",
+            "intent_operation": "report_status",
+            "source_of_truth": "operational_state",
+            "constraints": {"job_id": "JOB-UNSUPPORTED"},
+            "requested_fields": ["status"],
+            "locked_constraints": ["job_id"],
+            "parent_requirement_id": parent.id,
+            "expansion_reason": "Planner invented a follow-up.",
+            "derived_from_evidence_refs": [],
+            "derived_from_missing_reasons": [],
+        }
+    )
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-revise-unjustified-child",
+        requested_decision_kind="revise_requirements",
+        allowed_decision_kinds=["revise_requirements", "request_clarification", "fail"],
+        requirement_id=parent.id,
+    )
+    model = StaticPlannerModel(
+        json.dumps(
+            {
+                "decision": {
+                    "decision_kind": "revise_requirements",
+                    "reason": "Invent a child requirement.",
+                },
+                "proposed_requirement_ledger": proposed,
+            }
+        )
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+
+    with pytest.raises(PlannerDecisionValidationError, match="child requirement expansion requires evidence"):
+        validate_planner_decision(state, result.submission)
+
+
 @pytest.mark.asyncio
 async def test_phase10_5_qwen_adapter_enforces_write_choice_for_approval_required_mutation():
     capability_need = CapabilityNeed(
@@ -640,6 +846,127 @@ async def test_phase10_5_qwen_adapter_accepts_compact_selected_tool_name_submiss
     assert result.submission.decision.selected_tool_call.tool_name == "get__machines_{id}"
     assert result.submission.decision.diagnostics["planner_proposer"]["proposer_seam"] is True
     assert "selected_tool_name" not in result.submission.decision.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_qwen_adapter_carries_filtered_candidates_for_failed_memory_gate():
+    capability_need = CapabilityNeed(
+        source_of_truth="operational_state",
+        entity="machine",
+        action="read_one",
+        constraints={"machine_id": "M-LTH-77"},
+        requested_fields=["status"],
+        requirement_id="req-001",
+    )
+    state = PlannerOwnedAgentGraphState(
+        original_query="Show machine M-LTH-77 status.",
+        requirement_ledger=RequirementLedger(
+            user_goal="Show machine M-LTH-77 status.",
+            requirements=[
+                RequirementLedgerEntry(
+                    id="req-001",
+                    goal="show machine status",
+                    requirement_type="single_entity_status",
+                    entity="machine",
+                    intent_operation="report_status",
+                    source_of_truth="operational_state",
+                    constraints={"machine_id": "M-LTH-77"},
+                    requested_fields=["status"],
+                    locked_constraints=["machine_id"],
+                )
+            ],
+        ),
+        candidate_tool_windows=[
+            CandidateToolWindow(
+                requirement_id="req-001",
+                capability_need=capability_need,
+                candidates=[
+                    CandidateTool(tool_name="get__machines_{id}", rank=1, actions=["read_one", "read"]),
+                    CandidateTool(tool_name="get__machine_status_{id}", rank=2, actions=["read_one", "read"]),
+                ],
+            )
+        ],
+        hydrated_tool_cards=[
+            HydratedToolCards(
+                requirement_id="req-001",
+                cards=[
+                    HydratedToolCard(
+                        tool_name="get__machines_{id}",
+                        actions=["read_one"],
+                        is_read_only=True,
+                        required_args=["id"],
+                        path_params=["id"],
+                        query_params=["fields"],
+                    ),
+                    HydratedToolCard(
+                        tool_name="get__machine_status_{id}",
+                        actions=["read_one"],
+                        is_read_only=True,
+                        required_args=["id"],
+                        path_params=["id"],
+                        query_params=["fields"],
+                    ),
+                ],
+            )
+        ],
+    )
+    failed_call = GraphToolCall(
+        call_id="call-failed-primary",
+        kind="api_tool",
+        tool_name="get__machines_{id}",
+        args={"id": "M-LTH-77", "fields": "status"},
+        requirement_id="req-001",
+        candidate_window_id="window-001",
+    )
+    alternate_call = GraphToolCall(
+        call_id="call-alternate-status",
+        kind="api_tool",
+        tool_name="get__machine_status_{id}",
+        args={"id": "M-LTH-77", "fields": "status"},
+        requirement_id="req-001",
+        candidate_window_id="window-001",
+    )
+    state.execution_trace.diagnostics["replan_spine"] = {
+        "failed_tool_calls": [
+            {
+                "tool_name": failed_call.tool_name,
+                "args": dict(failed_call.args),
+                "requirement_id": "req-001",
+                "evidence_ref": "evidence-failed-primary",
+                "reason": "tool_error",
+                "attempt": 1,
+            }
+        ]
+    }
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-choose-001",
+        requested_decision_kind="choose_tool",
+        allowed_decision_kinds=["choose_tool", "revise_requirements", "request_clarification", "fail"],
+        requirement_id="req-001",
+        capability_need=capability_need,
+        candidate_tool_calls=[alternate_call],
+    )
+    model = StaticPlannerModel(
+        '{"decision":{"decision_kind":"choose_tool",'
+        '"selected_tool_call":{'
+        '"call_id":"call-failed-primary",'
+        '"kind":"api_tool",'
+        '"tool_name":"get__machines_{id}",'
+        '"args":{"id":"M-LTH-77","fields":"status"},'
+        '"requirement_id":"req-001",'
+        '"candidate_window_id":"window-001"'
+        '},'
+        '"reason":"Repeat the previous full selected tool call."}}'
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(state=state, context=context)
+
+    assert result.submission.decision.selected_tool_call is not None
+    assert result.submission.decision.selected_tool_call.tool_name == failed_call.tool_name
+    assert result.submission.candidate_tool_calls == [alternate_call]
+    with pytest.raises(PlannerDecisionValidationError, match="failed-tool memory"):
+        validate_planner_decision(state, result.submission)
 
 
 @pytest.mark.asyncio
@@ -824,7 +1151,10 @@ async def test_phase10_5_parallel_read_batch_guard_authorizes_each_selected_call
         ),
         adapter="phase10_5_batch_mock_proposer",
     ).submission.decision
-    assert record_planner_decision(state, choose).accepted is True
+    assert record_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=choose, candidate_tool_calls=calls),
+    ).accepted is True
     execute_batch = PlannerDecisionRecord(
         decision_id="dec-execute-002",
         decision_kind="execute_parallel_read_batch",
@@ -959,5 +1289,7 @@ def test_phase10_5_static_planner_authored_graph_decisions_use_proposer_seam():
         assert not (isinstance(author, ast.Constant) and author.value == "planner")
 
     assert "propose_decision(state=state, context=context)" in source
-    assert "record_planner_decision(state, proposal.submission)" in source
+    assert "proposal.submission.model_copy" in source
+    assert '"candidate_tool_calls": list(context.candidate_tool_calls)' in source
+    assert "record_planner_decision(state, submission)" in source
     assert "planner_proposer" in source

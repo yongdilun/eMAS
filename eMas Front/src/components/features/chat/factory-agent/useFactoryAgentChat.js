@@ -5,6 +5,7 @@ import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../tu
 import {
   buildActivityStepsFromSnapshot,
   coalesceActivitySteps,
+  compareActivitySteps,
   finalizeHistoricalActivityStates,
   stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils'
@@ -36,6 +37,20 @@ const hasAuthoritativeActivityRows = (steps) => (
 const stripSnapshotFallbackActivitySteps = (steps) => (
   Array.isArray(steps) ? steps.filter((step) => !isSnapshotFallbackActivityStep(step)) : []
 )
+const hasTerminalActivityStep = (steps) => (
+  Array.isArray(steps) && steps.some((step) => step?.state === 'complete' || step?.state === 'error')
+)
+const ACTIVITY_SETTLED_STATES = new Set(['success', 'complete', 'error'])
+const ACTIVITY_IN_FLIGHT_STATES = new Set(['running', 'retry', 'waiting'])
+const mergeLiveActivityStep = (existing, incoming) => {
+  if (!existing) return { ...incoming }
+  const existingState = String(existing?.state || '')
+  const incomingState = String(incoming?.state || '')
+  if (ACTIVITY_SETTLED_STATES.has(existingState) && ACTIVITY_IN_FLIGHT_STATES.has(incomingState)) {
+    return { ...incoming, ...existing }
+  }
+  return { ...existing, ...incoming }
+}
 
 function nowTime() {
   return formatFactoryAgentTime(Date.now())
@@ -53,9 +68,9 @@ function formatTs(ts) {
 function nextSessionName() {
   if (!hasStorage()) return 'New chat'
   try {
-    const current = Number(localStorage.getItem(SESSION_COUNTER_KEY) || '0')
+    const current = Number(window.localStorage.getItem(SESSION_COUNTER_KEY) || '0')
     const next = Number.isFinite(current) ? current + 1 : 1
-    localStorage.setItem(SESSION_COUNTER_KEY, String(next))
+    window.localStorage.setItem(SESSION_COUNTER_KEY, String(next))
     return `Chat ${next}`
   } catch {
     return 'New chat'
@@ -230,7 +245,6 @@ export function useFactoryAgentChat() {
     const nextTimeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
     setTimeline(nextTimeline)
     setPresentation(snapshot?.presentation || null)
-    setResponseDocument(responseDocumentUpdate.state.document)
 
     if (ACTIVITY_TIMELINE_ENABLED) {
       setActivitySteps((prev) => {
@@ -268,9 +282,7 @@ export function useFactoryAgentChat() {
               const existing = byId.get(s.id)
               byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
             }
-            const merged = Array.from(byId.values()).sort(
-              (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-            )
+            const merged = Array.from(byId.values()).sort(compareActivitySteps)
             result = coalesceActivitySteps(merged)
           } else {
             // Session no longer in an active stream: drop client placeholder rows so a
@@ -306,9 +318,7 @@ export function useFactoryAgentChat() {
                 if (!s?.id || byId.has(s.id)) continue
                 byId.set(s.id, { ...s })
               }
-              const merged = Array.from(byId.values()).sort(
-                (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-              )
+              const merged = Array.from(byId.values()).sort(compareActivitySteps)
               result = coalesceActivitySteps(merged)
             } else {
               result = finalizeHistoricalActivityStates(built)
@@ -331,6 +341,8 @@ export function useFactoryAgentChat() {
       })
     }
 
+    setResponseDocument(responseDocumentUpdate.state.document)
+
     // Server is now the source of truth for pending_approval.
     // The snapshot loader self-heals stale approvals, so we trust it directly.
     const serverPending = snapshot?.pending_approval || null
@@ -341,14 +353,14 @@ export function useFactoryAgentChat() {
 
     setLastSyncedAt(new Date().toISOString())
     if (nextSession?.session_id && hasStorage()) {
-      localStorage.setItem(ACTIVE_SESSION_KEY, nextSession.session_id)
+      window.localStorage.setItem(ACTIVE_SESSION_KEY, nextSession.session_id)
     }
     mergeSessionSummary(nextSession)
     return nextSession
   }, [mergeSessionSummary])
 
   useEffect(() => {
-    if (hasStorage()) localStorage.setItem(MESSAGE_MODE_KEY, DEFAULT_MESSAGE_MODE)
+    if (hasStorage()) window.localStorage.setItem(MESSAGE_MODE_KEY, DEFAULT_MESSAGE_MODE)
   }, [])
 
   const clearSnapshotState = useCallback(() => {
@@ -390,7 +402,7 @@ export function useFactoryAgentChat() {
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
       if (kind === 'not_found' || kind === 'auth') {
-        const currentStoredId = hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null
+        const currentStoredId = hasStorage() ? window.localStorage.getItem(ACTIVE_SESSION_KEY) : null
         const currentSnapshotId = lastSnapshotSessionIdRef.current
         if (
           kind === 'auth' ||
@@ -398,7 +410,7 @@ export function useFactoryAgentChat() {
           String(currentStoredId) === String(sessionId) ||
           String(currentSnapshotId || '') === String(sessionId)
         ) {
-          if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+          if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
           clearSnapshotState()
         }
       }
@@ -413,11 +425,12 @@ export function useFactoryAgentChat() {
     const currentSessionStatus = session?.status || null
     setActivitySteps((prev) => {
       const withoutClient = stripClientActivitySteps(prev)
+      if (hasTerminalActivityStep(withoutClient)) return withoutClient
       const idx = withoutClient.findIndex((s) => s.id === incoming.id)
       const next = [...withoutClient]
-      if (idx >= 0) next[idx] = { ...next[idx], ...incoming }
+      if (idx >= 0) next[idx] = mergeLiveActivityStep(next[idx], incoming)
       else next.push(incoming)
-      next.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      next.sort(compareActivitySteps)
       return coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus))
     })
     if (terminalActivity && currentSessionId) {
@@ -459,7 +472,6 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-        FACTORY_AGENT_STATUS.BLOCKED,
       ].includes(session?.status))
 
   useActivityStream(session?.session_id || null, applyStreamActivityStep, {
@@ -475,7 +487,6 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
-        FACTORY_AGENT_STATUS.BLOCKED,
       ].includes(session?.status)),
   )
 
@@ -511,7 +522,6 @@ export function useFactoryAgentChat() {
     ) {
       return 3000
     }
-    if (session.status === FACTORY_AGENT_STATUS.BLOCKED) return 6000
     return null
   }, [session?.status])
 
@@ -542,10 +552,11 @@ export function useFactoryAgentChat() {
       try {
         await refreshSessionList()
         if (!hasStorage()) return
-        const savedId = localStorage.getItem(ACTIVE_SESSION_KEY)
+        const savedId = window.localStorage.getItem(ACTIVE_SESSION_KEY)
         if (!savedId) return
         await safelyRefreshSnapshot(savedId)
       } catch (err) {
+        if (classifyFactoryAgentError(err) === 'not_found') return
         setError(normalizeFactoryAgentError(err, 'Could not restore active session'))
       } finally {
         setLoading(false)
@@ -560,7 +571,7 @@ export function useFactoryAgentChat() {
     setError(null)
     try {
       await refreshSessionList()
-      const savedId = session?.session_id || (hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null)
+      const savedId = session?.session_id || (hasStorage() ? window.localStorage.getItem(ACTIVE_SESSION_KEY) : null)
       if (savedId) await safelyRefreshSnapshot(savedId)
       return true
     } catch (err) {
@@ -579,7 +590,7 @@ export function useFactoryAgentChat() {
         user_id: DEFAULT_USER_ID,
         name: nextSessionName(),
       })
-      if (hasStorage()) localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
+      if (hasStorage()) window.localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
       mergeSessionSummary(created)
       await refreshSessionList()
       await safelyRefreshSnapshot(created.session_id)
@@ -723,7 +734,7 @@ export function useFactoryAgentChat() {
     try {
       await factoryAgentApi.deleteSession(sessionId)
       if (session?.session_id === sessionId) {
-        if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+        if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
         clearSnapshotState()
       }
       await refreshSessionList()
@@ -739,7 +750,7 @@ export function useFactoryAgentChat() {
     setError(null)
     try {
       await factoryAgentApi.deleteSessions({ user_id: DEFAULT_USER_ID })
-      if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
       clearClientProgress()
       clearClientProgressTimers()
       clearSnapshotState()

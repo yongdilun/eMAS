@@ -47,6 +47,7 @@ async function parseErrorBody(res) {
     try {
       const json = JSON.parse(text)
       if (typeof json.detail === 'string') return json.detail
+      if (Array.isArray(json.detail?.errors)) return json.detail.errors.filter(Boolean).join(' ')
       if (json.detail && typeof json.detail === 'object') return JSON.stringify(json.detail)
       return json.message || json.error || text
     } catch {

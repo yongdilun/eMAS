@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -19,9 +20,14 @@ from factory_agent.graph.v2_agent_graph import (
 from factory_agent.observability.metrics import metrics
 from factory_agent.persistence.models import Approval as ApprovalRow
 from factory_agent.persistence.models import Session as SessionRow
-from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
+from factory_agent.planning.v2_contracts import EvidenceLedgerEntry, requirement_child_lineage
 from factory_agent.planning.v2_rag_tool import ensure_v2_rag_tool
 from factory_agent.schemas import PlanDraft, PlanResponse, PlanStepDraft, ToolInfo
+from factory_agent.services.planner_activity_captions import (
+    ActivityCaption,
+    build_activity_caption_context_from_graph_state,
+    caption_for_graph_event,
+)
 from factory_agent.services.session_revision import bump_session_revision
 
 PersistPlan = Callable[..., Awaitable[PlanResponse]]
@@ -29,7 +35,39 @@ SessionLookup = Callable[..., Awaitable[Any]]
 UuidFactory = Callable[[], str]
 
 _ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
-_LIVE_GRAPH_MAX_STEPS = 8
+_LIVE_GRAPH_MAX_STEPS = 64
+_ACTIVITY_GRAPH_HISTORY_FIELDS = {
+    "id",
+    "timestamp",
+    "order",
+    "_order",
+    "group",
+    "label",
+    "detail",
+    "state",
+}
+
+
+def _activity_graph_history_from_context(context: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    rows = (context or {}).get("live_activity_steps") if isinstance(context, Mapping) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        kept = {key: row[key] for key in _ACTIVITY_GRAPH_HISTORY_FIELDS if key in row}
+        if kept.get("id") and kept.get("label"):
+            out.append(kept)
+    return out[-_LIVE_GRAPH_MAX_STEPS:]
+
+
+def _intent_contract_replan_spine(state: Any) -> dict[str, Any]:
+    diagnostics = getattr(getattr(state, "execution_trace", None), "diagnostics", {})
+    replan = diagnostics.get("replan_spine") if isinstance(diagnostics, Mapping) else None
+    if not isinstance(replan, Mapping):
+        return {}
+    return dict(replan)
 
 
 def _graph_event_is_rag(event: Mapping[str, Any]) -> bool:
@@ -53,22 +91,22 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "requirement_ledger_node": (
             "planning",
-            "Preparing next action",
+            "Structuring request",
             "Structuring the request",
         ),
         "planner_decision_node": (
             "planning",
-            "Preparing next action",
+            "Choosing next action",
             "Choosing the next backend action",
         ),
         "tool_retrieval_node": (
             "planning",
-            "Preparing next action",
+            "Finding information path",
             "Finding the right information path",
         ),
         "planner_choose_tool_node": (
             "planning",
-            "Preparing next action",
+            "Selecting safe action",
             "Selecting a safe action",
         ),
         "tool_execution_node": (
@@ -83,12 +121,12 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "satisfaction_node": (
             "response",
-            "Checking result",
+            "Verifying result",
             "Verifying the result",
         ),
         "approval_node": (
             "planning",
-            "Preparing next action",
+            "Checking approvals",
             "Checking approval requirements",
         ),
         "finalize_node": (
@@ -98,7 +136,7 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "response_document_node": (
             "response",
-            "Preparing response",
+            "Rendering response",
             "Rendering the response",
         ),
     }
@@ -106,14 +144,33 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
     if spec is None:
         return None
     group, label, detail = spec
+    caption = caption_for_graph_event(
+        event,
+        ActivityCaption(group=group, label=label, detail=detail, state="running"),
+    )
     return {
         "id": f"graph:{node}",
+        "_graph_node": node,
         "timestamp": int(datetime.utcnow().timestamp()),
-        "group": group,
-        "label": label,
-        "detail": detail,
-        "state": "running",
+        "group": caption.group,
+        "label": caption.label,
+        "detail": caption.detail,
+        "state": caption.state,
     }
+
+
+def _live_activity_order(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _live_activity_id_component(value: Any) -> str:
+    text = str(value or "").strip()
+    out = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "-" for ch in text)
+    return out.strip("-") or "node"
 
 
 class LiveGraphActivityRecorder:
@@ -129,11 +186,17 @@ class LiveGraphActivityRecorder:
         self._session_id = session_id
         self._pending: list[dict[str, Any]] = []
         self._drain_task: asyncio.Task[None] | None = None
+        self._sequence = 0
 
     def record_graph_event(self, event: Mapping[str, Any]) -> None:
         step = _live_activity_step_for_graph_event(event)
         if step is None:
             return
+        replan_spine = event.get("replan_spine")
+        if isinstance(replan_spine, Mapping):
+            step["_replan_spine"] = dict(replan_spine)
+        self._sequence += 1
+        step["_pending_order"] = self._sequence
         self._pending.append(step)
         try:
             loop = asyncio.get_running_loop()
@@ -169,15 +232,58 @@ class LiveGraphActivityRecorder:
             context = dict(row.replan_context or {})
             existing_rows = context.get("live_activity_steps")
             existing = [dict(item) for item in existing_rows if isinstance(item, dict)] if isinstance(existing_rows, list) else []
-            by_id = {str(item.get("id") or ""): item for item in existing if item.get("id")}
-            for step in batch:
-                by_id[str(step["id"])] = dict(step)
+            seen_ids: set[str] = set()
+            live_steps: list[dict[str, Any]] = []
+            max_order = 0
+            for item in existing:
+                step_id = str(item.get("id") or "").strip()
+                if not step_id or step_id in seen_ids:
+                    continue
+                seen_ids.add(step_id)
+                order = _live_activity_order(item.get("order") or item.get("_order"))
+                if order is not None:
+                    item["order"] = order
+                    item["_order"] = order
+                    max_order = max(max_order, order)
+                live_steps.append(item)
+            latest_replan_spine: dict[str, Any] | None = None
+            ordered_batch = sorted(
+                batch,
+                key=lambda item: _live_activity_order(item.get("_pending_order")) or 0,
+            )
+            for step in ordered_batch:
+                replan_spine = step.pop("_replan_spine", None)
+                if isinstance(replan_spine, Mapping):
+                    latest_replan_spine = dict(replan_spine)
+                step.pop("_pending_order", None)
+                node = step.pop("_graph_node", None)
+                if node is None:
+                    node = str(step.get("id") or "").removeprefix("graph:")
+                max_order += 1
+                base_id = f"graph:{max_order:06d}:{_live_activity_id_component(node)}"
+                step_id = base_id
+                suffix = 2
+                while step_id in seen_ids:
+                    step_id = f"{base_id}:{suffix}"
+                    suffix += 1
+                seen_ids.add(step_id)
+                step["id"] = step_id
+                step["order"] = max_order
+                step["_order"] = max_order
+                live_steps.append(dict(step))
             live_steps = sorted(
-                by_id.values(),
-                key=lambda item: (int(item.get("timestamp") or 0), str(item.get("id") or "")),
+                live_steps,
+                key=lambda item: (
+                    int(item.get("order") or item.get("_order") or 0),
+                    int(item.get("timestamp") or 0),
+                    str(item.get("id") or ""),
+                ),
             )[-_LIVE_GRAPH_MAX_STEPS:]
             context["live_activity_steps"] = live_steps
             context["live_activity_revision"] = int(context.get("live_activity_revision") or 0) + 1
+            if latest_replan_spine is not None:
+                context["live_replan_spine"] = latest_replan_spine
+                context["live_replan_spine_revision"] = int(context.get("live_replan_spine_revision") or 0) + 1
             row.replan_context = context
             row.updated_at = datetime.utcnow()
             bump_session_revision(row)
@@ -231,6 +337,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         finally:
             if live_activity is not None:
                 await live_activity.flush()
+                await self._refresh_session_live_activity_context(db=db, sess=sess)
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return await self.persist_result(
             db=db,
@@ -279,8 +386,37 @@ class PlannerOwnedGraphRuntimeAdapter:
         finally:
             if live_activity is not None:
                 await live_activity.flush()
+                await self._refresh_session_live_activity_context(db=db, sess=sess)
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return result
+
+    async def _refresh_session_live_activity_context(self, *, db: AsyncSession, sess: Any) -> None:
+        session_id = str(getattr(sess, "session_id", "") or "").strip()
+        if not session_id or not hasattr(db, "refresh"):
+            return
+        try:
+            await db.refresh(sess, attribute_names=["replan_context", "event_seq", "updated_at"])
+            return
+        except Exception:
+            pass
+        try:
+            row = (
+                await db.execute(
+                    select(SessionRow)
+                    .where(SessionRow.session_id == session_id)
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+        except Exception:
+            return
+        if row is None:
+            return
+        if isinstance(row.replan_context, dict):
+            sess.replan_context = row.replan_context
+        if getattr(row, "event_seq", None) is not None:
+            sess.event_seq = row.event_seq
+        if getattr(row, "updated_at", None) is not None:
+            sess.updated_at = row.updated_at
 
     async def persist_result(
         self,
@@ -309,7 +445,7 @@ class PlannerOwnedGraphRuntimeAdapter:
                 context=context,
             )
 
-        draft, tool_outputs = self._plan_artifacts(result)
+        draft, tool_outputs = self._plan_artifacts(result, tools_by_name=tools_by_name)
         failed = self._graph_failed(result, tool_outputs)
         plan_status = "FAILED" if failed and mode != "plan" else "COMPLETED" if mode != "plan" else "DRAFT"
         response = await self._persist_plan(
@@ -546,16 +682,47 @@ class PlannerOwnedGraphRuntimeAdapter:
         state = result.state
         loop_state = state.as_loop_compat_state()
         graph_state = state.model_dump(mode="json")
+        response_document_context = state.response_document_context.model_dump(mode="json")
+        replan_spine = _intent_contract_replan_spine(state)
+        dependency_plan = state.execution_trace.diagnostics.get("dependency_plan")
+        dependency_plan_history = state.execution_trace.diagnostics.get("dependency_plan_history")
+        child_lineage = requirement_child_lineage(state.requirement_ledger)
+        activity_caption_context = build_activity_caption_context_from_graph_state(state)
+        activity_graph_steps = _activity_graph_history_from_context(base_context)
+        if activity_graph_steps:
+            activity_caption_context["activity_graph_steps"] = activity_graph_steps
+        conditional_branches = [
+            branch.model_dump(mode="json")
+            for branch in state.requirement_ledger.conditional_branches
+        ]
+        answer_instructions = [
+            instruction.model_dump(mode="json")
+            for instruction in state.requirement_ledger.answer_instructions
+        ]
         context = dict(base_context or {})
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
+        context.pop("live_replan_spine", None)
+        context.pop("live_replan_spine_revision", None)
+        if activity_graph_steps:
+            context["activity_graph_steps"] = activity_graph_steps
         context["intent_contract"] = {
             "intent": intent,
             "engine_version": "v2",
             "execution_trace": state.execution_trace.model_dump(mode="json"),
             "v2_state": loop_state.model_dump(mode="json"),
             "planner_owned_agent_graph_state": graph_state,
+            "response_document_context": response_document_context,
+            "dependency_plan": dependency_plan,
+            "dependency_plan_history": dependency_plan_history,
+            "child_requirement_lineage": child_lineage,
+            "conditional_branches": conditional_branches,
+            "answer_instructions": answer_instructions,
+            "replan_spine": replan_spine,
+            "activity_caption_context": activity_caption_context,
         }
+        if activity_graph_steps:
+            context["intent_contract"]["activity_graph_steps"] = activity_graph_steps
         context.pop("no_op_mutations", None)
         no_op_mutations = self._no_op_mutations(state)
         if no_op_mutations:
@@ -570,10 +737,19 @@ class PlannerOwnedGraphRuntimeAdapter:
             "planner_decision_count": len(state.planner_decisions),
             "evidence_refs": [evidence.id for evidence in state.evidence_ledger.evidence],
             "response_document_state": state.response_document_context.state,
-            "response_document_context": state.response_document_context.model_dump(mode="json"),
+            "response_document_context": response_document_context,
+            "dependency_plan": dependency_plan,
+            "dependency_plan_history": dependency_plan_history,
+            "child_requirement_lineage": child_lineage,
+            "conditional_branches": conditional_branches,
+            "answer_instructions": answer_instructions,
+            "replan_spine": replan_spine,
+            "activity_caption_context": activity_caption_context,
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
         }
+        if activity_graph_steps:
+            context["planner_owned_agent_graph"]["activity_graph_steps"] = activity_graph_steps
         context["skip_completed_narrative_adapter"] = True
         context["requirement_ledger_revision"] = state.requirement_ledger.revision
         context.pop("langgraph_approval_resume", None)
@@ -584,6 +760,8 @@ class PlannerOwnedGraphRuntimeAdapter:
     def _plan_artifacts(
         self,
         result: PlannerOwnedGraphResult,
+        *,
+        tools_by_name: Mapping[str, ToolInfo] | None = None,
     ) -> tuple[PlanDraft, list[dict[str, Any]]]:
         state = result.state
         summary = self._response_summary(result)
@@ -593,6 +771,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             output
             for output in tool_outputs
             if str(output.get("tool_name") or "").strip() and not output.get("aggregated_from")
+            and str(output.get("status") or "").upper() != "FAILED"
+            and self._tool_output_has_valid_plan_step_args(output, tools_by_name or {})
         ]
         steps = [
             PlanStepDraft(
@@ -611,6 +791,23 @@ class PlannerOwnedGraphRuntimeAdapter:
         )
         return draft, tool_outputs
 
+    def _tool_output_has_valid_plan_step_args(
+        self,
+        output: Mapping[str, Any],
+        tools_by_name: Mapping[str, ToolInfo],
+    ) -> bool:
+        tool_name = str(output.get("tool_name") or "").strip()
+        tool = tools_by_name.get(tool_name)
+        if tool is None:
+            return False
+        args = output.get("args")
+        args = dict(args) if isinstance(args, Mapping) else {}
+        try:
+            Draft202012Validator(tool.input_schema or {"type": "object"}).validate(args)
+        except Exception:
+            return False
+        return True
+
     def _tool_outputs(self, result: PlannerOwnedGraphResult) -> list[dict[str, Any]]:
         state = result.state
         blocks_by_evidence = {
@@ -619,9 +816,20 @@ class PlannerOwnedGraphRuntimeAdapter:
             if isinstance(block, dict) and block.get("evidence_ref")
         }
         business_change_hints = self._business_change_hints_by_requirement(state)
+        active_response_refs = set(state.response_document_context.evidence_refs)
+        tool_output_refs = set(active_response_refs)
+        if not tool_output_refs and self._response_context_replan_limit_reached(state):
+            tool_output_refs = {
+                evidence.id
+                for evidence in state.evidence_ledger.evidence
+                if not evidence.diagnostic_metadata.get("stale_after_graph_replan")
+                and evidence.diagnostic_metadata.get("superseded_reason") != "replan_spine_retry"
+            }
         outputs: list[dict[str, Any]] = []
         for evidence in state.evidence_ledger.evidence:
             if not evidence.tool_name:
+                continue
+            if tool_output_refs and evidence.id not in tool_output_refs:
                 continue
             if self._is_non_actionable_preview_evidence(evidence):
                 continue
@@ -669,6 +877,12 @@ class PlannerOwnedGraphRuntimeAdapter:
                 }
             )
         return outputs
+
+    def _response_context_replan_limit_reached(self, state: Any) -> bool:
+        context = getattr(state, "response_document_context", None)
+        diagnostics = getattr(context, "diagnostics", {}) if context is not None else {}
+        replan = diagnostics.get("replan_spine") if isinstance(diagnostics, Mapping) else None
+        return isinstance(replan, Mapping) and replan.get("replan_limit_reached") is True
 
     def _is_non_actionable_preview_evidence(self, evidence: EvidenceLedgerEntry) -> bool:
         metadata = evidence.diagnostic_metadata if isinstance(evidence.diagnostic_metadata, Mapping) else {}

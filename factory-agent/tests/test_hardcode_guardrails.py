@@ -141,9 +141,10 @@ FRONTEND_PHRASE_ALLOWLIST_COUNTS = {
         "please approve": (1, "Legacy completed-approval fallback after typed presentation is absent."),
         "will be updated from": (1, "Legacy completed-approval fallback after typed presentation is absent."),
         "risk summary": (1, "Legacy plan-like detail filter for snapshots without typed presentation."),
+        "run complete": (1, "Typed active-status display suppresses stale terminal labels while sessions are active."),
     },
     "eMas Front/src/components/features/chat/factory-agent/activityTimelineUtils.js": {
-        "run complete": (7, "Display label and stale terminal fallback guarded by typed presentation state."),
+        "run complete": (8, "Display label and stale terminal suppression guarded by typed presentation/session state."),
     },
     "eMas Front/src/components/features/chat/factory-agent/presentationContract.js": {
         "run complete": (1, "Typed presentation maps completed state to a display label."),

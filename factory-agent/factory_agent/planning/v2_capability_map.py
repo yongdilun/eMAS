@@ -6,18 +6,29 @@ from typing import Any
 
 from ..schemas import Intent, ToolInfo
 from .intent import SemanticFrame, semantic_frame_for_text, split_user_intents
+from .semantic_intake import (
+    SemanticIntakeItem,
+    SemanticIntakeProposer,
+    SemanticIntakeResult,
+    propose_semantic_intake_for_text,
+)
 from .tool_intent_profile import build_tool_intent_profile, normalize_token
 from .v2_contracts import (
+    AnswerInstruction,
     CapabilityAction,
     CapabilityMap,
     CapabilityMapEntry,
     CapabilityNeed,
+    ClarificationNeed,
+    ConditionalBranchContract,
     FieldAlias,
     FieldAliases,
+    FormattingInstruction,
     IntentOperation,
     RequirementLedger,
     RequirementLedgerEntry,
     RequirementOrigin,
+    RequirementIntakeClause,
     RequirementRevisionRecord,
     RequirementSketch,
     RequirementSketchItem,
@@ -49,6 +60,36 @@ _NEGATIVE_SAFETY_RE = re.compile(
     re.IGNORECASE,
 )
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_UNBOUND_REFERENT_ID_TOKENS = {
+    "a",
+    "an",
+    "applicable",
+    "id",
+    "if",
+    "it",
+    "its",
+    "on",
+    "one",
+    "present",
+    "related",
+    "that",
+    "the",
+    "this",
+    "too",
+}
+_DEPENDENT_OR_CONDITIONAL_MARKER_RE = re.compile(
+    r"\b(?:that|this|it|its|their|related|when|if|only\s+if)\b|"
+    r"\bthere\s+is\s+one\b|\bif\s+(?:present|applicable)\b",
+    re.IGNORECASE,
+)
+_DEPENDENT_ENTITY_TERM_RE = re.compile(
+    r"\b(?P<entity>machines?|jobs?|products?|materials?)\b",
+    re.IGNORECASE,
+)
+_EVIDENCE_DRIVEN_FOLLOWUP_RE = re.compile(
+    r"\b(?:why|cause|causes|reason|reasons|root\s+cause|explain|diagnos(?:e|is|tic))\b",
+    re.IGNORECASE,
+)
 
 
 _COMMON_FIELD_TERMS: dict[str, tuple[str, ...]] = {
@@ -167,6 +208,10 @@ def build_capability_needs_for_text(
     capability_map: CapabilityMap | None = None,
 ) -> list[CapabilityNeed]:
     sketch = build_requirement_sketch_for_text(text, capability_map=capability_map)
+    return build_capability_needs_from_sketch(sketch)
+
+
+def build_capability_needs_from_sketch(sketch: RequirementSketch) -> list[CapabilityNeed]:
     needs: list[CapabilityNeed] = []
     for requirement in sketch.requirements:
         action = _capability_action_for_requirement(requirement.requirement_type, requirement.source_of_truth)
@@ -194,18 +239,47 @@ def build_requirement_sketch_for_text(
     text: str,
     *,
     capability_map: CapabilityMap | None = None,
+    semantic_intake: SemanticIntakeResult | None = None,
+    semantic_intake_proposer: SemanticIntakeProposer | None = None,
 ) -> RequirementSketch:
     capability_map = capability_map or CapabilityMap()
     aliases = capability_map.field_aliases
     intents = _prepare_requirement_intents(split_user_intents(text), aliases)
+    semantic_intake = semantic_intake or propose_semantic_intake_for_text(
+        text,
+        proposer=semantic_intake_proposer,
+        prepared_clauses=[intent.description for intent in intents],
+    )
+    intents_by_clause: dict[str, Intent] = {}
+    for intent in intents:
+        intents_by_clause.setdefault(intent.description, intent)
     requirements: list[RequirementSketchItem] = []
     slices: list[ToolRetrievalSlice] = []
+    intake_clauses: list[RequirementIntakeClause] = []
+    conditional_branches: list[ConditionalBranchContract] = []
+    answer_instructions: list[AnswerInstruction] = []
+    formatting_instructions: list[FormattingInstruction] = []
+    clarification_needs: list[ClarificationNeed] = []
+    intake_item_to_requirement_id: dict[str, str] = {}
+    intake_item_to_branch_id: dict[str, str] = {}
 
-    for index, intent in enumerate(intents, start=1):
-        clause = intent.description
+    for index, intake_item in enumerate(semantic_intake.items, start=1):
+        clause = intake_item.text
+        intent = intents_by_clause.get(clause) or split_user_intents(clause)[0]
         frame = semantic_frame_for_text(clause)
         source = _source_for_frame(frame, clause)
         entity = _entity_for_hint(frame, clause, source)
+        if intake_item.role == "answer_instruction" and _answer_instruction_requires_retrieval(
+            frame,
+            source=source,
+        ):
+            intake_item = intake_item.model_copy(
+                update={
+                    "role": "required_requirement",
+                    "reason": "answer_instruction_contains_retrieval_target",
+                }
+            )
+        clause_id = f"clause-{index:03d}"
 
         previous_modifier = _previous_requirement_modifier_for_clause(clause)
         if previous_modifier and requirements:
@@ -218,6 +292,258 @@ def build_requirement_sketch_for_text(
                 slices[-1].constraints.update(previous_modifier)
             continue
 
+        if intake_item.role == "conditional_branch":
+            parent_requirement_id = _parent_requirement_id_for_intake_item(
+                intake_item,
+                intake_item_to_requirement_id=intake_item_to_requirement_id,
+                requirements=requirements,
+            )
+            conditional_branch = _conditional_branch_for_intake_item(
+                intake_item,
+                clause=clause,
+                capability_map=capability_map,
+                entity=entity,
+            )
+            if conditional_branch is None or parent_requirement_id is None:
+                need_id = f"clarification-{len(clarification_needs) + 1:03d}"
+                clarification_needs.append(
+                    ClarificationNeed(
+                        id=need_id,
+                        text=clause,
+                        reason="conditional_branch_missing_active_parent_or_referent",
+                        blocked_entity=entity,
+                    )
+                )
+                intake_clauses.append(
+                    RequirementIntakeClause(
+                        id=clause_id,
+                        text=clause,
+                        role="clarification_need",
+                        reason="conditional_branch_missing_active_parent_or_referent",
+                    )
+                )
+                continue
+
+            previous = next(
+                requirement for requirement in requirements if requirement.id == parent_requirement_id
+            )
+            condition_fields = [
+                str(field)
+                for field in conditional_branch["condition"].get("field_any", [])
+                if str(field)
+            ]
+            if condition_fields:
+                previous.constraints["observation_fields"] = list(
+                    dict.fromkeys(
+                        [
+                            *(
+                                previous.constraints.get("observation_fields")
+                                if isinstance(previous.constraints.get("observation_fields"), list)
+                                else []
+                            ),
+                            *condition_fields,
+                        ]
+                    )
+                )
+                for retrieval_slice in slices:
+                    if retrieval_slice.slice_id and retrieval_slice.text == previous.goal:
+                        retrieval_slice.constraints["observation_fields"] = list(
+                            dict.fromkeys(
+                                [
+                                    *(
+                                        retrieval_slice.constraints.get("observation_fields")
+                                        if isinstance(retrieval_slice.constraints.get("observation_fields"), list)
+                                        else []
+                                    ),
+                                    *condition_fields,
+                                ]
+                            )
+                        )
+                        break
+            branch_id = f"branch-{len(conditional_branches) + 1:03d}"
+            branch = ConditionalBranchContract(
+                id=branch_id,
+                parent_requirement_id=parent_requirement_id,
+                text=clause,
+                condition=dict(conditional_branch["condition"]),
+                on_true=dict(conditional_branch["on_true"]),
+                diagnostics=dict(conditional_branch.get("diagnostics") or {}),
+            )
+            conditional_branches.append(branch)
+            intake_item_to_branch_id[intake_item.id] = branch_id
+            if _clause_requests_answer_composition(clause):
+                answer_instructions.append(
+                    AnswerInstruction(
+                        id=f"answer-{len(answer_instructions) + 1:03d}",
+                        text=clause,
+                        applies_to_requirement_ids=[parent_requirement_id],
+                        applies_to_branch_ids=[branch_id],
+                        reason="answer_composition_instruction",
+                    )
+                )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="conditional_branch",
+                    parent_requirement_id=parent_requirement_id,
+                    branch_id=branch_id,
+                    reason="conditional_branch_waits_for_parent_evidence",
+                )
+            )
+            continue
+
+        if intake_item.role == "answer_instruction":
+            instruction_id = f"answer-{len(answer_instructions) + 1:03d}"
+            applies_to_requirement_ids = _applies_to_requirement_ids_for_intake_item(
+                intake_item,
+                intake_item_to_requirement_id=intake_item_to_requirement_id,
+                requirements=requirements,
+            )
+            applies_to_branch_ids = _applies_to_branch_ids_for_intake_item(
+                intake_item,
+                intake_item_to_branch_id=intake_item_to_branch_id,
+                conditional_branches=conditional_branches,
+            )
+            answer_instructions.append(
+                AnswerInstruction(
+                    id=instruction_id,
+                    text=clause,
+                    applies_to_requirement_ids=applies_to_requirement_ids,
+                    applies_to_branch_ids=applies_to_branch_ids,
+                    reason=intake_item.reason or "answer_composition_instruction",
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="answer_instruction",
+                    reason=intake_item.reason or "answer_composition_instruction",
+                )
+            )
+            continue
+
+        if intake_item.role == "formatting_instruction":
+            instruction_id = f"format-{len(formatting_instructions) + 1:03d}"
+            formatting_instructions.append(
+                FormattingInstruction(
+                    id=instruction_id,
+                    text=clause,
+                    reason=intake_item.reason or "formatting_instruction",
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="formatting_instruction",
+                    reason=intake_item.reason or "formatting_instruction",
+                )
+            )
+            continue
+
+        if intake_item.role == "clarification_need":
+            need_id = f"clarification-{len(clarification_needs) + 1:03d}"
+            blocked_entity = (
+                str(intake_item.diagnostics.get("blocked_entity") or "").strip()
+                or entity
+                or _dependent_singular_read_entity(clause)
+            )
+            clarification_needs.append(
+                ClarificationNeed(
+                    id=need_id,
+                    text=clause,
+                    reason=intake_item.reason or "clarification_needed",
+                    blocked_entity=blocked_entity or None,
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="clarification_need",
+                    reason=intake_item.reason or "clarification_needed",
+                )
+            )
+            continue
+
+        if intake_item.role not in {"required_requirement", "mutation_or_approval_request"}:
+            continue
+
+        answer_instruction = _answer_instruction_for_clause(
+            clause,
+            frame=frame,
+            source=source,
+            previous_requirements=requirements,
+            conditional_branches=conditional_branches,
+        )
+        if answer_instruction is not None:
+            instruction_id = f"answer-{len(answer_instructions) + 1:03d}"
+            answer_instructions.append(
+                AnswerInstruction(
+                    id=instruction_id,
+                    text=clause,
+                    applies_to_requirement_ids=[
+                        requirement.id for requirement in requirements[-1:] if requirement.id
+                    ],
+                    applies_to_branch_ids=[
+                        branch.id for branch in conditional_branches[-1:] if branch.id
+                    ],
+                    reason=answer_instruction,
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="answer_instruction",
+                    reason=answer_instruction,
+                )
+            )
+            continue
+
+        clarification_need = _clarification_need_for_clause(clause, frame=frame)
+        if clarification_need is not None:
+            need_id = f"clarification-{len(clarification_needs) + 1:03d}"
+            clarification_needs.append(
+                ClarificationNeed(
+                    id=need_id,
+                    text=clause,
+                    reason=clarification_need["reason"],
+                    blocked_entity=clarification_need.get("entity"),
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="clarification_need",
+                    reason=clarification_need["reason"],
+                )
+            )
+            continue
+
+        formatting_instruction = _formatting_instruction_for_clause(clause, frame=frame, source=source)
+        if formatting_instruction is not None:
+            instruction_id = f"format-{len(formatting_instructions) + 1:03d}"
+            formatting_instructions.append(
+                FormattingInstruction(
+                    id=instruction_id,
+                    text=clause,
+                    reason=formatting_instruction,
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="formatting_instruction",
+                    reason=formatting_instruction,
+                )
+            )
+            continue
+
         conditional_branch = _conditional_branch_for_clause(
             clause,
             capability_map=capability_map,
@@ -225,11 +551,67 @@ def build_requirement_sketch_for_text(
         )
         if conditional_branch and requirements:
             previous = requirements[-1]
-            previous.constraints.setdefault("conditional_branches", []).append(conditional_branch)
-            if "conditional_branches" not in previous.locked_constraints:
-                previous.locked_constraints.append("conditional_branches")
-            if slices:
-                slices[-1].constraints.setdefault("conditional_branches", []).append(conditional_branch)
+            condition_fields = [
+                str(field)
+                for field in conditional_branch["condition"].get("field_any", [])
+                if str(field)
+            ]
+            if condition_fields:
+                previous.constraints["observation_fields"] = list(
+                    dict.fromkeys(
+                        [
+                            *(
+                                previous.constraints.get("observation_fields")
+                                if isinstance(previous.constraints.get("observation_fields"), list)
+                                else []
+                            ),
+                            *condition_fields,
+                        ]
+                    )
+                )
+                if slices:
+                    slices[-1].constraints["observation_fields"] = list(
+                        dict.fromkeys(
+                            [
+                                *(
+                                    slices[-1].constraints.get("observation_fields")
+                                    if isinstance(slices[-1].constraints.get("observation_fields"), list)
+                                    else []
+                                ),
+                                *condition_fields,
+                            ]
+                        )
+                    )
+            branch_id = f"branch-{len(conditional_branches) + 1:03d}"
+            branch = ConditionalBranchContract(
+                id=branch_id,
+                parent_requirement_id=previous.id,
+                text=clause,
+                condition=dict(conditional_branch["condition"]),
+                on_true=dict(conditional_branch["on_true"]),
+                diagnostics=dict(conditional_branch.get("diagnostics") or {}),
+            )
+            conditional_branches.append(branch)
+            if _clause_requests_answer_composition(clause):
+                answer_instructions.append(
+                    AnswerInstruction(
+                        id=f"answer-{len(answer_instructions) + 1:03d}",
+                        text=clause,
+                        applies_to_requirement_ids=[previous.id],
+                        applies_to_branch_ids=[branch_id],
+                        reason="answer_composition_instruction",
+                    )
+                )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="conditional_branch",
+                    parent_requirement_id=previous.id,
+                    branch_id=branch_id,
+                    reason="conditional_branch_waits_for_parent_evidence",
+                )
+            )
             continue
 
         constraints = _constraints_for_clause(
@@ -240,12 +622,46 @@ def build_requirement_sketch_for_text(
             entity=entity,
             capability_map=capability_map,
         )
+        depends_on_requirement_ids: list[str] = []
+        if intake_item.role == "mutation_or_approval_request":
+            previous_dependency_id = _bind_dependent_mutation_to_previous_result_set(
+                constraints,
+                clause=clause,
+                entity=entity,
+                previous_requirements=requirements,
+            )
+            if previous_dependency_id:
+                depends_on_requirement_ids.append(previous_dependency_id)
         requested_fields = _requested_fields_for_clause(
             clause,
             aliases,
             entity=entity,
             source_of_truth=source,
         )
+        if _dependent_singular_read_entity(clause) and not _has_bounded_identity_constraints(
+            constraints,
+            entity=entity,
+        ):
+            blocked_entity = _dependent_singular_read_entity(clause) or entity
+            need_id = f"clarification-{len(clarification_needs) + 1:03d}"
+            clarification_needs.append(
+                ClarificationNeed(
+                    id=need_id,
+                    text=clause,
+                    reason="dependent_singular_read_missing_bound_entity",
+                    blocked_entity=blocked_entity,
+                )
+            )
+            intake_clauses.append(
+                RequirementIntakeClause(
+                    id=clause_id,
+                    text=clause,
+                    role="clarification_need",
+                    reason="dependent_singular_read_missing_bound_entity",
+                )
+            )
+            continue
+
         for field in ("sort_by",):
             value = constraints.get(field)
             if isinstance(value, str) and value not in requested_fields:
@@ -258,7 +674,7 @@ def build_requirement_sketch_for_text(
             source_of_truth=source,
         )
         locked_constraints = _locked_constraints_for(constraints, requested_fields)
-        requirement_id = f"req-{index:03d}"
+        requirement_id = f"req-{len(requirements) + 1:03d}"
 
         requirement = RequirementSketchItem(
             id=requirement_id,
@@ -270,6 +686,7 @@ def build_requirement_sketch_for_text(
             constraints=constraints,
             requested_fields=requested_fields,
             locked_constraints=locked_constraints,
+            depends_on=depends_on_requirement_ids,
             origin=RequirementOrigin(
                 goal="deterministic_requirement_sketch",
                 constraints="deterministic_extraction",
@@ -278,9 +695,19 @@ def build_requirement_sketch_for_text(
             ),
         )
         requirements.append(requirement)
+        intake_item_to_requirement_id[intake_item.id] = requirement_id
+        intake_clauses.append(
+            RequirementIntakeClause(
+                id=clause_id,
+                text=clause,
+                role=intake_item.role,
+                requirement_id=requirement_id,
+                reason="executable_required_requirement",
+            )
+        )
         slices.append(
             ToolRetrievalSlice(
-                slice_id=f"slice-{index:03d}",
+                slice_id=f"slice-{len(slices) + 1:03d}",
                 text=clause,
                 source_of_truth_hint=source,
                 entity=entity,
@@ -295,6 +722,21 @@ def build_requirement_sketch_for_text(
         requirements=requirements,
         field_aliases=aliases,
         tool_retrieval_slices=slices,
+        intake_clauses=intake_clauses,
+        conditional_branches=conditional_branches,
+        answer_instructions=answer_instructions,
+        formatting_instructions=formatting_instructions,
+        clarification_needs=clarification_needs,
+        intake_diagnostics={
+            **dict(semantic_intake.diagnostics),
+            "source": semantic_intake.source,
+            "proposer": semantic_intake.proposer,
+            "item_count": len(semantic_intake.items),
+            "compiled_requirement_count": len(requirements),
+            "compiler_authority": "deterministic",
+            "active_executable_roles": ["required_requirement"],
+            "raw_llm_output_executes_tools": False,
+        },
     )
 
 
@@ -304,6 +746,182 @@ def _prepare_requirement_intents(intents: list[Intent], aliases: FieldAliases) -
     for intent in coalesced:
         prepared.extend(_expand_mixed_entity_intent(intent))
     return prepared
+
+
+def _parent_requirement_id_for_intake_item(
+    intake_item: SemanticIntakeItem,
+    *,
+    intake_item_to_requirement_id: Mapping[str, str],
+    requirements: list[RequirementSketchItem],
+) -> str | None:
+    if intake_item.parent_item_id:
+        requirement_id = intake_item_to_requirement_id.get(intake_item.parent_item_id)
+        if requirement_id:
+            return requirement_id
+    return requirements[-1].id if requirements else None
+
+
+def _applies_to_requirement_ids_for_intake_item(
+    intake_item: SemanticIntakeItem,
+    *,
+    intake_item_to_requirement_id: Mapping[str, str],
+    requirements: list[RequirementSketchItem],
+) -> list[str]:
+    ids = [
+        intake_item_to_requirement_id[item_id]
+        for item_id in intake_item.applies_to_item_ids
+        if item_id in intake_item_to_requirement_id
+    ]
+    if ids:
+        return list(dict.fromkeys(ids))
+    return [requirement.id for requirement in requirements[-1:] if requirement.id]
+
+
+def _applies_to_branch_ids_for_intake_item(
+    intake_item: SemanticIntakeItem,
+    *,
+    intake_item_to_branch_id: Mapping[str, str],
+    conditional_branches: list[ConditionalBranchContract],
+) -> list[str]:
+    ids = [
+        intake_item_to_branch_id[item_id]
+        for item_id in intake_item.applies_to_item_ids
+        if item_id in intake_item_to_branch_id
+    ]
+    if ids:
+        return list(dict.fromkeys(ids))
+    return [branch.id for branch in conditional_branches[-1:] if branch.id]
+
+
+def _conditional_branch_for_intake_item(
+    intake_item: SemanticIntakeItem,
+    *,
+    clause: str,
+    capability_map: CapabilityMap,
+    entity: str | None,
+) -> dict[str, Any] | None:
+    legacy = _conditional_branch_for_clause(clause, capability_map=capability_map, entity=entity)
+    child_intent = dict(intake_item.child_intent or {})
+    proposed_entity = str(child_intent.get("entity") or "").strip()
+    if not proposed_entity and legacy:
+        proposed_entity = str(dict(legacy.get("on_true") or {}).get("entity") or "").strip()
+    if not proposed_entity:
+        proposed_entity = _dependent_singular_read_entity(clause) or ""
+    branch_entity = _conditional_branch_entity_for_phrase(proposed_entity, capability_map=capability_map)
+    if not branch_entity:
+        return legacy
+
+    proposed_fields = [
+        str(field)
+        for field in (
+            intake_item.condition.get("field_any")
+            or child_intent.get("value_from_field_any")
+            or []
+        )
+        if str(field)
+    ]
+    identifier_fields = _conditional_identifier_fields(capability_map, branch_entity)
+    field_any = _validated_referent_fields(
+        proposed_fields,
+        entity=branch_entity,
+        fallback_fields=identifier_fields,
+    )
+    fan_out = str(child_intent.get("fan_out") or "").strip()
+    if fan_out not in {"all_unique_values", "first_value"}:
+        fan_out = (
+            "all_unique_values"
+            if legacy and dict(legacy.get("on_true") or {}).get("fan_out") == "all_unique_values"
+            else "first_value"
+        )
+    return {
+        "condition": {
+            "type": "active_parent_evidence_has_any_field",
+            "field_any": field_any,
+            "source": "active_parent_evidence",
+        },
+        "on_true": {
+            "action": "read_one",
+            "entity": branch_entity,
+            "constraint_field": f"{branch_entity}_id",
+            "value_from_field_any": field_any,
+            "fan_out": fan_out,
+            "requirement_type": "single_entity_status",
+            "intent_operation": "report_status",
+        },
+        "diagnostics": {
+            "role": "conditional_branch",
+            "non_executable_until_condition_true": True,
+            "compiled_from_semantic_intake": True,
+            **({"fan_out": fan_out} if fan_out == "all_unique_values" else {}),
+        },
+    }
+
+
+def _validated_referent_fields(
+    fields: Iterable[str],
+    *,
+    entity: str,
+    fallback_fields: list[str],
+) -> list[str]:
+    primary = f"{entity}_id"
+    active = f"active_{entity}_id"
+    valid: list[str] = []
+    for field in fields:
+        value = str(field or "").strip()
+        if value == primary or value == active or value.endswith(f"_{primary}"):
+            valid.append(value)
+    return list(dict.fromkeys(valid or fallback_fields))
+
+
+def _dependent_singular_read_entity(clause: str) -> str | None:
+    lowered = clause.lower()
+    if not _DEPENDENT_OR_CONDITIONAL_MARKER_RE.search(lowered):
+        return None
+
+    match = re.search(
+        r"\b(?:read|show|check|get|look\s+up)\s+"
+        r"(?:(?:that|this|the)\s+)?(?P<entity>[a-z][a-z0-9_-]*)?\s*(?:too)?\b",
+        clause,
+        re.IGNORECASE,
+    )
+    if match:
+        entity = _normalize_phrase(match.group("entity") or "").replace(" ", "_")
+        if entity and entity not in _UNBOUND_REFERENT_ID_TOKENS:
+            return _singular_entity_name(entity)
+
+    for entity_match in _DEPENDENT_ENTITY_TERM_RE.finditer(clause):
+        entity = _singular_entity_name(_normalize_phrase(entity_match.group("entity")))
+        if entity:
+            return entity
+    return None
+
+
+def _has_bounded_identity_constraints(constraints: Mapping[str, Any], *, entity: str | None) -> bool:
+    identity_fields = {"id", "machine_ref"}
+    if entity:
+        identity_fields.add(f"{entity}_id")
+    for key, value in constraints.items():
+        if key not in identity_fields and not key.endswith("_id"):
+            continue
+        for item in _iter_identity_constraint_values(value):
+            if item.strip().lower() not in _UNBOUND_REFERENT_ID_TOKENS:
+                return True
+    return False
+
+
+def _iter_identity_constraint_values(value: Any) -> Iterable[str]:
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)]
+
+
+def _singular_entity_name(entity: str) -> str:
+    normalized = _normalize_phrase(entity).replace(" ", "_")
+    if normalized.endswith("s") and len(normalized) > 1:
+        return normalized[:-1]
+    return normalized
 
 
 def _coalesce_field_continuation_intents(intents: list[Intent], aliases: FieldAliases) -> list[Intent]:
@@ -333,7 +951,13 @@ def _is_field_continuation_clause(
     previous_clause: str,
     aliases: FieldAliases,
 ) -> bool:
-    if not _FIELD_SEGMENT_RE.search(previous_clause):
+    previous_has_field_segment = bool(_FIELD_SEGMENT_RE.search(previous_clause))
+    continuation_has_field_or_control = bool(
+        _fields_mentioned(clause, aliases, entity=None)
+        or _SORT_HINT_RE.search(clause)
+        or _LIMIT_RE.search(clause)
+    )
+    if not (previous_has_field_segment or continuation_has_field_or_control):
         return False
     if split_user_intents(clause)[0].explicit_constraints:
         return False
@@ -429,11 +1053,18 @@ def build_requirement_ledger_from_sketch(sketch: RequirementSketch) -> Requireme
                 constraints=dict(item.constraints),
                 requested_fields=list(item.requested_fields),
                 locked_constraints=list(item.locked_constraints),
+                depends_on=list(item.depends_on),
                 status="open",
                 origin=item.origin,
             )
             for item in sketch.requirements
         ],
+        intake_clauses=list(sketch.intake_clauses),
+        conditional_branches=list(sketch.conditional_branches),
+        answer_instructions=list(sketch.answer_instructions),
+        formatting_instructions=list(sketch.formatting_instructions),
+        clarification_needs=list(sketch.clarification_needs),
+        intake_diagnostics=dict(sketch.intake_diagnostics),
         revision=1,
         revision_history=[
             RequirementRevisionRecord(
@@ -775,6 +1406,16 @@ def _source_for_frame(frame: SemanticFrame, clause: str) -> SourceOfTruth:
     return "unknown"
 
 
+def _answer_instruction_requires_retrieval(frame: SemanticFrame, *, source: SourceOfTruth) -> bool:
+    if source == "unknown":
+        return False
+    if source == "document_knowledge":
+        return True
+    if frame.entity or frame.domain_intent or frame.route.startswith("tool."):
+        return True
+    return any(values for values in frame.normalized_entities.values())
+
+
 def _entity_for_hint(frame: SemanticFrame, clause: str, source: SourceOfTruth) -> str | None:
     if source == "document_knowledge":
         lowered = clause.lower()
@@ -844,8 +1485,101 @@ def _constraints_for_clause(
 
     if frame.requires_approval or re.search(r"\b(?:approval|approve|ask\s+approval|before\s+applying)\b", clause, re.I):
         constraints["requires_approval"] = True
+    if _requires_evidence_driven_followup(clause, frame=frame):
+        constraints["requires_followup_evidence"] = True
 
     return constraints
+
+
+def _requires_evidence_driven_followup(clause: str, *, frame: SemanticFrame) -> bool:
+    if frame.action not in {"read", "unknown"}:
+        return False
+    return bool(_EVIDENCE_DRIVEN_FOLLOWUP_RE.search(clause))
+
+
+def _bind_dependent_mutation_to_previous_result_set(
+    constraints: dict[str, Any],
+    *,
+    clause: str,
+    entity: str | None,
+    previous_requirements: list[RequirementSketchItem],
+) -> str | None:
+    previous = _previous_result_set_requirement(
+        previous_requirements,
+        entity=entity,
+    )
+    if previous is None or not _clause_refers_to_previous_result_set(clause, entity=entity or previous.entity):
+        return None
+
+    for field, source_value in previous.constraints.items():
+        if _is_control_or_target_constraint(field) or source_value in (None, "", [], {}):
+            continue
+        current_value = constraints.get(field)
+        target_field = f"new_{field}"
+        if (
+            current_value not in (None, "", [], {})
+            and not _constraint_values_equal(current_value, source_value)
+            and target_field not in constraints
+        ):
+            constraints[target_field] = current_value
+        constraints[field] = source_value
+    return previous.id
+
+
+def _previous_result_set_requirement(
+    previous_requirements: list[RequirementSketchItem],
+    *,
+    entity: str | None,
+) -> RequirementSketchItem | None:
+    for requirement in reversed(previous_requirements):
+        if requirement.requirement_type in {"mutation_request", "approval_request", "clarification_request"}:
+            continue
+        if entity and requirement.entity and requirement.entity != entity:
+            continue
+        if requirement.source_of_truth != "operational_state":
+            continue
+        if not requirement.constraints:
+            continue
+        return requirement
+    return None
+
+
+def _clause_refers_to_previous_result_set(clause: str, *, entity: str | None) -> bool:
+    entity_terms = ["records", "rows", "items", "them", "those", "these"]
+    if entity:
+        normalized = _normalize_phrase(entity).replace(" ", "_")
+        singular = normalized[:-1] if normalized.endswith("s") else normalized
+        entity_terms.extend([singular, f"{singular}s"])
+    entity_pattern = "|".join(re.escape(term).replace(r"\ ", r"[ _-]+") for term in dict.fromkeys(entity_terms))
+    return bool(
+        re.search(
+            rf"\b(?:(?:those|these|selected|listed|matching|returned|found)\s+(?:{entity_pattern})|them|those|these)\b",
+            _normalize_phrase(clause),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_control_or_target_constraint(field: str) -> bool:
+    return field.startswith("new_") or field in {
+        "limit",
+        "sort_by",
+        "sort_dir",
+        "observation_fields",
+        "preview_before_apply",
+        "requires_approval",
+        "safety_constraints",
+    }
+
+
+def _constraint_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, list) or isinstance(right, list):
+        left_values = left if isinstance(left, list) else [left]
+        right_values = right if isinstance(right, list) else [right]
+        return {str(value).strip().lower() for value in left_values} == {
+            str(value).strip().lower() for value in right_values
+        }
+    return str(left).strip().lower() == str(right).strip().lower()
 
 
 def _merge_constraint_value(constraints: dict[str, Any], field: str, value: Any) -> None:
@@ -867,6 +1601,92 @@ def _conditional_branch_for_clause(
     capability_map: CapabilityMap,
     entity: str | None,
 ) -> dict[str, Any] | None:
+    dependent_read = re.search(
+        r"\bif\b.+?\bincludes?\s+(?:a|an|the)?\s*(?P<entity>[a-z][a-z0-9_-]*)\s+id\b"
+        r".+?\bread\s+that\s+(?P=entity)\b",
+        clause,
+        re.IGNORECASE | re.DOTALL,
+    )
+    for_each_dependent_read = re.search(
+        r"\bfor\s+(?:each|every)\b.+?\b(?:that|which|where)\s+"
+        r"(?:includes?|has|contains)\s+(?:a|an|the)?\s*"
+        r"(?P<entity>[a-z][a-z0-9_-]*)\s+id\b"
+        r".+?\bread\s+that\s+(?P=entity)\b",
+        clause,
+        re.IGNORECASE | re.DOTALL,
+    )
+    dependent_read = dependent_read or for_each_dependent_read
+    if dependent_read:
+        branch_entity = _conditional_branch_entity_for_phrase(
+            dependent_read.group("entity"),
+            capability_map=capability_map,
+        )
+        if not branch_entity:
+            branch_entity = entity or ""
+        if not branch_entity:
+            return None
+        field_any = _conditional_identifier_fields(capability_map, branch_entity)
+        return {
+            "condition": {
+                "type": "active_parent_evidence_has_any_field",
+                "field_any": field_any,
+                "source": "active_parent_evidence",
+            },
+            "on_true": {
+                "action": "read_one",
+                "entity": branch_entity,
+                "constraint_field": f"{branch_entity}_id",
+                "value_from_field_any": field_any,
+                "fan_out": "all_unique_values"
+                if for_each_dependent_read
+                else "first_value",
+                "requirement_type": "single_entity_status",
+                "intent_operation": "report_status",
+            },
+            "diagnostics": {
+                "role": "conditional_branch",
+                "non_executable_until_condition_true": True,
+                **(
+                    {"fan_out": "all_unique_values"}
+                    if for_each_dependent_read
+                    else {}
+                ),
+            },
+        }
+
+    dependent_entity = _dependent_singular_read_entity(clause)
+    if dependent_entity:
+        if _dependent_clause_requires_evidence_branch(clause):
+            branch_entity = _conditional_branch_entity_for_phrase(
+                dependent_entity,
+                capability_map=capability_map,
+            )
+            if not branch_entity:
+                branch_entity = entity or ""
+            if branch_entity:
+                field_any = _conditional_identifier_fields(capability_map, branch_entity)
+                return {
+                    "condition": {
+                        "type": "active_parent_evidence_has_any_field",
+                        "field_any": field_any,
+                        "source": "active_parent_evidence",
+                    },
+                    "on_true": {
+                        "action": "read_one",
+                        "entity": branch_entity,
+                        "constraint_field": f"{branch_entity}_id",
+                        "value_from_field_any": field_any,
+                        "fan_out": "first_value",
+                        "requirement_type": "single_entity_status",
+                        "intent_operation": "report_status",
+                    },
+                    "diagnostics": {
+                        "role": "conditional_branch",
+                        "non_executable_until_condition_true": True,
+                        "dependent_referent_guard": True,
+                    },
+                }
+
     if not re.search(r"\bif\s+any\b", clause, re.IGNORECASE):
         return None
     if not re.search(r"\bexplain\b", clause, re.IGNORECASE):
@@ -881,16 +1701,125 @@ def _conditional_branch_for_clause(
     if condition_value is None:
         return None
 
-    branch: dict[str, Any] = {
-        "branch_type": "conditional_explanation",
-        "condition_field": "status",
-        "condition_value": condition_value,
-        "required_evidence": "typed_explanation",
-        "planner_action": "continue_for_explanation_before_update_suggestion",
+    return {
+        "condition": {
+            "type": "row_field_equals",
+            "field": "status",
+            "value": condition_value,
+            "source": "active_parent_evidence",
+        },
+        "on_true": {
+            "action": "continue_for_explanation_before_update_suggestion",
+            "required_evidence": "typed_explanation",
+        },
+        "diagnostics": {
+            "role": "conditional_branch",
+            "legacy_collection_explanation_branch": True,
+            **(
+                {"ordering": "explain_before_suggestion"}
+                if re.search(r"\bbefore\b.*\b(?:suggest|recommend)", clause, re.IGNORECASE)
+                else {}
+            ),
+        },
     }
-    if re.search(r"\bbefore\b.*\b(?:suggest|recommend)", clause, re.IGNORECASE):
-        branch["ordering"] = "explain_before_suggestion"
-    return branch
+
+
+def _conditional_branch_entity_for_phrase(phrase: str, *, capability_map: CapabilityMap) -> str:
+    entity = _normalize_phrase(phrase).replace(" ", "_")
+    if not entity:
+        return ""
+    known_entities = {
+        str(capability.entity or "").strip()
+        for capability in capability_map.capabilities
+        if str(capability.entity or "").strip()
+    }
+    candidates = [entity]
+    if entity.endswith("s") and len(entity) > 1:
+        candidates.append(entity[:-1])
+    return next((candidate for candidate in candidates if candidate in known_entities), candidates[0])
+
+
+def _conditional_identifier_fields(capability_map: CapabilityMap, entity: str) -> list[str]:
+    primary = f"{entity}_id"
+    fields: list[str] = [primary, f"active_{primary}"]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def _answer_instruction_for_clause(
+    clause: str,
+    *,
+    frame: SemanticFrame,
+    source: SourceOfTruth,
+    previous_requirements: list[RequirementSketchItem],
+    conditional_branches: list[ConditionalBranchContract],
+) -> str | None:
+    if not previous_requirements and not conditional_branches:
+        return None
+    if _dependent_singular_read_entity(clause) and _dependent_clause_requires_evidence_branch(clause):
+        return None
+    if re.search(r"^\s*(?:summari[sz]e|explain|describe)\b", clause, re.IGNORECASE):
+        if not any(values for values in frame.normalized_entities.values()):
+            return "answer_composition_instruction"
+    if frame.entity or source != "unknown":
+        return None
+    if re.search(r"\b(?:explain|why|cause|reason|summari[sz]e)\b", clause, re.IGNORECASE):
+        return "answer_composition_instruction"
+    return None
+
+
+def _clause_requests_answer_composition(clause: str) -> bool:
+    return bool(re.search(r"\b(?:explain|why|cause|reason|summari[sz]e|describe)\b", clause, re.IGNORECASE))
+
+
+def _dependent_clause_requires_evidence_branch(clause: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:read|show|check|get|look\s+up|pull|fetch)\b|"
+            r"\b(?:when|if|only\s+if)\b|\bthere\s+is\s+one\b|\bif\s+(?:present|applicable)\b",
+            clause,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _clarification_need_for_clause(clause: str, *, frame: SemanticFrame) -> dict[str, str] | None:
+    if frame.normalized_entities:
+        return None
+    match = re.search(
+        r"\b(?:read|show|check|get|look\s+up)\s+(?:that|this|the)\s+"
+        r"(?P<entity>[a-z][a-z0-9_-]*)\b",
+        clause,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    entity = _normalize_phrase(match.group("entity")).replace(" ", "_")
+    return {
+        "reason": "dependent_singular_read_missing_bound_entity",
+        "entity": entity,
+    }
+
+
+def _formatting_instruction_for_clause(
+    clause: str,
+    *,
+    frame: SemanticFrame,
+    source: SourceOfTruth,
+) -> str | None:
+    if frame.entity or source != "unknown":
+        return None
+    normalized = _normalize_phrase(clause)
+    formatting_terms = {
+        "briefly",
+        "status first",
+        "short answer",
+        "concise",
+        "one sentence",
+        "bullet points",
+    }
+    if normalized in formatting_terms:
+        return "formatting_instruction"
+    return None
 
 
 def _previous_requirement_modifier_for_clause(clause: str) -> dict[str, Any] | None:
@@ -975,6 +1904,15 @@ def _sort_field_for_clause(
         for term in _terms_for_field(field, aliases, entity=entity):
             if _contains_term(text, term):
                 return field
+    sort_match = re.search(
+        r"\b(?:sort(?:ed)?|order(?:ed)?|rank(?:ed)?)\s+by\s+(?P<field>.+?)"
+        r"(?:\s+(?:asc(?:ending)?|desc(?:ending)?)\b|[,.;]|$)",
+        text,
+        re.I | re.S,
+    )
+    if sort_match:
+        for field in _fields_mentioned(sort_match.group("field"), aliases, entity=entity):
+            return field
     return None
 
 
@@ -1139,7 +2077,11 @@ def _term_position(text: str, term: str) -> int | None:
 
 
 def _locked_constraints_for(constraints: dict[str, Any], requested_fields: list[str]) -> list[str]:
-    locked = [key for key, value in constraints.items() if value not in (None, "", [], {})]
+    locked = [
+        key
+        for key, value in constraints.items()
+        if key not in {"observation_fields", "requires_followup_evidence"} and value not in (None, "", [], {})
+    ]
     if requested_fields:
         locked.append("requested_fields")
     return list(dict.fromkeys(locked))

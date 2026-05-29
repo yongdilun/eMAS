@@ -881,7 +881,13 @@ class PlanCreationService:
             sess.status = "WAITING_APPROVAL"
         elif persisted_status == "FAILED":
             sess.status = "FAILED"
-            sess.error = first_failed_summary or sess.error or "Execution failed before a safe final answer could be produced."
+            plan_failure_summary = str(getattr(draft, "plan_explanation", "") or "").strip()
+            sess.error = (
+                first_failed_summary
+                or plan_failure_summary
+                or sess.error
+                or "Execution failed before a safe final answer could be produced."
+            )
             sess.completed_at = None
         else:
             sess.status = "PLANNING" if draft_steps else "IDLE"

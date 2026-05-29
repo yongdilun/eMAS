@@ -19,6 +19,14 @@ pytest-cache-files-*/
 test-artifacts/
 failed_ingestion.log
 
+# Browser MCP debug captures
+.playwright-mcp/*.log
+.playwright-mcp/*.yml
+
+# Local run/debug dumps
+run-*.json
+manual-for-each-product-final*
+
 # System / Go Build Caches
 .cache/
 emas/.cache/

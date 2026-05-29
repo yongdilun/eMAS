@@ -61,6 +61,7 @@ class Settings:
     tool_result_summary_backend: str = "auto"  # auto|deterministic|langchain (legacy alias -> deterministic)
     tool_selector_backend: str = "auto"  # auto|retrieval|langchain
     planner_model: str = "Qwen3.5-9B"
+    semantic_intake_model: str = "Qwen3.5-9B"
     summary_model: str = "Qwen3.5-9B"
     tool_result_summary_model: str = "Qwen3.5-9B"
     tool_selector_model: str = "Qwen3.5-9B"
@@ -96,6 +97,8 @@ class Settings:
     llm_default_max_tokens: int = 4096
     planner_timeout_s: float = 60.0
     planner_max_tokens: int = 2048
+    semantic_intake_timeout_s: float = 12.0
+    semantic_intake_max_tokens: int = 320
     summary_timeout_s: float = 20.0
     summary_max_tokens: int = 512
     tool_selector_timeout_s: float = 8.0
@@ -109,6 +112,7 @@ class Settings:
     openai_base_url: str | None = None
     openai_api_key: str | None = None
     planner_openai_base_url: str | None = None
+    semantic_intake_openai_base_url: str | None = None
     summary_openai_base_url: str | None = None
     tool_result_summary_openai_base_url: str | None = None
     tool_selector_openai_base_url: str | None = None
@@ -266,6 +270,10 @@ def get_settings() -> Settings:
         tool_result_summary_backend=_normalize_summary_backend(os.getenv("TOOL_RESULT_SUMMARY_BACKEND", "auto")),
         tool_selector_backend=os.getenv("TOOL_SELECTOR_BACKEND", "auto").strip().lower(),
         planner_model=env("PLANNER_MODEL", env("LLM_MODEL", "Qwen3.5-9B")).strip(),
+        semantic_intake_model=env(
+            "SEMANTIC_INTAKE_MODEL",
+            env("PLANNER_MODEL", env("LLM_MODEL", "Qwen3.5-9B")),
+        ).strip(),
         summary_model=env("SUMMARY_MODEL", env("LLM_MODEL", "Qwen3.5-9B")).strip(),
         tool_result_summary_model=env(
             "TOOL_RESULT_SUMMARY_MODEL",
@@ -298,6 +306,12 @@ def get_settings() -> Settings:
         ),
         planner_max_tokens=int(
             os.getenv("PLANNER_MAX_TOKENS", os.getenv("LLM_JSON_MAX_TOKENS", "2048"))
+        ),
+        semantic_intake_timeout_s=float(
+            os.getenv("SEMANTIC_INTAKE_TIMEOUT_S", os.getenv("LLM_JSON_TIMEOUT_S", "12"))
+        ),
+        semantic_intake_max_tokens=int(
+            os.getenv("SEMANTIC_INTAKE_MAX_TOKENS", os.getenv("LLM_JSON_MAX_TOKENS", "320"))
         ),
         summary_timeout_s=float(
             os.getenv("SUMMARY_TIMEOUT_S", os.getenv("LLM_DEFAULT_TIMEOUT_S", "20"))
@@ -341,6 +355,13 @@ def get_settings() -> Settings:
         openai_api_key=(env("OPENAI_API_KEY") or env("LLM_API_KEY") or None),
         planner_openai_base_url=(
             env("PLANNER_OPENAI_BASE_URL")
+            or env("OPENAI_BASE_URL")
+            or env("LLM_BASE_URL")
+            or None
+        ),
+        semantic_intake_openai_base_url=(
+            env("SEMANTIC_INTAKE_OPENAI_BASE_URL")
+            or env("PLANNER_OPENAI_BASE_URL")
             or env("OPENAI_BASE_URL")
             or env("LLM_BASE_URL")
             or None

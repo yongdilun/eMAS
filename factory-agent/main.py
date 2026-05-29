@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 import os
 from typing import Any
 
+from factory_agent.platform_compat import guard_blocking_windows_platform_queries
+
+guard_blocking_windows_platform_queries()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -183,6 +187,14 @@ def _ensure_schema_compatibility(sync_conn, *, allow_mutation: bool = True) -> N
 
 async def _is_graph_native_session(db, session: SessionRow | None) -> bool:
     return await is_graph_native_session(db, session)
+
+
+async def _cancel_and_await_task(task: asyncio.Task | None) -> None:
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
 
 
 @asynccontextmanager
@@ -829,23 +841,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    if listener_task:
-        listener_task.cancel()
-        with contextlib.suppress(Exception):
-            await listener_task
-    if redis_monitor_task:
-        redis_monitor_task.cancel()
-        with contextlib.suppress(Exception):
-            await redis_monitor_task
-    if stuck_step_task:
-        stuck_step_task.cancel()
-        with contextlib.suppress(Exception):
-            await stuck_step_task
-    for t in worker_tasks:
-        t.cancel()
-    for t in worker_tasks:
-        with contextlib.suppress(Exception):
-            await t
+    await _cancel_and_await_task(listener_task)
+    await _cancel_and_await_task(redis_monitor_task)
+    await _cancel_and_await_task(stuck_step_task)
+    for task in worker_tasks:
+        await _cancel_and_await_task(task)
     await event_bus.close()
     log_event("agent_server_stopped")
 

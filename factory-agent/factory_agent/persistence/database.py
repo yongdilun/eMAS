@@ -1,4 +1,5 @@
-﻿import os
+﻿import asyncio
+import os
 import time
 
 from dotenv import load_dotenv
@@ -31,7 +32,30 @@ else:
         }
     )
 
+
+def configure_aiomysql_cancel_safe_termination(dialect) -> None:
+    if getattr(dialect, "driver", None) != "aiomysql":
+        return
+    if getattr(dialect, "_factory_agent_cancel_safe_termination", False):
+        return
+    original_do_terminate = dialect.do_terminate
+
+    def do_terminate(dbapi_connection):
+        try:
+            original_do_terminate(dbapi_connection)
+        except asyncio.CancelledError:
+            force_close = getattr(dbapi_connection, "_terminate_force_close", None)
+            if callable(force_close):
+                force_close()
+                return
+            raise
+
+    dialect.do_terminate = do_terminate
+    dialect._factory_agent_cancel_safe_termination = True
+
+
 engine = create_async_engine(DATABASE_URL, **engine_kwargs)
+configure_aiomysql_cancel_safe_termination(engine.sync_engine.dialect)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
@@ -67,6 +91,28 @@ def _after_cursor_execute(conn, cursor, statement, parameters, context, executem
 
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         yield session
+    finally:
+        await close_session_after_cancellation(session)
+
+
+async def close_session_after_cancellation(session: AsyncSession) -> None:
+    # Request cancellation can arrive while FastAPI is finalizing dependencies; let
+    # the DB close finish so SQLAlchemy/aiomysql do not log interrupted cleanup.
+    close_task = asyncio.create_task(session.close())
+    try:
+        await asyncio.shield(close_task)
+    except asyncio.CancelledError:
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                continue
+        try:
+            await close_task
+        except (Exception, asyncio.CancelledError):
+            pass
+        raise
 

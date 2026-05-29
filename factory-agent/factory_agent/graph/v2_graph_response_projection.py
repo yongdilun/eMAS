@@ -23,15 +23,345 @@ def _phase6_response_blocks(state: PlannerOwnedAgentGraphState) -> list[dict[str
 
 
 def _phase6_response_summary(state: PlannerOwnedAgentGraphState, blocks: list[dict[str, Any]]) -> str:
-    _ = state
-    parts = [
-        str(block.get("summary") or "").strip()
-        for block in blocks
-        if str(block.get("summary") or "").strip()
-    ]
+    activated_parts, covered_requirement_ids = _activated_conditional_branch_summary_parts(state, blocks)
+    parts: list[str] = []
+    if activated_parts:
+        parts.extend(activated_parts)
+        parts.extend(
+            str(block.get("summary") or block.get("user_message") or "").strip()
+            for block in blocks
+            if str(block.get("requirement_id") or "") not in covered_requirement_ids
+            and str(block.get("summary") or block.get("user_message") or "").strip()
+        )
+    else:
+        parts.extend(
+            str(block.get("summary") or block.get("user_message") or "").strip()
+            for block in blocks
+            if str(block.get("summary") or block.get("user_message") or "").strip()
+        )
+    parts.extend(_conditional_branch_summary_parts(state, blocks))
     if not parts:
         return "No fulfilled read evidence was available for response rendering."
     return " ".join(dict.fromkeys(parts))
+
+
+def _activated_conditional_branch_summary_parts(
+    state: PlannerOwnedAgentGraphState,
+    blocks: list[dict[str, Any]],
+) -> tuple[list[str], set[str]]:
+    block_by_requirement_id = _blocks_by_requirement_id(blocks)
+    requirements_by_id = {
+        str(requirement.id): requirement
+        for requirement in state.requirement_ledger.requirements
+        if str(getattr(requirement, "id", "") or "")
+    }
+    parts: list[str] = []
+    covered_requirement_ids: set[str] = set()
+    for branch in getattr(state.requirement_ledger, "conditional_branches", []) or []:
+        if getattr(branch, "status", None) != "activated":
+            continue
+        parent_requirement_id = str(getattr(branch, "parent_requirement_id", "") or "")
+        parent_block = block_by_requirement_id.get(parent_requirement_id)
+        fan_out_parts = _fan_out_conditional_branch_summary_parts(
+            branch,
+            parent_block=parent_block,
+            block_by_requirement_id=block_by_requirement_id,
+            requirements_by_id=requirements_by_id,
+        )
+        if fan_out_parts:
+            parts.extend(fan_out_parts)
+            covered_requirement_ids.add(parent_requirement_id)
+            covered_requirement_ids.update(
+                str(child_id)
+                for child_id in getattr(branch, "activated_child_requirement_ids", []) or []
+                if str(child_id or "")
+            )
+            continue
+        field, value = _branch_trigger_field_value(branch, parent_block)
+        child_entity = _branch_child_entity(branch)
+        parent_label = _block_record_label(parent_block)
+        if parent_label and field and value not in (None, "", [], {}):
+            parts.append(
+                f"{parent_label} included {_field_label(field)} {value}, "
+                f"so the conditional {child_entity} follow-up was run."
+            )
+            covered_requirement_ids.add(parent_requirement_id)
+        for child_requirement_id in getattr(branch, "activated_child_requirement_ids", []) or []:
+            child_id = str(child_requirement_id or "")
+            child_block = block_by_requirement_id.get(child_id)
+            child_summary = str((child_block or {}).get("summary") or "").strip()
+            if child_summary:
+                parts.append(child_summary)
+                covered_requirement_ids.add(child_id)
+    return parts, covered_requirement_ids
+
+
+def _fan_out_conditional_branch_summary_parts(
+    branch: Any,
+    *,
+    parent_block: dict[str, Any] | None,
+    block_by_requirement_id: Mapping[str, dict[str, Any]],
+    requirements_by_id: Mapping[str, Any],
+) -> list[str]:
+    on_true = getattr(branch, "on_true", {}) or {}
+    if on_true.get("fan_out") != "all_unique_values":
+        return []
+    rows = (parent_block or {}).get("rows")
+    if not isinstance(rows, list):
+        return []
+    child_ids = [
+        str(child_id)
+        for child_id in getattr(branch, "activated_child_requirement_ids", []) or []
+        if str(child_id or "")
+    ]
+    if not child_ids:
+        return []
+
+    child_entity = _branch_child_entity(branch)
+    condition_fields = _branch_condition_fields(branch)
+    constraint_field = str(on_true.get("constraint_field") or "").strip()
+    trigger_fields = [*condition_fields]
+    if constraint_field and constraint_field not in trigger_fields:
+        trigger_fields.append(constraint_field)
+
+    parts: list[str] = []
+    for child_id in child_ids:
+        child_block = block_by_requirement_id.get(child_id)
+        child_requirement = requirements_by_id.get(child_id)
+        trigger_value = _child_trigger_value(
+            child_requirement,
+            child_block,
+            constraint_field=constraint_field,
+            trigger_fields=trigger_fields,
+        )
+        if trigger_value in (None, "", [], {}):
+            continue
+        parent_row = _row_for_trigger_value(rows, trigger_fields, trigger_value)
+        if not parent_row:
+            continue
+        source_field = _row_field_for_value(parent_row, trigger_fields, trigger_value)
+        parent_label = _row_record_label(parent_block, parent_row)
+        if parent_label and source_field:
+            parts.append(
+                f"{parent_label} included {_field_label(source_field)} {trigger_value}, "
+                f"so the conditional {child_entity} follow-up was run."
+            )
+        child_summary = str((child_block or {}).get("summary") or "").strip()
+        if child_summary:
+            parts.append(child_summary)
+    return parts
+
+
+def _conditional_branch_summary_parts(
+    state: PlannerOwnedAgentGraphState,
+    blocks: list[dict[str, Any]],
+) -> list[str]:
+    block_by_requirement_id = _blocks_by_requirement_id(blocks)
+    ledger = state.requirement_ledger
+    parts: list[str] = []
+    for branch in getattr(ledger, "conditional_branches", []) or []:
+        if getattr(branch, "status", None) != "skipped":
+            continue
+        if getattr(branch, "skipped_reason", None) != "conditional_branch_not_triggered":
+            continue
+        on_true = getattr(branch, "on_true", {}) or {}
+        entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
+        missing_field = _branch_missing_identifier_label(branch)
+        if missing_field:
+            follow_up = f"{entity} follow-up" if entity and entity != "follow-up" else "follow-up"
+            parent_label = _block_record_label(block_by_requirement_id.get(str(branch.parent_requirement_id)))
+            parent_suffix = f" on {parent_label}" if parent_label else ""
+            parts.append(f"No {missing_field} was present{parent_suffix}, so the conditional {follow_up} was skipped.")
+        else:
+            parts.append("The conditional follow-up was skipped because its trigger was not present.")
+    return parts
+
+
+def _blocks_by_requirement_id(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_requirement_id: dict[str, dict[str, Any]] = {}
+    for block in blocks:
+        requirement_id = str(block.get("requirement_id") or "")
+        if not requirement_id:
+            continue
+        existing = by_requirement_id.get(requirement_id)
+        if existing is None or (_block_has_rows(block) and not _block_has_rows(existing)):
+            by_requirement_id[requirement_id] = block
+    return by_requirement_id
+
+
+def _block_has_rows(block: dict[str, Any]) -> bool:
+    return isinstance(block.get("rows"), list)
+
+
+def _branch_condition_fields(branch: Any) -> list[str]:
+    condition = getattr(branch, "condition", {}) or {}
+    fields: list[str] = []
+    field_any = condition.get("field_any")
+    if isinstance(field_any, list):
+        fields.extend(str(field).strip() for field in field_any if str(field or "").strip())
+    field = str(condition.get("field") or "").strip()
+    if field:
+        fields.append(field)
+    return list(dict.fromkeys(fields))
+
+
+def _child_trigger_value(
+    child_requirement: Any | None,
+    child_block: dict[str, Any] | None,
+    *,
+    constraint_field: str,
+    trigger_fields: list[str],
+) -> Any:
+    constraints = getattr(child_requirement, "constraints", {}) or {}
+    if constraint_field and isinstance(constraints, Mapping):
+        value = constraints.get(constraint_field)
+        if value not in (None, "", [], {}):
+            return value
+    fields = (child_block or {}).get("fields")
+    field_values = fields if isinstance(fields, Mapping) else {}
+    for field in [constraint_field, *trigger_fields]:
+        if not field:
+            continue
+        value = field_values.get(field)
+        if value not in (None, "", [], {}):
+            return value
+    return (child_block or {}).get("entity_id")
+
+
+def _row_for_trigger_value(
+    rows: list[Any],
+    trigger_fields: list[str],
+    trigger_value: Any,
+) -> Mapping[str, Any] | None:
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if _row_field_for_value(row, trigger_fields, trigger_value):
+            return row
+    return None
+
+
+def _row_field_for_value(
+    row: Mapping[str, Any],
+    trigger_fields: list[str],
+    trigger_value: Any,
+) -> str | None:
+    for field in trigger_fields:
+        value = row.get(field)
+        if value not in (None, "", [], {}) and str(value) == str(trigger_value):
+            return field
+    return None
+
+
+def _branch_trigger_field_value(branch: Any, parent_block: dict[str, Any] | None) -> tuple[str | None, Any]:
+    diagnostics = getattr(branch, "diagnostics", {}) or {}
+    field = str(diagnostics.get("trigger_field") or "").strip()
+    value = diagnostics.get("trigger_value")
+    if field and value not in (None, "", [], {}):
+        return field, value
+    condition = getattr(branch, "condition", {}) or {}
+    field_any = condition.get("field_any")
+    fields = (parent_block or {}).get("fields")
+    if isinstance(field_any, list) and isinstance(fields, Mapping):
+        for candidate in field_any:
+            candidate_field = str(candidate or "").strip()
+            candidate_value = fields.get(candidate_field)
+            if candidate_field and candidate_value not in (None, "", [], {}):
+                return candidate_field, candidate_value
+    return field or None, value
+
+
+def _branch_child_entity(branch: Any) -> str:
+    on_true = getattr(branch, "on_true", {}) or {}
+    entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
+    return entity or "follow-up"
+
+
+def _branch_missing_identifier_label(branch: Any) -> str | None:
+    on_true = getattr(branch, "on_true", {}) or {}
+    condition = getattr(branch, "condition", {}) or {}
+    field = str(on_true.get("constraint_field") or "").strip()
+    if not field:
+        field_any = condition.get("field_any")
+        if isinstance(field_any, list) and field_any:
+            field = str(field_any[0] or "").strip()
+    if not field:
+        return None
+    return _field_label(field)
+
+
+def _field_label(field: str) -> str:
+    return field.replace("_", " ")
+
+
+def _block_record_label(block: dict[str, Any] | None) -> str | None:
+    if not block:
+        return None
+    entity = str(block.get("entity_type") or "record").strip()
+    fields = block.get("fields")
+    field_values = fields if isinstance(fields, Mapping) else {}
+    entity_id = block.get("entity_id") or _first_field_value(
+        field_values,
+        [f"{entity}_id", "entity_id", "id", "machine_ref"],
+    )
+    label = entity.capitalize() if entity else "Record"
+    if entity_id not in (None, ""):
+        return f"{label} {entity_id}"
+    return label
+
+
+def _row_record_label(block: dict[str, Any] | None, row: Mapping[str, Any]) -> str | None:
+    entity = str((block or {}).get("entity_type") or "record").strip()
+    entity_id = _first_field_value(
+        row,
+        [f"{entity}_id", "entity_id", "id", "machine_ref"],
+    )
+    label = entity.capitalize() if entity else "Record"
+    if entity_id not in (None, ""):
+        return f"{label} {entity_id}"
+    return _block_record_label(block)
+
+
+def _replan_limit_response_block(state: PlannerOwnedAgentGraphState, replan_spine: Mapping[str, Any]) -> dict[str, Any]:
+    stale_refs = [
+        str(ref)
+        for ref in replan_spine.get("stale_attempt_evidence_refs", replan_spine.get("stale_evidence_refs", []))
+        if str(ref)
+    ]
+    requirement_ids = [
+        requirement.id
+        for requirement in state.requirement_ledger.requirements
+        if requirement.status != "satisfied"
+    ]
+    message = (
+        "I could not verify the requested evidence after bounded retries, "
+        "so I did not claim a successful status."
+    )
+    return {
+        "id": "diagnostic:replan-limit",
+        "type": "diagnostic",
+        "severity": "error",
+        "reason": "replan_limit_reached",
+        "title": "Unable to verify evidence",
+        "summary": message,
+        "user_message": message,
+        "cause": "The graph kept receiving incomplete or stale evidence for the active read requirement.",
+        "impact": {
+            "changes_applied": False,
+            "safe_to_retry": True,
+            "unsatisfied_requirement_ids": requirement_ids,
+        },
+        "current_state": "No successful active evidence satisfied the request.",
+        "next_action": "Retry after the upstream data source can return the requested fields.",
+        "technical_details": {
+            "reason": "replan_limit_reached",
+            "attempt_count": int(replan_spine.get("attempt_count") or 0),
+            "max_attempts": int(replan_spine.get("max_attempts") or 0),
+            "stale_attempt_evidence_refs": stale_refs,
+            "sanitized": True,
+        },
+        "details_collapsed": True,
+    }
 
 
 def _phase6_response_block_for_evidence(requirement: Any | None, evidence: EvidenceLedgerEntry) -> dict[str, Any]:

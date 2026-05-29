@@ -445,6 +445,99 @@ test('FactoryAgentChatPanel renders backend unavailable errors without fake succ
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel clears a missing saved session without startup failure copy', async () => {
+  const { factoryAgentApi } = await server.ssrLoadModule('/src/services/factoryAgentApi.js')
+  const original = {
+    listTools: factoryAgentApi.listTools,
+    listSessions: factoryAgentApi.listSessions,
+    getSnapshot: factoryAgentApi.getSnapshot,
+  }
+  factoryAgentApi.listTools = async () => []
+  factoryAgentApi.listSessions = async () => []
+  factoryAgentApi.getSnapshot = async () => {
+    const err = new Error('Requested resource was not found.')
+    err.status = 404
+    throw err
+  }
+  window.localStorage.setItem('factory_agent_active_session_id', 'missing-seeded-session')
+
+  const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
+  const view = await render(React.createElement(FactoryAgentChatPanel))
+
+  try {
+    await waitFor(() => assert.equal(window.localStorage.getItem('factory_agent_active_session_id'), null))
+    assert.doesNotMatch(view.text(), /Factory Agent chat could not start/i)
+    assert.doesNotMatch(view.text(), /Try starting chat again/i)
+    assert.doesNotMatch(view.text(), /Requested resource was not found/i)
+  } finally {
+    await view.unmount()
+    factoryAgentApi.listTools = original.listTools
+    factoryAgentApi.listSessions = original.listSessions
+    factoryAgentApi.getSnapshot = original.getSnapshot
+    window.localStorage.removeItem('factory_agent_active_session_id')
+  }
+})
+
+test('FactoryAgentChatPanel does not describe a started active run timeout as chat startup failure', async () => {
+  const chatState = createChatState({
+    session: { session_id: 'session-started-timeout', name: 'Started timeout', status: 'EXECUTING' },
+    sessionList: [{ session_id: 'session-started-timeout', name: 'Started timeout', status: 'EXECUTING' }],
+    activeSessionName: 'Started timeout',
+    error: 'Factory Agent request timed out after 75000 ms. Retry or cancel the current run.',
+    turns: [
+      {
+        id: 'turn-started-timeout',
+        created_at: '2026-05-27T09:07:00.000Z',
+        user: {
+          content: 'Find all low priority jobs',
+          created_at: '2026-05-27T09:07:00.000Z',
+        },
+        summary: "I'm working on the request and waiting for the next backend update.",
+        responseDocument: baseResponseDocument({
+          state: 'running',
+          status: 'running',
+          message: "I'm working on the request and waiting for the next backend update.",
+          blocks: [
+            {
+              id: 'activity:started-timeout',
+              type: 'run_activity',
+              step_ids: ['analysis-1'],
+            },
+          ],
+        }),
+      },
+    ],
+    activitySteps: [
+      {
+        id: 'act:running-tool',
+        timestamp: 1,
+        group: 'research',
+        label: 'Running selected tool',
+        detail: 'Checking relevant records',
+        state: 'success',
+      },
+      {
+        id: 'act:checking-result',
+        timestamp: 2,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'running',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  assert.match(view.container.querySelector('[data-chatbot-topbar]')?.textContent || '', /Checking result/)
+  assert.doesNotMatch(view.text(), /Factory Agent chat could not start/i)
+  assert.doesNotMatch(view.text(), /Try starting chat again/i)
+  assert.doesNotMatch(view.text(), /request timed out after 75000 ms/i)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders failed commit diagnostics without stale success copy', async () => {
   const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
   const safeSummary =
@@ -987,6 +1080,51 @@ test('FactoryAgentChatPanel renders read-only collection as one Results surface 
   assert.doesNotMatch(view.text(), /\bPreview\b/)
   assert.match(view.text(), /Results/)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="result_table"] [data-affected-record-row]').length, 5)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel labels product record previews by product id before status', async () => {
+  const document = baseResponseDocument({
+    message: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+    summary: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+    blocks: [
+      {
+        id: 'message:conditional-product',
+        type: 'short_message',
+        message: 'Job JOB-SEED-001 included product id P-001, so the conditional product follow-up was run. Product P-001 is active.',
+        status: 'completed',
+      },
+      {
+        id: 'record-preview:conditional-product',
+        type: 'record_preview',
+        operation_id: 'op-conditional-product',
+        title: 'Read product status',
+        rows: [{ status: 'active', product_id: 'P-001' }],
+        read_scope: 'records',
+        display_mode: 'record_preview',
+        entity_type: 'product',
+        entity_count: 1,
+        preview_limit: 5,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-product-preview', name: 'Product preview', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-product-preview', name: 'Product preview', status: 'COMPLETED' }],
+    activeSessionName: 'Product preview',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Read product status/))
+  const productBlock = view.container.querySelector('[data-response-block-type="record_preview"]')
+  const chip = productBlock?.querySelector('[data-affected-record-row]')
+  assert.equal(chip?.textContent, 'P-001')
+  assert.equal(chip?.getAttribute('data-record-id'), 'P-001')
+  assert.notEqual(chip?.textContent, 'active')
+  assert.match(productBlock?.textContent || '', /Status\s*active/i)
 
   await view.unmount()
 })
@@ -2271,6 +2409,63 @@ test('FactoryAgentChatPanel renders response_document failure diagnostic safely'
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel lets terminal response_document own stale timeout errors', async () => {
+  const document = baseResponseDocument({
+    state: 'blocked',
+    status: 'blocked',
+    message: 'I could not verify the requested evidence after bounded retries.',
+    run_steps: [
+      {
+        step_id: 'diagnostic:replan-limit',
+        kind: 'diagnostic',
+        state: 'failed',
+        title: 'Run needs attention',
+        summary: 'I could not verify the requested evidence after bounded retries.',
+        current: true,
+      },
+    ],
+    blocks: [
+      {
+        id: 'diagnostic:replan-limit',
+        type: 'diagnostic',
+        severity: 'error',
+        reason: 'replan_limit_reached',
+        title: 'Run needs attention',
+        user_message: 'I could not verify the requested evidence after bounded retries.',
+        cause: 'Evidence could not be verified after retrying the read.',
+        current_state: 'No successful active evidence satisfied the request.',
+        next_action: 'Retry after the upstream data source can return the requested fields.',
+        impact: { changes_applied: false, safe_to_retry: true },
+        technical_details: { error_code: 'planner_no_action', sanitized: true },
+        details_collapsed: true,
+      },
+    ],
+    diagnostics: { reason: 'replan_limit_reached', sanitized: true },
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-replan-limit', name: 'Machine status', status: 'BLOCKED' },
+    sessionList: [{ session_id: 'session-replan-limit', name: 'Machine status', status: 'BLOCKED' }],
+    activeSessionName: 'Machine status',
+    error: 'Factory Agent request timed out while waiting for the final snapshot.',
+    turns: [responseDocumentTurn(document, { summary: 'Request could not start.' })],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Run needs attention/))
+  assert.match(view.text(), /could not verify the requested evidence after bounded retries/i)
+  assert.match(view.text(), /Technical details/)
+  assert.doesNotMatch(view.text(), /Factory Agent request timed out/i)
+  assert.doesNotMatch(view.text(), /Request could not start/i)
+  assert.doesNotMatch(view.text(), /Try starting chat again/i)
+  assert.equal(
+    Array.from(view.container.querySelectorAll('button')).some((button) => button.textContent.trim() === 'stop'),
+    false,
+  )
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel preserves completed response_document evidence while approval 2 is pending', async () => {
   const approvalRows = [
     { job_id: 'JOB-SEED-001', previous_priority: 'high', new_priority: 'low' },
@@ -2482,6 +2677,98 @@ test('FactoryAgentChatPanel hides premature live Run complete until terminal sna
   assert.match(view.text(), /Checking citations/)
   assert.doesNotMatch(view.text(), /Run complete/)
   assert.doesNotMatch(view.text(), /Understanding your request/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel keeps richer completed live activity instead of swapping to short document steps', async () => {
+  const document = baseResponseDocument({
+    state: 'completed',
+    status: 'completed',
+    message: 'Final answer is ready.',
+    run_steps: [
+      {
+        step_id: 'analysis-short',
+        kind: 'analysis',
+        state: 'completed',
+        title: 'Understood request',
+        summary: 'Request parsed.',
+      },
+      {
+        step_id: 'complete-short',
+        kind: 'completed',
+        state: 'completed',
+        title: 'Run complete',
+        summary: 'Final answer is ready.',
+      },
+    ],
+    blocks: [
+      {
+        id: 'activity:rd-completed-richer-live',
+        type: 'run_activity',
+        step_ids: ['analysis-short', 'complete-short'],
+      },
+      {
+        id: 'message:rd-completed-richer-live',
+        type: 'short_message',
+        message: 'Final answer is ready.',
+        status: 'completed',
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-completed-richer-live', name: 'RD completed richer live', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-completed-richer-live', name: 'RD completed richer live', status: 'COMPLETED' }],
+    activeSessionName: 'RD completed richer live',
+    turns: [responseDocumentTurn(document, { summary: 'Final answer is ready.' })],
+    activitySteps: [
+      {
+        id: 'graph:000001:semantic_intake_node',
+        timestamp: 1,
+        order: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing your request and recent context',
+        state: 'success',
+      },
+      {
+        id: 'graph:000002:tool_execution_node',
+        timestamp: 2,
+        order: 2,
+        group: 'research',
+        label: 'Reading 2 product records',
+        detail: 'Parallel read batch scheduled',
+        state: 'success',
+      },
+      {
+        id: 'graph:000003:evidence_observation_node',
+        timestamp: 3,
+        order: 3,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'success',
+      },
+      {
+        id: 'graph:000004:complete',
+        timestamp: 4,
+        order: 4,
+        group: 'response',
+        label: 'Run complete',
+        detail: 'All steps finished. See the thread below.',
+        state: 'complete',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Run complete/))
+  const activityButton = Array.from(view.container.querySelectorAll('button'))
+    .find((button) => /Run complete/.test(button.textContent || ''))
+  await click(activityButton)
+  assert.match(view.text(), /Reading 2 product records/)
+  assert.match(view.text(), /Checking result/)
 
   await view.unmount()
 })

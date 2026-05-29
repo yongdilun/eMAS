@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,10 @@ from factory_agent.schemas import (
     SourceListBlock,
 )
 from factory_agent.services.response_document_service import compose_response_document
+from factory_agent.services.planner_activity_captions import (
+    enrich_activity_step_rows,
+    is_safe_dynamic_activity_label,
+)
 from factory_agent.session_state import (
     USER_CANCELLED_ACTIVITY_DETAIL,
     USER_CANCELLED_ACTIVITY_LABEL,
@@ -354,14 +358,21 @@ _LIVE_ACTIVITY_ALLOWED_STATES = {"running", "success", "retry", "waiting", "erro
 _LIVE_ACTIVITY_ALLOWED_LABELS = {
     "Understood request",
     "Preparing next action",
+    "Structuring request",
+    "Choosing next action",
+    "Finding information path",
+    "Selecting safe action",
     "Searching knowledge sources",
     "Building cited answer",
     "Checking citations",
     "Running selected tool",
     "Checking result",
+    "Verifying result",
+    "Checking approvals",
     "Waiting for approval",
     "Applying approved changes",
     "Preparing response",
+    "Rendering response",
 }
 _LIVE_ACTIVITY_UNSAFE_TEXT_FRAGMENTS = {
     "__",
@@ -416,6 +427,595 @@ def _safe_activity_domain_label(ev: TimelineEventResponse) -> str:
         if token in text:
             return label
     return "relevant records"
+
+
+def _activity_event_args(ev: TimelineEventResponse) -> dict[str, Any]:
+    details = ev.details if isinstance(ev.details, dict) else {}
+    args = details.get("args")
+    if isinstance(args, dict):
+        return dict(args)
+    result = details.get("result")
+    if isinstance(result, dict) and isinstance(result.get("request_args"), dict):
+        return dict(result["request_args"])
+    return {}
+
+
+def _activity_domain_subject(ev: TimelineEventResponse) -> str:
+    label = _safe_activity_domain_label(ev)
+    if label.endswith(" records"):
+        return label[: -len(" records")]
+    if label.endswith(" requests"):
+        return label[: -len(" requests")]
+    return ""
+
+
+def _activity_read_target_label(ev: TimelineEventResponse | None) -> str:
+    if ev is None:
+        return "selected read"
+    subject = _activity_domain_subject(ev)
+    args = _activity_event_args(ev)
+    fields = args.get("fields") or args.get("requested_fields")
+    if isinstance(fields, str):
+        requested = {item.strip().lower() for item in fields.split(",") if item.strip()}
+    elif isinstance(fields, list):
+        requested = {str(item).strip().lower() for item in fields if str(item).strip()}
+    else:
+        requested = set()
+    if subject and "status" in requested:
+        return f"{subject} status read"
+    if subject:
+        return f"{subject} read"
+    return "selected read"
+
+
+def _activity_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
+def _activity_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _activity_replan_total_attempts(replan_spine: dict[str, Any]) -> int:
+    max_replans = _activity_int(replan_spine.get("max_attempts")) or 0
+    attempt_count = _activity_int(replan_spine.get("attempt_count")) or 0
+    if max_replans > 0:
+        return max_replans + 1
+    if attempt_count > 0:
+        return attempt_count + 1
+    return 0
+
+
+def _activity_attempt_text(attempt: int, total: int, message: str) -> str:
+    if attempt > 0 and total > 0:
+        return f"Attempt {attempt} of {total} - {message}"
+    return message
+
+
+def _activity_result_error_kind(ev: TimelineEventResponse | None) -> str | None:
+    if ev is None:
+        return None
+    details = ev.details if isinstance(ev.details, dict) else {}
+    result = details.get("result")
+    result = result if isinstance(result, dict) else {}
+    error = result.get("error")
+    error = error if isinstance(error, dict) else {}
+    error_type = str(
+        error.get("error_type")
+        or result.get("error_type")
+        or details.get("error_type")
+        or ""
+    ).strip().lower()
+    status_code = (
+        _activity_int(result.get("status_code"))
+        or _activity_int(result.get("http_status"))
+        or _activity_int(details.get("http_status"))
+    )
+    if error_type == "timeout" or status_code in {408, 504}:
+        return "timeout"
+    if error_type in {"empty_data", "insufficient_context", "no_match", "missing_evidence"}:
+        return "incomplete"
+    if error_type in {"http_error", "http_500", "network", "tool_execution_exception"}:
+        return "tool_error"
+    if status_code is not None and status_code >= 400:
+        return "tool_error"
+    return None
+
+
+def _activity_attempt_reason_kind(
+    *,
+    replan_spine: dict[str, Any],
+    replan_attempt: int,
+    failed_event: TimelineEventResponse | None,
+) -> str:
+    event_kind = _activity_result_error_kind(failed_event)
+    if event_kind:
+        return event_kind
+    attempts = replan_spine.get("attempts")
+    if isinstance(attempts, list):
+        for item in attempts:
+            if not isinstance(item, dict):
+                continue
+            if _activity_int(item.get("attempt")) != replan_attempt:
+                continue
+            for reason in item.get("missing_evidence_reasons") or []:
+                if not isinstance(reason, dict):
+                    continue
+                code = str(reason.get("reason") or "").strip().lower()
+                if code in {"insufficient_context", "missing_evidence", "no_match"}:
+                    return "incomplete"
+                if code == "tool_error":
+                    return "tool_error"
+    for reason in replan_spine.get("missing_evidence_reasons") or []:
+        if not isinstance(reason, dict):
+            continue
+        code = str(reason.get("reason") or "").strip().lower()
+        if code in {"insufficient_context", "missing_evidence", "no_match"}:
+            return "incomplete"
+        if code == "tool_error":
+            return "tool_error"
+    return "tool_error"
+
+
+def _activity_retry_reason_text(kind: str) -> str:
+    if kind == "timeout":
+        return "Previous read timed out"
+    if kind == "incomplete":
+        return "Evidence was incomplete"
+    if kind == "different_tool":
+        return "Trying a different tool"
+    return "Previous read failed"
+
+
+def _activity_replan_label(kind: str) -> str:
+    if kind == "timeout":
+        return "Replanning after timeout"
+    if kind == "incomplete":
+        return "Replanning for more evidence"
+    if kind == "different_tool":
+        return "Replanning with a different tool"
+    return "Replanning after failed read"
+
+
+def _activity_is_read_event(ev: TimelineEventResponse) -> bool:
+    tool_name = str(ev.tool_name or (ev.step_context or {}).get("tool_name") or "").strip().lower()
+    return not tool_name.startswith(_WRITE_TOOL_PREFIXES) and not _is_rag_activity_event(ev)
+
+
+def _activity_replan_attempt_base(base: Mapping[str, Any], attempt: int) -> dict[str, Any]:
+    tagged = dict(base)
+    tagged["_replan_attempt"] = attempt
+    return tagged
+
+
+def _activity_replan_story_step(
+    ev: TimelineEventResponse,
+    base: dict[str, str],
+    detail: str | None,
+    *,
+    replan_spine: dict[str, Any],
+    prior_replans: int,
+    failed_event: TimelineEventResponse | None,
+    later_replan: bool,
+) -> tuple[dict[str, Any], str | None]:
+    total = _activity_replan_total_attempts(replan_spine)
+    event_type = ev.event_type
+    if total <= 0:
+        return base, detail
+
+    if event_type == "replan_requested":
+        next_attempt = prior_replans + 2
+        kind = _activity_attempt_reason_kind(
+            replan_spine=replan_spine,
+            replan_attempt=max(1, next_attempt - 1),
+            failed_event=failed_event,
+        )
+        reason = _activity_retry_reason_text(kind)
+        return (
+            _activity_replan_attempt_base(
+                {"group": "planning", "label": _activity_replan_label(kind), "state": "retry"},
+                next_attempt,
+            ),
+            _activity_attempt_text(next_attempt, total, reason),
+        )
+
+    if event_type in {"execution_started", "tool_started"} and _activity_is_read_event(ev):
+        attempt = prior_replans + 1
+        if attempt <= 1:
+            return (
+                _activity_replan_attempt_base(
+                    {"group": "research", "label": "Running selected tool", "state": "running"},
+                    attempt,
+                ),
+                _activity_attempt_text(attempt, total, "Running the selected read"),
+            )
+        return (
+            _activity_replan_attempt_base(
+                {"group": "research", "label": f"Retrying {_activity_read_target_label(ev)}", "state": "running"},
+                attempt,
+            ),
+            _activity_attempt_text(attempt, total, "Running the next selected read"),
+        )
+
+    if event_type == "tool_result" and _activity_is_read_event(ev):
+        attempt = prior_replans + 1
+        status = str(ev.status or "").upper()
+        domain = _safe_activity_domain_label(ev)
+        if status in {"FAILED", "AMBIGUOUS"}:
+            kind = _activity_attempt_reason_kind(
+                replan_spine=replan_spine,
+                replan_attempt=max(1, attempt),
+                failed_event=ev,
+            )
+            reason = _activity_retry_reason_text(kind)
+            if later_replan:
+                return (
+                    _activity_replan_attempt_base(
+                        {"group": "response", "label": "Checking evidence", "state": "success"},
+                        attempt,
+                    ),
+                    _activity_attempt_text(attempt, total, reason),
+                )
+            return (
+                _activity_replan_attempt_base(
+                    {"group": "response", "label": "Checking evidence", "state": "error"},
+                    attempt,
+                ),
+                _activity_attempt_text(attempt, total, "Evidence could not be verified"),
+            )
+        if status == "DONE":
+            label = "Checking new evidence" if prior_replans > 0 else "Checking evidence"
+            return (
+                _activity_replan_attempt_base({"group": "response", "label": label, "state": "success"}, attempt),
+                _activity_attempt_text(attempt, total, f"Verified {domain}"),
+            )
+
+    if event_type == "session_completed" and prior_replans > 0:
+        attempt = min(total, max(prior_replans + 1, (_activity_int(replan_spine.get("attempt_count")) or 0) + 1))
+        return (
+            _activity_replan_attempt_base(base, attempt),
+            _activity_attempt_text(attempt, total, "Completed with verified evidence"),
+        )
+
+    if event_type in {"session_failed", "session_blocked"} and replan_spine.get("replan_limit_reached"):
+        attempt = min(total, max(prior_replans + 1, (_activity_int(replan_spine.get("attempt_count")) or 0) + 1))
+        return (
+            _activity_replan_attempt_base(base, attempt),
+            _activity_attempt_text(attempt, total, "Evidence could not be verified after retries"),
+        )
+
+    return base, detail
+
+
+def _activity_probe_event_from_failed_call(call: Mapping[str, Any] | None) -> TimelineEventResponse | None:
+    if not isinstance(call, Mapping):
+        return None
+    tool_name = str(call.get("tool_name") or "").strip()
+    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+    if not tool_name:
+        return None
+    error: dict[str, Any] = {"code": str(call.get("reason") or "tool_error")}
+    if call.get("error_type"):
+        error["error_type"] = str(call.get("error_type"))
+    return TimelineEventResponse(
+        event_id="activity:failed-call-probe",
+        event_type="tool_result",
+        content="",
+        created_at=datetime(2026, 1, 1, 0, 0, 0),
+        tool_name=tool_name,
+        status="FAILED",
+        details={
+            "args": dict(args),
+            "result": {
+                "status": "tool_failed",
+                "error": error,
+            },
+        },
+    )
+
+
+def _activity_replan_story_from_diagnostics(
+    raw_steps: list[dict[str, Any]],
+    snapshot: SessionSnapshotResponse,
+    replan_spine: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not raw_steps:
+        return raw_steps
+    attempts = replan_spine.get("attempts")
+    failed_calls = replan_spine.get("failed_tool_calls")
+    if not isinstance(failed_calls, list) or not failed_calls:
+        failed_calls = []
+        for item in attempts if isinstance(attempts, list) else []:
+            if not isinstance(item, Mapping):
+                continue
+            item_failed_calls = item.get("failed_tool_calls")
+            if not isinstance(item_failed_calls, list):
+                continue
+            failed_calls.extend(call for call in item_failed_calls if isinstance(call, Mapping))
+
+    if not isinstance(attempts, list) or not attempts:
+        attempt_count = _activity_int(replan_spine.get("attempt_count")) or len(failed_calls)
+        attempts = []
+        for index in range(max(attempt_count, 0)):
+            attempt: dict[str, Any] = {"attempt": index + 1}
+            if index < len(failed_calls) and isinstance(failed_calls[index], Mapping):
+                attempt["failed_tool_calls"] = [failed_calls[index]]
+            attempts.append(attempt)
+
+    if not attempts and not failed_calls:
+        return raw_steps
+
+    total = _activity_replan_total_attempts(replan_spine)
+    if total <= 0:
+        return raw_steps
+
+    terminal = next((step for step in reversed(raw_steps) if step.get("state") in {"complete", "error"}), None)
+    terminal_state = str(terminal.get("state") if terminal else "")
+    terminal_ts = int(terminal.get("timestamp") or snapshot.session.updated_at.timestamp()) if terminal else int(snapshot.session.updated_at.timestamp())
+    leading = [step for step in raw_steps if step.get("label") == "Understood request"][:1]
+    first_call = next((call for call in failed_calls if isinstance(call, Mapping)), None)
+    probe = _activity_probe_event_from_failed_call(first_call)
+    existing_attempt_kinds = _activity_existing_replan_kinds_by_attempt(raw_steps)
+    kind = existing_attempt_kinds.get(1) or _activity_attempt_reason_kind(
+        replan_spine=replan_spine,
+        replan_attempt=1,
+        failed_event=probe,
+    )
+    reason = _activity_retry_reason_text(kind)
+    target = _activity_read_target_label(probe)
+    domain = _safe_activity_domain_label(probe) if probe is not None else "relevant records"
+    active_attempt = min(total, max((_activity_int(replan_spine.get("attempt_count")) or 0) + 1, 1))
+
+    story: list[dict[str, Any]] = [dict(step) for step in leading]
+    story_ids = {str(step.get("id") or "") for step in story}
+    first_run_index = next(
+        (idx for idx, step in enumerate(raw_steps) if step.get("label") == "Running selected tool"),
+        -1,
+    )
+    first_check_search_start = first_run_index + 1 if first_run_index >= 0 else 0
+    first_check_index = next(
+        (
+            idx
+            for idx, step in enumerate(
+                raw_steps[first_check_search_start:],
+                start=first_check_search_start,
+            )
+            if step.get("label") in {"Checking result", "Checking evidence"}
+        ),
+        -1,
+    )
+    prelude_limit = first_run_index if first_run_index >= 0 else len(raw_steps)
+    for step in raw_steps[:prelude_limit]:
+        step_id = str(step.get("id") or "")
+        if step_id in story_ids or step.get("state") in {"complete", "error"}:
+            continue
+        if step.get("label") in {"Running selected tool", "Checking result", "Checking evidence"}:
+            continue
+        story.append({**step, "state": "success" if step.get("state") in _ACTIVITY_FINALIZE_STATES else step.get("state")})
+        story_ids.add(step_id)
+
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=terminal_ts - 10)
+
+    def add(offset: int, group: str, label: str, state: str, detail: str, *, attempt: int | None = None) -> None:
+        row: dict[str, Any] = {
+            "id": f"act:replan_story:{len(story) + 1}",
+            "timestamp": base_ts + offset,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": state,
+        }
+        if attempt is not None:
+            row["_replan_attempt"] = attempt
+        story.append(row)
+
+    if first_run_index >= 0:
+        story.append(
+            {
+                **raw_steps[first_run_index],
+                "detail": _activity_attempt_text(1, total, "Running the selected read"),
+                "state": "success",
+                "_replan_attempt": 1,
+            }
+        )
+    else:
+        add(
+            1,
+            "research",
+            "Running selected tool",
+            "success",
+            _activity_attempt_text(1, total, "Running the selected read"),
+            attempt=1,
+        )
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=base_ts)
+    if first_check_index >= 0:
+        story.append(
+            {
+                **raw_steps[first_check_index],
+                "label": "Checking evidence" if terminal_state else raw_steps[first_check_index].get("label"),
+                "detail": _activity_attempt_text(1, total, reason),
+                "state": "success",
+                "_replan_attempt": 1,
+            }
+        )
+    else:
+        add(
+            2,
+            "response",
+            "Checking evidence",
+            "success",
+            _activity_attempt_text(1, total, reason),
+            attempt=1,
+        )
+    base_ts = max((int(step.get("timestamp") or 0) for step in story), default=base_ts)
+    for item in attempts:
+        if not isinstance(item, Mapping):
+            continue
+        replan_attempt = _activity_int(item.get("attempt")) or len(story)
+        next_attempt = min(total, replan_attempt + 1)
+        attempt_call = next(
+            (
+                call for call in item.get("failed_tool_calls", [])
+                if isinstance(call, Mapping) and call.get("tool_name")
+            ),
+            first_call,
+        )
+        attempt_probe = _activity_probe_event_from_failed_call(attempt_call)
+        attempt_kind = existing_attempt_kinds.get(next_attempt) or existing_attempt_kinds.get(replan_attempt)
+        if attempt_kind is None:
+            attempt_kind = _activity_attempt_reason_kind(
+                replan_spine=replan_spine,
+                replan_attempt=max(1, replan_attempt),
+                failed_event=attempt_probe,
+            )
+        attempt_reason = _activity_retry_reason_text(attempt_kind)
+        attempt_target = _activity_read_target_label(attempt_probe) if attempt_probe is not None else target
+        if replan_attempt > 1:
+            add(
+                2 + (replan_attempt * 3) - 2,
+                "response",
+                "Checking evidence",
+                "success",
+                _activity_attempt_text(replan_attempt, total, attempt_reason),
+                attempt=replan_attempt,
+            )
+        add(
+            2 + (replan_attempt * 3) - 1,
+            "planning",
+            _activity_replan_label(attempt_kind),
+            "success",
+            _activity_attempt_text(next_attempt, total, attempt_reason),
+            attempt=next_attempt,
+        )
+        add(
+            2 + (replan_attempt * 3),
+            "research",
+            f"Retrying {attempt_target}",
+            "success" if terminal_state or next_attempt != active_attempt else "running",
+            _activity_attempt_text(next_attempt, total, "Running the next selected read"),
+            attempt=next_attempt,
+        )
+
+    final_attempt = min(total, max((_activity_int(replan_spine.get("attempt_count")) or 0) + 1, 1))
+    if terminal_state == "complete":
+        add(
+            total + 20,
+            "response",
+            "Checking new evidence",
+            "success",
+            _activity_attempt_text(final_attempt, total, f"Verified {domain}"),
+            attempt=final_attempt,
+        )
+    if terminal:
+        terminal_detail = (
+            _activity_attempt_text(final_attempt, total, "Completed with verified evidence")
+            if terminal_state == "complete"
+            else _activity_attempt_text(final_attempt, total, "Evidence could not be verified after retries")
+        )
+        story.append({**terminal, "detail": terminal_detail, "_replan_attempt": final_attempt})
+    return _activity_normalize_replan_story_order(story)
+
+
+def _activity_existing_replan_kinds_by_attempt(raw_steps: list[dict[str, Any]]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for step in raw_steps:
+        attempt = _activity_int(step.get("_replan_attempt") or step.get("replan_attempt"))
+        if attempt is None:
+            continue
+        kind = _activity_existing_replan_kind(step)
+        if kind:
+            out[attempt] = kind
+    return out
+
+
+def _activity_existing_replan_kind(step: Mapping[str, Any]) -> str | None:
+    text = f"{step.get('label') or ''} {step.get('detail') or ''}".lower()
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "different tool" in text:
+        return "different_tool"
+    if "more evidence" in text or "incomplete" in text:
+        return "incomplete"
+    if "failed" in text:
+        return "tool_error"
+    return None
+
+
+def _activity_normalize_replan_story_order(raw_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    terminal_index = -1
+    for idx in range(len(raw_steps) - 1, -1, -1):
+        if raw_steps[idx].get("state") in {"complete", "error"}:
+            terminal_index = idx
+            break
+    if terminal_index < 0:
+        for idx, step in enumerate(raw_steps):
+            step["_order"] = idx
+        return raw_steps
+
+    terminal_ts = int(raw_steps[terminal_index].get("timestamp") or 0)
+    for idx, step in enumerate(raw_steps):
+        step["_order"] = idx
+        if idx < terminal_index:
+            step["timestamp"] = terminal_ts - (terminal_index - idx)
+    return raw_steps
+
+
+def _activity_collapse_noisy_replan_attempts(
+    raw_steps: list[dict[str, Any]],
+    replan_spine: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not replan_spine:
+        return raw_steps
+    attempt_numbers = sorted(
+        {
+            attempt
+            for step in raw_steps
+            if (attempt := _activity_int(step.get("_replan_attempt"))) is not None
+        }
+    )
+    if len(attempt_numbers) <= 3:
+        return raw_steps
+    has_terminal = any(step.get("state") in {"complete", "error"} for step in raw_steps)
+    if not has_terminal:
+        return raw_steps
+    tail_attempts_to_keep = 1
+    collapse_until = max(len(attempt_numbers) - tail_attempts_to_keep, 1)
+    collapsed_attempts = set(attempt_numbers[1:collapse_until])
+    if not collapsed_attempts:
+        return raw_steps
+
+    collapsed_seen: set[int] = set()
+    summary: dict[str, Any] | None = None
+    compacted: list[dict[str, Any]] = []
+    for step in raw_steps:
+        attempt = _activity_int(step.get("_replan_attempt"))
+        if attempt in collapsed_attempts:
+            collapsed_seen.add(attempt)
+            if summary is None:
+                summary = {
+                    "id": "act:replan_attempts_collapsed",
+                    "timestamp": int(step.get("timestamp") or 0),
+                    "group": "system",
+                    "label": "Earlier retry attempts",
+                    "detail": "",
+                    "state": "success",
+                }
+                compacted.append(summary)
+            continue
+        compacted.append(step)
+
+    if not collapsed_seen or summary is None:
+        return raw_steps
+    attempt_word = "attempt" if len(collapsed_seen) == 1 else "attempts"
+    summary["detail"] = f"{len(collapsed_seen)} earlier {attempt_word} collapsed"
+    return compacted
 
 
 def _is_rag_activity_event(ev: TimelineEventResponse) -> bool:
@@ -539,27 +1139,58 @@ def _live_activity_text(value: Any) -> str:
     return text
 
 
+def _activity_graph_steps_from_context(context: Mapping[str, Any]) -> list[Any]:
+    candidates: list[Any] = [context.get("activity_graph_steps")]
+    for key in ("intent_contract", "planner_owned_agent_graph", "activity_caption_context"):
+        nested = context.get(key)
+        if not isinstance(nested, Mapping):
+            continue
+        candidates.append(nested.get("activity_graph_steps"))
+        caption_context = nested.get("activity_caption_context")
+        if isinstance(caption_context, Mapping):
+            candidates.append(caption_context.get("activity_graph_steps"))
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return candidate
+    return []
+
+
 def _live_activity_steps_for_snapshot(
     snapshot: SessionSnapshotResponse,
     *,
     session_status: str,
 ) -> list[dict[str, Any]]:
     """Expose server-authored in-flight graph activity without trusting arbitrary context text."""
-    if session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES:
-        return []
-    context = snapshot.session.replan_context if isinstance(snapshot.session.replan_context, dict) else {}
-    rows = context.get("live_activity_steps")
+    session_replan_context = (
+        snapshot.session.get("replan_context")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "replan_context", None)
+    )
+    context = session_replan_context if isinstance(session_replan_context, dict) else {}
+    if session_status in _ACTIVITY_ACTIVE_SESSION_STATUSES:
+        rows = context.get("live_activity_steps")
+        if not isinstance(rows, list):
+            rows = _activity_graph_steps_from_context(context)
+    else:
+        rows = _activity_graph_steps_from_context(context)
     if not isinstance(rows, list):
         return []
+    if not rows:
+        return []
 
-    fallback_ts = int(snapshot.session.updated_at.timestamp())
+    updated_at = (
+        snapshot.session.get("updated_at")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "updated_at", None)
+    )
+    fallback_ts = int(updated_at.timestamp()) if hasattr(updated_at, "timestamp") else int(datetime.utcnow().timestamp())
     out: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for idx, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
         label = _live_activity_text(row.get("label"))
-        if label not in _LIVE_ACTIVITY_ALLOWED_LABELS:
+        if label not in _LIVE_ACTIVITY_ALLOWED_LABELS and not is_safe_dynamic_activity_label(label):
             continue
         step_id = _live_activity_text(row.get("id")) or f"graph:live:{idx}"
         if not step_id.startswith("graph:"):
@@ -578,17 +1209,27 @@ def _live_activity_steps_for_snapshot(
         except (TypeError, ValueError):
             timestamp = fallback_ts + idx
         detail = _live_activity_text(row.get("detail")) or None
+        order = _activity_int(row.get("order") or row.get("_order")) or idx + 1
         out.append(
             {
                 "id": step_id,
                 "timestamp": timestamp,
+                "order": order,
+                "_order": order,
                 "group": group,
                 "label": label,
                 "detail": detail,
                 "state": state,
             }
         )
-    return sorted(out, key=lambda step: (int(step["timestamp"]), str(step["id"])))
+    return sorted(
+        out,
+        key=lambda step: (
+            int(step.get("order") or step.get("_order") or 0),
+            int(step["timestamp"]),
+            str(step["id"]),
+        ),
+    )
 
 
 def _snapshot_plan_scoped_steps(
@@ -666,6 +1307,24 @@ def _activity_inject_plan_execution_summary(
     return [*raw_steps[:last_terminal_index], row, *raw_steps[last_terminal_index:]]
 
 
+def _activity_finalize_row_states(raw_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    last_terminal_index = -1
+    for idx in range(len(raw_steps) - 1, -1, -1):
+        if raw_steps[idx].get("state") in {"complete", "error"}:
+            last_terminal_index = idx
+            break
+    if last_terminal_index >= 0:
+        for idx in range(last_terminal_index):
+            if raw_steps[idx].get("state") in _ACTIVITY_FINALIZE_STATES:
+                raw_steps[idx]["state"] = "success"
+        return raw_steps[: last_terminal_index + 1]
+    upper_bound = len(raw_steps) - 1
+    for idx in range(upper_bound):
+        if raw_steps[idx].get("state") in _ACTIVITY_FINALIZE_STATES:
+            raw_steps[idx]["state"] = "success"
+    return raw_steps
+
+
 def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[ActivityStepResponse]:
     raw_steps: list[dict[str, Any]] = []
     repeated_by_signature: dict[tuple[str, str, str, str, str], int] = {}
@@ -674,7 +1333,24 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
     has_pending_approval = snapshot.pending_approval is not None
     session_status = str(getattr(snapshot.session, "status", "") or "").upper()
     suppress_completion = has_pending_approval or session_status in _ACTIVITY_ACTIVE_SESSION_STATUSES
-    for ev in snapshot.timeline:
+    replan_spine = _replan_spine_from_session_context(snapshot.session)
+    use_replan_story = bool(
+        replan_spine
+        and (
+            replan_spine.get("attempt_count")
+            or replan_spine.get("attempts")
+            or replan_spine.get("replan_limit_reached")
+        )
+    )
+    prior_replans = 0
+    last_failed_read_event: TimelineEventResponse | None = None
+    timeline_events = list(snapshot.timeline)
+    later_replan_by_index = [
+        any(later.event_type == "replan_requested" for later in timeline_events[idx + 1 :])
+        for idx, _ in enumerate(timeline_events)
+    ]
+
+    for idx_ev, ev in enumerate(timeline_events):
         base = _activity_base_for_timeline_event(ev)
         if base is None:
             continue
@@ -683,6 +1359,16 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         if suppress_completion and ev.event_type == "session_completed":
             continue
         detail = _activity_detail_for_event(ev, label=base["label"])
+        if use_replan_story:
+            base, detail = _activity_replan_story_step(
+                ev,
+                base,
+                detail,
+                replan_spine=replan_spine,
+                prior_replans=prior_replans,
+                failed_event=last_failed_read_event,
+                later_replan=later_replan_by_index[idx_ev],
+            )
         signature = _activity_merge_signature(ev, base, detail)
         if base["state"] in _ACTIVITY_MERGEABLE_STATES and signature in index_by_signature:
             count = repeated_by_signature.get(signature, 1) + 1
@@ -694,36 +1380,54 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
             continue
         index_by_signature[signature] = len(raw_steps)
         repeated_by_signature[signature] = 1
-        raw_steps.append(
-            {
-                "id": _activity_step_stable_id(ev, signature),
-                "timestamp": int(ev.created_at.timestamp()),
-                "group": base["group"],
-                "label": base["label"],
-                "detail": detail,
-                "state": base["state"],
-            }
-        )
+        row = {
+            "id": _activity_step_stable_id(ev, signature),
+            "timestamp": int(ev.created_at.timestamp()),
+            "group": base["group"],
+            "label": base["label"],
+            "detail": detail,
+            "state": base["state"],
+        }
+        if base.get("_replan_attempt") is not None:
+            row["_replan_attempt"] = base["_replan_attempt"]
+        raw_steps.append(row)
+        if ev.event_type == "tool_result" and str(ev.status or "").upper() in {"FAILED", "AMBIGUOUS"} and _activity_is_read_event(ev):
+            last_failed_read_event = ev
+        if ev.event_type == "replan_requested":
+            prior_replans += 1
 
     live_steps = _live_activity_steps_for_snapshot(snapshot, session_status=session_status)
+    active_live_sort_key = None
     if live_steps:
-        existing_label_groups = {
+        live_label_groups = {
             (str(step.get("group") or ""), str(step.get("label") or ""))
-            for step in raw_steps
+            for step in live_steps
         }
-        filtered_live_steps: list[dict[str, Any]] = []
-        for step in live_steps:
-            label_group = (str(step.get("group") or ""), str(step.get("label") or ""))
-            if label_group in existing_label_groups:
-                continue
-            existing_label_groups.add(label_group)
-            filtered_live_steps.append(step)
-        live_steps = filtered_live_steps
-    if live_steps:
         live_ids = {str(step["id"]) for step in live_steps}
-        raw_steps = [step for step in raw_steps if str(step.get("id") or "") not in live_ids]
+        raw_steps = [
+            step
+            for step in raw_steps
+            if str(step.get("id") or "") not in live_ids
+            and (str(step.get("group") or ""), str(step.get("label") or "")) not in live_label_groups
+        ]
         raw_steps.extend(live_steps)
-        raw_steps.sort(key=lambda step: (int(step["timestamp"]), str(step["id"])))
+        first_live_timestamp = min(int(step.get("timestamp") or 0) for step in live_steps)
+
+        def _active_live_sort_key(step: dict[str, Any]) -> tuple[int, float, int, str]:
+            timestamp = int(step.get("timestamp") or 0)
+            sort_order = _activity_float(step.get("_sort_after_order"))
+            if sort_order is not None:
+                return (1, sort_order, timestamp, str(step.get("id") or ""))
+            order = _activity_int(step.get("order") or step.get("_order"))
+            if order is not None:
+                return (1, order, timestamp, str(step.get("id") or ""))
+            bucket = 0 if timestamp <= first_live_timestamp else 2
+            return (bucket, timestamp, 0, str(step.get("id") or ""))
+
+        active_live_sort_key = _active_live_sort_key
+        raw_steps.sort(
+            key=_active_live_sort_key
+        )
 
     if session_status == "WAITING_APPROVAL":
         latest_waiting_approval_index = -1
@@ -764,8 +1468,15 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
                 raw_steps[idx]["state"] = "success"
 
     raw_steps = _activity_inject_plan_execution_summary(raw_steps, snapshot)
+    if use_replan_story:
+        raw_steps = _activity_replan_story_from_diagnostics(raw_steps, snapshot, replan_spine)
+        raw_steps = _activity_collapse_noisy_replan_attempts(raw_steps, replan_spine)
 
-    if len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
+    if (
+        session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES
+        and not live_steps
+        and len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS
+    ):
         older = raw_steps[: -(_ACTIVITY_MAX_VISIBLE_STEPS - 1)]
         recent = raw_steps[-(_ACTIVITY_MAX_VISIBLE_STEPS - 1) :]
         grouped = {
@@ -778,10 +1489,40 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         }
         raw_steps = [grouped, *recent]
 
+    session_replan_context = (
+        snapshot.session.get("replan_context")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "replan_context", None)
+    )
+    session_updated_at = (
+        snapshot.session.get("updated_at")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "updated_at", None)
+    )
+    fallback_timestamp = (
+        int(session_updated_at.timestamp())
+        if hasattr(session_updated_at, "timestamp")
+        else int(datetime.utcnow().timestamp())
+    )
+    raw_steps = enrich_activity_step_rows(
+        raw_steps,
+        session_replan_context if isinstance(session_replan_context, dict) else {},
+        fallback_timestamp=fallback_timestamp,
+        session_status=session_status,
+    )
+    if active_live_sort_key is not None and not use_replan_story:
+        raw_steps.sort(key=active_live_sort_key)
+    raw_steps = _activity_finalize_row_states(raw_steps)
+    for idx, step in enumerate(raw_steps, start=1):
+        step["order"] = idx
+        step["_order"] = idx
+
     return [
         ActivityStepResponse(
             id=str(step["id"]),
             timestamp=int(step["timestamp"]),
+            order=_activity_int(step.get("order") or step.get("_order")),
+            replan_attempt=_activity_int(step.get("replan_attempt") or step.get("_replan_attempt")),
             group=step["group"],
             label=step["label"],
             detail=step.get("detail"),
@@ -1302,7 +2043,7 @@ def _presentation_diagnostics(
     reason: str,
     steps: list[PlanStepResponse],
 ) -> dict[str, Any]:
-    return {
+    diagnostics = {
         "reason": reason,
         "session_status": getattr(session, "status", None),
         "session_error": getattr(session, "error", None),
@@ -1319,9 +2060,135 @@ def _presentation_diagnostics(
             if str(step.status or "").upper() in {"FAILED", "AMBIGUOUS"} or step.last_error
         ],
     }
+    replan_spine = _replan_spine_from_session_context(session)
+    if replan_spine:
+        diagnostics["replan_spine"] = replan_spine
+        diagnostics["replan_limit_reached"] = bool(replan_spine.get("replan_limit_reached"))
+    return diagnostics
+
+
+def _replan_spine_from_session_context(session: Any) -> dict[str, Any]:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return {}
+    live_replan_spine = context.get("live_replan_spine")
+    if isinstance(live_replan_spine, dict):
+        return dict(live_replan_spine)
+    for candidate in _replan_context_candidates(context):
+        replan_spine = candidate.get("replan_spine")
+        if isinstance(replan_spine, dict):
+            return dict(replan_spine)
+        response_context = candidate.get("response_document_context")
+        if not isinstance(response_context, dict):
+            continue
+        response_diagnostics = response_context.get("diagnostics")
+        if not isinstance(response_diagnostics, dict):
+            continue
+        replan_spine = response_diagnostics.get("replan_spine")
+        if isinstance(replan_spine, dict):
+            return dict(replan_spine)
+    return {}
+
+
+def _replan_context_candidates(context: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = [context]
+    for key in ("intent_contract", "planner_owned_agent_graph"):
+        nested = context.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    return candidates
+
+
+def _response_document_context_from_replan_context(context: dict[str, Any]) -> dict[str, Any]:
+    for candidate in _replan_context_candidates(context):
+        response_context = candidate.get("response_document_context")
+        if isinstance(response_context, dict):
+            return response_context
+    return {}
+
+
+def _planner_owned_response_contract_diagnostics(session: Any, *, reason: str) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {"reason": reason}
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return diagnostics
+
+    response_context = _response_document_context_from_replan_context(context)
+    response_diagnostics = (
+        response_context.get("diagnostics")
+        if isinstance(response_context.get("diagnostics"), dict)
+        else {}
+    )
+    for candidate in _replan_context_candidates(context):
+        lineage = candidate.get("child_requirement_lineage")
+        if isinstance(lineage, list):
+            diagnostics["child_requirement_lineage"] = [
+                dict(item) for item in lineage if isinstance(item, dict)
+            ]
+            break
+    if "child_requirement_lineage" not in diagnostics:
+        lineage = response_diagnostics.get("child_requirement_lineage")
+        if isinstance(lineage, list):
+            diagnostics["child_requirement_lineage"] = [
+                dict(item) for item in lineage if isinstance(item, dict)
+            ]
+
+    active_refs = (
+        response_diagnostics.get("active_final_evidence_refs")
+        or response_diagnostics.get("active_evidence_refs")
+    )
+    if isinstance(active_refs, list):
+        diagnostics["active_final_evidence_refs"] = list(active_refs)
+    response_refs = response_context.get("evidence_refs") or response_diagnostics.get("response_evidence_refs")
+    if isinstance(response_refs, list):
+        diagnostics["response_evidence_refs"] = list(response_refs)
+    return diagnostics
+
+
+def _response_document_diagnostics_from_replan_context(context: dict[str, Any]) -> dict[str, Any]:
+    response_context = _response_document_context_from_replan_context(context)
+    if not isinstance(response_context, dict):
+        return {}
+    response_diagnostics = response_context.get("diagnostics")
+    if not isinstance(response_diagnostics, dict):
+        return {}
+    return response_diagnostics
+
+
+def _replan_limit_reached(session: Any) -> bool:
+    replan_spine = _replan_spine_from_session_context(session)
+    return bool(replan_spine.get("replan_limit_reached"))
+
+
+def _replan_limit_summary(session: Any) -> str | None:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return None
+    response_diagnostics = _response_document_diagnostics_from_replan_context(context)
+    summary = str(response_diagnostics.get("summary") or "").strip()
+    return summary or None
+
+
+def _planner_owned_completed_answer_summary(
+    *,
+    session: Any,
+    terminal_event: TimelineEventResponse | None,
+    plan: PlanRow | None,
+) -> str | None:
+    context = getattr(session, "replan_context", None)
+    if isinstance(context, dict):
+        response_diagnostics = _response_document_diagnostics_from_replan_context(context)
+        graph_summary = str(response_diagnostics.get("summary") or "").strip()
+        if graph_summary:
+            return graph_summary
+    if terminal_event and terminal_event.content:
+        return terminal_event.content
+    return plan.plan_explanation if plan else None
 
 
 def _typed_blocked_reason(session: Any, *, default: str = "session_blocked") -> str:
+    if _replan_limit_reached(session):
+        return "replan_limit_reached"
     context = getattr(session, "replan_context", None)
     if isinstance(context, dict):
         reason = str(context.get("blocked_reason") or "").strip()
@@ -1489,11 +2356,16 @@ def _derive_snapshot_presentation(
         context = getattr(session, "replan_context", None)
         if isinstance(context, dict) and context.get("original_session_status"):
             diagnostics["original_session_status"] = context.get("original_session_status")
+        summary = (
+            _replan_limit_summary(session)
+            if reason == "replan_limit_reached"
+            else None
+        )
         return PresentationResponse(
             kind="diagnostic",
             state="blocked",
             operation_id=operation_id,
-            summary=getattr(session, "error", None) or (terminal_event.content if terminal_event else "Execution blocked."),
+            summary=summary or getattr(session, "error", None) or (terminal_event.content if terminal_event else "Execution blocked."),
             rows=step_rows,
             sources=sources,
             diagnostics=diagnostics,
@@ -1568,7 +2440,7 @@ def _derive_snapshot_presentation(
             summary=terminal_event.content if terminal_event else "Mutation completed.",
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "mutation_completed"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="mutation_completed"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 
@@ -1581,7 +2453,7 @@ def _derive_snapshot_presentation(
             summary=answer_summary,
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "source_backed_answer"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="source_backed_answer"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 
@@ -1590,10 +2462,14 @@ def _derive_snapshot_presentation(
             kind="answer",
             state="completed",
             operation_id=operation_id,
-            summary=terminal_event.content if terminal_event else (plan.plan_explanation if plan else None),
+            summary=_planner_owned_completed_answer_summary(
+                session=session,
+                terminal_event=terminal_event,
+                plan=plan,
+            ),
             rows=step_rows,
             sources=sources,
-            diagnostics={"reason": "completed_answer"},
+            diagnostics=_planner_owned_response_contract_diagnostics(session, reason="completed_answer"),
             invariants={**invariants, "full_success_forbidden": False},
         )
 

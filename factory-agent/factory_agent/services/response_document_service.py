@@ -11,6 +11,10 @@ from factory_agent.graph.noop_mutations import (
     NO_OP_MUTATION_STATUS,
     normalize_no_op_mutation,
 )
+from factory_agent.planning.v2_dependency_scheduler import (
+    DEPENDENCY_PLAN_DIAGNOSTIC_KEY,
+    DEPENDENCY_PLAN_HISTORY_DIAGNOSTIC_KEY,
+)
 from factory_agent.planning.query_shape import parse_fields_arg
 from factory_agent.rag.source_metadata import (
     insufficient_context_answer,
@@ -88,6 +92,12 @@ SOURCE_LOCATOR_CONTRACT = "source_locator_v1"
 READ_DISPLAY_PREVIEW_LIMIT = 5
 READ_SCOPE_STATUS_ONLY = "status_only"
 READ_SCOPE_DETAILS = "details"
+_PLANNER_OWNED_RESPONSE_DIAGNOSTIC_KEYS = frozenset(
+    {
+        DEPENDENCY_PLAN_DIAGNOSTIC_KEY,
+        DEPENDENCY_PLAN_HISTORY_DIAGNOSTIC_KEY,
+    }
+)
 READ_SCOPE_RECORDS = "records"
 DISPLAY_MODE_COMPACT_STATUS_CARD = "compact_status_card"
 DISPLAY_MODE_DETAIL_STATUS_CARD = "detail_status_card"
@@ -303,6 +313,17 @@ _FAILURE_TEMPLATES: dict[str, FailureTemplate] = {
         retry_policy="retry_failed_rows_only",
         safe_to_retry=True,
     ),
+    "replan_limit_reached": FailureTemplate(
+        reason="replan_limit_reached",
+        title="Run needs attention",
+        user_message="I could not verify the requested evidence after bounded retries.",
+        cause="The run reached its retry limit before active evidence satisfied the request.",
+        current_state="No successful active evidence satisfied the request.",
+        next_action="Retry after the upstream data source can return the requested fields.",
+        action_ids=("check_status", "start_new_request", "view_diagnostics"),
+        retry_policy="retry_after_upstream_evidence_recovers",
+        safe_to_retry=True,
+    ),
     "planner_no_action": FailureTemplate(
         reason="planner_no_action",
         title="Request could not start",
@@ -404,6 +425,7 @@ class ReadEvidence:
     rows: list[dict[str, Any]] = field(default_factory=list)
     step_ids: list[str] = field(default_factory=list)
     completed_at: datetime | None = None
+    first_seen: int = 0
     tool_name: str | None = None
     args: dict[str, Any] = field(default_factory=dict)
 
@@ -1209,6 +1231,8 @@ def _error_code(value: Any, *, fallback: str = "unknown_error") -> str:
 
 
 def _sanitize_diagnostic_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    if key == "child_requirement_lineage":
+        return _sanitize_child_requirement_lineage(value)
     if depth > 4:
         return "[truncated]"
     if key and _SENSITIVE_KEY_RE.search(key):
@@ -1225,6 +1249,38 @@ def _sanitize_diagnostic_value(value: Any, *, key: str = "", depth: int = 0) -> 
             return _error_code(value)
         return _redact_sensitive_text(value)
     return value
+
+
+def _sanitize_child_requirement_lineage(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    lineage: list[dict[str, Any]] = []
+    for item in value[:25]:
+        if not isinstance(item, dict):
+            continue
+        out: dict[str, Any] = {}
+        for key in (
+            "parent_requirement_id",
+            "child_requirement_ids",
+            "ledger_revision",
+            "expansion_reason",
+            "derived_from_evidence_refs",
+            "derived_from_missing_reasons",
+        ):
+            if key in item:
+                out[key] = _sanitize_diagnostic_value(item[key], key=key, depth=1)
+        children = item.get("children")
+        if isinstance(children, list):
+            out["children"] = [
+                {
+                    str(child_key): _sanitize_diagnostic_value(child_value, key=str(child_key), depth=1)
+                    for child_key, child_value in child.items()
+                }
+                for child in children[:25]
+                if isinstance(child, dict)
+            ]
+        lineage.append(out)
+    return lineage
 
 
 def _row_ids_by_status(rows: list[dict[str, Any]], status: str) -> list[str]:
@@ -1293,6 +1349,8 @@ def _failure_reason(
     latest_closed_approval = _latest_closed_approval(approvals)
     text = _failure_probe_text(presentation=presentation, steps=steps, approvals=approvals)
 
+    if legacy_reason == "replan_limit_reached":
+        return legacy_reason
     if legacy_reason in {"planner_no_action", "unable_to_start_request", "orphan_turn_state"}:
         return legacy_reason
     if "planner_no_action" in text:
@@ -2447,13 +2505,15 @@ def _read_evidence(
         rows: list[dict[str, Any]],
         step_id: str | None,
         completed_at: datetime | None,
+        first_seen: int,
         *,
         tool_name: str | None = None,
         args: dict[str, Any] | None = None,
     ) -> None:
         if key not in rows_by_key:
-            rows_by_key[key] = ReadEvidence(key=key, operation_id=operation_id)
+            rows_by_key[key] = ReadEvidence(key=key, operation_id=operation_id, first_seen=first_seen)
         evidence = rows_by_key[key]
+        evidence.first_seen = min(evidence.first_seen, first_seen)
         evidence.rows.extend(rows)
         if step_id and step_id not in evidence.step_ids:
             evidence.step_ids.append(step_id)
@@ -2464,12 +2524,13 @@ def _read_evidence(
         if args and not evidence.args:
             evidence.args = dict(args)
 
-    for step in steps:
+    for source_index, step in enumerate(steps):
         status = str(step.status or "").upper()
         if status not in {"DONE", "FAILED", "AMBIGUOUS"} or _is_write_tool_name(step.tool_name):
             continue
         if not (_is_read_tool_name(step.tool_name) or isinstance(step.result, dict)):
             continue
+        step_order = int(step.step_index) if step.step_index is not None else source_index
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
         rows = _operation_rows_from_result(
             step.result if isinstance(step.result, dict) else None,
@@ -2484,11 +2545,13 @@ def _read_evidence(
             rows,
             step.step_id,
             step.completed_at or step.started_at,
+            step_order,
             tool_name=step.tool_name,
             args=step.args if isinstance(step.args, dict) else {},
         )
 
-    for event in timeline:
+    timeline_order_offset = len(steps)
+    for event_index, event in enumerate(timeline):
         if event.event_type != "tool_result" or _is_write_tool_name(event.tool_name):
             continue
         details = event.details if isinstance(event.details, dict) else {}
@@ -2509,18 +2572,19 @@ def _read_evidence(
             rows,
             event.step_id,
             event.created_at,
+            timeline_order_offset + event_index,
             tool_name=event.tool_name,
             args=args,
         )
 
     if presentation.kind == "answer" and presentation.rows:
-        add_rows("read:presentation", [dict(row) for row in presentation.rows], None, None)
+        add_rows("read:presentation", [dict(row) for row in presentation.rows], None, None, len(steps) + len(timeline))
 
     out: list[ReadEvidence] = []
     for evidence in rows_by_key.values():
         evidence.rows = _dedupe_rows(evidence.rows)
         out.append(evidence)
-    return sorted(out, key=lambda item: (item.completed_at or datetime.min, item.key))
+    return sorted(out, key=lambda item: (item.first_seen, item.completed_at or datetime.min, item.key))
 
 
 def _source_priority(row: dict[str, Any]) -> str:
@@ -3699,6 +3763,73 @@ def _read_evidence_summary_for_mixed_read(item: ReadEvidence, *, session: Any) -
     return _read_evidence_collection_summary(item, rows=rows)
 
 
+def _same_entity_single_record_read_step(
+    items: list[ReadEvidence],
+    *,
+    document_id: str,
+    operation_id: str | None,
+    session: Any,
+) -> RunStep | None:
+    if len(items) <= 1:
+        return None
+    entities = {_read_evidence_entity(item) for item in items}
+    if len(entities) != 1:
+        return None
+    entity = next(iter(entities))
+    if not entity:
+        return None
+    rows_by_item = [
+        [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+        for item in items
+    ]
+    if not rows_by_item or any(len(rows) != 1 for rows in rows_by_item):
+        return None
+    rows = [rows[0] for rows in rows_by_item]
+    requested_field_sets = [
+        tuple(parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None))
+        for item in items
+    ]
+    requested_fields = (
+        list(requested_field_sets[0])
+        if requested_field_sets and len(set(requested_field_sets)) == 1
+        else []
+    )
+    status_like = _read_evidence_is_status_only(
+        rows=rows,
+        requested_fields=requested_fields,
+        entity_type=entity,
+        session=session,
+    )
+    entity_label = _human_status_label(entity).lower()
+    if status_like:
+        title = f"Read {len(rows)} {entity_label} statuses"
+        summary = _read_policy_summary(
+            rows,
+            ReadDisplayPolicy(
+                read_scope=READ_SCOPE_STATUS_ONLY,
+                requested_fields=requested_fields
+                or _status_requested_fields(rows[0], entity, READ_SCOPE_STATUS_ONLY),
+                display_mode=DISPLAY_MODE_COLLECTION_TABLE,
+                entity_count=len(rows),
+                entity_type=entity,
+                contract=ENTITY_STATUS_CONTRACT,
+            ),
+            None,
+        )
+    else:
+        title = f"Read {len(rows)} {entity_label} records"
+        summary = _read_evidence_collection_summary(items[0], rows=rows)
+    return RunStep(
+        step_id=f"read:{operation_id or document_id}:batch",
+        kind="read",
+        state="completed",
+        title=title,
+        summary=summary,
+        operation_id=items[0].operation_id or operation_id,
+        record_count=len(rows),
+    )
+
+
 def _mixed_read_summary(read_evidence: list[ReadEvidence], *, session: Any) -> str | None:
     tool_read_evidence = [item for item in read_evidence if item.tool_name]
     read_step_ids = {
@@ -3740,6 +3871,58 @@ def _mixed_read_summary(read_evidence: list[ReadEvidence], *, session: Any) -> s
     return ". ".join(summaries) + "."
 
 
+def _planner_owned_response_diagnostics(session: Any) -> dict[str, Any]:
+    context = getattr(session, "replan_context", None)
+    if not isinstance(context, dict):
+        return {}
+    candidates = [context.get("intent_contract"), context]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        response_context = candidate.get("response_document_context")
+        if not isinstance(response_context, dict):
+            continue
+        diagnostics = response_context.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            return diagnostics
+    return {}
+
+
+def _planner_owned_response_document_diagnostics(session: Any) -> dict[str, Any]:
+    diagnostics = _planner_owned_response_diagnostics(session)
+    if not diagnostics:
+        return {}
+    return {
+        key: _sanitize_diagnostic_value(diagnostics[key], key=key)
+        for key in _PLANNER_OWNED_RESPONSE_DIAGNOSTIC_KEYS
+        if key in diagnostics
+    }
+
+
+def _planner_owned_composed_summary(session: Any, presentation: PresentationResponse) -> str | None:
+    summary = _trimmed(presentation.summary)
+    if not summary:
+        return None
+    diagnostics = _planner_owned_response_diagnostics(session)
+    if not diagnostics:
+        return None
+    diagnostic_summary = _trimmed(diagnostics.get("summary"))
+    if diagnostic_summary and diagnostic_summary != summary:
+        summary = diagnostic_summary
+    branches = diagnostics.get("conditional_branches")
+    answer_instructions = diagnostics.get("answer_instructions")
+    has_branch_outcome = False
+    if isinstance(branches, list):
+        has_branch_outcome = any(
+            isinstance(branch, dict) and str(branch.get("status") or "").lower() in {"activated", "skipped"}
+            for branch in branches
+        )
+    has_answer_instruction = bool(answer_instructions) if isinstance(answer_instructions, list) else False
+    if has_branch_outcome or has_answer_instruction:
+        return summary
+    return None
+
+
 def _compose_run_steps(
     *,
     document_id: str,
@@ -3759,6 +3942,7 @@ def _compose_run_steps(
     failure_profile: FailureProfile | None,
 ) -> list[RunStep]:
     run_steps: list[RunStep] = []
+    planner_owned_summary = _planner_owned_composed_summary(session, presentation)
     non_terminal_progress = _is_non_terminal_progress_presentation(presentation=presentation, state=state)
     has_request_evidence = bool(timeline or approvals or mutation_groups or read_evidence or sources)
     if has_request_evidence:
@@ -3924,36 +4108,45 @@ def _compose_run_steps(
     }
     if not approvals and read_evidence and len(read_step_ids) > 1:
         tool_read_evidence = [item for item in read_evidence if item.tool_name]
-        for index, item in enumerate(tool_read_evidence):
-            rows = [row for row in item.rows if isinstance(row, dict)]
-            requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
-            status_like = rows and _status_rows_are_projectable(rows) and (
-                "status" in requested_fields or _STATUS_INTENT_RE.search(_trimmed(getattr(session, "current_intent", None)))
-            )
-            row_policy = ReadDisplayPolicy(
-                read_scope=READ_SCOPE_STATUS_ONLY if status_like else READ_SCOPE_RECORDS,
-                requested_fields=requested_fields or (
-                    _status_requested_fields(rows[0], _status_entity_type(rows[0]), READ_SCOPE_STATUS_ONLY)
-                    if status_like
-                    else []
-                ),
-                display_mode=DISPLAY_MODE_RECORD_PREVIEW if len(rows) <= 1 else DISPLAY_MODE_COLLECTION_TABLE,
-                entity_count=len(rows),
-                entity_type=_read_evidence_entity(item),
-                contract=ENTITY_STATUS_CONTRACT if status_like else None,
-                sort_fields=_sort_fields_from_args(item.args),
-            )
-            run_steps.append(
-                RunStep(
-                    step_id=f"{item.key or 'read'}:{index}",
-                    kind="read",
-                    state="completed",
-                    title=_read_evidence_title(item),
-                    summary=_read_policy_summary(rows, row_policy, presentation.summary),
-                    operation_id=item.operation_id or operation_id,
-                    record_count=len(rows),
+        batch_step = _same_entity_single_record_read_step(
+            tool_read_evidence,
+            document_id=document_id,
+            operation_id=operation_id,
+            session=session,
+        )
+        if batch_step is not None:
+            run_steps.append(batch_step)
+        else:
+            for index, item in enumerate(tool_read_evidence):
+                rows = [row for row in item.rows if isinstance(row, dict)]
+                requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+                status_like = rows and _status_rows_are_projectable(rows) and (
+                    "status" in requested_fields or _STATUS_INTENT_RE.search(_trimmed(getattr(session, "current_intent", None)))
                 )
-            )
+                row_policy = ReadDisplayPolicy(
+                    read_scope=READ_SCOPE_STATUS_ONLY if status_like else READ_SCOPE_RECORDS,
+                    requested_fields=requested_fields or (
+                        _status_requested_fields(rows[0], _status_entity_type(rows[0]), READ_SCOPE_STATUS_ONLY)
+                        if status_like
+                        else []
+                    ),
+                    display_mode=DISPLAY_MODE_RECORD_PREVIEW if len(rows) <= 1 else DISPLAY_MODE_COLLECTION_TABLE,
+                    entity_count=len(rows),
+                    entity_type=_read_evidence_entity(item),
+                    contract=ENTITY_STATUS_CONTRACT if status_like else None,
+                    sort_fields=_sort_fields_from_args(item.args),
+                )
+                run_steps.append(
+                    RunStep(
+                        step_id=f"{item.key or 'read'}:{index}",
+                        kind="read",
+                        state="completed",
+                        title=_read_evidence_title(item),
+                        summary=_read_policy_summary(rows, row_policy, presentation.summary),
+                        operation_id=item.operation_id or operation_id,
+                        record_count=len(rows),
+                    )
+                )
     elif not approvals and read_evidence:
         total_rows = sum(len(item.rows) for item in read_evidence)
         read_rows = [row for item in read_evidence for row in item.rows]
@@ -4028,7 +4221,11 @@ def _compose_run_steps(
             completion_summary = _trimmed(status_result.get("summary")) or None
         elif read_evidence:
             read_rows = [row for item in read_evidence for row in item.rows]
-            completion_summary = _mixed_read_summary(read_evidence, session=session) or _read_policy_summary(read_rows, read_policy, presentation.summary)
+            completion_summary = (
+                planner_owned_summary
+                or _mixed_read_summary(read_evidence, session=session)
+                or _read_policy_summary(read_rows, read_policy, presentation.summary)
+            )
         elif sources:
             completion_summary = "Source-backed answer is ready."
         else:
@@ -4259,6 +4456,10 @@ def _short_message(
                 return clean_summary.split(" The related sources checked", 1)[0].rstrip(".") + "."
             return "I do not have enough retrieved evidence to answer that safely."
         return "I found a source-backed answer."
+
+    planner_owned_summary = _planner_owned_composed_summary(session, presentation)
+    if state == "completed" and planner_owned_summary:
+        return planner_owned_summary
 
     if status_result:
         return _trimmed(status_result.get("summary")) or "Status is ready."
@@ -4900,6 +5101,7 @@ def compose_response_document(
 
     read_shape = "status" if status_result else _read_result_shape(read_rows) if read_rows or presentation.kind == "answer" else None
     diagnostics = _sanitize_diagnostic_value(dict(presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}))
+    diagnostics.update(_planner_owned_response_document_diagnostics(session))
     if presentation.kind == "answer" and state == "completed" and not read_rows and not sources and not mutation_groups:
         diagnostics["reason"] = "no_results"
     if failure_profile is not None:
@@ -4911,6 +5113,7 @@ def compose_response_document(
             "next_action": failure_profile.next_action,
             "retry_safety": failure_profile.retry_safety,
         }
+        diagnostics.update(_planner_owned_response_document_diagnostics(session))
     changed_mutation_groups = [group for group in mutation_groups if not _is_no_op_group(group)]
     no_op_mutation_groups = [group for group in mutation_groups if _is_no_op_group(group)]
     invariants = {

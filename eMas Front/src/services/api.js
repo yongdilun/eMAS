@@ -4,6 +4,12 @@ const BASE_URL = (
   import.meta.env?.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
 ).replace(/\/+$/, '')
 
+const USER_ID = import.meta.env?.VITE_USER_ID || 'local-planner'
+const PLANNER_HEADERS = {
+  'X-User-Id': USER_ID,
+  'X-User-Role': 'planner',
+}
+
 /**
  * Parse a backend error response into a human-readable message.
  * Backends often return { detail: "..." } or { message: "..." } or plain text.
@@ -108,9 +114,9 @@ const put = (path, body, headers, opts) => request('PUT', path, body, headers, o
 const patch = (path, body, headers, opts) => request('PATCH', path, body, headers, opts)
 const del = (path) => request('DELETE', path)
 
-/** POST with X-User-Role: planner for scheduling write operations */
+/** POST with planner identity headers for scheduling write operations */
 const postPlanner = (path, body, options = {}) =>
-  request('POST', path, body, { 'X-User-Role': 'planner' }, options)
+  request('POST', path, body, PLANNER_HEADERS, options)
 
 /**
  * All API responses are wrapped as { success: boolean, data: T, error?: string }.
@@ -268,7 +274,7 @@ export function isStaleProposalError(err) {
 
 /**
  * Execute a suggested_call from the AI API: { method, path, body, purpose, requires_approval }.
- * Uses X-User-Role: planner for write operations (POST, PUT, PATCH, DELETE).
+ * Uses planner identity headers for write operations (POST, PUT, PATCH, DELETE).
  */
 export async function executeSuggestedCall(call, options = {}) {
   const method = String(call?.method || 'GET').toUpperCase()
@@ -277,7 +283,7 @@ export async function executeSuggestedCall(call, options = {}) {
   const url = path.startsWith('http') ? path : `${BASE_URL}${path.replace(/^\/api\/v1/, '')}`
   const headers = {
     'Content-Type': 'application/json',
-    ...(isWrite ? { 'X-User-Role': 'planner' } : {}),
+    ...(isWrite ? PLANNER_HEADERS : {}),
     ...(options.headers || {}),
   }
   const opts = { method, headers }

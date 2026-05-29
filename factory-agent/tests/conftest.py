@@ -2,6 +2,15 @@
 from pathlib import Path
 import os
 
+# Ensure `factory-agent/` is on sys.path so imports like `import main` work.
+FACTORY_AGENT_DIR = Path(__file__).resolve().parents[1]
+if str(FACTORY_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(FACTORY_AGENT_DIR))
+
+from factory_agent.platform_compat import guard_blocking_windows_platform_queries
+
+guard_blocking_windows_platform_queries()
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -9,11 +18,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from dotenv import load_dotenv
 
-
-# Ensure `factory-agent/` is on sys.path so imports like `import main` work.
-FACTORY_AGENT_DIR = Path(__file__).resolve().parents[1]
-if str(FACTORY_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(FACTORY_AGENT_DIR))
 
 # Load `factory-agent/.env` for optional integration tests (e.g. REDIS_URL).
 load_dotenv(FACTORY_AGENT_DIR / ".env", override=False)
@@ -64,4 +68,3 @@ async def sessionmaker_override():
 async def db_session(sessionmaker_override):
     async with sessionmaker_override() as session:
         yield session
-

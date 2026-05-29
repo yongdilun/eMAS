@@ -7,12 +7,25 @@ test('response_document hard query oracle catalog includes HQ-01 HQ-05 HQ-3S-01 
     'HQ-01',
     'HQ-05',
     'HQ-3S-01',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
+    'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
+    'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
+    'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
+    'HQ-DEPENDENCY-INDEPENDENT-READ-BATCH',
+    'HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS',
+    'HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ',
     'HQ-9-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
     'HQ-9-APPROVAL',
     'HQ-9-INTERRUPT',
+    'HQ-REPLAN-SPINE-RECOVERY',
+    'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
+    'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
     'HQ-9-TOOL-FAILURE',
   ])
 
@@ -52,15 +65,158 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   const byId = Object.fromEntries(hardQueryScenarios.map((scenario) => [scenario.id, scenario]))
   const requiredIds = [
     'HQ-9-READ',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE',
+    'HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE',
+    'HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE',
+    'HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE',
+    'HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION',
+    'HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT',
+    'HQ-DEPENDENCY-INDEPENDENT-READ-BATCH',
+    'HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS',
+    'HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ',
     'HQ-9-MULTI-ID',
     'HQ-9-MIXED-RAG',
     'HQ-9-RAG-INSUFFICIENT',
     'HQ-9-APPROVAL',
     'HQ-9-INTERRUPT',
+    'HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE',
+    'HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE',
     'HQ-9-TOOL-FAILURE',
   ]
 
   for (const id of requiredIds) expect(byId[id], `${id} exists`).toBeTruthy()
+
+  const conditionTrue = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-TRUE']
+  expect(conditionTrue.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    conditionType: 'active_parent_evidence_has_any_field',
+  })
+  expect(conditionTrue.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childEntity: 'product',
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+    requireFinalParentAndChildEvidence: true,
+  })
+  expect(conditionTrue.expected.stepSequence.map((step) => step.toolName)).toEqual([
+    'get__jobs_{id}',
+    'get__products_{id}',
+  ])
+  expect(conditionTrue.expected.visibleTextIncludes.map((item) => item.label)).toContain('conditional relationship summary')
+  expect(conditionTrue.expected.forbiddenVisibleText.map((item) => item.label)).toContain('shallow mixed-read counter')
+  expect(conditionTrue.expected.visibleSemanticBlocks[1]).toMatchObject({
+    entityType: 'product',
+    title: /Read product status/i,
+  })
+  expect(conditionTrue.expected.visibleSemanticBlocks[1].textIncludes).toEqual([/P-001/i, /Status\s+active/i])
+
+  const conditionFalse = byId['HQ-REQUIREMENT-EXPANSION-CONDITION-FALSE']
+  expect(conditionFalse.expected.conditionalBranches[0]).toMatchObject({
+    status: 'skipped',
+    skippedReason: 'conditional_branch_not_triggered',
+    conditionType: 'active_parent_evidence_has_any_field',
+  })
+  expect(conditionFalse.expected.requirementExpansion).toMatchObject({
+    expectNoChildLineage: true,
+  })
+  expect(conditionFalse.expected.forbiddenStepSequence[0]).toMatchObject({
+    toolName: 'get__machines_{id}',
+  })
+
+  const forEachProduct = byId['HQ-REQUIREMENT-EXPANSION-FOR-EACH-PRODUCT']
+  expect(forEachProduct.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 2,
+    triggerValues: ['P-001', 'P-002'],
+  })
+  expect(forEachProduct.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    requireChildCount: 2,
+    childConstraintKey: 'product_id',
+    childConstraintValues: ['P-001', 'P-002'],
+    requireFreshChildRetrieval: true,
+  })
+  expect(forEachProduct.expected.stepSequence.map((step) => step.toolName)).toEqual([
+    'get__jobs_{id}',
+    'get__jobs_{id}',
+    'get__products_{id}',
+    'get__products_{id}',
+  ])
+  expect(forEachProduct.expected.visibleTextIncludes.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['first job product summary', 'second job product summary']),
+  )
+
+  const semanticFalse = byId['HQ-SEMANTIC-INTAKE-CONDITIONAL-FALSE']
+  expect(semanticFalse.expected.conditionalBranches[0]).toMatchObject({
+    status: 'skipped',
+    skippedReason: 'conditional_branch_not_triggered',
+    fieldAny: ['job_id', 'active_job_id'],
+  })
+  expect(semanticFalse.expected.forbiddenStepSequence.map((step) => step.toolName)).toEqual(
+    expect.arrayContaining(['get__jobs', 'get__jobs_{id}', 'get__settings_get']),
+  )
+
+  const semanticTrue = byId['HQ-SEMANTIC-INTAKE-CONDITIONAL-TRUE']
+  expect(semanticTrue.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 1,
+    triggerValues: ['P-001'],
+  })
+  expect(semanticTrue.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+  })
+
+  const semanticAnswer = byId['HQ-SEMANTIC-INTAKE-ANSWER-INSTRUCTION']
+  expect(semanticAnswer.expected.forbiddenStepSequence[0]).toMatchObject({
+    toolName: 'get__settings_get',
+  })
+
+  const semanticIfPresent = byId['HQ-SEMANTIC-INTAKE-DEPENDENT-IF-PRESENT']
+  expect(semanticIfPresent.expected.conditionalBranches[0]).toMatchObject({
+    status: 'activated',
+    activatedChildCount: 1,
+    triggerValues: ['P-001'],
+  })
+  expect(semanticIfPresent.expected.requirementExpansion).toMatchObject({
+    requireChildLineage: true,
+    childConstraintKey: 'product_id',
+    childConstraintValue: 'P-001',
+    requireFreshChildRetrieval: true,
+  })
+  expect(semanticIfPresent.expected.forbiddenVisibleText.map((item) => item.label)).toContain('fake product id if')
+
+  const dependencyBatch = byId['HQ-DEPENDENCY-INDEPENDENT-READ-BATCH']
+  expect(dependencyBatch.expected.dependencyPlan.readyGroup).toMatchObject({
+    mode: 'parallel_read_batch',
+    maxBatchSize: 3,
+    minRequirementCount: 2,
+  })
+  expect(dependencyBatch.expected.dependencyPlan.parallelBatch).toMatchObject({
+    readOnlyApiOnly: true,
+    sameSourceOfTruth: 'operational_state',
+  })
+
+  const dependencyChild = byId['HQ-DEPENDENCY-CONDITIONAL-CHILD-WAITS']
+  expect(dependencyChild.expected.dependencyPlan).toMatchObject({
+    childWaitsForParent: true,
+  })
+  expect(dependencyChild.expected.dependencyPlan.historyLabels.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['independent_read']),
+  )
+
+  const dependencyApproval = byId['HQ-DEPENDENCY-APPROVAL-WAITS-FOR-READ']
+  expect(dependencyApproval.expected.sessionStatus).toBe('WAITING_APPROVAL')
+  expect(dependencyApproval.expected.dependencyPlan).toMatchObject({
+    approvalWaitsForRead: true,
+  })
+  expect(dependencyApproval.expected.dependencyPlan.historyLabels.map((item) => item.label)).toEqual(
+    expect.arrayContaining(['sequential_read', 'approval_required']),
+  )
 
   const hardRead = byId['HQ-9-READ']
   expect(hardRead.expected.plannerOwnedGraph).toMatchObject({
@@ -153,6 +309,49 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     ledgerRevisionIncrements: true,
     staleApprovalInvalidated: true,
     staleEvidenceInvalidated: true,
+  })
+
+  const replanTimeout = byId['HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE']
+  expect(replanTimeout.toolFaults.rules[0]).toMatchObject({
+    fault: 'timeout',
+    once: false,
+  })
+  expect(replanTimeout.expected.replanSpine).toMatchObject({
+    attemptCountEqualsMaxAttempts: true,
+    limitReached: true,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    requiresStaleAttemptEvidence: true,
+    forbidActiveFinalEvidence: true,
+    forbidStaleFinalEvidence: true,
+  })
+
+  const replanRecovery = byId['HQ-REPLAN-SPINE-RECOVERY']
+  expect(replanRecovery.toolFaults.rules[0]).toMatchObject({
+    fault: 'timeout',
+    once: true,
+  })
+  expect(replanRecovery.expected.replanSpine).toMatchObject({
+    limitReached: false,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    requiresActiveFinalEvidence: true,
+    activeFinalEvidenceInResponse: true,
+    forbidStaleFinalEvidence: true,
+  })
+
+  const replanLimit = byId['HQ-REPLAN-SPINE-LIMIT-SAFE-FAILURE']
+  expect(replanLimit.toolFaults.rules[0]).toMatchObject({
+    fault: 'http_error',
+    once: false,
+  })
+  expect(replanLimit.expected.replanSpine).toMatchObject({
+    attemptCountEqualsMaxAttempts: true,
+    limitReached: true,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    forbidActiveFinalEvidence: true,
+    forbidResponseEvidenceRefs: true,
   })
 
   const failure = byId['HQ-9-TOOL-FAILURE']
