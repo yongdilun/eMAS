@@ -509,6 +509,36 @@ def test_semantic_intake_keeps_field_sort_limit_continuations_on_collection_read
     assert requirement.requested_fields == ["job_id", "deadline"]
 
 
+def test_semantic_intake_keeps_blocked_row_condition_as_non_child_branch():
+    state = build_initial_planner_owned_agent_graph_state(
+        "List the next 3 low-priority jobs sorted by deadline with only job id, status, priority, and deadline. "
+        "If any listed job is blocked, explain why before suggesting any update.",
+        tools_by_name={
+            "get__jobs": _job_collection_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+        },
+    )
+
+    ledger = state.requirement_ledger
+    requirement = ledger.requirements[0]
+    branch = ledger.conditional_branches[0]
+
+    assert len(ledger.requirements) == 1
+    assert requirement.requirement_type == "filtered_collection"
+    assert requirement.requested_fields == ["job_id", "status", "priority", "deadline"]
+    assert "observation_fields" not in requirement.constraints
+    assert branch.condition == {
+        "type": "row_field_equals",
+        "field": "status",
+        "value": "blocked",
+        "source": "active_parent_evidence",
+    }
+    assert branch.on_true == {
+        "action": "continue_for_explanation_before_update_suggestion",
+        "required_evidence": "typed_explanation",
+    }
+
+
 def test_semantic_intake_repairs_fragmented_single_clause_model_output():
     prompt = "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3."
     proposer = OpenAICompatibleSemanticIntakeProposer(

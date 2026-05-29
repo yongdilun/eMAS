@@ -301,10 +301,16 @@ async def test_phase9_hard_read_query_proves_v2_retrieval_satisfaction_and_condi
     assert branch.parent_requirement_id == list_requirement.id
     assert branch.status == "pending"
     assert "blocked" in branch.text.lower()
-    assert branch.condition["source"] == "active_parent_evidence"
-    assert branch.on_true["entity"] == "job"
-    assert branch.on_true["value_from_field_any"] == ["job_id", "active_job_id"]
-    assert branch.diagnostics["non_executable_until_condition_true"] is True
+    assert branch.condition == {
+        "type": "row_field_equals",
+        "field": "status",
+        "value": "blocked",
+        "source": "active_parent_evidence",
+    }
+    assert branch.on_true == {
+        "action": "continue_for_explanation_before_update_suggestion",
+        "required_evidence": "typed_explanation",
+    }
     checks = {check.check: check for check in list_requirement.satisfaction_checks}
     assert checks["requested_fields"].actual == ["deadline", "job_id", "priority", "status"]
     assert "conditional_branch:typed_explanation" not in checks

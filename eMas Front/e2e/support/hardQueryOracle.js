@@ -226,6 +226,16 @@ function addResponseDocumentViolations(violations, snapshot, expected) {
       violations.push(`response_document expected at least ${responseExpected.minReadRunSteps} read run_steps but saw ${readRunSteps.length}`)
     }
   }
+  const expectedRunStepTitles = asArray(responseExpected.runStepTitles)
+  if (expectedRunStepTitles.length) {
+    const titles = backendRunSteps(snapshot).map((step) => step?.title || '')
+    let cursor = 0
+    for (const expectedTitle of expectedRunStepTitles) {
+      const found = titles.findIndex((title, index) => index >= cursor && matches(title, expectedTitle))
+      if (found < 0) violations.push(`response_document run_steps missing ordered title ${labelForPattern(expectedTitle)}`)
+      else cursor = found + 1
+    }
+  }
   if (expected.noMutation && blockTypes.some((type) => ['approval_required', 'mutation_result'].includes(type))) {
     violations.push(`read-only scenario response_document contained mutation/approval block: ${blockTypes.join(', ')}`)
   }

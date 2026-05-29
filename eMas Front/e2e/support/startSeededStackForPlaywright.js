@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
+import { blankOpenAICompatibleEnv } from './factoryAgentEnv.js'
 import { seededRuntimeEnv } from './fullStackEnv.js'
 
 const repoRoot = path.resolve(process.cwd(), '..')
@@ -143,17 +144,7 @@ try {
       CORS_ALLOW_ORIGINS: `${env.viteBaseUrl},http://localhost:${env.vitePort}`,
       REDIS_URL: '',
       FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER: '1',
-      PLANNER_OPENAI_BASE_URL: '',
-      OPENAI_BASE_URL: '',
-      LLM_BASE_URL: '',
-      PLANNER_API_KEY: '',
-      OPENAI_API_KEY: '',
-      LLM_API_KEY: '',
-      DEVELOPMENT_PLANNER_OPENAI_BASE_URL: '',
-      DEVELOPMENT_OPENAI_BASE_URL: '',
-      DEVELOPMENT_LLM_BASE_URL: '',
-      DEVELOPMENT_OPENAI_API_KEY: '',
-      DEVELOPMENT_LLM_API_KEY: '',
+      ...blankOpenAICompatibleEnv(),
       FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE: '1',
       FACTORY_AGENT_TOOLS_MD_PATH: path.join(env.artifactDir, 'factory-agent-tools.md'),
       SUMMARY_BACKEND: 'deterministic',

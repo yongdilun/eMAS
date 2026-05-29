@@ -298,7 +298,7 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
 
       await expect(page.getByText(/Controlled seeded RAG answer/i).first()).toBeVisible()
       await expect(page.getByText(/M-CNC-01/i).first()).toBeVisible()
-      await expect(page.getByText('Knowledge sources')).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Knowledge sources' }).first()).toBeVisible()
       await expect(page.getByText(/Seeded LOTO Procedure for M-CNC-01/i).first()).toBeVisible()
       await expect(page.getByText(/Which machine ID/i)).toHaveCount(0)
       await expect(page.getByText(/currently running|machine status only/i)).toHaveCount(0)
@@ -321,7 +321,7 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
     await expect(page.getByText(/Controlled seeded RAG answer/i).first()).toBeVisible()
     await expect(page.getByText(/lockout|tagout/i).first()).toBeVisible()
     await expect(page.getByText(/M-CNC-01/i).first()).toBeVisible()
-    await expect(page.getByText('Knowledge sources')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Knowledge sources' }).first()).toBeVisible()
     await expect(page.getByText(/Seeded LOTO Procedure for M-CNC-01/i).first()).toBeVisible()
     await expect(page.getByText(/Status:\s*running|machine status only|Which machine/i)).toHaveCount(0)
     await expect(page.getByText('Factory Agent needs attention')).toHaveCount(0)
@@ -343,7 +343,7 @@ test.describe('Phase 19 seeded prompt/workflow regression gate @prompt-regressio
 
     await expect(page.getByText(/Controlled seeded RAG answer/i).first()).toBeVisible()
     await expect(page.getByText(/M-CNC-01/i).first()).toBeVisible()
-    await expect(page.getByText('Knowledge sources')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Knowledge sources' }).first()).toBeVisible()
     await expect(page.getByText(/Seeded LOTO Procedure for M-CNC-01/i).first()).toBeVisible()
     await expect(page.getByText(/Which machine ID/i)).toHaveCount(0)
     await expect(page.getByText('Factory Agent needs attention')).toHaveCount(0)

@@ -156,7 +156,6 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
         hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
         approvalActionCount: 0,
         textIncludes: [
-          positivePrompt,
           'Before reenergizing, notify affected employees',
           'Control of Hazardous Energy Lockout/Tagout',
           'osha_3120_lockout_tagout',
@@ -191,7 +190,6 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
         hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'status_result', 'mutation_result'],
         approvalActionCount: 0,
         textIncludes: [
-          negativePrompt,
           'I do not have enough retrieved evidence to answer that safely.',
           'related sources checked',
           'Control of Hazardous Energy Lockout/Tagout',

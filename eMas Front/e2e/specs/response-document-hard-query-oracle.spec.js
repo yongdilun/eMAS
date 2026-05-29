@@ -310,6 +310,10 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
     staleApprovalInvalidated: true,
     staleEvidenceInvalidated: true,
   })
+  expect(interrupt.expected.responseDocument.runStepTitles).toEqual([
+    /Approval 1 rejected/i,
+    /Waiting for approval 2/i,
+  ])
 
   const replanTimeout = byId['HQ-REPLAN-SPINE-TIMEOUT-SAFE-FAILURE']
   expect(replanTimeout.toolFaults.rules[0]).toMatchObject({
@@ -355,9 +359,15 @@ test('response_document phase9 hard query oracle covers release-proof scenario f
   })
 
   const failure = byId['HQ-9-TOOL-FAILURE']
-  expect(failure.expected.toolFailure).toMatchObject({
-    sourceType: 'api_tool',
-    reason: 'tool_error',
-    finalSuccessForbidden: true,
+  expect(failure.expected.replanSpine).toMatchObject({
+    limitReached: false,
+    requiresFailedToolMemory: true,
+    failedToolReason: 'tool_error',
+    requiresActiveFinalEvidence: true,
+    activeFinalEvidenceInResponse: true,
+  })
+  expect(failure.expected.responseDocument).toMatchObject({
+    blockTypes: ['status_result'],
+    hiddenBlockTypes: ['diagnostic', 'result_table', 'approval_required', 'mutation_result'],
   })
 })

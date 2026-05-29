@@ -1277,13 +1277,13 @@ export const hardQueryScenarios = Object.freeze([
         contracts: ['business_change_v1'],
         blockTypes: ['approval_required', 'record_preview', 'result_table'],
         hiddenBlockTypes: ['mutation_result'],
+        runStepTitles: [
+          /Approval 1 rejected/i,
+          /Waiting for approval 2/i,
+        ],
       },
       visibleSemanticBlocks: [
         { type: 'approval_required', contract: 'business_change_v1' },
-      ],
-      visibleRunSteps: [
-        { title: /Approval 1 rejected/i },
-        { title: /Waiting for approval 2/i },
       ],
       forbiddenVisibleText: [
         { label: 'stale final answer after interrupt', pattern: /Run complete/i },
@@ -1513,7 +1513,7 @@ export const hardQueryScenarios = Object.freeze([
   },
   {
     id: 'HQ-9-TOOL-FAILURE',
-    tags: ['hard query', 'phase9', 'tool failure fallback', 'response_document'],
+    tags: ['hard query', 'phase9', 'tool failure recovery', 'response_document'],
     toolFaults: {
       rules: [
         {
@@ -1527,24 +1527,52 @@ export const hardQueryScenarios = Object.freeze([
     },
     prompt: 'Show machine M-CNC-01 status while the machine status API returns a typed upstream timeout.',
     expected: {
-      sessionStatus: 'FAILED',
-      responseState: 'failed',
+      sessionStatus: 'COMPLETED',
+      responseState: 'completed',
       approvalCount: 0,
-      toolFailure: {
-        sourceType: 'api_tool',
-        reason: 'tool_error',
-        finalSuccessForbidden: true,
+      noMutation: true,
+      replanSpine: {
+        minAttempts: 1,
+        limitReached: false,
+        requiresMissingEvidenceReason: true,
+        missingEvidenceReason: 'tool_error',
+        requiresFailedToolMemory: true,
+        failedToolReason: 'tool_error',
+        requiresStaleAttemptEvidence: true,
+        requiresHistoricalEvidence: true,
+        requiresActiveFinalEvidence: true,
+        activeFinalEvidenceInResponse: true,
+        forbidStaleFinalEvidence: true,
       },
       responseDocument: {
-        blockTypes: ['diagnostic'],
-        diagnosticReasonsAllowed: ['tool_timeout', 'tool_http_error', 'unknown_failure'],
+        blockTypes: ['status_result'],
+        hiddenBlockTypes: ['diagnostic', 'result_table', 'approval_required', 'mutation_result'],
+        blocks: [
+          {
+            type: 'status_result',
+            contract: 'entity_status_v1',
+            readScope: 'status_only',
+            requestedFields: ['machine_id', 'status'],
+            displayMode: 'compact_status_card',
+            entityType: 'machine',
+            entityCount: 1,
+          },
+        ],
       },
       visibleSemanticBlocks: [
-        { type: 'diagnostic' },
+        {
+          type: 'status_result',
+          contract: 'entity_status_v1',
+          readScope: 'status_only',
+          requestedFields: ['machine_id', 'status'],
+          displayMode: 'compact_status_card',
+          entityType: 'machine',
+          statusFieldKeys: ['machine_id', 'status'],
+        },
       ],
       forbiddenVisibleText: [
-        { label: 'fake machine status after failure', pattern: /M-CNC-01 is running/i },
-        { label: 'fake success text', pattern: /Run complete/i },
+        { label: 'safe failure text after recovery', pattern: /could not verify the requested evidence after bounded retries/i },
+        { label: 'approval required for read recovery', pattern: /Approval required/i },
       ],
     },
   },

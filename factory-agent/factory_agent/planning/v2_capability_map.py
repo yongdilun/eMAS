@@ -90,6 +90,20 @@ _EVIDENCE_DRIVEN_FOLLOWUP_RE = re.compile(
     r"\b(?:why|cause|causes|reason|reasons|root\s+cause|explain|diagnos(?:e|is|tic))\b",
     re.IGNORECASE,
 )
+_ROW_STATUS_CONDITION_FALLBACK_VALUES = {
+    "active",
+    "blocked",
+    "completed",
+    "done",
+    "error",
+    "failed",
+    "inactive",
+    "pending",
+    "planned",
+    "queued",
+    "running",
+    "stopped",
+}
 
 
 _COMMON_FIELD_TERMS: dict[str, tuple[str, ...]] = {
@@ -805,6 +819,8 @@ def _conditional_branch_for_intake_item(
     entity: str | None,
 ) -> dict[str, Any] | None:
     legacy = _conditional_branch_for_clause(clause, capability_map=capability_map, entity=entity)
+    if legacy and dict(legacy.get("condition") or {}).get("type") == "row_field_equals":
+        return legacy
     child_intent = dict(intake_item.child_intent or {})
     proposed_entity = str(child_intent.get("entity") or "").strip()
     if not proposed_entity and legacy:
@@ -1658,6 +1674,14 @@ def _conditional_branch_for_clause(
             },
         }
 
+    row_field_branch = _row_field_conditional_branch_for_clause(
+        clause,
+        capability_map=capability_map,
+        entity=entity,
+    )
+    if row_field_branch:
+        return row_field_branch
+
     dependent_entity = _dependent_singular_read_entity(clause)
     if dependent_entity:
         if _dependent_clause_requires_evidence_branch(clause):
@@ -1691,16 +1715,28 @@ def _conditional_branch_for_clause(
                     },
                 }
 
+    return _row_field_conditional_branch_for_clause(
+        clause,
+        capability_map=capability_map,
+        entity=entity,
+    )
+
+
+def _row_field_conditional_branch_for_clause(
+    clause: str,
+    *,
+    capability_map: CapabilityMap,
+    entity: str | None,
+) -> dict[str, Any] | None:
     if not re.search(r"\bif\s+any\b", clause, re.IGNORECASE):
         return None
     if not re.search(r"\bexplain\b", clause, re.IGNORECASE):
         return None
 
-    metadata = _metadata_for_entity(capability_map, entity=entity, source="operational_state")
-    status_values = _filter_enums(metadata).get("status", [])
-    condition_value = next(
-        (value for value in status_values if _contains_term(clause, value)),
-        None,
+    condition_value = _status_condition_value_for_clause(
+        clause,
+        capability_map=capability_map,
+        entity=entity,
     )
     if condition_value is None:
         return None
@@ -1726,6 +1762,35 @@ def _conditional_branch_for_clause(
             ),
         },
     }
+
+
+def _status_condition_value_for_clause(
+    clause: str,
+    *,
+    capability_map: CapabilityMap,
+    entity: str | None,
+) -> str | None:
+    metadata = _metadata_for_entity(capability_map, entity=entity, source="operational_state")
+    status_values = _filter_enums(metadata).get("status", [])
+    enum_value = next(
+        (value for value in status_values if _contains_term(clause, value)),
+        None,
+    )
+    if enum_value is not None:
+        return enum_value
+    if resolve_field_alias("status", capability_map.field_aliases, entity=entity) != "status":
+        return None
+
+    match = re.search(
+        r"\b(?:status\s+(?:is|=|equals)|is|are|was|were|be|being|becomes?)\s+"
+        r"(?:a|an|the)?\s*(?P<value>[a-z][a-z0-9_-]*)\b",
+        clause,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    value = match.group("value").lower()
+    return value if value in _ROW_STATUS_CONDITION_FALLBACK_VALUES else None
 
 
 def _conditional_branch_entity_for_phrase(phrase: str, *, capability_map: CapabilityMap) -> str:
