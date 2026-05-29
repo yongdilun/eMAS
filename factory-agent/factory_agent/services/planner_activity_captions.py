@@ -479,11 +479,12 @@ def _parallel_batch_row(context: Mapping[str, Any], *, timestamp: int, terminal:
     if group is None:
         return None
     requirement_ids = _string_list(group.get("requirement_ids"))
-    if len(requirement_ids) <= 1:
+    count = _parallel_batch_count(group)
+    if count <= 1:
         return None
     requirements = _requirements_by_id(context)
     entities = [_requirement_entity(requirements.get(req_id)) for req_id in requirement_ids]
-    label = f"Reading {_record_subject(entities, len(requirement_ids), include_count=True)}"
+    label = f"Reading {_record_subject(entities, count, include_count=True)}"
     return {
         "id": f"act:caption:parallel_read_batch:{str(group.get('group_id') or 'group')}",
         "timestamp": timestamp,
@@ -548,14 +549,25 @@ def _latest_parallel_ready_group(context: Mapping[str, Any]) -> dict[str, Any] |
     for entry in reversed(entries):
         for group in _list(entry.get("ready_groups")):
             group = _mapping(group)
-            if group.get("mode") == "parallel_read_batch" and len(_string_list(group.get("requirement_ids"))) > 1:
+            if group.get("mode") == "parallel_read_batch" and _parallel_batch_count(group) > 1:
                 return dict(group)
     plan = _mapping(context.get("dependency_plan"))
     for group in _list(plan.get("ready_groups")):
         group = _mapping(group)
-        if group.get("mode") == "parallel_read_batch" and len(_string_list(group.get("requirement_ids"))) > 1:
+        if group.get("mode") == "parallel_read_batch" and _parallel_batch_count(group) > 1:
             return dict(group)
     return None
+
+
+def _parallel_batch_count(group: Mapping[str, Any]) -> int:
+    requirement_count = len(_string_list(group.get("requirement_ids")))
+    diagnostics = _mapping(group.get("diagnostic_metadata"))
+    estimated_count = (
+        _int(group.get("estimated_tool_call_count"))
+        or _int(diagnostics.get("estimated_tool_call_count"))
+        or 0
+    )
+    return max(requirement_count, estimated_count)
 
 
 def _dependency_history_entries(context: Mapping[str, Any]) -> list[dict[str, Any]]:

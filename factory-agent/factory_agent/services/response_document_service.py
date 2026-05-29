@@ -3763,6 +3763,73 @@ def _read_evidence_summary_for_mixed_read(item: ReadEvidence, *, session: Any) -
     return _read_evidence_collection_summary(item, rows=rows)
 
 
+def _same_entity_single_record_read_step(
+    items: list[ReadEvidence],
+    *,
+    document_id: str,
+    operation_id: str | None,
+    session: Any,
+) -> RunStep | None:
+    if len(items) <= 1:
+        return None
+    entities = {_read_evidence_entity(item) for item in items}
+    if len(entities) != 1:
+        return None
+    entity = next(iter(entities))
+    if not entity:
+        return None
+    rows_by_item = [
+        [row for row in item.rows if isinstance(row, dict) and not _is_empty_result_envelope(row)]
+        for item in items
+    ]
+    if not rows_by_item or any(len(rows) != 1 for rows in rows_by_item):
+        return None
+    rows = [rows[0] for rows in rows_by_item]
+    requested_field_sets = [
+        tuple(parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None))
+        for item in items
+    ]
+    requested_fields = (
+        list(requested_field_sets[0])
+        if requested_field_sets and len(set(requested_field_sets)) == 1
+        else []
+    )
+    status_like = _read_evidence_is_status_only(
+        rows=rows,
+        requested_fields=requested_fields,
+        entity_type=entity,
+        session=session,
+    )
+    entity_label = _human_status_label(entity).lower()
+    if status_like:
+        title = f"Read {len(rows)} {entity_label} statuses"
+        summary = _read_policy_summary(
+            rows,
+            ReadDisplayPolicy(
+                read_scope=READ_SCOPE_STATUS_ONLY,
+                requested_fields=requested_fields
+                or _status_requested_fields(rows[0], entity, READ_SCOPE_STATUS_ONLY),
+                display_mode=DISPLAY_MODE_COLLECTION_TABLE,
+                entity_count=len(rows),
+                entity_type=entity,
+                contract=ENTITY_STATUS_CONTRACT,
+            ),
+            None,
+        )
+    else:
+        title = f"Read {len(rows)} {entity_label} records"
+        summary = _read_evidence_collection_summary(items[0], rows=rows)
+    return RunStep(
+        step_id=f"read:{operation_id or document_id}:batch",
+        kind="read",
+        state="completed",
+        title=title,
+        summary=summary,
+        operation_id=items[0].operation_id or operation_id,
+        record_count=len(rows),
+    )
+
+
 def _mixed_read_summary(read_evidence: list[ReadEvidence], *, session: Any) -> str | None:
     tool_read_evidence = [item for item in read_evidence if item.tool_name]
     read_step_ids = {
@@ -4041,36 +4108,45 @@ def _compose_run_steps(
     }
     if not approvals and read_evidence and len(read_step_ids) > 1:
         tool_read_evidence = [item for item in read_evidence if item.tool_name]
-        for index, item in enumerate(tool_read_evidence):
-            rows = [row for row in item.rows if isinstance(row, dict)]
-            requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
-            status_like = rows and _status_rows_are_projectable(rows) and (
-                "status" in requested_fields or _STATUS_INTENT_RE.search(_trimmed(getattr(session, "current_intent", None)))
-            )
-            row_policy = ReadDisplayPolicy(
-                read_scope=READ_SCOPE_STATUS_ONLY if status_like else READ_SCOPE_RECORDS,
-                requested_fields=requested_fields or (
-                    _status_requested_fields(rows[0], _status_entity_type(rows[0]), READ_SCOPE_STATUS_ONLY)
-                    if status_like
-                    else []
-                ),
-                display_mode=DISPLAY_MODE_RECORD_PREVIEW if len(rows) <= 1 else DISPLAY_MODE_COLLECTION_TABLE,
-                entity_count=len(rows),
-                entity_type=_read_evidence_entity(item),
-                contract=ENTITY_STATUS_CONTRACT if status_like else None,
-                sort_fields=_sort_fields_from_args(item.args),
-            )
-            run_steps.append(
-                RunStep(
-                    step_id=f"{item.key or 'read'}:{index}",
-                    kind="read",
-                    state="completed",
-                    title=_read_evidence_title(item),
-                    summary=_read_policy_summary(rows, row_policy, presentation.summary),
-                    operation_id=item.operation_id or operation_id,
-                    record_count=len(rows),
+        batch_step = _same_entity_single_record_read_step(
+            tool_read_evidence,
+            document_id=document_id,
+            operation_id=operation_id,
+            session=session,
+        )
+        if batch_step is not None:
+            run_steps.append(batch_step)
+        else:
+            for index, item in enumerate(tool_read_evidence):
+                rows = [row for row in item.rows if isinstance(row, dict)]
+                requested_fields = parse_fields_arg(item.args.get("fields") if isinstance(item.args, dict) else None)
+                status_like = rows and _status_rows_are_projectable(rows) and (
+                    "status" in requested_fields or _STATUS_INTENT_RE.search(_trimmed(getattr(session, "current_intent", None)))
                 )
-            )
+                row_policy = ReadDisplayPolicy(
+                    read_scope=READ_SCOPE_STATUS_ONLY if status_like else READ_SCOPE_RECORDS,
+                    requested_fields=requested_fields or (
+                        _status_requested_fields(rows[0], _status_entity_type(rows[0]), READ_SCOPE_STATUS_ONLY)
+                        if status_like
+                        else []
+                    ),
+                    display_mode=DISPLAY_MODE_RECORD_PREVIEW if len(rows) <= 1 else DISPLAY_MODE_COLLECTION_TABLE,
+                    entity_count=len(rows),
+                    entity_type=_read_evidence_entity(item),
+                    contract=ENTITY_STATUS_CONTRACT if status_like else None,
+                    sort_fields=_sort_fields_from_args(item.args),
+                )
+                run_steps.append(
+                    RunStep(
+                        step_id=f"{item.key or 'read'}:{index}",
+                        kind="read",
+                        state="completed",
+                        title=_read_evidence_title(item),
+                        summary=_read_policy_summary(rows, row_policy, presentation.summary),
+                        operation_id=item.operation_id or operation_id,
+                        record_count=len(rows),
+                    )
+                )
     elif not approvals and read_evidence:
         total_rows = sum(len(item.rows) for item in read_evidence)
         read_rows = [row for item in read_evidence for row in item.rows]

@@ -508,6 +508,50 @@ def test_parallel_read_batch_caption_uses_ready_group_count_and_entity():
     assert batch["state"] == "running"
 
 
+def test_parallel_read_batch_caption_uses_estimated_call_count_for_single_requirement():
+    state = _state(
+        [
+            _requirement(
+                "req-1",
+                requirement_type="multi_entity_status",
+                entity="job",
+                intent_operation="report_multi_status",
+                constraints={"job_id": ["JOB-SEED-001", "JOB-SEED-002", "JOB-SEED-003"]},
+                requested_fields=[],
+            )
+        ],
+        cards={"req-1": [_card("get__jobs_{id}")]},
+    )
+    state.execution_trace.diagnostics["dependency_plan_history"] = [
+        {
+            "ready_groups": [
+                {
+                    "group_id": "dependency-group-001",
+                    "mode": "parallel_read_batch",
+                    "requirement_ids": ["req-1"],
+                    "diagnostic_metadata": {"estimated_tool_call_count": 3},
+                }
+            ],
+            "ready_requirement_ids": ["req-1"],
+        }
+    ]
+
+    rows = enrich_activity_step_rows(
+        [],
+        {
+            "intent_contract": {
+                "activity_caption_context": build_activity_caption_context_from_graph_state(state),
+            }
+        },
+        fallback_timestamp=1_770_000_000,
+        session_status="EXECUTING",
+    )
+
+    labels = [row["label"] for row in rows]
+    assert "Reading 3 job records" in labels
+    assert "Reading job records" not in labels
+
+
 def test_parallel_read_batch_caption_does_not_insert_into_older_graph_pass():
     state = _state(
         [

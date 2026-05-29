@@ -2683,6 +2683,11 @@ async def test_parallel_read_response_document_preserves_step_order_over_complet
         )
 
     assert rendered_job_ids == job_ids
+    read_steps = [step for step in document["run_steps"] if step["kind"] == "read"]
+    assert len(read_steps) == 1
+    assert read_steps[0]["title"] == "Read 3 job records"
+    assert read_steps[0]["summary"] == "Found 3 jobs."
+    assert read_steps[0]["record_count"] == 3
 
 
 @pytest.mark.asyncio
