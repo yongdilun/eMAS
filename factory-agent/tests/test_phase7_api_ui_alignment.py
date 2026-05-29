@@ -1274,6 +1274,65 @@ def test_live_graph_activity_exposes_serialized_order_when_timestamps_collide():
     assert [step.model_dump()["order"] for step in steps] == [1, 2, 3]
 
 
+def test_live_graph_activity_keeps_repeated_occurrences_in_backend_order_when_timestamps_differ():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    active_snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-live-graph-repeated-occurrences",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=3),
+            "replan_context": {
+                "live_activity_steps": [
+                    {
+                        "id": "graph:000001:planner_choose_tool_node",
+                        "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:000002:tool_execution_node",
+                        "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+                        "order": 2,
+                        "group": "research",
+                        "label": "Running selected tool",
+                        "detail": "Checking relevant records",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:000003:planner_choose_tool_node",
+                        "timestamp": int((created_at + timedelta(seconds=1)).timestamp()),
+                        "order": 3,
+                        "group": "planning",
+                        "label": "Selecting safe action",
+                        "detail": "Selecting a safe action",
+                        "state": "running",
+                    },
+                ]
+            },
+        },
+    )
+
+    steps = _activity_steps_for_snapshot(active_snapshot)
+    assert [step.id for step in steps] == [
+        "graph:000001:planner_choose_tool_node",
+        "graph:000002:tool_execution_node",
+        "graph:000003:planner_choose_tool_node",
+    ]
+    assert [step.order for step in steps] == [1, 2, 3]
+    assert [step.state for step in steps] == ["success", "success", "running"]
+
+
 def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():
     created_at = datetime(2026, 5, 13, 9, 0, 0)
     domains = ["machines", "jobs", "products", "inventory", "reports"]

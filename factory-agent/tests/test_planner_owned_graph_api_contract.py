@@ -7,10 +7,13 @@ import json
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from factory_agent.config import get_settings, normalize_factory_agent_engine
+from factory_agent.persistence.models import Session
 from factory_agent.planning.tool_selector import ToolSelectionResult, ToolSelector
 from factory_agent.rag.schemas import AnswerResult, SourceCitation
+from factory_agent.services.planner_owned_graph_runtime import LiveGraphActivityRecorder
 from tests.test_api_endpoints import _make_app, _seed_tool
 
 
@@ -119,6 +122,62 @@ def test_phase8_default_engine_is_v2_with_legacy_kill_switch_removed():
     assert normalize_factory_agent_engine("unknown") == "v2"
     assert normalize_factory_agent_engine("legacy") == "v2"
     assert get_settings().factory_agent_engine == "v2"
+
+
+@pytest.mark.asyncio
+async def test_live_activity_records_repeated_graph_nodes_as_ordered_occurrences(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="activity-repeated-graph-occurrences",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Read jobs and then dependent products",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=1,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="activity-repeated-graph-occurrences",
+    )
+    for node in [
+        "planner_choose_tool_node",
+        "tool_execution_node",
+        "planner_choose_tool_node",
+    ]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+        await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "activity-repeated-graph-occurrences")
+            )
+        ).scalar_one()
+
+    live_steps = row.replan_context["live_activity_steps"]
+    assert [step["label"] for step in live_steps] == [
+        "Selecting safe action",
+        "Running selected tool",
+        "Selecting safe action",
+    ]
+    assert [step["order"] for step in live_steps] == [1, 2, 3]
+    assert len({step["id"] for step in live_steps}) == 3
 
 
 @pytest.mark.asyncio

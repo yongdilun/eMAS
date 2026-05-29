@@ -63,10 +63,11 @@ export function normalizeActivityStep(step) {
 }
 
 export function compareActivitySteps(a, b) {
-  const ts = Number(a?.timestamp || 0) - Number(b?.timestamp || 0)
-  if (ts !== 0) return ts
   const aOrder = activityOrderValue(a)
   const bOrder = activityOrderValue(b)
+  if (aOrder != null && bOrder != null && aOrder !== bOrder) return aOrder - bOrder
+  const ts = Number(a?.timestamp || 0) - Number(b?.timestamp || 0)
+  if (ts !== 0) return ts
   if (aOrder != null || bOrder != null) {
     return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
   }
@@ -122,6 +123,21 @@ function preferActivityId(a, b) {
   return aid || bid
 }
 
+function shouldCoalesceActivitySteps(existing, incoming) {
+  const existingId = String(existing?.id || '')
+  const incomingId = String(incoming?.id || '')
+  const existingGraph = existingId.startsWith('graph:')
+  const incomingGraph = incomingId.startsWith('graph:')
+  if (existingGraph && incomingGraph) {
+    const existingOrder = activityOrderValue(existing)
+    const incomingOrder = activityOrderValue(incoming)
+    if (existingOrder != null && incomingOrder != null && existingOrder !== incomingOrder) {
+      return false
+    }
+  }
+  return true
+}
+
 function mergeDuplicateActivityStep(existing, incoming) {
   const existingRank = ACTIVITY_STATE_MERGE_RANK[existing?.state] ?? 0
   const incomingRank = ACTIVITY_STATE_MERGE_RANK[incoming?.state] ?? 0
@@ -151,6 +167,17 @@ export function coalesceActivitySteps(steps = []) {
     const key = activityMeaningKey(step)
     if (key && indexByMeaning.has(key)) {
       const index = indexByMeaning.get(key)
+      if (!shouldCoalesceActivitySteps(out[index], step)) {
+        const occurrenceKey = `${key}::${step.id}`
+        if (indexByMeaning.has(occurrenceKey)) {
+          const occurrenceIndex = indexByMeaning.get(occurrenceKey)
+          out[occurrenceIndex] = mergeDuplicateActivityStep(out[occurrenceIndex], step)
+          continue
+        }
+        indexByMeaning.set(occurrenceKey, out.length)
+        out.push(step)
+        continue
+      }
       out[index] = mergeDuplicateActivityStep(out[index], step)
       continue
     }

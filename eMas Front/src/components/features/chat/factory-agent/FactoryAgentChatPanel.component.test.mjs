@@ -445,6 +445,39 @@ test('FactoryAgentChatPanel renders backend unavailable errors without fake succ
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel clears a missing saved session without startup failure copy', async () => {
+  const { factoryAgentApi } = await server.ssrLoadModule('/src/services/factoryAgentApi.js')
+  const original = {
+    listTools: factoryAgentApi.listTools,
+    listSessions: factoryAgentApi.listSessions,
+    getSnapshot: factoryAgentApi.getSnapshot,
+  }
+  factoryAgentApi.listTools = async () => []
+  factoryAgentApi.listSessions = async () => []
+  factoryAgentApi.getSnapshot = async () => {
+    const err = new Error('Requested resource was not found.')
+    err.status = 404
+    throw err
+  }
+  window.localStorage.setItem('factory_agent_active_session_id', 'missing-seeded-session')
+
+  const { default: FactoryAgentChatPanel } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/FactoryAgentChatPanel.jsx')
+  const view = await render(React.createElement(FactoryAgentChatPanel))
+
+  try {
+    await waitFor(() => assert.equal(window.localStorage.getItem('factory_agent_active_session_id'), null))
+    assert.doesNotMatch(view.text(), /Factory Agent chat could not start/i)
+    assert.doesNotMatch(view.text(), /Try starting chat again/i)
+    assert.doesNotMatch(view.text(), /Requested resource was not found/i)
+  } finally {
+    await view.unmount()
+    factoryAgentApi.listTools = original.listTools
+    factoryAgentApi.listSessions = original.listSessions
+    factoryAgentApi.getSnapshot = original.getSnapshot
+    window.localStorage.removeItem('factory_agent_active_session_id')
+  }
+})
+
 test('FactoryAgentChatPanel does not describe a started active run timeout as chat startup failure', async () => {
   const chatState = createChatState({
     session: { session_id: 'session-started-timeout', name: 'Started timeout', status: 'EXECUTING' },

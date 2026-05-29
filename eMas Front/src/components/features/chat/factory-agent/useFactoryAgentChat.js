@@ -68,9 +68,9 @@ function formatTs(ts) {
 function nextSessionName() {
   if (!hasStorage()) return 'New chat'
   try {
-    const current = Number(localStorage.getItem(SESSION_COUNTER_KEY) || '0')
+    const current = Number(window.localStorage.getItem(SESSION_COUNTER_KEY) || '0')
     const next = Number.isFinite(current) ? current + 1 : 1
-    localStorage.setItem(SESSION_COUNTER_KEY, String(next))
+    window.localStorage.setItem(SESSION_COUNTER_KEY, String(next))
     return `Chat ${next}`
   } catch {
     return 'New chat'
@@ -353,14 +353,14 @@ export function useFactoryAgentChat() {
 
     setLastSyncedAt(new Date().toISOString())
     if (nextSession?.session_id && hasStorage()) {
-      localStorage.setItem(ACTIVE_SESSION_KEY, nextSession.session_id)
+      window.localStorage.setItem(ACTIVE_SESSION_KEY, nextSession.session_id)
     }
     mergeSessionSummary(nextSession)
     return nextSession
   }, [mergeSessionSummary])
 
   useEffect(() => {
-    if (hasStorage()) localStorage.setItem(MESSAGE_MODE_KEY, DEFAULT_MESSAGE_MODE)
+    if (hasStorage()) window.localStorage.setItem(MESSAGE_MODE_KEY, DEFAULT_MESSAGE_MODE)
   }, [])
 
   const clearSnapshotState = useCallback(() => {
@@ -402,7 +402,7 @@ export function useFactoryAgentChat() {
     } catch (err) {
       const kind = classifyFactoryAgentError(err)
       if (kind === 'not_found' || kind === 'auth') {
-        const currentStoredId = hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null
+        const currentStoredId = hasStorage() ? window.localStorage.getItem(ACTIVE_SESSION_KEY) : null
         const currentSnapshotId = lastSnapshotSessionIdRef.current
         if (
           kind === 'auth' ||
@@ -410,7 +410,7 @@ export function useFactoryAgentChat() {
           String(currentStoredId) === String(sessionId) ||
           String(currentSnapshotId || '') === String(sessionId)
         ) {
-          if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+          if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
           clearSnapshotState()
         }
       }
@@ -552,10 +552,11 @@ export function useFactoryAgentChat() {
       try {
         await refreshSessionList()
         if (!hasStorage()) return
-        const savedId = localStorage.getItem(ACTIVE_SESSION_KEY)
+        const savedId = window.localStorage.getItem(ACTIVE_SESSION_KEY)
         if (!savedId) return
         await safelyRefreshSnapshot(savedId)
       } catch (err) {
+        if (classifyFactoryAgentError(err) === 'not_found') return
         setError(normalizeFactoryAgentError(err, 'Could not restore active session'))
       } finally {
         setLoading(false)
@@ -570,7 +571,7 @@ export function useFactoryAgentChat() {
     setError(null)
     try {
       await refreshSessionList()
-      const savedId = session?.session_id || (hasStorage() ? localStorage.getItem(ACTIVE_SESSION_KEY) : null)
+      const savedId = session?.session_id || (hasStorage() ? window.localStorage.getItem(ACTIVE_SESSION_KEY) : null)
       if (savedId) await safelyRefreshSnapshot(savedId)
       return true
     } catch (err) {
@@ -589,7 +590,7 @@ export function useFactoryAgentChat() {
         user_id: DEFAULT_USER_ID,
         name: nextSessionName(),
       })
-      if (hasStorage()) localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
+      if (hasStorage()) window.localStorage.setItem(ACTIVE_SESSION_KEY, created.session_id)
       mergeSessionSummary(created)
       await refreshSessionList()
       await safelyRefreshSnapshot(created.session_id)
@@ -733,7 +734,7 @@ export function useFactoryAgentChat() {
     try {
       await factoryAgentApi.deleteSession(sessionId)
       if (session?.session_id === sessionId) {
-        if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+        if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
         clearSnapshotState()
       }
       await refreshSessionList()
@@ -749,7 +750,7 @@ export function useFactoryAgentChat() {
     setError(null)
     try {
       await factoryAgentApi.deleteSessions({ user_id: DEFAULT_USER_ID })
-      if (hasStorage()) localStorage.removeItem(ACTIVE_SESSION_KEY)
+      if (hasStorage()) window.localStorage.removeItem(ACTIVE_SESSION_KEY)
       clearClientProgress()
       clearClientProgressTimers()
       clearSnapshotState()

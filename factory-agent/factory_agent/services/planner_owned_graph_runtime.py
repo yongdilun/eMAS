@@ -126,12 +126,27 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
     )
     return {
         "id": f"graph:{node}",
+        "_graph_node": node,
         "timestamp": int(datetime.utcnow().timestamp()),
         "group": caption.group,
         "label": caption.label,
         "detail": caption.detail,
         "state": caption.state,
     }
+
+
+def _live_activity_order(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _live_activity_id_component(value: Any) -> str:
+    text = str(value or "").strip()
+    out = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "-" for ch in text)
+    return out.strip("-") or "node"
 
 
 class LiveGraphActivityRecorder:
@@ -157,8 +172,7 @@ class LiveGraphActivityRecorder:
         if isinstance(replan_spine, Mapping):
             step["_replan_spine"] = dict(replan_spine)
         self._sequence += 1
-        step["order"] = self._sequence
-        step["_order"] = self._sequence
+        step["_pending_order"] = self._sequence
         self._pending.append(step)
         try:
             loop = asyncio.get_running_loop()
@@ -194,20 +208,47 @@ class LiveGraphActivityRecorder:
             context = dict(row.replan_context or {})
             existing_rows = context.get("live_activity_steps")
             existing = [dict(item) for item in existing_rows if isinstance(item, dict)] if isinstance(existing_rows, list) else []
-            by_id = {str(item.get("id") or ""): item for item in existing if item.get("id")}
+            seen_ids: set[str] = set()
+            live_steps: list[dict[str, Any]] = []
+            max_order = 0
+            for item in existing:
+                step_id = str(item.get("id") or "").strip()
+                if not step_id or step_id in seen_ids:
+                    continue
+                seen_ids.add(step_id)
+                order = _live_activity_order(item.get("order") or item.get("_order"))
+                if order is not None:
+                    item["order"] = order
+                    item["_order"] = order
+                    max_order = max(max_order, order)
+                live_steps.append(item)
             latest_replan_spine: dict[str, Any] | None = None
-            for step in batch:
+            ordered_batch = sorted(
+                batch,
+                key=lambda item: _live_activity_order(item.get("_pending_order")) or 0,
+            )
+            for step in ordered_batch:
                 replan_spine = step.pop("_replan_spine", None)
                 if isinstance(replan_spine, Mapping):
                     latest_replan_spine = dict(replan_spine)
-                step_id = str(step["id"])
-                existing_order = by_id.get(step_id, {}).get("order") or by_id.get(step_id, {}).get("_order")
-                if existing_order is not None:
-                    step["order"] = existing_order
-                    step["_order"] = existing_order
-                by_id[step_id] = dict(step)
+                step.pop("_pending_order", None)
+                node = step.pop("_graph_node", None)
+                if node is None:
+                    node = str(step.get("id") or "").removeprefix("graph:")
+                max_order += 1
+                base_id = f"graph:{max_order:06d}:{_live_activity_id_component(node)}"
+                step_id = base_id
+                suffix = 2
+                while step_id in seen_ids:
+                    step_id = f"{base_id}:{suffix}"
+                    suffix += 1
+                seen_ids.add(step_id)
+                step["id"] = step_id
+                step["order"] = max_order
+                step["_order"] = max_order
+                live_steps.append(dict(step))
             live_steps = sorted(
-                by_id.values(),
+                live_steps,
                 key=lambda item: (
                     int(item.get("order") or item.get("_order") or 0),
                     int(item.get("timestamp") or 0),

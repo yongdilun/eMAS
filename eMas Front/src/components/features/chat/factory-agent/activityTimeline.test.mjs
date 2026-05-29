@@ -41,12 +41,11 @@ test('assistantAnswerAllowed: defers until activity terminal when steps exist', 
   )
 })
 
-test('activity ordering uses backend order when timestamps collide', () => {
-  const timestamp = 1770000000
+test('activity ordering uses backend order even when timestamps arrive out of order', () => {
   const ordered = [
     {
       id: 'graph:aaa-last',
-      timestamp,
+      timestamp: 1770000001,
       order: 3,
       label: 'Checking result',
       detail: 'Checking tool evidence',
@@ -55,7 +54,7 @@ test('activity ordering uses backend order when timestamps collide', () => {
     },
     {
       id: 'graph:zzz-first',
-      timestamp,
+      timestamp: 1770000003,
       order: 1,
       label: 'Understood request',
       detail: 'Structuring the request',
@@ -64,7 +63,7 @@ test('activity ordering uses backend order when timestamps collide', () => {
     },
     {
       id: 'graph:mmm-second',
-      timestamp,
+      timestamp: 1770000002,
       order: 2,
       label: 'Running selected tool',
       detail: 'Checking relevant records',
@@ -312,6 +311,46 @@ test('coalesces duplicate timeline and live graph activity rows by visible meani
   assert.deepEqual(rows.map((step) => step.label), ['Understood request', 'Checking result'])
   assert.equal(rows[0].id, 'graph:semantic_intake_node')
   assert.equal(rows[0].state, 'success')
+})
+
+test('keeps repeated graph occurrences in backend order', () => {
+  const rows = coalesceActivitySteps([
+    {
+      id: 'graph:000001:planner_choose_tool_node',
+      timestamp: 1770000003,
+      order: 1,
+      group: 'planning',
+      label: 'Selecting safe action',
+      detail: 'Selecting a safe action',
+      state: 'success',
+    },
+    {
+      id: 'graph:000002:tool_execution_node',
+      timestamp: 1770000002,
+      order: 2,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      state: 'success',
+    },
+    {
+      id: 'graph:000003:planner_choose_tool_node',
+      timestamp: 1770000001,
+      order: 3,
+      group: 'planning',
+      label: 'Selecting safe action',
+      detail: 'Selecting a safe action',
+      state: 'running',
+    },
+  ])
+
+  assert.deepEqual(rows.map((step) => step.id), [
+    'graph:000001:planner_choose_tool_node',
+    'graph:000002:tool_execution_node',
+    'graph:000003:planner_choose_tool_node',
+  ])
+  assert.deepEqual(rows.map((step) => step.order), [1, 2, 3])
+  assert.equal(rows[2].state, 'running')
 })
 
 test('completed activity remains available as a collapsed summary', () => {

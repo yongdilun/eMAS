@@ -753,7 +753,12 @@ def _activity_replan_story_from_diagnostics(
     leading = [step for step in raw_steps if step.get("label") == "Understood request"][:1]
     first_call = next((call for call in failed_calls if isinstance(call, Mapping)), None)
     probe = _activity_probe_event_from_failed_call(first_call)
-    kind = _activity_attempt_reason_kind(replan_spine=replan_spine, replan_attempt=1, failed_event=probe)
+    existing_attempt_kinds = _activity_existing_replan_kinds_by_attempt(raw_steps)
+    kind = existing_attempt_kinds.get(1) or _activity_attempt_reason_kind(
+        replan_spine=replan_spine,
+        replan_attempt=1,
+        failed_event=probe,
+    )
     reason = _activity_retry_reason_text(kind)
     target = _activity_read_target_label(probe)
     domain = _safe_activity_domain_label(probe) if probe is not None else "relevant records"
@@ -853,11 +858,13 @@ def _activity_replan_story_from_diagnostics(
             first_call,
         )
         attempt_probe = _activity_probe_event_from_failed_call(attempt_call)
-        attempt_kind = _activity_attempt_reason_kind(
-            replan_spine=replan_spine,
-            replan_attempt=max(1, replan_attempt),
-            failed_event=attempt_probe,
-        )
+        attempt_kind = existing_attempt_kinds.get(next_attempt) or existing_attempt_kinds.get(replan_attempt)
+        if attempt_kind is None:
+            attempt_kind = _activity_attempt_reason_kind(
+                replan_spine=replan_spine,
+                replan_attempt=max(1, replan_attempt),
+                failed_event=attempt_probe,
+            )
         attempt_reason = _activity_retry_reason_text(attempt_kind)
         attempt_target = _activity_read_target_label(attempt_probe) if attempt_probe is not None else target
         if replan_attempt > 1:
@@ -904,6 +911,31 @@ def _activity_replan_story_from_diagnostics(
         )
         story.append({**terminal, "detail": terminal_detail, "_replan_attempt": final_attempt})
     return _activity_normalize_replan_story_order(story)
+
+
+def _activity_existing_replan_kinds_by_attempt(raw_steps: list[dict[str, Any]]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for step in raw_steps:
+        attempt = _activity_int(step.get("_replan_attempt") or step.get("replan_attempt"))
+        if attempt is None:
+            continue
+        kind = _activity_existing_replan_kind(step)
+        if kind:
+            out[attempt] = kind
+    return out
+
+
+def _activity_existing_replan_kind(step: Mapping[str, Any]) -> str | None:
+    text = f"{step.get('label') or ''} {step.get('detail') or ''}".lower()
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "different tool" in text:
+        return "different_tool"
+    if "more evidence" in text or "incomplete" in text:
+        return "incomplete"
+    if "failed" in text:
+        return "tool_error"
+    return None
 
 
 def _activity_normalize_replan_story_order(raw_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1325,28 +1357,30 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
 
     live_steps = _live_activity_steps_for_snapshot(snapshot, session_status=session_status)
     if live_steps:
-        existing_label_groups = {
+        live_label_groups = {
             (str(step.get("group") or ""), str(step.get("label") or ""))
-            for step in raw_steps
+            for step in live_steps
         }
-        filtered_live_steps: list[dict[str, Any]] = []
-        for step in live_steps:
-            label_group = (str(step.get("group") or ""), str(step.get("label") or ""))
-            if label_group in existing_label_groups:
-                continue
-            existing_label_groups.add(label_group)
-            filtered_live_steps.append(step)
-        live_steps = filtered_live_steps
-    if live_steps:
         live_ids = {str(step["id"]) for step in live_steps}
-        raw_steps = [step for step in raw_steps if str(step.get("id") or "") not in live_ids]
+        raw_steps = [
+            step
+            for step in raw_steps
+            if str(step.get("id") or "") not in live_ids
+            and (str(step.get("group") or ""), str(step.get("label") or "")) not in live_label_groups
+        ]
         raw_steps.extend(live_steps)
+        first_live_timestamp = min(int(step.get("timestamp") or 0) for step in live_steps)
+
+        def _active_live_sort_key(step: dict[str, Any]) -> tuple[int, int, int, str]:
+            timestamp = int(step.get("timestamp") or 0)
+            order = _activity_int(step.get("order") or step.get("_order"))
+            if order is not None:
+                return (1, order, timestamp, str(step.get("id") or ""))
+            bucket = 0 if timestamp <= first_live_timestamp else 2
+            return (bucket, timestamp, 0, str(step.get("id") or ""))
+
         raw_steps.sort(
-            key=lambda step: (
-                int(step["timestamp"]),
-                int(step.get("order") or step.get("_order") or 0),
-                str(step["id"]),
-            )
+            key=_active_live_sort_key
         )
 
     if session_status == "WAITING_APPROVAL":
@@ -1405,13 +1439,31 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         }
         raw_steps = [grouped, *recent]
 
+    session_replan_context = (
+        snapshot.session.get("replan_context")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "replan_context", None)
+    )
+    session_updated_at = (
+        snapshot.session.get("updated_at")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "updated_at", None)
+    )
+    fallback_timestamp = (
+        int(session_updated_at.timestamp())
+        if hasattr(session_updated_at, "timestamp")
+        else int(datetime.utcnow().timestamp())
+    )
     raw_steps = enrich_activity_step_rows(
         raw_steps,
-        snapshot.session.replan_context if isinstance(snapshot.session.replan_context, dict) else {},
-        fallback_timestamp=int(snapshot.session.updated_at.timestamp()),
+        session_replan_context if isinstance(session_replan_context, dict) else {},
+        fallback_timestamp=fallback_timestamp,
         session_status=session_status,
     )
     raw_steps = _activity_finalize_row_states(raw_steps)
+    for idx, step in enumerate(raw_steps, start=1):
+        step["order"] = idx
+        step["_order"] = idx
 
     return [
         ActivityStepResponse(
