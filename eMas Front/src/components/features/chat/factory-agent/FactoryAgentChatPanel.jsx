@@ -37,6 +37,8 @@ const STARTER_PROMPTS = Object.freeze([
   'Change all low priority job to medium, then change all medium priority job to high',
   'Find all low priority jobs',
   'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
+  'Read jobs JOB-SEED-001 and JOB-SEED-002. For each job that includes a product id, read that product. Summarize each job with its product.',
+  'Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003.',
 ])
 
 function isProgressSummary(text) {
