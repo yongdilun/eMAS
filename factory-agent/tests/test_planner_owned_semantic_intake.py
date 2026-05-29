@@ -112,6 +112,53 @@ def _product_status_tool() -> ToolInfo:
     )
 
 
+def _job_collection_tool() -> ToolInfo:
+    return _tool(
+        "get__jobs",
+        endpoint="/jobs",
+        tags=["job", "list", "priority", "deadline"],
+        query_params=["priority", "fields", "sort_by", "sort_dir", "limit"],
+        input_properties={
+            "priority": {"type": "string"},
+            "fields": {"type": "string"},
+            "sort_by": {"type": "string"},
+            "sort_dir": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        output_properties={
+            "job_id": {"type": "string"},
+            "deadline": {"type": "string"},
+            "priority": {"type": "string"},
+            "status": {"type": "string"},
+        },
+        entity="job",
+        response_contract="result_collection_v1",
+    )
+
+
+def _machine_status_with_reference_tool() -> ToolInfo:
+    return _tool(
+        "get__machines_{id}",
+        endpoint="/machines/{id}",
+        tags=["machine", "lookup", "status"],
+        required=["id"],
+        query_params=["fields"],
+        input_properties={
+            "id": {"type": "string", "x-ai-id-field": "machine_id", "x-ai-entity": "machine"},
+            "fields": {"type": "string"},
+        },
+        output_properties={
+            "machine_id": {"type": "string"},
+            "status": {"type": "string"},
+            "job_id": {"type": "string"},
+            "reference_job_id": {"type": "string"},
+            "active_job_id": {"type": "string"},
+        },
+        entity="machine",
+        response_contract="entity_status_v1",
+    )
+
+
 class _FakeMessage:
     def __init__(self, content: str) -> None:
         self.content = content
@@ -297,6 +344,222 @@ def test_semantic_intake_proposer_names_langsmith_run_and_metadata():
     assert config["metadata"]["component"] == "semantic_intake"
     assert config["metadata"]["compiler_authority"] == "deterministic"
     assert config["metadata"]["raw_llm_output_executes_tools"] is False
+
+
+def test_semantic_intake_repairs_missing_mutation_clause_and_binds_previous_result_set():
+    prompt = (
+        "List medium priority jobs, then change those jobs to high priority. "
+        "Show what would change and ask approval before applying."
+    )
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "required_requirement",
+                        "text": "List medium priority jobs",
+                    }
+                ]
+            }
+        ),
+    )
+
+    state = build_initial_planner_owned_agent_graph_state(
+        prompt,
+        tools_by_name={},
+        semantic_intake_proposer=proposer,
+    )
+
+    ledger = state.requirement_ledger
+    read_requirement = ledger.requirements[0]
+    mutation_requirement = ledger.requirements[1]
+
+    assert [clause.role for clause in ledger.intake_clauses] == [
+        "required_requirement",
+        "mutation_or_approval_request",
+    ]
+    assert read_requirement.requirement_type == "filtered_collection"
+    assert read_requirement.constraints["priority"] == "medium"
+    assert mutation_requirement.requirement_type == "mutation_request"
+    assert mutation_requirement.depends_on == [read_requirement.id]
+    assert mutation_requirement.constraints["priority"] == "medium"
+    assert mutation_requirement.constraints["new_priority"] == "high"
+    assert mutation_requirement.constraints["preview_before_apply"] is True
+    assert mutation_requirement.constraints["requires_approval"] is True
+    assert {"priority", "new_priority", "preview_before_apply", "requires_approval"}.issubset(
+        mutation_requirement.locked_constraints
+    )
+    assert state.execution_trace.diagnostics["semantic_intake"]["llm_clause_coverage_repaired"] is True
+
+
+def test_semantic_intake_repairs_merged_multi_clause_model_item():
+    prompt = (
+        "List medium priority jobs, then change those jobs to high priority. "
+        "Show what would change and ask approval before applying."
+    )
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "required_requirement",
+                        "text": prompt,
+                    }
+                ]
+            }
+        ),
+    )
+
+    state = build_initial_planner_owned_agent_graph_state(
+        prompt,
+        tools_by_name={},
+        semantic_intake_proposer=proposer,
+    )
+
+    ledger = state.requirement_ledger
+
+    assert [requirement.requirement_type for requirement in ledger.requirements] == [
+        "filtered_collection",
+        "mutation_request",
+    ]
+    assert ledger.requirements[1].depends_on == [ledger.requirements[0].id]
+    assert ledger.requirements[1].constraints["priority"] == "medium"
+    assert ledger.requirements[1].constraints["new_priority"] == "high"
+    assert state.execution_trace.diagnostics["semantic_intake"]["llm_clause_coverage_repaired"] is True
+    assert state.execution_trace.diagnostics["semantic_intake"]["llm_item_count_before_clause_repair"] == 1
+
+
+def test_semantic_intake_reclassifies_mislabeled_write_clause_from_small_model():
+    prompt = (
+        "List medium priority jobs, then change those jobs to high priority. "
+        "Show what would change and ask approval before applying."
+    )
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {
+                        "id": "1",
+                        "role": "required_requirement",
+                        "text": "List medium priority jobs",
+                    },
+                    {
+                        "id": "2",
+                        "role": "conditional_branch",
+                        "text": "change those jobs to high priority.",
+                    },
+                    {
+                        "id": "3",
+                        "role": "conditional_branch",
+                        "text": "Show what would change",
+                    },
+                    {
+                        "id": "4",
+                        "role": "mutation_or_approval_request",
+                        "text": "ask approval before applying.",
+                    },
+                ]
+            }
+        ),
+    )
+
+    state = build_initial_planner_owned_agent_graph_state(
+        prompt,
+        tools_by_name={},
+        semantic_intake_proposer=proposer,
+    )
+
+    ledger = state.requirement_ledger
+
+    assert [clause.role for clause in ledger.intake_clauses] == [
+        "required_requirement",
+        "mutation_or_approval_request",
+    ]
+    assert [requirement.requirement_type for requirement in ledger.requirements] == [
+        "filtered_collection",
+        "mutation_request",
+    ]
+    assert ledger.requirements[1].depends_on == [ledger.requirements[0].id]
+    assert ledger.requirements[1].constraints["priority"] == "medium"
+    assert ledger.requirements[1].constraints["new_priority"] == "high"
+    assert ledger.requirements[1].constraints["preview_before_apply"] is True
+    assert ledger.requirements[1].constraints["requires_approval"] is True
+
+
+def test_semantic_intake_keeps_field_sort_limit_continuations_on_collection_read():
+    state = build_initial_planner_owned_agent_graph_state(
+        "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3.",
+        tools_by_name={"get__jobs": _job_collection_tool()},
+    )
+
+    ledger = state.requirement_ledger
+    requirement = ledger.requirements[0]
+
+    assert len(ledger.requirements) == 1
+    assert requirement.requirement_type == "filtered_collection"
+    assert requirement.constraints["priority"] == "low"
+    assert requirement.constraints["sort_by"] == "deadline"
+    assert requirement.constraints["sort_dir"] == "asc"
+    assert requirement.constraints["limit"] == 3
+    assert requirement.requested_fields == ["job_id", "deadline"]
+
+
+def test_semantic_intake_repairs_fragmented_single_clause_model_output():
+    prompt = "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3."
+    proposer = OpenAICompatibleSemanticIntakeProposer(
+        get_settings(),
+        model=_FakeModel(
+            {
+                "items": [
+                    {"id": "1", "role": "list", "text": "List low priority jobs"},
+                    {"id": "2", "role": "filter", "text": "only job id"},
+                    {"id": "3", "role": "filter", "text": "deadline"},
+                    {"id": "4", "role": "filter", "text": "sorted by deadline ascending"},
+                    {"id": "5", "role": "filter", "text": "limit 3"},
+                ]
+            }
+        ),
+    )
+
+    state = build_initial_planner_owned_agent_graph_state(
+        prompt,
+        tools_by_name={"get__jobs": _job_collection_tool()},
+        semantic_intake_proposer=proposer,
+    )
+
+    requirement = state.requirement_ledger.requirements[0]
+    semantic_intake = state.execution_trace.diagnostics["semantic_intake"]
+
+    assert requirement.constraints["priority"] == "low"
+    assert requirement.constraints["sort_by"] == "deadline"
+    assert requirement.constraints["sort_dir"] == "asc"
+    assert requirement.constraints["limit"] == 3
+    assert requirement.requested_fields == ["job_id", "deadline"]
+    assert semantic_intake["llm_clause_coverage_repaired"] is True
+    assert len(semantic_intake["llm_fragmented_prepared_clauses"]) == 1
+    assert "sorted by deadline ascending" in semantic_intake["llm_fragmented_prepared_clauses"][0]
+
+
+def test_semantic_intake_conditional_referent_fields_exclude_non_active_references():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Check machine M-CNC-01 status. If the machine result includes a job id, read that job.",
+        tools_by_name={
+            "get__machines_{id}": _machine_status_with_reference_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+        },
+    )
+
+    requirement = state.requirement_ledger.requirements[0]
+    branch = state.requirement_ledger.conditional_branches[0]
+
+    assert requirement.constraints["observation_fields"] == ["job_id", "active_job_id"]
+    assert branch.condition["field_any"] == ["job_id", "active_job_id"]
+    assert "reference_job_id" not in branch.condition["field_any"]
 
 
 def test_semantic_intake_classifies_conditional_job_branch():

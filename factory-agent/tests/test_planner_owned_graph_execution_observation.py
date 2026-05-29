@@ -160,6 +160,27 @@ def _job_status_tool() -> ToolInfo:
     )
 
 
+def _job_priority_update_tool() -> ToolInfo:
+    return _tool(
+        "put__jobs_{id}",
+        endpoint="/jobs/{id}",
+        method="PUT",
+        tags=["job", "update", "priority", "approval_required"],
+        required=["id", "priority"],
+        input_properties={
+            "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+            "priority": {"type": "string"},
+        },
+        output_properties={
+            "job_id": {"type": "string"},
+            "priority": {"type": "string"},
+            "status": {"type": "string"},
+        },
+        entity="job",
+        response_contract="business_change_v1",
+    )
+
+
 def _job_collection_tool() -> ToolInfo:
     return _tool(
         "get__jobs",
@@ -173,6 +194,32 @@ def _job_collection_tool() -> ToolInfo:
         },
         output_properties={
             "job_id": {"type": "string", "x-ai-aliases": ["job id"]},
+            "product_id": {"type": "string", "x-ai-aliases": ["product id"]},
+            "status": {"type": "string"},
+            "priority": {"type": "string"},
+        },
+        entity="job",
+        response_contract="result_collection_v1",
+    )
+
+
+def _job_collection_projection_tool() -> ToolInfo:
+    return _tool(
+        "get__jobs",
+        endpoint="/jobs",
+        tags=["job", "list", "status"],
+        query_params=["fields", "status", "priority", "sort_by", "sort_dir", "limit"],
+        input_properties={
+            "fields": {"type": "string"},
+            "status": {"type": "string"},
+            "priority": {"type": "string"},
+            "sort_by": {"type": "string"},
+            "sort_dir": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        output_properties={
+            "job_id": {"type": "string", "x-ai-aliases": ["job id"]},
+            "deadline": {"type": "string"},
             "product_id": {"type": "string", "x-ai-aliases": ["product id"]},
             "status": {"type": "string"},
             "priority": {"type": "string"},
@@ -316,6 +363,48 @@ class SequentialMachineStatusExecutor:
                     "machine_id": args.get("id"),
                     "status": "running",
                 }
+            },
+            "infrastructure_error": False,
+        }
+
+
+class SequentialJobCollectionProjectionExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, tool, idempotency_key, extra_headers
+        self.calls.append({"args": dict(args)})
+        if len(self.calls) == 1:
+            return {
+                "ok": False,
+                "http_status": None,
+                "latency_ms": 0,
+                "body": {
+                    "error_type": "timeout",
+                    "message": "Controlled typed timeout from the seeded tool fault harness.",
+                },
+                "infrastructure_error": True,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {
+                "data": [
+                    {
+                        "job_id": "JOB-SEED-005",
+                        "deadline": "2026-06-01",
+                    },
+                    {
+                        "job_id": "JOB-SEED-009",
+                        "deadline": "2026-06-03",
+                    },
+                    {
+                        "job_id": "JOB-SEED-012",
+                        "deadline": "2026-06-05",
+                    },
+                ]
             },
             "infrastructure_error": False,
         }
@@ -681,6 +770,42 @@ class MachineAndJobExecutor:
         }
 
 
+class ReadThenApprovalExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 3,
+                "body": {
+                    "data": {
+                        "job_id": args.get("id"),
+                        "priority": "medium",
+                        "status": "planned",
+                    }
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "job_id": args.get("id"),
+                    "priority": args.get("priority"),
+                    "status": "updated",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 def _graph(
     *,
     tools_by_name: dict[str, ToolInfo] | None = None,
@@ -812,6 +937,58 @@ class RepeatFailedFullSelectedCallProposer:
             ),
             adapter="repeat_failed_full_selected_call_proposer",
     )
+
+
+@pytest.mark.asyncio
+async def test_approval_staging_waits_for_prior_read_evidence_observation():
+    executor = ReadThenApprovalExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["put__jobs_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "put__jobs_{id}": _job_priority_update_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Show job JOB-SEED-001 status, then update job JOB-SEED-001 priority to high after approval.",
+        session_context={"session_id": "dependency-approval-waits-for-read-evidence"},
+    )
+
+    decisions = result.state.planner_decisions
+    read_execute_index = next(
+        index
+        for index, decision in enumerate(decisions)
+        if decision.decision_kind == "execute_tool" and decision.requirement_id == "req-001"
+    )
+    approval_index = next(
+        index
+        for index, decision in enumerate(decisions)
+        if decision.decision_kind == "request_approval" and decision.requirement_id == "req-002"
+    )
+    dependency_plan = result.state.execution_trace.diagnostics["dependency_plan"]
+    final_labels = {
+        item["requirement_id"]: item["label"]
+        for item in dependency_plan["requirements"]
+    }
+
+    assert read_execute_index < approval_index
+    assert [call["tool_name"] for call in executor.calls] == ["get__jobs_{id}"]
+    assert {
+        evidence.requirement_id
+        for evidence in result.state.evidence_ledger.evidence
+        if evidence.source_type == "api_tool"
+    } == {"req-001"}
+    assert result.state.requirement_ledger.requirements[0].status == "satisfied"
+    assert final_labels["req-001"] == "satisfied_or_terminal"
+    assert final_labels["req-002"] == "approval_required"
+    assert result.state.pending_approval.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -1426,6 +1603,45 @@ async def test_for_each_conditional_product_branch_batches_parent_item_reads_for
 
 
 @pytest.mark.asyncio
+async def test_plain_bounded_job_reads_do_not_expand_product_followups_from_incidental_ids():
+    executor = MultiJobProductsThenProductsExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__products_{id}"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+    ).run(
+        "Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003.",
+        session_context={"session_id": "plain-bounded-job-read-no-product-followups"},
+    )
+
+    requirements = result.state.requirement_ledger.requirements
+    job_calls = [call for call in executor.calls if call["tool_name"] == "get__jobs_{id}"]
+
+    assert [call["args"]["id"] for call in job_calls] == [
+        "JOB-SEED-001",
+        "JOB-SEED-002",
+        "JOB-SEED-003",
+    ]
+    assert not any(call["tool_name"] == "get__products_{id}" for call in executor.calls)
+    assert [requirement.id for requirement in requirements] == ["req-001"]
+    assert not any(requirement.parent_requirement_id for requirement in requirements)
+    assert [window.requirement_id for window in result.state.candidate_tool_windows] == ["req-001"]
+    assert len(selector.calls) == 1
+    assert result.state.execution_trace.diagnostics.get("requirement_expansion") is None
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_conditional_machine_branch_skips_when_job_evidence_has_no_machine_id():
     executor = JobWithoutMachineThenMachineExecutor()
     selector = SequentialRecordingSelector(
@@ -1764,6 +1980,44 @@ async def test_replan_spine_retries_after_retriable_missing_evidence_and_then_sa
     assert diagnostics["satisfaction"]["missing_evidence_reasons"][0]["retriable"] is True
     assert diagnostics["replan_spine"]["attempt_count"] == 1
     assert diagnostics["phase9_active_revision_evidence"]["historical_evidence_refs"] == [evidence[0].id]
+
+
+@pytest.mark.asyncio
+async def test_replan_spine_retry_preserves_collection_projection_sort_and_limit_args():
+    executor = SequentialJobCollectionProjectionExecutor()
+    selector = RecordingSelector(["get__jobs"])
+
+    result = await _graph(
+        tools_by_name={"get__jobs": _job_collection_projection_tool()},
+        selector=selector,
+        http_executor=executor,
+    ).run(
+        "List low priority jobs, only job id and deadline, sorted by deadline ascending, limit 3.",
+        session_context={"session_id": "replan-spine-collection-projection-recovery"},
+    )
+
+    requirement = result.state.requirement_ledger.requirements[0]
+    successful_args = executor.calls[-1]["args"]
+
+    assert len(executor.calls) == 2
+    assert requirement.status == "satisfied"
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert executor.calls[0]["args"] == successful_args
+    assert successful_args == {
+        "priority": "low",
+        "sort_by": "deadline",
+        "sort_dir": "asc",
+        "limit": 3,
+        "fields": "job_id,deadline",
+    }
+    assert requirement.requested_fields == ["job_id", "deadline"]
+    assert requirement.locked_constraints == [
+        "priority",
+        "sort_by",
+        "sort_dir",
+        "limit",
+        "requested_fields",
+    ]
 
 
 @pytest.mark.asyncio

@@ -425,6 +425,7 @@ class ReadEvidence:
     rows: list[dict[str, Any]] = field(default_factory=list)
     step_ids: list[str] = field(default_factory=list)
     completed_at: datetime | None = None
+    first_seen: int = 0
     tool_name: str | None = None
     args: dict[str, Any] = field(default_factory=dict)
 
@@ -2504,13 +2505,15 @@ def _read_evidence(
         rows: list[dict[str, Any]],
         step_id: str | None,
         completed_at: datetime | None,
+        first_seen: int,
         *,
         tool_name: str | None = None,
         args: dict[str, Any] | None = None,
     ) -> None:
         if key not in rows_by_key:
-            rows_by_key[key] = ReadEvidence(key=key, operation_id=operation_id)
+            rows_by_key[key] = ReadEvidence(key=key, operation_id=operation_id, first_seen=first_seen)
         evidence = rows_by_key[key]
+        evidence.first_seen = min(evidence.first_seen, first_seen)
         evidence.rows.extend(rows)
         if step_id and step_id not in evidence.step_ids:
             evidence.step_ids.append(step_id)
@@ -2521,12 +2524,13 @@ def _read_evidence(
         if args and not evidence.args:
             evidence.args = dict(args)
 
-    for step in steps:
+    for source_index, step in enumerate(steps):
         status = str(step.status or "").upper()
         if status not in {"DONE", "FAILED", "AMBIGUOUS"} or _is_write_tool_name(step.tool_name):
             continue
         if not (_is_read_tool_name(step.tool_name) or isinstance(step.result, dict)):
             continue
+        step_order = int(step.step_index) if step.step_index is not None else source_index
         default_status = "failed" if status in {"FAILED", "AMBIGUOUS"} else "succeeded"
         rows = _operation_rows_from_result(
             step.result if isinstance(step.result, dict) else None,
@@ -2541,11 +2545,13 @@ def _read_evidence(
             rows,
             step.step_id,
             step.completed_at or step.started_at,
+            step_order,
             tool_name=step.tool_name,
             args=step.args if isinstance(step.args, dict) else {},
         )
 
-    for event in timeline:
+    timeline_order_offset = len(steps)
+    for event_index, event in enumerate(timeline):
         if event.event_type != "tool_result" or _is_write_tool_name(event.tool_name):
             continue
         details = event.details if isinstance(event.details, dict) else {}
@@ -2566,18 +2572,19 @@ def _read_evidence(
             rows,
             event.step_id,
             event.created_at,
+            timeline_order_offset + event_index,
             tool_name=event.tool_name,
             args=args,
         )
 
     if presentation.kind == "answer" and presentation.rows:
-        add_rows("read:presentation", [dict(row) for row in presentation.rows], None, None)
+        add_rows("read:presentation", [dict(row) for row in presentation.rows], None, None, len(steps) + len(timeline))
 
     out: list[ReadEvidence] = []
     for evidence in rows_by_key.values():
         evidence.rows = _dedupe_rows(evidence.rows)
         out.append(evidence)
-    return sorted(out, key=lambda item: (item.completed_at or datetime.min, item.key))
+    return sorted(out, key=lambda item: (item.first_seen, item.completed_at or datetime.min, item.key))
 
 
 def _source_priority(row: dict[str, Any]) -> str:

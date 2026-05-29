@@ -86,6 +86,10 @@ _DEPENDENT_ENTITY_TERM_RE = re.compile(
     r"\b(?P<entity>machines?|jobs?|products?|materials?)\b",
     re.IGNORECASE,
 )
+_EVIDENCE_DRIVEN_FOLLOWUP_RE = re.compile(
+    r"\b(?:why|cause|causes|reason|reasons|root\s+cause|explain|diagnos(?:e|is|tic))\b",
+    re.IGNORECASE,
+)
 
 
 _COMMON_FIELD_TERMS: dict[str, tuple[str, ...]] = {
@@ -618,6 +622,16 @@ def build_requirement_sketch_for_text(
             entity=entity,
             capability_map=capability_map,
         )
+        depends_on_requirement_ids: list[str] = []
+        if intake_item.role == "mutation_or_approval_request":
+            previous_dependency_id = _bind_dependent_mutation_to_previous_result_set(
+                constraints,
+                clause=clause,
+                entity=entity,
+                previous_requirements=requirements,
+            )
+            if previous_dependency_id:
+                depends_on_requirement_ids.append(previous_dependency_id)
         requested_fields = _requested_fields_for_clause(
             clause,
             aliases,
@@ -672,6 +686,7 @@ def build_requirement_sketch_for_text(
             constraints=constraints,
             requested_fields=requested_fields,
             locked_constraints=locked_constraints,
+            depends_on=depends_on_requirement_ids,
             origin=RequirementOrigin(
                 goal="deterministic_requirement_sketch",
                 constraints="deterministic_extraction",
@@ -936,7 +951,13 @@ def _is_field_continuation_clause(
     previous_clause: str,
     aliases: FieldAliases,
 ) -> bool:
-    if not _FIELD_SEGMENT_RE.search(previous_clause):
+    previous_has_field_segment = bool(_FIELD_SEGMENT_RE.search(previous_clause))
+    continuation_has_field_or_control = bool(
+        _fields_mentioned(clause, aliases, entity=None)
+        or _SORT_HINT_RE.search(clause)
+        or _LIMIT_RE.search(clause)
+    )
+    if not (previous_has_field_segment or continuation_has_field_or_control):
         return False
     if split_user_intents(clause)[0].explicit_constraints:
         return False
@@ -1032,6 +1053,7 @@ def build_requirement_ledger_from_sketch(sketch: RequirementSketch) -> Requireme
                 constraints=dict(item.constraints),
                 requested_fields=list(item.requested_fields),
                 locked_constraints=list(item.locked_constraints),
+                depends_on=list(item.depends_on),
                 status="open",
                 origin=item.origin,
             )
@@ -1463,8 +1485,101 @@ def _constraints_for_clause(
 
     if frame.requires_approval or re.search(r"\b(?:approval|approve|ask\s+approval|before\s+applying)\b", clause, re.I):
         constraints["requires_approval"] = True
+    if _requires_evidence_driven_followup(clause, frame=frame):
+        constraints["requires_followup_evidence"] = True
 
     return constraints
+
+
+def _requires_evidence_driven_followup(clause: str, *, frame: SemanticFrame) -> bool:
+    if frame.action not in {"read", "unknown"}:
+        return False
+    return bool(_EVIDENCE_DRIVEN_FOLLOWUP_RE.search(clause))
+
+
+def _bind_dependent_mutation_to_previous_result_set(
+    constraints: dict[str, Any],
+    *,
+    clause: str,
+    entity: str | None,
+    previous_requirements: list[RequirementSketchItem],
+) -> str | None:
+    previous = _previous_result_set_requirement(
+        previous_requirements,
+        entity=entity,
+    )
+    if previous is None or not _clause_refers_to_previous_result_set(clause, entity=entity or previous.entity):
+        return None
+
+    for field, source_value in previous.constraints.items():
+        if _is_control_or_target_constraint(field) or source_value in (None, "", [], {}):
+            continue
+        current_value = constraints.get(field)
+        target_field = f"new_{field}"
+        if (
+            current_value not in (None, "", [], {})
+            and not _constraint_values_equal(current_value, source_value)
+            and target_field not in constraints
+        ):
+            constraints[target_field] = current_value
+        constraints[field] = source_value
+    return previous.id
+
+
+def _previous_result_set_requirement(
+    previous_requirements: list[RequirementSketchItem],
+    *,
+    entity: str | None,
+) -> RequirementSketchItem | None:
+    for requirement in reversed(previous_requirements):
+        if requirement.requirement_type in {"mutation_request", "approval_request", "clarification_request"}:
+            continue
+        if entity and requirement.entity and requirement.entity != entity:
+            continue
+        if requirement.source_of_truth != "operational_state":
+            continue
+        if not requirement.constraints:
+            continue
+        return requirement
+    return None
+
+
+def _clause_refers_to_previous_result_set(clause: str, *, entity: str | None) -> bool:
+    entity_terms = ["records", "rows", "items", "them", "those", "these"]
+    if entity:
+        normalized = _normalize_phrase(entity).replace(" ", "_")
+        singular = normalized[:-1] if normalized.endswith("s") else normalized
+        entity_terms.extend([singular, f"{singular}s"])
+    entity_pattern = "|".join(re.escape(term).replace(r"\ ", r"[ _-]+") for term in dict.fromkeys(entity_terms))
+    return bool(
+        re.search(
+            rf"\b(?:(?:those|these|selected|listed|matching|returned|found)\s+(?:{entity_pattern})|them|those|these)\b",
+            _normalize_phrase(clause),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_control_or_target_constraint(field: str) -> bool:
+    return field.startswith("new_") or field in {
+        "limit",
+        "sort_by",
+        "sort_dir",
+        "observation_fields",
+        "preview_before_apply",
+        "requires_approval",
+        "safety_constraints",
+    }
+
+
+def _constraint_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, list) or isinstance(right, list):
+        left_values = left if isinstance(left, list) else [left]
+        right_values = right if isinstance(right, list) else [right]
+        return {str(value).strip().lower() for value in left_values} == {
+            str(value).strip().lower() for value in right_values
+        }
+    return str(left).strip().lower() == str(right).strip().lower()
 
 
 def _merge_constraint_value(constraints: dict[str, Any], field: str, value: Any) -> None:
@@ -1626,13 +1741,7 @@ def _conditional_branch_entity_for_phrase(phrase: str, *, capability_map: Capabi
 
 def _conditional_identifier_fields(capability_map: CapabilityMap, entity: str) -> list[str]:
     primary = f"{entity}_id"
-    fields: list[str] = [primary]
-    suffix = f"_{primary}"
-    for alias in capability_map.field_aliases.aliases:
-        canonical = str(alias.canonical_field or "").strip()
-        if canonical == primary or canonical.endswith(suffix):
-            fields.append(canonical)
-    fields.append(f"active_{primary}")
+    fields: list[str] = [primary, f"active_{primary}"]
     return list(dict.fromkeys(field for field in fields if field))
 
 
@@ -1795,6 +1904,15 @@ def _sort_field_for_clause(
         for term in _terms_for_field(field, aliases, entity=entity):
             if _contains_term(text, term):
                 return field
+    sort_match = re.search(
+        r"\b(?:sort(?:ed)?|order(?:ed)?|rank(?:ed)?)\s+by\s+(?P<field>.+?)"
+        r"(?:\s+(?:asc(?:ending)?|desc(?:ending)?)\b|[,.;]|$)",
+        text,
+        re.I | re.S,
+    )
+    if sort_match:
+        for field in _fields_mentioned(sort_match.group("field"), aliases, entity=entity):
+            return field
     return None
 
 
@@ -1962,7 +2080,7 @@ def _locked_constraints_for(constraints: dict[str, Any], requested_fields: list[
     locked = [
         key
         for key, value in constraints.items()
-        if key not in {"observation_fields"} and value not in (None, "", [], {})
+        if key not in {"observation_fields", "requires_followup_evidence"} and value not in (None, "", [], {})
     ]
     if requested_fields:
         locked.append("requested_fields")

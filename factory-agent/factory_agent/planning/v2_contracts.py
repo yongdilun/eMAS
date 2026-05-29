@@ -417,6 +417,7 @@ class RequirementSketchItem(V2ContractModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     requested_fields: list[str] = Field(default_factory=list)
     locked_constraints: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
     origin: RequirementOrigin = Field(default_factory=RequirementOrigin)
 
 

@@ -249,15 +249,38 @@ class OpenAICompatibleSemanticIntakeProposer:
         }
         if not isinstance(parsed, dict):
             raise ValueError("semantic intake proposer returned invalid JSON")
+        normalized_items = _normalize_llm_items(_llm_items_payload(parsed))
+        coverage_diagnostics: dict[str, Any] = {}
+        missing_clauses = _missing_prepared_clauses(normalized_items, effective_clauses)
+        fragmented_clauses = _fragmented_prepared_clauses(normalized_items, effective_clauses)
+        clause_count_mismatch = len(normalized_items) < len(effective_clauses)
+        if missing_clauses or fragmented_clauses or clause_count_mismatch:
+            fallback = DeterministicFallbackSemanticIntakeProposer().propose(
+                text,
+                prepared_clauses=effective_clauses,
+            )
+            normalized_items = [item.model_dump(mode="json") for item in fallback.items]
+            coverage_diagnostics = {
+                "llm_clause_coverage_repaired": True,
+                "llm_missing_prepared_clauses": missing_clauses,
+                "llm_fragmented_prepared_clauses": fragmented_clauses,
+                "llm_clause_count_mismatch": clause_count_mismatch,
+                "llm_item_count_before_clause_repair": len(_llm_items_payload(parsed) or []),
+                "clause_repair_proposer": DeterministicFallbackSemanticIntakeProposer.proposer_name,
+            }
+        else:
+            coverage_diagnostics = {"llm_clause_coverage_repaired": False}
+
         try:
             result = SemanticIntakeResult.model_validate(
                 {
                     "user_goal": text,
-                    "items": _normalize_llm_items(_llm_items_payload(parsed)),
+                    "items": normalized_items,
                     "source": "llm",
                     "proposer": self.proposer_name,
                     "diagnostics": {
                         **diagnostics,
+                        **coverage_diagnostics,
                         **(parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), dict) else {}),
                     },
                 }
@@ -625,6 +648,53 @@ def _normalize_llm_items(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _missing_prepared_clauses(items: list[Mapping[str, Any]], prepared_clauses: list[str]) -> list[str]:
+    item_texts = [_clause_coverage_key(item.get("text")) for item in items]
+    missing: list[str] = []
+    for clause in prepared_clauses:
+        clause_key = _clause_coverage_key(clause)
+        if not clause_key:
+            continue
+        if not any(_coverage_key_matches_clause(item_key, clause_key) for item_key in item_texts):
+            missing.append(clause)
+    return missing
+
+
+def _fragmented_prepared_clauses(items: list[Mapping[str, Any]], prepared_clauses: list[str]) -> list[str]:
+    item_payloads = [
+        {
+            "key": _clause_coverage_key(item.get("text")),
+            "role": str(item.get("role") or ""),
+        }
+        for item in items
+    ]
+    fragmented: list[str] = []
+    for clause in prepared_clauses:
+        clause_key = _clause_coverage_key(clause)
+        if not clause_key:
+            continue
+        if any(payload["key"] == clause_key or clause_key in payload["key"] for payload in item_payloads):
+            continue
+        fragments = [
+            payload
+            for payload in item_payloads
+            if payload["key"] and payload["key"] != clause_key and payload["key"] in clause_key
+        ]
+        if len(fragments) >= 2 or any(payload["role"] == "clarification_need" for payload in fragments):
+            fragmented.append(clause)
+    return fragmented
+
+
+def _coverage_key_matches_clause(item_key: str, clause_key: str) -> bool:
+    if not item_key:
+        return False
+    return item_key == clause_key or item_key in clause_key or clause_key in item_key
+
+
+def _clause_coverage_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", _normalize_space(str(value or "")).lower()).strip()
+
+
 def _answer_instruction_text_from_value(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -655,6 +725,15 @@ def _normalize_llm_role(value: Any, *, text: str) -> RequirementClauseRole:
         "mutation_or_approval_request",
     }
     if raw in allowed:
+        frame = semantic_frame_for_text(text)
+        if raw in {"required_requirement", "conditional_branch"} and _is_answer_instruction(
+            text,
+            frame=frame,
+            has_context=True,
+        ):
+            return "answer_instruction"
+        if raw != "mutation_or_approval_request" and _is_concrete_write_clause(text, frame=frame):
+            return "mutation_or_approval_request"
         return raw  # type: ignore[return-value]
     if re.search(r"\b(?:conditional|if|when|whenever)\b", haystack):
         return "conditional_branch"
@@ -667,6 +746,19 @@ def _normalize_llm_role(value: Any, *, text: str) -> RequirementClauseRole:
     if re.search(r"\b(?:format|table|bullet|brief|concise|list)\b", raw):
         return "formatting_instruction"
     return "clarification_need"
+
+
+def _is_concrete_write_clause(text: str, *, frame: Any) -> bool:
+    if bool(getattr(frame, "requires_approval", False)):
+        return True
+    action = str(getattr(frame, "action", "") or "")
+    if action in {"create", "update", "delete"} and re.search(
+        r"\b(?:change|update|create|delete|cancel|set)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    return bool(re.search(r"\b(?:change|update|create|delete|cancel|set)\b", text, re.IGNORECASE))
 
 
 def _llm_items_payload(parsed: dict[str, Any]) -> Any:

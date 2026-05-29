@@ -1166,6 +1166,7 @@ class PlannerOwnedAgentGraph:
         executions: list[GraphToolExecutionResult] = []
         action_events: list[dict[str, Any]] = []
         rejected_by_dependency_plan: list[dict[str, Any]] = []
+        deferred_approval_decisions: list[dict[str, Any]] = []
         pending_calls_by_requirement: dict[str, list[GraphToolCall]] = {}
         for choose_decision in choose_decisions:
             selected_calls = [
@@ -1246,6 +1247,15 @@ class PlannerOwnedAgentGraph:
             if not selected_calls:
                 continue
             if _tool_choice_requires_graph_approval(state, choose_decision):
+                if executions:
+                    deferred_approval_decisions.append(
+                        {
+                            "decision_id": choose_decision.decision_id,
+                            "requirement_id": choose_decision.requirement_id,
+                            "reason": "prior_read_execution_requires_evidence_observation",
+                        }
+                    )
+                    continue
                 await self._stage_write_approval(state, choose_decision)
                 if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
                     state,
@@ -1276,6 +1286,7 @@ class PlannerOwnedAgentGraph:
             state.execution_trace.diagnostics[_PENDING_EXECUTION_DIAGNOSTIC_KEY] = {
                 "status": "blocked_by_dependency_plan" if rejected_by_dependency_plan else "no_tool_choice",
                 "rejected_by_dependency_plan": rejected_by_dependency_plan,
+                "deferred_approval_decisions": deferred_approval_decisions,
             }
             return _state_update(state)
 
@@ -1284,6 +1295,7 @@ class PlannerOwnedAgentGraph:
             "execution_results": [execution.model_dump(mode="json") for execution in executions],
             "dependency_read_batches": batch_events,
             "rejected_by_dependency_plan": rejected_by_dependency_plan,
+            "deferred_approval_decisions": deferred_approval_decisions,
         }
         previous_actions = list(state.execution_trace.diagnostics.get("graph_tool_actions") or [])
         state.execution_trace.diagnostics["graph_tool_actions"] = [*previous_actions, *action_events]
@@ -1415,15 +1427,18 @@ class PlannerOwnedAgentGraph:
                 "final_validation_deferred": True,
             }
             return _state_update(state)
-        if _has_open_graph_write_requirement(state):
-            state.execution_trace.diagnostics["satisfaction"] = {
-                "status": "paused_for_graph_write_followup",
-                "open_write_requirement_ids": _open_graph_write_requirement_ids(state),
-                "final_validation_deferred": True,
-            }
-            return _state_update(state)
+        open_write_requirement_ids = set(_open_graph_write_requirement_ids(state))
+        open_write_requirements = {
+            requirement.id: requirement.model_copy(deep=True)
+            for requirement in state.requirement_ledger.requirements
+            if requirement.id in open_write_requirement_ids
+        }
         historical_evidence = state.evidence_ledger
         loop_state = state.as_loop_compat_state()
+        if open_write_requirements and loop_state.requirement_ledger is not None:
+            for requirement in loop_state.requirement_ledger.requirements:
+                if requirement.id in open_write_requirements:
+                    requirement.status = "skipped"
         active_evidence = [
             evidence
             for evidence in historical_evidence.evidence
@@ -1436,6 +1451,16 @@ class PlannerOwnedAgentGraph:
         state.revision_history = loop_state.revision_history
         state.execution_trace = loop_state.execution_trace
         state.evidence_ledger = historical_evidence
+        if open_write_requirements:
+            state.requirement_ledger.requirements = [
+                open_write_requirements.get(requirement.id, requirement)
+                for requirement in state.requirement_ledger.requirements
+            ]
+            state.satisfaction_state.requirements = [
+                requirement_state
+                for requirement_state in state.satisfaction_state.requirements
+                if requirement_state.requirement_id not in open_write_requirements
+            ]
         state.execution_trace.diagnostics["phase9_active_revision_evidence"] = {
             "active_evidence_refs": [evidence.id for evidence in active_evidence],
             "historical_evidence_refs": [
@@ -1448,6 +1473,23 @@ class PlannerOwnedAgentGraph:
                 for evidence in historical_evidence.evidence
             ),
         }
+        attach_dependency_plan_diagnostics(state)
+        if _has_open_graph_write_requirement(state):
+            if state.pending_approval.status == "none":
+                await self._stage_next_write_approval_if_needed(state)
+                attach_dependency_plan_diagnostics(state)
+            status = (
+                "paused_for_approval"
+                if state.pending_approval.status == "pending"
+                else "paused_for_graph_write_followup"
+            )
+            state.execution_trace.diagnostics["satisfaction"] = {
+                "status": status,
+                "approval_id": state.pending_approval.approval_id,
+                "open_write_requirement_ids": _open_graph_write_requirement_ids(state),
+                "final_validation_deferred": True,
+            }
+            return _state_update(state)
         validate_graph_state_final_state(state)
         current_missing_reasons = _current_missing_evidence_reasons(state)
         _prepare_replan_spine_after_satisfaction(
@@ -1640,6 +1682,17 @@ class PlannerOwnedAgentGraph:
         call = choose_decision.selected_tool_call
         if call is None:
             raise ValueError("approval staging requires a selected graph tool call")
+        if call.decision_id:
+            source_decision = next(
+                (
+                    decision
+                    for decision in state.planner_decisions
+                    if decision.decision_id == call.decision_id
+                ),
+                None,
+            )
+            if source_decision is not None and source_decision.ledger_revision != state.requirement_ledger.revision:
+                call = call.model_copy(update={"decision_id": None})
         requirement = _requirement_by_id(state, call.requirement_id)
         card = _hydrated_card_for_tool_call(state, call)
         if requirement is None or card is None:
@@ -1827,12 +1880,16 @@ class PlannerOwnedAgentGraph:
         }
 
     async def _stage_next_write_approval_if_needed(self, state: PlannerOwnedAgentGraphState) -> None:
+        dependency_plan = attach_dependency_plan_diagnostics(state)
         for choose_decision in state.planner_decisions:
+            call = choose_decision.selected_tool_call
             if (
                 choose_decision.decision_kind == "choose_tool"
                 and _planner_decision_is_active_for_graph_revision(state, choose_decision)
-                and choose_decision.selected_tool_call is not None
-                and not _has_evidence_for_requirement(state, choose_decision.selected_tool_call.requirement_id)
+                and call is not None
+                and not _has_evidence_for_requirement(state, call.requirement_id)
+                and not _has_execution_decision_for_call(state, call)
+                and dependency_allows_tool_call(dependency_plan, call)
                 and _tool_choice_requires_graph_approval(state, choose_decision)
             ):
                 _record_node_visit(state, "tool_execution_node", self._tracer)
@@ -2497,6 +2554,8 @@ def _child_requirement_specs_from_evidence(
         parent = _requirement_by_id(state, evidence.requirement_id)
         if parent is None or parent.parent_requirement_id is not None or parent.status != "open":
             continue
+        if not _allows_evidence_driven_child_expansion(parent):
+            continue
         if _is_unbounded_collection_evidence(parent, evidence):
             continue
         if _child_count_for_parent(state, parent.id) >= 2:
@@ -2516,6 +2575,10 @@ def _child_requirement_specs_from_evidence(
             if _child_count_for_parent(state, parent.id) + sum(1 for spec in specs if spec[0].id == parent.id) >= 2:
                 break
     return specs
+
+
+def _allows_evidence_driven_child_expansion(parent: RequirementLedgerEntry) -> bool:
+    return parent.constraints.get("requires_followup_evidence") is True
 
 
 def _is_unbounded_collection_evidence(
