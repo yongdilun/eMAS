@@ -576,6 +576,11 @@ function rendererDomDisagrees(backend, visible, expected = {}) {
     }
   }
   for (const type of backend.responseDocument.blockTypes) {
+    const foldedIntoApproval =
+      ['record_preview', 'result_table'].includes(type) &&
+      visible.visibleBlockTypes.includes('approval_required') &&
+      backend.responseDocument.blocks.some((block) => block.type === type && block.approvalId)
+    if (foldedIntoApproval) continue
     if (DISPLAYABLE_BLOCK_TYPES.has(type) && !visible.visibleBlockTypes.includes(type)) {
       return `response_document block ${type} is missing from visible DOM`
     }

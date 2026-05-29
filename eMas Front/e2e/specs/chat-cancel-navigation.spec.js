@@ -84,7 +84,7 @@ test.describe('Factory Agent chat cancel and disconnect scenarios', () => {
         return connections.length
       })
       .toBeGreaterThan(0)
-    await expect(page.getByText('Understanding your request')).toBeVisible()
+    await expect(page.getByText('Understanding your request').first()).toBeVisible()
 
     const observedStreams = ['notification']
     const activityConnections = await connectionsFor({

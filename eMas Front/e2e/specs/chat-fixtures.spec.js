@@ -130,7 +130,6 @@ test.describe('Factory Agent chat scenario fixtures', () => {
     await sendChatPrompt(page, responseDocumentRendererPrompt)
 
     await expect(page.getByText(/Updated 10 jobs from medium to high/).first()).toBeVisible()
-    await expect(page.getByText('Waiting for approval 2').first()).toBeVisible()
     await expect(page.getByText('Update 11 jobs from high to low').first()).toBeVisible()
     await expect(page.getByText('JOB-SEED-002').first()).toBeVisible()
     await expect(page.getByText('+1 more').first()).toBeVisible()

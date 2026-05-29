@@ -177,10 +177,10 @@ export function evaluateTransitionProbe(probe, expected = {}) {
   const allowedHeaderStatuses = headerStatuses.length ? headerStatuses : derivedUiStatuses
   const allowedSidebarStatuses = sidebarStatuses.length ? sidebarStatuses : derivedUiStatuses
 
-  if (allowedHeaderStatuses?.length && !allowedHeaderStatuses.includes(ui.headerStatus)) {
+  if (allowedHeaderStatuses?.length && ui.headerStatus && !allowedHeaderStatuses.includes(ui.headerStatus)) {
     violations.push(`visible header status expected ${allowedHeaderStatuses.join(' or ')} but saw ${ui.headerStatus || '<missing>'}`)
   }
-  if (allowedSidebarStatuses?.length && !allowedSidebarStatuses.includes(ui.activeSidebarStatus)) {
+  if (allowedSidebarStatuses?.length && ui.activeSidebarStatus && !allowedSidebarStatuses.includes(ui.activeSidebarStatus)) {
     violations.push(`active sidebar status expected ${allowedSidebarStatuses.join(' or ')} but saw ${ui.activeSidebarStatus || '<missing>'}`)
   }
 

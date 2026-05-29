@@ -31,11 +31,12 @@ test.describe('Phase 16 release security and privacy cross-checks @security @pri
 
     await openChat(page)
 
-    await expect(page.getByText(/Session not found|Requested resource was not found|Factory Agent needs attention/i).first()).toBeVisible()
     await expect(page.getByText(/PHASE16_OTHER_USER_SECRET|maintenance override for another operator/i)).toHaveCount(0)
+    await expect(page.getByText(/Requested resource was not found|raw backend JSON|Factory Agent chat could not start|Try starting chat again/i)).toHaveCount(0)
     await expect
       .poll(() => page.evaluate((key) => window.localStorage.getItem(key), activeSessionStorageKey))
       .not.toBe('phase16-other-user-session-id')
+    await expect(page.getByText(/Start a session from the sidebar|Ask for operations tasks requiring safe approvals/i).first()).toBeVisible()
   })
 
   test('scenario 97 release: unauthenticated REST, polling, and EventSource probes are denied', async ({ page }) => {

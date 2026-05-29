@@ -42,9 +42,10 @@ test.describe('L4 release resilience and accessibility @l4-release', () => {
     await expect(page.getByText('Run needs attention').first()).toBeVisible({
       timeout: releaseEnv.latencyBudgetsMs.finalAnswer,
     })
-    await expect(page.getByText(/stopped before a safe final result was available/i).first()).toBeVisible()
-    await expect(page.getByText(/Current state: The run is in a diagnostic state/i).first()).toBeVisible()
-    await expect(page.getByText(/Next action: Check current status before retrying/i).first()).toBeVisible()
+    await expect(page.getByText(/could not verify the requested evidence after bounded retries/i).first()).toBeVisible()
+    await expect(page.getByText(/Cause: The run reached its retry limit/i).first()).toBeVisible()
+    await expect(page.getByText(/Current state: No successful active evidence satisfied the request/i).first()).toBeVisible()
+    await expect(page.getByText(/Next action: Retry after the upstream data source can return the requested fields/i).first()).toBeVisible()
     await expect(page.getByText('Run complete')).toHaveCount(0)
     await expect(page.getByText(/Machine M-CNC-01 .* seeded Go API data/i)).toHaveCount(0)
   })
