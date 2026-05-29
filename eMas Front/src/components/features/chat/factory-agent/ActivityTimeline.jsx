@@ -197,16 +197,16 @@ const ActivityTimeline = ({ steps = [] }) => {
                                         <MaterialActivityIcon icon={stepIcon} className={`text-[11px] ${stepMotion}`} />
                                     </span>
                                     <span className="min-w-0 flex-1">
-                                        <span className="flex items-center gap-2 text-ink-muted">
-                                            <span>{step.label}</span>
+                                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ink-muted">
+                                            <span className="min-w-0 max-w-full break-words leading-snug">{step.label}</span>
                                             {current ? (
-                                                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                                <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                                                     Current
                                                 </span>
                                             ) : null}
                                         </span>
                                         {step.detail ? (
-                                            <span className="block text-[11px] text-ink-subtle">{step.detail}</span>
+                                            <span className="block break-words text-[11px] leading-snug text-ink-subtle">{step.detail}</span>
                                         ) : null}
                                     </span>
                                 </li>

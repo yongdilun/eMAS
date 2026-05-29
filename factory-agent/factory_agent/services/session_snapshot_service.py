@@ -48,6 +48,10 @@ from factory_agent.schemas import (
     SourceListBlock,
 )
 from factory_agent.services.response_document_service import compose_response_document
+from factory_agent.services.planner_activity_captions import (
+    enrich_activity_step_rows,
+    is_safe_dynamic_activity_label,
+)
 from factory_agent.session_state import (
     USER_CANCELLED_ACTIVITY_DETAIL,
     USER_CANCELLED_ACTIVITY_LABEL,
@@ -713,22 +717,30 @@ def _activity_replan_story_from_diagnostics(
     snapshot: SessionSnapshotResponse,
     replan_spine: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if not raw_steps or any(str(step.get("label") or "").startswith("Replanning") for step in raw_steps):
+    if not raw_steps:
         return raw_steps
     attempts = replan_spine.get("attempts")
     failed_calls = replan_spine.get("failed_tool_calls")
-    if not isinstance(attempts, list) or not attempts:
-        return raw_steps
     if not isinstance(failed_calls, list) or not failed_calls:
         failed_calls = []
-        for item in attempts:
+        for item in attempts if isinstance(attempts, list) else []:
             if not isinstance(item, Mapping):
                 continue
             item_failed_calls = item.get("failed_tool_calls")
             if not isinstance(item_failed_calls, list):
                 continue
             failed_calls.extend(call for call in item_failed_calls if isinstance(call, Mapping))
-    if not failed_calls:
+
+    if not isinstance(attempts, list) or not attempts:
+        attempt_count = _activity_int(replan_spine.get("attempt_count")) or len(failed_calls)
+        attempts = []
+        for index in range(max(attempt_count, 0)):
+            attempt: dict[str, Any] = {"attempt": index + 1}
+            if index < len(failed_calls) and isinstance(failed_calls[index], Mapping):
+                attempt["failed_tool_calls"] = [failed_calls[index]]
+            attempts.append(attempt)
+
+    if not attempts and not failed_calls:
         return raw_steps
 
     total = _activity_replan_total_attempts(replan_spine)
@@ -891,7 +903,26 @@ def _activity_replan_story_from_diagnostics(
             else _activity_attempt_text(final_attempt, total, "Evidence could not be verified after retries")
         )
         story.append({**terminal, "detail": terminal_detail, "_replan_attempt": final_attempt})
-    return story
+    return _activity_normalize_replan_story_order(story)
+
+
+def _activity_normalize_replan_story_order(raw_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    terminal_index = -1
+    for idx in range(len(raw_steps) - 1, -1, -1):
+        if raw_steps[idx].get("state") in {"complete", "error"}:
+            terminal_index = idx
+            break
+    if terminal_index < 0:
+        for idx, step in enumerate(raw_steps):
+            step["_order"] = idx
+        return raw_steps
+
+    terminal_ts = int(raw_steps[terminal_index].get("timestamp") or 0)
+    for idx, step in enumerate(raw_steps):
+        step["_order"] = idx
+        if idx < terminal_index:
+            step["timestamp"] = terminal_ts - (terminal_index - idx)
+    return raw_steps
 
 
 def _activity_collapse_noisy_replan_attempts(
@@ -1086,7 +1117,7 @@ def _live_activity_steps_for_snapshot(
         if not isinstance(row, dict):
             continue
         label = _live_activity_text(row.get("label"))
-        if label not in _LIVE_ACTIVITY_ALLOWED_LABELS:
+        if label not in _LIVE_ACTIVITY_ALLOWED_LABELS and not is_safe_dynamic_activity_label(label):
             continue
         step_id = _live_activity_text(row.get("id")) or f"graph:live:{idx}"
         if not step_id.startswith("graph:"):
@@ -1201,6 +1232,24 @@ def _activity_inject_plan_execution_summary(
         "state": "error" if any_fail else "success",
     }
     return [*raw_steps[:last_terminal_index], row, *raw_steps[last_terminal_index:]]
+
+
+def _activity_finalize_row_states(raw_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    last_terminal_index = -1
+    for idx in range(len(raw_steps) - 1, -1, -1):
+        if raw_steps[idx].get("state") in {"complete", "error"}:
+            last_terminal_index = idx
+            break
+    if last_terminal_index >= 0:
+        for idx in range(last_terminal_index):
+            if raw_steps[idx].get("state") in _ACTIVITY_FINALIZE_STATES:
+                raw_steps[idx]["state"] = "success"
+        return raw_steps[: last_terminal_index + 1]
+    upper_bound = len(raw_steps) - 1
+    for idx in range(upper_bound):
+        if raw_steps[idx].get("state") in _ACTIVITY_FINALIZE_STATES:
+            raw_steps[idx]["state"] = "success"
+    return raw_steps
 
 
 def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[ActivityStepResponse]:
@@ -1355,6 +1404,14 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
             "state": "success",
         }
         raw_steps = [grouped, *recent]
+
+    raw_steps = enrich_activity_step_rows(
+        raw_steps,
+        snapshot.session.replan_context if isinstance(snapshot.session.replan_context, dict) else {},
+        fallback_timestamp=int(snapshot.session.updated_at.timestamp()),
+        session_status=session_status,
+    )
+    raw_steps = _activity_finalize_row_states(raw_steps)
 
     return [
         ActivityStepResponse(

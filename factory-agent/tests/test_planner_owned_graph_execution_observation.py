@@ -37,11 +37,33 @@ from factory_agent.planning.v2_planner_proposer import (
     PlannerDecisionProposalResult,
 )
 from factory_agent.schemas import ToolInfo
+from factory_agent.services.planner_activity_captions import (
+    build_activity_caption_context_from_graph_state,
+    enrich_activity_step_rows,
+)
 
 
 FACTORY_AGENT_ROOT = Path(__file__).resolve().parents[1]
 PLAN_CREATION_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "services" / "plan_creation_service.py"
 RUNTIME_ADAPTER_SOURCE = FACTORY_AGENT_ROOT / "factory_agent" / "services" / "planner_owned_graph_runtime.py"
+
+
+def _caption_rows_for_result(
+    result: Any,
+    base_rows: list[dict[str, Any]] | None = None,
+    *,
+    session_status: str = "COMPLETED",
+) -> list[dict[str, Any]]:
+    return enrich_activity_step_rows(
+        list(base_rows or []),
+        {
+            "intent_contract": {
+                "activity_caption_context": build_activity_caption_context_from_graph_state(result.state),
+            }
+        },
+        fallback_timestamp=1_770_000_000,
+        session_status=session_status,
+    )
 
 
 def _settings():
@@ -833,6 +855,20 @@ def _graph(
     )
 
 
+@pytest.mark.asyncio
+async def test_activity_captions_describe_simple_read_from_structured_state():
+    result = await _graph().run(
+        "Show machine M-LTH-77 status.",
+        session_context={"session_id": "activity-caption-simple-read"},
+    )
+
+    caption_rows = _caption_rows_for_result(result)
+
+    reading = next(row for row in caption_rows if row["label"] == "Reading machine records")
+    assert reading["detail"] == "Checking machine records"
+    assert reading["state"] == "success"
+
+
 def _independent_machine_and_job_state() -> PlannerOwnedAgentGraphState:
     return PlannerOwnedAgentGraphState(
         original_query="Read machine M-CNC-01 and job JOB-SEED-001.",
@@ -990,6 +1026,26 @@ async def test_approval_staging_waits_for_prior_read_evidence_observation():
     assert final_labels["req-002"] == "approval_required"
     assert result.state.pending_approval.status == "pending"
 
+    caption_rows = _caption_rows_for_result(
+        result,
+        [
+            {
+                "id": "act:approval",
+                "timestamp": 1_770_000_010,
+                "group": "approval",
+                "label": "Waiting for your approval",
+                "detail": "Checking approval requirements",
+                "state": "waiting",
+            }
+        ],
+        session_status="WAITING_APPROVAL",
+    )
+    labels = [row["label"] for row in caption_rows]
+    assert "Prerequisite read complete" in labels
+    assert labels.index("Prerequisite read complete") < labels.index("Waiting for your approval")
+    approval_row = next(row for row in caption_rows if row["label"] == "Waiting for your approval")
+    assert approval_row["detail"] == "Read evidence is ready; checking approval requirements"
+
 
 @pytest.mark.asyncio
 async def test_dependency_plan_exposes_and_executes_independent_read_batch():
@@ -1043,6 +1099,9 @@ async def test_dependency_plan_exposes_and_executes_independent_read_batch():
         "get__machines_{id}",
         "get__jobs_{id}",
     ]
+
+    caption_rows = _caption_rows_for_result(result)
+    assert any(row["label"] == "Reading 2 records" for row in caption_rows)
     assert set(evidence_by_requirement) == {"req-001", "req-002"}
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
@@ -1453,6 +1512,10 @@ async def test_if_present_product_explanation_activates_child_after_job_evidence
     assert selector.calls[1]["context"]["v2_tool_selector_adapter_request"]["requirement_id"] == child.id
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
+    caption_rows = _caption_rows_for_result(result)
+    activated = next(row for row in caption_rows if row["label"] == "Activated dependent read")
+    assert activated["detail"] == "Parent evidence supplied product id"
+
 
 @pytest.mark.asyncio
 async def test_if_present_product_explanation_skips_child_when_job_has_no_product_id():
@@ -1487,6 +1550,10 @@ async def test_if_present_product_explanation_skips_child_when_job_has_no_produc
     assert [window.requirement_id for window in result.state.candidate_tool_windows] == ["req-001"]
     assert len(selector.calls) == 1
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+    caption_rows = _caption_rows_for_result(result)
+    skipped = next(row for row in caption_rows if row["label"] == "Skipped dependent read")
+    assert skipped["detail"] == "No product id found"
 
 
 @pytest.mark.asyncio

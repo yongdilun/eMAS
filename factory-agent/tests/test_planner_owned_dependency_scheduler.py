@@ -14,6 +14,10 @@ from factory_agent.planning.v2_contracts import (
     RequirementLedgerEntry,
 )
 from factory_agent.planning.v2_dependency_scheduler import build_dependency_plan
+from factory_agent.services.planner_activity_captions import (
+    build_activity_caption_context_from_graph_state,
+    enrich_activity_step_rows,
+)
 
 
 def _requirement(
@@ -469,6 +473,39 @@ def test_parallel_read_batch_caps_ready_group_at_three_calls():
     assert group.mode == "parallel_read_batch"
     assert group.requirement_ids == ["req-1", "req-2", "req-3"]
     assert group.max_batch_size == 3
+
+
+def test_parallel_read_batch_caption_uses_ready_group_count_and_entity():
+    state = _state(
+        [
+            _requirement(f"req-{index}", entity="job", constraints={"job_id": f"JOB-{index:03d}"})
+            for index in range(1, 5)
+        ],
+        cards={f"req-{index}": [_card("get__jobs_{id}")] for index in range(1, 5)},
+    )
+    plan = build_dependency_plan(state)
+    state.execution_trace.diagnostics["dependency_plan"] = plan.model_dump(mode="json")
+    state.execution_trace.diagnostics["dependency_plan_history"] = [
+        {
+            "ready_groups": [group.model_dump(mode="json") for group in plan.ready_groups],
+            "ready_requirement_ids": [rid for group in plan.ready_groups for rid in group.requirement_ids],
+        }
+    ]
+
+    rows = enrich_activity_step_rows(
+        [],
+        {
+            "intent_contract": {
+                "activity_caption_context": build_activity_caption_context_from_graph_state(state),
+            }
+        },
+        fallback_timestamp=1_770_000_000,
+        session_status="EXECUTING",
+    )
+
+    batch = next(row for row in rows if row["label"] == "Reading 3 job records")
+    assert batch["detail"] == "Parallel read batch scheduled"
+    assert batch["state"] == "running"
 
 
 def test_dependency_scheduler_fails_closed_when_read_label_cannot_be_proven_variant():

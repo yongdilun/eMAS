@@ -138,6 +138,7 @@ from .v2_graph_tool_choice import (
     _tool_calls_for_card,
     _tool_choice_requires_graph_approval,
 )
+from ..services.planner_activity_captions import build_activity_caption_context_from_graph_state
 
 
 PLANNER_OWNED_AGENT_GRAPH_NODE_ORDER: tuple[str, ...] = (
@@ -301,7 +302,12 @@ class LocalPlannerOwnedGraphTracer:
             event["replan_spine"] = dict(replan_spine)
         self.events.append(event)
         if self.on_node_recorded is not None:
-            self.on_node_recorded(dict(event))
+            self.on_node_recorded(
+                {
+                    **event,
+                    "activity_caption_context": build_activity_caption_context_from_graph_state(state),
+                }
+            )
 
 
 class PlannerOwnedAgentGraphAdapters:

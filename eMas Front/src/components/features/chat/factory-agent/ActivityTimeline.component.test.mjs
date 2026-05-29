@@ -403,3 +403,42 @@ test('ActivityTimeline does not entry-animate replacement rows', async () => {
 
   await view.unmount()
 })
+
+test('ActivityTimeline gives long expanded captions wrapping classes', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const longLabel = 'Reading 3 job records with prerequisite read evidence ready before approval scheduling continues'
+  const longDetail = 'Attempt 2 of 3 - Previous read timed out while dependent child requirement waited for parent evidence'
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'step-1',
+        timestamp: 1,
+        group: 'research',
+        label: 'Reading job records',
+        detail: 'Checking job records',
+        state: 'success',
+      },
+      {
+        id: 'step-2',
+        timestamp: 2,
+        group: 'research',
+        label: longLabel,
+        detail: longDetail,
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const currentRow = view.container.querySelector('[data-step-id="step-2"]')
+  assert.ok(currentRow)
+  const labelNode = Array.from(currentRow.querySelectorAll('span'))
+    .find((node) => node.textContent === longLabel)
+  const detailNode = Array.from(currentRow.querySelectorAll('span'))
+    .find((node) => node.textContent === longDetail)
+
+  assert.match(labelNode?.className || '', /break-words/)
+  assert.match(detailNode?.className || '', /break-words/)
+
+  await view.unmount()
+})

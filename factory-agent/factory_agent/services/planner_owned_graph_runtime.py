@@ -23,6 +23,11 @@ from factory_agent.persistence.models import Session as SessionRow
 from factory_agent.planning.v2_contracts import EvidenceLedgerEntry, requirement_child_lineage
 from factory_agent.planning.v2_rag_tool import ensure_v2_rag_tool
 from factory_agent.schemas import PlanDraft, PlanResponse, PlanStepDraft, ToolInfo
+from factory_agent.services.planner_activity_captions import (
+    ActivityCaption,
+    build_activity_caption_context_from_graph_state,
+    caption_for_graph_event,
+)
 from factory_agent.services.session_revision import bump_session_revision
 
 PersistPlan = Callable[..., Awaitable[PlanResponse]]
@@ -115,13 +120,17 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
     if spec is None:
         return None
     group, label, detail = spec
+    caption = caption_for_graph_event(
+        event,
+        ActivityCaption(group=group, label=label, detail=detail, state="running"),
+    )
     return {
         "id": f"graph:{node}",
         "timestamp": int(datetime.utcnow().timestamp()),
-        "group": group,
-        "label": label,
-        "detail": detail,
-        "state": "running",
+        "group": caption.group,
+        "label": caption.label,
+        "detail": caption.detail,
+        "state": caption.state,
     }
 
 
@@ -583,6 +592,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         dependency_plan = state.execution_trace.diagnostics.get("dependency_plan")
         dependency_plan_history = state.execution_trace.diagnostics.get("dependency_plan_history")
         child_lineage = requirement_child_lineage(state.requirement_ledger)
+        activity_caption_context = build_activity_caption_context_from_graph_state(state)
         conditional_branches = [
             branch.model_dump(mode="json")
             for branch in state.requirement_ledger.conditional_branches
@@ -609,6 +619,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "conditional_branches": conditional_branches,
             "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
+            "activity_caption_context": activity_caption_context,
         }
         context.pop("no_op_mutations", None)
         no_op_mutations = self._no_op_mutations(state)
@@ -631,6 +642,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "conditional_branches": conditional_branches,
             "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
+            "activity_caption_context": activity_caption_context,
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
         }
