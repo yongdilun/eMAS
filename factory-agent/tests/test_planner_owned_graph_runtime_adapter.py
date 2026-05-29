@@ -275,6 +275,51 @@ async def test_phase10_graph_runtime_records_live_activity_for_activity_sse(sess
 
 
 @pytest.mark.asyncio
+async def test_graph_runtime_refreshes_session_context_after_live_activity_flush(sessionmaker_override, db_session):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    sess = Session(
+        session_id="phase10-live-activity-refresh",
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="Read jobs and products",
+        session_started_at=created_at,
+        created_at=created_at,
+        updated_at=created_at,
+        replan_context={},
+        event_seq=3,
+    )
+    db_session.add(sess)
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-refresh",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "semantic_intake_node",
+            "ledger_revision": 1,
+        }
+    )
+    await recorder.flush()
+
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+
+    assert sess.replan_context == {}
+    await adapter._refresh_session_live_activity_context(db=db_session, sess=sess)
+
+    assert sess.replan_context["live_activity_steps"][0]["label"] == "Understood request"
+
+
+@pytest.mark.asyncio
 async def test_live_activity_preserves_graph_progress_order_when_nodes_share_timestamp(
     sessionmaker_override,
     db_session,
@@ -735,6 +780,78 @@ def test_phase10_graph_runtime_keeps_no_record_preview_out_of_executable_tool_ou
             "reason": "no_matching_records",
         }
     ]
+
+
+def test_graph_runtime_preserves_live_activity_history_before_clearing_transient_rows():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Read jobs and their products.",
+        tools_by_name={"get__machines_{id}": _tool()},
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["semantic_intake_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "phase10-session"}},
+    )
+    base_context = {
+        "live_activity_steps": [
+            {
+                "id": "graph:000001:semantic_intake_node",
+                "timestamp": 1770000001,
+                "order": 1,
+                "group": "planning",
+                "label": "Understood request",
+                "detail": "Reviewing your request and recent context",
+                "state": "success",
+                "unsafe_extra": {"tool_name": "get__jobs_{id}"},
+            },
+            {
+                "id": "graph:000002:response_document_node",
+                "timestamp": 1770000002,
+                "order": 2,
+                "group": "response",
+                "label": "Rendering response",
+                "detail": "Rendering the response",
+                "state": "running",
+            },
+        ],
+        "live_activity_revision": 12,
+    }
+
+    context = adapter._graph_context(result=result, intent="Read jobs and their products.", base_context=base_context)
+
+    assert "live_activity_steps" not in context
+    assert "live_activity_revision" not in context
+    assert context["activity_graph_steps"] == [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": 1770000001,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:response_document_node",
+            "timestamp": 1770000002,
+            "order": 2,
+            "group": "response",
+            "label": "Rendering response",
+            "detail": "Rendering the response",
+            "state": "running",
+        },
+    ]
+    assert context["intent_contract"]["activity_graph_steps"] == context["activity_graph_steps"]
+    assert context["planner_owned_agent_graph"]["activity_graph_steps"] == context["activity_graph_steps"]
+    assert context["intent_contract"]["activity_caption_context"]["activity_graph_steps"] == context["activity_graph_steps"]
 
 
 def test_graph_runtime_keeps_failed_tool_evidence_out_of_plan_steps_but_in_tool_outputs():

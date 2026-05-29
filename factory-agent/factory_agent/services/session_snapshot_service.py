@@ -476,6 +476,13 @@ def _activity_int(value: Any) -> int | None:
     return parsed
 
 
+def _activity_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _activity_replan_total_attempts(replan_spine: dict[str, Any]) -> int:
     max_replans = _activity_int(replan_spine.get("max_attempts")) or 0
     attempt_count = _activity_int(replan_spine.get("attempt_count")) or 0
@@ -832,6 +839,7 @@ def _activity_replan_story_from_diagnostics(
         story.append(
             {
                 **raw_steps[first_check_index],
+                "label": "Checking evidence" if terminal_state else raw_steps[first_check_index].get("label"),
                 "detail": _activity_attempt_text(1, total, reason),
                 "state": "success",
                 "_replan_attempt": 1,
@@ -1131,20 +1139,51 @@ def _live_activity_text(value: Any) -> str:
     return text
 
 
+def _activity_graph_steps_from_context(context: Mapping[str, Any]) -> list[Any]:
+    candidates: list[Any] = [context.get("activity_graph_steps")]
+    for key in ("intent_contract", "planner_owned_agent_graph", "activity_caption_context"):
+        nested = context.get(key)
+        if not isinstance(nested, Mapping):
+            continue
+        candidates.append(nested.get("activity_graph_steps"))
+        caption_context = nested.get("activity_caption_context")
+        if isinstance(caption_context, Mapping):
+            candidates.append(caption_context.get("activity_graph_steps"))
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return candidate
+    return []
+
+
 def _live_activity_steps_for_snapshot(
     snapshot: SessionSnapshotResponse,
     *,
     session_status: str,
 ) -> list[dict[str, Any]]:
     """Expose server-authored in-flight graph activity without trusting arbitrary context text."""
-    if session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES:
-        return []
-    context = snapshot.session.replan_context if isinstance(snapshot.session.replan_context, dict) else {}
-    rows = context.get("live_activity_steps")
+    session_replan_context = (
+        snapshot.session.get("replan_context")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "replan_context", None)
+    )
+    context = session_replan_context if isinstance(session_replan_context, dict) else {}
+    if session_status in _ACTIVITY_ACTIVE_SESSION_STATUSES:
+        rows = context.get("live_activity_steps")
+        if not isinstance(rows, list):
+            rows = _activity_graph_steps_from_context(context)
+    else:
+        rows = _activity_graph_steps_from_context(context)
     if not isinstance(rows, list):
         return []
+    if not rows:
+        return []
 
-    fallback_ts = int(snapshot.session.updated_at.timestamp())
+    updated_at = (
+        snapshot.session.get("updated_at")
+        if isinstance(snapshot.session, dict)
+        else getattr(snapshot.session, "updated_at", None)
+    )
+    fallback_ts = int(updated_at.timestamp()) if hasattr(updated_at, "timestamp") else int(datetime.utcnow().timestamp())
     out: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for idx, row in enumerate(rows):
@@ -1358,6 +1397,7 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
             prior_replans += 1
 
     live_steps = _live_activity_steps_for_snapshot(snapshot, session_status=session_status)
+    active_live_sort_key = None
     if live_steps:
         live_label_groups = {
             (str(step.get("group") or ""), str(step.get("label") or ""))
@@ -1373,14 +1413,18 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         raw_steps.extend(live_steps)
         first_live_timestamp = min(int(step.get("timestamp") or 0) for step in live_steps)
 
-        def _active_live_sort_key(step: dict[str, Any]) -> tuple[int, int, int, str]:
+        def _active_live_sort_key(step: dict[str, Any]) -> tuple[int, float, int, str]:
             timestamp = int(step.get("timestamp") or 0)
+            sort_order = _activity_float(step.get("_sort_after_order"))
+            if sort_order is not None:
+                return (1, sort_order, timestamp, str(step.get("id") or ""))
             order = _activity_int(step.get("order") or step.get("_order"))
             if order is not None:
                 return (1, order, timestamp, str(step.get("id") or ""))
             bucket = 0 if timestamp <= first_live_timestamp else 2
             return (bucket, timestamp, 0, str(step.get("id") or ""))
 
+        active_live_sort_key = _active_live_sort_key
         raw_steps.sort(
             key=_active_live_sort_key
         )
@@ -1428,7 +1472,11 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         raw_steps = _activity_replan_story_from_diagnostics(raw_steps, snapshot, replan_spine)
         raw_steps = _activity_collapse_noisy_replan_attempts(raw_steps, replan_spine)
 
-    if session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES and len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS:
+    if (
+        session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES
+        and not live_steps
+        and len(raw_steps) > _ACTIVITY_MAX_VISIBLE_STEPS
+    ):
         older = raw_steps[: -(_ACTIVITY_MAX_VISIBLE_STEPS - 1)]
         recent = raw_steps[-(_ACTIVITY_MAX_VISIBLE_STEPS - 1) :]
         grouped = {
@@ -1462,6 +1510,8 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         fallback_timestamp=fallback_timestamp,
         session_status=session_status,
     )
+    if active_live_sort_key is not None and not use_replan_story:
+        raw_steps.sort(key=active_live_sort_key)
     raw_steps = _activity_finalize_row_states(raw_steps)
     for idx, step in enumerate(raw_steps, start=1):
         step["order"] = idx

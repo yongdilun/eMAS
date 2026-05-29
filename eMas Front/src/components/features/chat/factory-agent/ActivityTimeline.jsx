@@ -57,6 +57,10 @@ function isCurrentStep(step, rows) {
 }
 
 function visualStateForStep(step, rows, isTerminal) {
+    if (!isTerminal && !isCurrentStep(step, rows)) {
+        const state = step?.state
+        if (state === 'running' || state === 'retry' || state === 'waiting') return 'success'
+    }
     if (!isTerminal && isCurrentStep(step, rows) && step?.state === 'success') {
         return 'running'
     }

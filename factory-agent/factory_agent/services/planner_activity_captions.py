@@ -284,6 +284,7 @@ def _add_simple_read_caption(
         return
     row = _read_caption_row(context, timestamp=_timestamp_after_current_activity(rows, fallback_timestamp), terminal=terminal)
     if row is not None:
+        row.update(_sort_after_latest_safe_action(rows))
         _append_unique(rows, row)
 
 
@@ -300,6 +301,7 @@ def _add_parallel_read_batch_caption(
         terminal=terminal,
     )
     if row is not None:
+        row.update(_sort_after_latest_safe_action(rows))
         _append_unique(rows, row)
 
 
@@ -368,7 +370,8 @@ def _add_child_lineage_captions(
             rows,
             {
                 "id": f"act:caption:child_lineage:{str(lineage.get('parent_requirement_id') or idx)}",
-                "timestamp": _timestamp_before_first_research(rows, fallback_timestamp),
+                "timestamp": _timestamp_after_current_activity(rows, fallback_timestamp),
+                **_sort_after_parent_evidence(rows),
                 "group": "planning",
                 "label": "Activated dependent read",
                 "detail": f"Parent evidence supplied {_entity_id_label(entity)}",
@@ -397,7 +400,8 @@ def _add_conditional_branch_captions(
                 rows,
                 {
                     "id": f"act:caption:conditional_activated:{branch_id}",
-                    "timestamp": _timestamp_before_first_research(rows, fallback_timestamp),
+                    "timestamp": _timestamp_after_current_activity(rows, fallback_timestamp),
+                    **_sort_after_parent_evidence(rows),
                     "group": "planning",
                     "label": "Activated dependent read",
                     "detail": detail,
@@ -409,7 +413,8 @@ def _add_conditional_branch_captions(
                 rows,
                 {
                     "id": f"act:caption:conditional_skipped:{branch_id}",
-                    "timestamp": _timestamp_before_first_research(rows, fallback_timestamp),
+                    "timestamp": _timestamp_after_current_activity(rows, fallback_timestamp),
+                    **_sort_after_parent_evidence(rows),
                     "group": "planning",
                     "label": "Skipped dependent read",
                     "detail": _conditional_skip_detail(branch),
@@ -433,6 +438,7 @@ def _add_approval_prerequisite_caption(
         {
             "id": "act:caption:approval_prerequisite_read",
             "timestamp": approval_ts - 1,
+            **_sort_before_first_approval(rows),
             "group": "research",
             "label": "Prerequisite read complete",
             "detail": "Approval waited for read evidence",
@@ -788,6 +794,65 @@ def _timestamp_after_current_activity(rows: list[dict[str, Any]], fallback_times
     if terminal_timestamps:
         return min(terminal_timestamps) - 1
     return max(timestamps) + 1
+
+
+def _sort_after_parent_evidence(rows: list[dict[str, Any]]) -> dict[str, float]:
+    evidence_order = _first_order_for_labels(rows, {"Verifying result"})
+    if evidence_order is None:
+        evidence_order = _first_order_for_labels(rows, {"Checking result", "Checking evidence", "Checking new evidence"})
+    if evidence_order is None:
+        return {}
+    return {"_sort_after_order": evidence_order + 0.5}
+
+
+def _sort_before_first_approval(rows: list[dict[str, Any]]) -> dict[str, float]:
+    approval_order = _first_order_for_labels(
+        rows,
+        {"Checking approvals", "Waiting for approval", "Waiting for your approval"},
+    )
+    if approval_order is None:
+        return _sort_after_parent_evidence(rows)
+    return {"_sort_after_order": approval_order - 0.5}
+
+
+def _sort_after_latest_safe_action(rows: list[dict[str, Any]]) -> dict[str, float]:
+    order = _last_order_for_labels(rows, {"Selecting safe action"})
+    if order is None:
+        return {}
+    return {"_sort_after_order": order + 0.5}
+
+
+def _first_order_for_labels(rows: list[dict[str, Any]], labels: set[str]) -> float | None:
+    candidates: list[float] = []
+    for row in rows:
+        if str(row.get("label") or "") not in labels:
+            continue
+        order = _number(row.get("order") or row.get("_order"))
+        if order is not None:
+            candidates.append(order)
+    if not candidates:
+        return None
+    return min(candidates)
+
+
+def _last_order_for_labels(rows: list[dict[str, Any]], labels: set[str]) -> float | None:
+    candidates: list[float] = []
+    for row in rows:
+        if str(row.get("label") or "") not in labels:
+            continue
+        order = _number(row.get("order") or row.get("_order"))
+        if order is not None:
+            candidates.append(order)
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _first_approval_timestamp(rows: list[dict[str, Any]], fallback_timestamp: int) -> int:

@@ -442,3 +442,36 @@ test('ActivityTimeline gives long expanded captions wrapping classes', async () 
 
   await view.unmount()
 })
+
+test('ActivityTimeline renders stale in-flight rows as settled when a newer row is current', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(React.createElement(ActivityTimeline, {
+    steps: [
+      {
+        id: 'step-1',
+        timestamp: 1,
+        group: 'planning',
+        label: 'Selecting safe action',
+        detail: 'Selecting a safe action',
+        state: 'running',
+      },
+      {
+        id: 'step-2',
+        timestamp: 2,
+        group: 'response',
+        label: 'Rendering response',
+        detail: 'Rendering the response',
+        state: 'running',
+      },
+    ],
+  }))
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const stale = view.container.querySelector('[data-step-id="step-1"]')
+  const current = view.container.querySelector('[data-step-id="step-2"]')
+  assert.doesNotMatch(stale?.innerHTML || '', /animate-spin/)
+  assert.match(current?.innerHTML || '', /animate-spin/)
+  assert.equal((view.text().match(/Current/g) || []).length, 1)
+
+  await view.unmount()
+})

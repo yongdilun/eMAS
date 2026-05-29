@@ -2180,9 +2180,21 @@ export default function ResponseDocumentRenderer({
   const documentActivitySteps = activityStepsFromResponseDocument(document)
   const activeSessionStatus = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
   const liveActivityHasRetryStory = hasRetryStoryActivity(liveActivitySteps)
+  const liveActivityHasTerminal = Array.isArray(liveActivitySteps)
+    && liveActivitySteps.some((step) => step?.state === 'complete' || step?.state === 'error')
+  const liveActivityIsRicherTerminalHistory = Boolean(
+    isLatestTurn &&
+      liveActivityHasTerminal &&
+      Array.isArray(liveActivitySteps) &&
+      liveActivitySteps.length > documentActivitySteps.length,
+  )
   const shouldUseLiveActivitySteps = Boolean(
     isLatestTurn &&
-      (activeSessionStatus.has(String(sessionStatus || '').toUpperCase()) || liveActivityHasRetryStory) &&
+      (
+        activeSessionStatus.has(String(sessionStatus || '').toUpperCase()) ||
+        liveActivityHasRetryStory ||
+        liveActivityIsRicherTerminalHistory
+      ) &&
       Array.isArray(liveActivitySteps) &&
       liveActivitySteps.length > 0,
   )

@@ -2681,6 +2681,98 @@ test('FactoryAgentChatPanel hides premature live Run complete until terminal sna
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel keeps richer completed live activity instead of swapping to short document steps', async () => {
+  const document = baseResponseDocument({
+    state: 'completed',
+    status: 'completed',
+    message: 'Final answer is ready.',
+    run_steps: [
+      {
+        step_id: 'analysis-short',
+        kind: 'analysis',
+        state: 'completed',
+        title: 'Understood request',
+        summary: 'Request parsed.',
+      },
+      {
+        step_id: 'complete-short',
+        kind: 'completed',
+        state: 'completed',
+        title: 'Run complete',
+        summary: 'Final answer is ready.',
+      },
+    ],
+    blocks: [
+      {
+        id: 'activity:rd-completed-richer-live',
+        type: 'run_activity',
+        step_ids: ['analysis-short', 'complete-short'],
+      },
+      {
+        id: 'message:rd-completed-richer-live',
+        type: 'short_message',
+        message: 'Final answer is ready.',
+        status: 'completed',
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-completed-richer-live', name: 'RD completed richer live', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-completed-richer-live', name: 'RD completed richer live', status: 'COMPLETED' }],
+    activeSessionName: 'RD completed richer live',
+    turns: [responseDocumentTurn(document, { summary: 'Final answer is ready.' })],
+    activitySteps: [
+      {
+        id: 'graph:000001:semantic_intake_node',
+        timestamp: 1,
+        order: 1,
+        group: 'planning',
+        label: 'Understood request',
+        detail: 'Reviewing your request and recent context',
+        state: 'success',
+      },
+      {
+        id: 'graph:000002:tool_execution_node',
+        timestamp: 2,
+        order: 2,
+        group: 'research',
+        label: 'Reading 2 product records',
+        detail: 'Parallel read batch scheduled',
+        state: 'success',
+      },
+      {
+        id: 'graph:000003:evidence_observation_node',
+        timestamp: 3,
+        order: 3,
+        group: 'response',
+        label: 'Checking result',
+        detail: 'Checking tool evidence',
+        state: 'success',
+      },
+      {
+        id: 'graph:000004:complete',
+        timestamp: 4,
+        order: 4,
+        group: 'response',
+        label: 'Run complete',
+        detail: 'All steps finished. See the thread below.',
+        state: 'complete',
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Run complete/))
+  const activityButton = Array.from(view.container.querySelectorAll('button'))
+    .find((button) => /Run complete/.test(button.textContent || ''))
+  await click(activityButton)
+  assert.match(view.text(), /Reading 2 product records/)
+  assert.match(view.text(), /Checking result/)
+
+  await view.unmount()
+})
+
 test('FactoryAgent client progress uses one neutral fallback row while waiting for server activity', async () => {
   const { useFactoryAgentClientProgress } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/useFactoryAgentClientProgress.js')
 

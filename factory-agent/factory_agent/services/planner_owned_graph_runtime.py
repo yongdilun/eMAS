@@ -35,7 +35,31 @@ SessionLookup = Callable[..., Awaitable[Any]]
 UuidFactory = Callable[[], str]
 
 _ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
-_LIVE_GRAPH_MAX_STEPS = 8
+_LIVE_GRAPH_MAX_STEPS = 64
+_ACTIVITY_GRAPH_HISTORY_FIELDS = {
+    "id",
+    "timestamp",
+    "order",
+    "_order",
+    "group",
+    "label",
+    "detail",
+    "state",
+}
+
+
+def _activity_graph_history_from_context(context: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    rows = (context or {}).get("live_activity_steps") if isinstance(context, Mapping) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        kept = {key: row[key] for key in _ACTIVITY_GRAPH_HISTORY_FIELDS if key in row}
+        if kept.get("id") and kept.get("label"):
+            out.append(kept)
+    return out[-_LIVE_GRAPH_MAX_STEPS:]
 
 
 def _intent_contract_replan_spine(state: Any) -> dict[str, Any]:
@@ -313,6 +337,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         finally:
             if live_activity is not None:
                 await live_activity.flush()
+                await self._refresh_session_live_activity_context(db=db, sess=sess)
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return await self.persist_result(
             db=db,
@@ -361,8 +386,37 @@ class PlannerOwnedGraphRuntimeAdapter:
         finally:
             if live_activity is not None:
                 await live_activity.flush()
+                await self._refresh_session_live_activity_context(db=db, sess=sess)
         sess.llm_call_count = (sess.llm_call_count or 0) + self.llm_call_count(result)
         return result
+
+    async def _refresh_session_live_activity_context(self, *, db: AsyncSession, sess: Any) -> None:
+        session_id = str(getattr(sess, "session_id", "") or "").strip()
+        if not session_id or not hasattr(db, "refresh"):
+            return
+        try:
+            await db.refresh(sess, attribute_names=["replan_context", "event_seq", "updated_at"])
+            return
+        except Exception:
+            pass
+        try:
+            row = (
+                await db.execute(
+                    select(SessionRow)
+                    .where(SessionRow.session_id == session_id)
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+        except Exception:
+            return
+        if row is None:
+            return
+        if isinstance(row.replan_context, dict):
+            sess.replan_context = row.replan_context
+        if getattr(row, "event_seq", None) is not None:
+            sess.event_seq = row.event_seq
+        if getattr(row, "updated_at", None) is not None:
+            sess.updated_at = row.updated_at
 
     async def persist_result(
         self,
@@ -634,6 +688,9 @@ class PlannerOwnedGraphRuntimeAdapter:
         dependency_plan_history = state.execution_trace.diagnostics.get("dependency_plan_history")
         child_lineage = requirement_child_lineage(state.requirement_ledger)
         activity_caption_context = build_activity_caption_context_from_graph_state(state)
+        activity_graph_steps = _activity_graph_history_from_context(base_context)
+        if activity_graph_steps:
+            activity_caption_context["activity_graph_steps"] = activity_graph_steps
         conditional_branches = [
             branch.model_dump(mode="json")
             for branch in state.requirement_ledger.conditional_branches
@@ -647,6 +704,8 @@ class PlannerOwnedGraphRuntimeAdapter:
         context.pop("live_activity_revision", None)
         context.pop("live_replan_spine", None)
         context.pop("live_replan_spine_revision", None)
+        if activity_graph_steps:
+            context["activity_graph_steps"] = activity_graph_steps
         context["intent_contract"] = {
             "intent": intent,
             "engine_version": "v2",
@@ -662,6 +721,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "replan_spine": replan_spine,
             "activity_caption_context": activity_caption_context,
         }
+        if activity_graph_steps:
+            context["intent_contract"]["activity_graph_steps"] = activity_graph_steps
         context.pop("no_op_mutations", None)
         no_op_mutations = self._no_op_mutations(state)
         if no_op_mutations:
@@ -687,6 +748,8 @@ class PlannerOwnedGraphRuntimeAdapter:
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
         }
+        if activity_graph_steps:
+            context["planner_owned_agent_graph"]["activity_graph_steps"] = activity_graph_steps
         context["skip_completed_narrative_adapter"] = True
         context["requirement_ledger_revision"] = state.requirement_ledger.revision
         context.pop("langgraph_approval_resume", None)

@@ -796,6 +796,154 @@ def test_active_replan_spine_activity_continues_from_existing_check_result():
     assert steps[-1].state == "running"
 
 
+def test_completed_replan_spine_normalizes_live_check_result_to_evidence_story():
+    created_at = datetime(2026, 5, 13, 9, 53, 0)
+    attempts = [
+        {
+            "attempt": 1,
+            "missing_evidence_reasons": [
+                {
+                    "reason": "tool_error",
+                    "requirement_id": "req-job-priority",
+                    "evidence_refs": ["ev-failed-1"],
+                    "retriable": True,
+                }
+            ],
+            "failed_tool_calls": [
+                {
+                    "tool_name": "get__jobs",
+                    "args": {"priority": "low"},
+                    "requirement_id": "req-job-priority",
+                    "evidence_ref": "ev-failed-1",
+                    "reason": "tool_error",
+                    "attempt": 1,
+                }
+            ],
+        }
+    ]
+    replan_spine = {
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "attempts": attempts,
+        "missing_evidence_reasons": attempts[-1]["missing_evidence_reasons"],
+        "failed_tool_calls": attempts[-1]["failed_tool_calls"],
+    }
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:requirement_ledger_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Structuring request",
+            "detail": "Structuring the request",
+            "state": "success",
+        },
+        {
+            "id": "graph:planner_decision_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "planning",
+            "label": "Choosing next action",
+            "detail": "Choosing the next backend action",
+            "state": "success",
+        },
+        {
+            "id": "graph:tool_retrieval_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "planning",
+            "label": "Finding information path",
+            "detail": "Finding the right information path",
+            "state": "success",
+        },
+        {
+            "id": "graph:planner_choose_tool_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 5,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 6,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-replan-normalized",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 1,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {
+                "activity_graph_steps": graph_rows,
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "replan_spine": replan_spine,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:completed-replan-normalized",
+                event_type="plan_created",
+                content="Find low priority jobs",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:completed-replan-normalized",
+                event_type="session_completed",
+                content="Found low priority jobs.",
+                created_at=created_at + timedelta(seconds=8),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Choosing next action",
+        "Finding information path",
+        "Selecting safe action",
+        "Running selected tool",
+        "Checking evidence",
+        "Replanning after failed read",
+        "Retrying job read",
+        "Checking new evidence",
+        "Run complete",
+    ]
+    assert "Checking result" not in labels
+    assert steps[-1].state == "complete"
+
+
 def test_active_replan_spine_activity_is_uncollapsed_canonical_timeline():
     created_at = datetime(2026, 5, 13, 9, 54, 0)
     attempts = []
@@ -1331,6 +1479,337 @@ def test_live_graph_activity_keeps_repeated_occurrences_in_backend_order_when_ti
     ]
     assert [step.order for step in steps] == [1, 2, 3]
     assert [step.state for step in steps] == ["success", "success", "running"]
+
+
+def test_completed_graph_activity_keeps_preserved_live_history_as_canonical_timeline():
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": int((created_at + timedelta(seconds=1)).timestamp()),
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:requirement_node",
+            "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+            "order": 2,
+            "group": "planning",
+            "label": "Structuring request",
+            "detail": "Structuring the request",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:tool_execution_node",
+            "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+            "order": 3,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:evidence_observation_node",
+            "timestamp": int((created_at + timedelta(seconds=4)).timestamp()),
+            "order": 4,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+        {
+            "id": "graph:000005:satisfaction_node",
+            "timestamp": int((created_at + timedelta(seconds=5)).timestamp()),
+            "order": 5,
+            "group": "response",
+            "label": "Verifying result",
+            "detail": "Verifying the result",
+            "state": "success",
+        },
+        {
+            "id": "graph:000006:planner_choose_tool_node",
+            "timestamp": int((created_at + timedelta(seconds=6)).timestamp()),
+            "order": 6,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:000007:tool_execution_node",
+            "timestamp": int((created_at + timedelta(seconds=7)).timestamp()),
+            "order": 7,
+            "group": "research",
+            "label": "Reading 2 product records",
+            "detail": "Parallel read batch scheduled",
+            "state": "success",
+        },
+        {
+            "id": "graph:000008:response_document_node",
+            "timestamp": int((created_at + timedelta(seconds=8)).timestamp()),
+            "order": 8,
+            "group": "response",
+            "label": "Rendering response",
+            "detail": "Rendering the response",
+            "state": "running",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-graph-history",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:completed-graph-history",
+                event_type="plan_created",
+                content="Read jobs and dependent products.",
+                created_at=created_at + timedelta(seconds=1),
+                status="PLANNING",
+            ),
+            TimelineEventResponse(
+                event_id="completed:completed-graph-history",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=4),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+
+    assert [step.label for step in steps] == [
+        "Understood request",
+        "Structuring request",
+        "Running selected tool",
+        "Checking result",
+        "Verifying result",
+        "Selecting safe action",
+        "Reading 2 product records",
+        "Rendering response",
+        "Run complete",
+    ]
+    assert [step.state for step in steps[:-1]] == ["success"] * (len(steps) - 1)
+    assert steps[-1].state == "complete"
+    assert [step.order for step in steps] == list(range(1, len(steps) + 1))
+    assert "Earlier activity" not in [step.label for step in steps]
+    serialized = json.dumps([step.model_dump(exclude_none=True) for step in steps])
+    assert "get__" not in serialized
+    assert "tool_name" not in serialized
+    assert "unsafe_extra" not in serialized
+
+
+def test_completed_graph_activity_places_dependent_caption_after_parent_evidence():
+    created_at = datetime(2026, 5, 13, 9, 5, 0)
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:satisfaction_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "response",
+            "label": "Verifying result",
+            "detail": "Verifying the result",
+            "state": "success",
+        },
+        {
+            "id": "graph:000005:planner_decision_node",
+            "timestamp": timestamp,
+            "order": 5,
+            "group": "planning",
+            "label": "Choosing next action",
+            "detail": "Choosing the next backend action",
+            "state": "success",
+        },
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-dependent-caption-order",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "activity_caption_context": {
+                        "activity_graph_steps": graph_rows,
+                        "conditional_branches": [
+                            {
+                                "branch_id": "branch-product",
+                                "status": "activated",
+                                "activated_child_requirement_ids": ["req-product"],
+                                "condition": {"field_any": ["product_id"]},
+                            }
+                        ],
+                    },
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="completed:dependent-caption-order",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=9),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels.index("Verifying result") < labels.index("Activated dependent read")
+    assert labels.index("Activated dependent read") < labels.index("Choosing next action")
+
+
+def test_completed_graph_activity_places_read_caption_after_safe_action():
+    created_at = datetime(2026, 5, 13, 9, 6, 0)
+    timestamp = int((created_at + timedelta(seconds=3)).timestamp())
+    graph_rows = [
+        {
+            "id": "graph:000001:semantic_intake_node",
+            "timestamp": timestamp,
+            "order": 1,
+            "group": "planning",
+            "label": "Understood request",
+            "detail": "Reviewing your request and recent context",
+            "state": "success",
+        },
+        {
+            "id": "graph:000002:planner_choose_tool_node",
+            "timestamp": timestamp,
+            "order": 2,
+            "group": "planning",
+            "label": "Selecting safe action",
+            "detail": "Selecting a safe action",
+            "state": "success",
+        },
+        {
+            "id": "graph:000003:tool_execution_node",
+            "timestamp": timestamp,
+            "order": 3,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000004:evidence_observation_node",
+            "timestamp": timestamp,
+            "order": 4,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+    ]
+    caption_context = {
+        "activity_graph_steps": graph_rows,
+        "requirements": [
+            {
+                "id": "req-job-read",
+                "entity": "job",
+                "requirement_type": "filtered_collection",
+                "intent_operation": "filter_collection",
+                "source_of_truth": "operational_state",
+            }
+        ],
+        "evidence": [
+            {
+                "id": "ev-job-read",
+                "requirement_id": "req-job-read",
+                "source_type": "api_tool",
+            }
+        ],
+        "active_final_evidence_refs": ["ev-job-read"],
+    }
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-read-caption-order",
+            "user_id": "u1",
+            "status": "COMPLETED",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=9),
+            "replan_context": {
+                "intent_contract": {
+                    "activity_graph_steps": graph_rows,
+                    "activity_caption_context": caption_context,
+                },
+            },
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="completed:read-caption-order",
+                event_type="session_completed",
+                content="Answer is ready.",
+                created_at=created_at + timedelta(seconds=9),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels.index("Selecting safe action") < labels.index("Reading job records")
+    assert labels.index("Reading job records") < labels.index("Running selected tool")
 
 
 def test_phase7_activity_adapter_caps_and_groups_verbose_timelines():
