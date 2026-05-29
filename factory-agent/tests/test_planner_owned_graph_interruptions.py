@@ -229,7 +229,9 @@ async def test_phase9_carried_forward_evidence_must_be_explicit():
     )
 
     carried = next(evidence for evidence in explicit.state.evidence_ledger.evidence if evidence.id == evidence_id2)
-    assert evidence_id2 in explicit.state.response_document_context.evidence_refs
+    response_diagnostics = explicit.state.response_document_context.diagnostics
+    assert evidence_id2 in response_diagnostics["active_evidence_refs"]
+    assert explicit.state.response_document_context.evidence_refs == response_diagnostics["response_evidence_refs"]
     assert carried.diagnostic_metadata["carried_forward_explicit"] is True
     assert carried.diagnostic_metadata["carried_forward_to_ledger_revision"] == explicit.state.requirement_ledger.revision
 

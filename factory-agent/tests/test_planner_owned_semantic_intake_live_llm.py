@@ -15,10 +15,11 @@ def _live_llm_enabled() -> bool:
     )
 
 
-pytestmark = pytest.mark.skipif(
-    not _live_llm_enabled(),
-    reason="Set FACTORY_AGENT_LIVE_LLM=1 and OPENAI_BASE_URL or LLM_BASE_URL to run live semantic intake tests.",
-)
+if not _live_llm_enabled():
+    pytest.skip(
+        "Set FACTORY_AGENT_LIVE_LLM=1 and OPENAI_BASE_URL or LLM_BASE_URL to run live semantic intake tests.",
+        allow_module_level=True,
+    )
 
 
 @pytest.mark.parametrize(

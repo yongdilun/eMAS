@@ -996,7 +996,8 @@ def test_planner_authored_graph_decisions_still_require_proposer_diagnostics():
         assert not (isinstance(author, ast.Constant) and author.value == "planner")
 
     assert "propose_decision(state=state, context=context)" in source
-    assert "record_planner_decision(state, proposal.submission)" in source
+    assert "proposal.submission.model_copy" in source
+    assert "record_planner_decision(state, submission)" in source
     assert "planner_proposer" in source
 
 

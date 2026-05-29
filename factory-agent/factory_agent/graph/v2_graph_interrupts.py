@@ -47,6 +47,15 @@ def _apply_graph_revision_evidence_policy(
         metadata = dict(evidence.diagnostic_metadata or {})
         explicit_carry = carry_all or evidence.id in carry_forward_evidence_refs
         if explicit_carry and evidence.requirement_id in active_requirement_ids:
+            for key in (
+                "stale_after_user_interrupt",
+                "stale_after_graph_revision",
+                "stale_after_graph_replan",
+                "superseded_by_ledger_revision",
+                "superseded_by_replan_attempt",
+                "superseded_reason",
+            ):
+                metadata.pop(key, None)
             metadata["carried_forward_explicit"] = True
             metadata["carried_forward_from_ledger_revision"] = previous_revision
             metadata["carried_forward_to_ledger_revision"] = state.requirement_ledger.revision

@@ -21,6 +21,10 @@ def _settings(**overrides: Any):
         tool_selector_top_k=10,
         tool_selector_candidate_pool=20,
         tool_selector_reranker_enabled=False,
+        openai_api_key=None,
+        openai_base_url=None,
+        planner_openai_base_url=None,
+        semantic_intake_openai_base_url=None,
         **overrides,
     )
 

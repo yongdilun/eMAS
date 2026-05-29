@@ -638,9 +638,13 @@ def build_requirement_sketch_for_text(
             entity=entity,
             source_of_truth=source,
         )
-        if _dependent_singular_read_entity(clause) and not _has_bounded_identity_constraints(
-            constraints,
-            entity=entity,
+        if (
+            intake_item.role != "mutation_or_approval_request"
+            and _dependent_singular_read_entity(clause)
+            and not _has_bounded_identity_constraints(
+                constraints,
+                entity=entity,
+            )
         ):
             blocked_entity = _dependent_singular_read_entity(clause) or entity
             need_id = f"clarification-{len(clarification_needs) + 1:03d}"

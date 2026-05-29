@@ -295,11 +295,19 @@ async def test_phase9_hard_read_query_proves_v2_retrieval_satisfaction_and_condi
     assert list_requirement.constraints["sort_dir"] == "asc"
     assert list_requirement.constraints["limit"] == 3
     assert list_requirement.requested_fields == ["job_id", "status", "priority", "deadline"]
-    assert list_requirement.constraints["conditional_branches"][0]["condition_value"] == "blocked"
+    branches = run.state.requirement_sketch.conditional_branches
+    assert len(branches) == 1
+    branch = branches[0]
+    assert branch.parent_requirement_id == list_requirement.id
+    assert branch.status == "pending"
+    assert "blocked" in branch.text.lower()
+    assert branch.condition["source"] == "active_parent_evidence"
+    assert branch.on_true["entity"] == "job"
+    assert branch.on_true["value_from_field_any"] == ["job_id", "active_job_id"]
+    assert branch.diagnostics["non_executable_until_condition_true"] is True
     checks = {check.check: check for check in list_requirement.satisfaction_checks}
     assert checks["requested_fields"].actual == ["deadline", "job_id", "priority", "status"]
-    assert checks["conditional_branch:typed_explanation"].actual["planner_continuation_required"] is True
-    assert checks["conditional_branch:typed_explanation"].passed is True
+    assert "conditional_branch:typed_explanation" not in checks
     assert "blocked_reason" not in run.state.evidence_ledger.evidence[-1].normalized_result["rows"][1]
 
     assert run.draft is not None
