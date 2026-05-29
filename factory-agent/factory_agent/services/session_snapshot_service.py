@@ -367,10 +367,12 @@ _LIVE_ACTIVITY_ALLOWED_LABELS = {
     "Checking citations",
     "Running selected tool",
     "Checking result",
+    "Verifying result",
     "Checking approvals",
     "Waiting for approval",
     "Applying approved changes",
     "Preparing response",
+    "Rendering response",
 }
 _LIVE_ACTIVITY_UNSAFE_TEXT_FRAGMENTS = {
     "__",

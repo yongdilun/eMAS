@@ -508,6 +508,80 @@ def test_parallel_read_batch_caption_uses_ready_group_count_and_entity():
     assert batch["state"] == "running"
 
 
+def test_parallel_read_batch_caption_does_not_insert_into_older_graph_pass():
+    state = _state(
+        [
+            _requirement("req-product-1", entity="product", constraints={"product_id": "P-001"}),
+            _requirement("req-product-2", entity="product", constraints={"product_id": "P-002"}),
+        ],
+        cards={
+            "req-product-1": [_card("get__products_{id}")],
+            "req-product-2": [_card("get__products_{id}")],
+        },
+    )
+    plan = build_dependency_plan(state)
+    state.execution_trace.diagnostics["dependency_plan"] = plan.model_dump(mode="json")
+    state.execution_trace.diagnostics["dependency_plan_history"] = [
+        {
+            "ready_groups": [group.model_dump(mode="json") for group in plan.ready_groups],
+            "ready_requirement_ids": [rid for group in plan.ready_groups for rid in group.requirement_ids],
+        }
+    ]
+    rows = [
+        {
+            "id": "graph:000006:tool_execution_node",
+            "timestamp": 6,
+            "order": 6,
+            "group": "research",
+            "label": "Running selected tool",
+            "detail": "Checking relevant records",
+            "state": "success",
+        },
+        {
+            "id": "graph:000007:evidence_observation_node",
+            "timestamp": 7,
+            "order": 7,
+            "group": "response",
+            "label": "Checking result",
+            "detail": "Checking tool evidence",
+            "state": "success",
+        },
+        {
+            "id": "graph:000008:satisfaction_node",
+            "timestamp": 8,
+            "order": 8,
+            "group": "response",
+            "label": "Verifying result",
+            "detail": "Verifying the result",
+            "state": "success",
+        },
+        {
+            "id": "graph:000009:planner_decision_node",
+            "timestamp": 9,
+            "order": 9,
+            "group": "planning",
+            "label": "Choosing next action",
+            "detail": "Choosing the next backend action",
+            "state": "running",
+        },
+    ]
+
+    enriched = enrich_activity_step_rows(
+        rows,
+        {
+            "intent_contract": {
+                "activity_caption_context": build_activity_caption_context_from_graph_state(state),
+            }
+        },
+        fallback_timestamp=1,
+        session_status="EXECUTING",
+    )
+    labels = [row["label"] for row in enriched]
+
+    assert labels.index("Reading 2 product records") > labels.index("Verifying result")
+    assert labels.index("Reading 2 product records") > labels.index("Choosing next action")
+
+
 def test_dependency_scheduler_fails_closed_when_read_label_cannot_be_proven_variant():
     state = _state(
         [

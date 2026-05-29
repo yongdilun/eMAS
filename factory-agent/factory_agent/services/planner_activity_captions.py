@@ -282,7 +282,7 @@ def _add_simple_read_caption(
         return
     if _latest_parallel_ready_group(context) is not None:
         return
-    row = _read_caption_row(context, timestamp=_timestamp_before_first_research(rows, fallback_timestamp), terminal=terminal)
+    row = _read_caption_row(context, timestamp=_timestamp_after_current_activity(rows, fallback_timestamp), terminal=terminal)
     if row is not None:
         _append_unique(rows, row)
 
@@ -296,7 +296,7 @@ def _add_parallel_read_batch_caption(
 ) -> None:
     row = _parallel_batch_row(
         context,
-        timestamp=_timestamp_before_first_research(rows, fallback_timestamp),
+        timestamp=_timestamp_after_current_activity(rows, fallback_timestamp),
         terminal=terminal,
     )
     if row is not None:
@@ -771,6 +771,23 @@ def _timestamp_before_first_research(rows: list[dict[str, Any]], fallback_timest
     if candidates:
         return min(candidates) - 1
     return int(fallback_timestamp)
+
+
+def _timestamp_after_current_activity(rows: list[dict[str, Any]], fallback_timestamp: int) -> int:
+    timestamps: list[int] = []
+    terminal_timestamps: list[int] = []
+    for row in rows:
+        timestamp = _int(row.get("timestamp"))
+        if timestamp is None:
+            continue
+        timestamps.append(timestamp)
+        if row.get("state") in {"complete", "error"}:
+            terminal_timestamps.append(timestamp)
+    if not timestamps:
+        return int(fallback_timestamp)
+    if terminal_timestamps:
+        return min(terminal_timestamps) - 1
+    return max(timestamps) + 1
 
 
 def _first_approval_timestamp(rows: list[dict[str, Any]], fallback_timestamp: int) -> int:

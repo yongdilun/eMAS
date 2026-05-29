@@ -97,7 +97,7 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "satisfaction_node": (
             "response",
-            "Checking result",
+            "Verifying result",
             "Verifying the result",
         ),
         "approval_node": (
@@ -112,7 +112,7 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "response_document_node": (
             "response",
-            "Preparing response",
+            "Rendering response",
             "Rendering the response",
         ),
     }

@@ -345,6 +345,63 @@ async def test_live_activity_preserves_graph_progress_order_when_nodes_share_tim
 
 
 @pytest.mark.asyncio
+async def test_live_activity_labels_do_not_duplicate_distinct_result_and_response_nodes(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-distinct-labels",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Summarize two jobs and products",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-distinct-labels",
+    )
+    for node in [
+        "evidence_observation_node",
+        "satisfaction_node",
+        "finalize_node",
+        "response_document_node",
+    ]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-distinct-labels")
+            )
+        ).scalar_one()
+
+    labels = [step["label"] for step in row.replan_context["live_activity_steps"]]
+
+    assert labels == [
+        "Checking result",
+        "Verifying result",
+        "Preparing response",
+        "Rendering response",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_live_activity_persists_active_replan_spine_for_retry_story(
     sessionmaker_override,
     db_session,
