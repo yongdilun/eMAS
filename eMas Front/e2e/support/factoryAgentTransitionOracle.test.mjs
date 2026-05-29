@@ -134,6 +134,45 @@ test('transition oracle forbids internal diagnostics and final stale approval te
   assert.match(result.violations.join('\n'), /stale Approval required after completion/)
 })
 
+test('transition oracle scopes text checks to the active response instead of stale sidebar sessions', () => {
+  const result = evaluateTransitionProbe(probe({
+    snapshot: {
+      session: { status: 'COMPLETED' },
+      phase: 'COMPLETED',
+      pending_approval: null,
+      response_document: {
+        state: 'completed',
+        revision: 12,
+        blocks: [{ type: 'result_summary' }],
+      },
+    },
+    ui: {
+      headerStatus: 'Complete',
+      activeSidebarStatus: 'Complete',
+      visibleBlockTypes: ['result_summary'],
+      visibleBlockIds: ['result-summary:rd-1'],
+      approvalActionLabels: [],
+      visibleBlocks: [
+        { type: 'result_summary', id: 'result-summary:rd-1', text: 'Run complete. Updated 21 jobs.' },
+      ],
+      latestAssistantText: 'Run complete. Updated 21 jobs.',
+      visibleText: 'Chat 1 Complete Chat 2 Waiting for approval Run complete. Updated 21 jobs.',
+    },
+  }), {
+    sessionStatus: 'COMPLETED',
+    responseState: 'completed',
+    pendingApprovalId: null,
+    visibleBlockTypes: ['result_summary'],
+    hiddenBlockTypes: ['approval_required'],
+    approvalActionCount: 0,
+    textIncludes: [/Run complete/i],
+    textExcludes: [/Waiting for approval/i, /Approval required/i],
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.violations, [])
+})
+
 test('transition oracle includes final response visual-quality violations in compact summary', () => {
   const result = evaluateTransitionProbe(probe({
     snapshot: {

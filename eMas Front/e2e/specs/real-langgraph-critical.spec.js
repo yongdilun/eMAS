@@ -19,6 +19,7 @@ import {
   originalLowJobIds,
   originalMediumJobIds,
   pendingApprovalsForPage,
+  resetFactoryAgentSessions,
   resetSeededJobPriorities,
   sendPrompt,
   snapshotForPage,
@@ -45,7 +46,7 @@ async function pendingApprovalWithRows(page, expectedJobIds) {
         if (!Array.isArray(rows)) return false
         return rows.map((row) => row.job_id).filter(Boolean).sort().join('|') === [...expectedJobIds].sort().join('|')
       })?.approval_id || null
-    }, { timeout: 30_000 })
+    }, { timeout: 90_000 })
     .not.toBeNull()
   const pending = await pendingApprovalsForPage(page)
   return pending.find((approval) => bundleJobIds(approval).join('|') === [...expectedJobIds].sort().join('|'))
@@ -81,6 +82,7 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
   test.describe.configure({ timeout: 150_000 })
 
   test.beforeEach(async () => {
+    await resetFactoryAgentSessions()
     await resetSeededJobPriorities()
   })
 

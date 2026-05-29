@@ -128,6 +128,10 @@ export async function resetSeededJobPriorities() {
   }
 }
 
+export async function resetFactoryAgentSessions() {
+  await factoryAgentJson('/sessions?user_id=frontend-operator', { method: 'DELETE' })
+}
+
 export async function currentPriorityMap() {
   const body = await goApiJson('/jobs?fields=job_id,priority&sort_by=created_at&sort_dir=asc&limit=200')
   const rows = Array.isArray(body?.data) ? body.data : []

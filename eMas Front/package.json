@@ -16,7 +16,7 @@
     "test:e2e:mocked": "playwright test --project=chromium",
     "test:e2e:response-document": "playwright test --project=chromium --grep \"response_document|final response|approval|event storm\"",
     "test:e2e:seeded-oracles": "playwright test --project=chromium-seeded --grep \"@data-integrity|@prompt-regression|@sse\"",
-    "test:e2e:real-langgraph": "playwright test --project=chromium-real-langgraph --grep @critical",
+    "test:e2e:real-langgraph": "node e2e/support/runWithProgressTimeout.js --idle-timeout-ms=120000 --hard-timeout-ms=300000 -- node ./node_modules/@playwright/test/cli.js test --project=chromium-real-langgraph --grep \"@critical\"",
     "test:e2e:release": "playwright test --project=chromium-release",
     "test:e2e:synthetic": "playwright test --project=chromium-synthetic",
     "test:e2e:reliability": "playwright test --project=chromium --grep @reliability",

@@ -200,7 +200,7 @@ export function evaluateTransitionProbe(probe, expected = {}) {
     }
   }
 
-  const text = ui.visibleText || ''
+  const text = ui.latestAssistantText || ui.latestAssistantMessage || ui.visibleText || ''
   addForbiddenTextViolations(violations, text, {
     ...expected,
     forbidApprovalRequired:
