@@ -76,12 +76,12 @@ export async function pendingApprovalsForPage(page) {
   return factoryAgentJson(`/approvals/pending?session_id=${encodeURIComponent(sessionId)}`)
 }
 
-export async function waitForSessionStatus(page, expectedStatus) {
+export async function waitForSessionStatus(page, expectedStatus, { timeout = 30_000 } = {}) {
   await expect
     .poll(async () => {
       const snapshot = await snapshotForPage(page)
       return snapshot.session.status
-    })
+    }, { timeout })
     .toBe(expectedStatus)
 }
 
