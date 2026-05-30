@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import asdict
 from typing import Any
 
-from factory_agent.config import Settings
+from factory_agent.config import DEFAULT_RAG_ADVISORY_VARIANT, Settings
+from factory_agent.rag.context_building import BudgetedRSESettings
 from factory_agent.rag.pipeline import RAGPipelineConfig
 
 
 def advisory_rag_pipeline_config(settings: Settings) -> RAGPipelineConfig:
     """Resolve the production advisory RAG config from runtime settings."""
 
-    return advisory_rag_pipeline_config_for_variant(getattr(settings, "rag_advisory_variant", "default"))
+    return advisory_rag_pipeline_config_for_variant(
+        getattr(settings, "rag_advisory_variant", DEFAULT_RAG_ADVISORY_VARIANT)
+    )
 
 
 def advisory_rag_pipeline_config_for_variant(variant_id: str | None) -> RAGPipelineConfig:
-    variant = (variant_id or "default").strip().upper() or "DEFAULT"
+    variant = (variant_id or DEFAULT_RAG_ADVISORY_VARIANT).strip().upper() or DEFAULT_RAG_ADVISORY_VARIANT
     if variant in {"DEFAULT", "CURRENT", "LEGACY", "PREVIOUS"}:
         return RAGPipelineConfig(variant_id="default", operating_mode="advisory")
     if variant == "V3":
@@ -60,9 +64,35 @@ def advisory_rag_pipeline_config_for_variant(variant_id: str | None) -> RAGPipel
             document_augmentation=False,
             allow_rerank_fallback=False,
         )
+    if variant == "V15B":
+        return RAGPipelineConfig(
+            variant_id="V15B",
+            operating_mode="advisory",
+            retrieval_mode="hybrid",
+            use_rerank=True,
+            expand_neighbors=False,
+            vector_top_k=10,
+            keyword_top_k=10,
+            fusion_top_k=10,
+            query_rewrite=False,
+            corpus_aware_query_rewrite=True,
+            multi_query_retrieval=True,
+            context_builder="budgeted_rse",
+            context_builder_settings={
+                "budgeted_rse": asdict(
+                    BudgetedRSESettings(
+                        use_evidence_cards=True,
+                        evidence_card_context_mode="metadata_only",
+                    )
+                )
+            },
+            compression="none",
+            document_augmentation=False,
+            allow_rerank_fallback=False,
+        )
     raise ValueError(
         "Unsupported RAG advisory variant "
-        f"{variant_id!r}; expected default, current, previous, V3, V7, or V12"
+        f"{variant_id!r}; expected default, current, previous, V3, V7, V12, or V15B"
     )
 
 

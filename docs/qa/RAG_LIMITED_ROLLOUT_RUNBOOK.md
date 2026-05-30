@@ -1,30 +1,42 @@
 # eMAS RAG Limited Rollout Runbook
 
 Created: 2026-05-26
+Updated: 2026-05-31
 
-Scope: limited advisory-mode rollout controls for the approved `V12` RAG candidate. This runbook does not approve full production authority, autonomous safety/compliance decisions, live machine-action approval, or benchmark remediation.
+Scope: limited school/demo advisory-mode controls for the active `V15B` RAG candidate. This runbook does not approve full production authority, autonomous safety/compliance decisions, live machine-action approval, compliance certification, sign-off, current-state proof, or benchmark remediation.
 
-Approved candidate:
+Active school/demo advisory candidate:
 
-- `V12` = Query Rewrite + Hybrid Search + RSE + Rerank.
+- `V15B` = Corpus-aware multi-query rewrite + hybrid retrieval + rerank + budgeted RSE + evidence cards for citation/facet/debug metadata only.
+
+Rollback candidates:
+
+- `V12` = approved Phase 14 limited advisory baseline while V12 drift is investigated.
+- `default` = previous legacy advisory RAG behavior.
 
 ## Runtime Path
 
 Production advisory RAG is reached through the Factory Agent planner-owned graph virtual tool `rag_search_documents` and the direct document-knowledge answer path. Both call `RAGPipeline.run(..., route="RAG_ONLY")`.
 
-Phase 15 added a production-facing advisory selector:
+The advisory selector now defaults to `V15B` for this environment. Keep the explicit local setting in place for clarity:
+
+```powershell
+$env:RAG_ADVISORY_VARIANT = "V15B"
+```
+
+Rollback to the Phase 14 V12 baseline:
 
 ```powershell
 $env:RAG_ADVISORY_VARIANT = "V12"
 ```
 
-Rollback to previous RAG behavior:
+Rollback to previous legacy RAG behavior:
 
 ```powershell
 $env:RAG_ADVISORY_VARIANT = "default"
 ```
 
-Unset the variable for the same rollback behavior. The selector does not use eval-only paths, test-artifact paths, augmented indexes, or benchmark artifacts.
+Do not unset the variable as a rollback step because the application default now resolves to `V15B`. The selector does not use eval-only paths, test-artifact paths, augmented indexes, or benchmark artifacts.
 
 ## Approved Config
 
@@ -32,20 +44,22 @@ Use this config only for advisory document answers:
 
 | Setting | Value |
 | --- | --- |
-| Runtime flag | `RAG_ADVISORY_VARIANT=V12` |
-| Operating mode | Advisory RAG only |
+| Runtime flag | `RAG_ADVISORY_VARIANT=V15B` |
+| Operating mode | School/demo advisory RAG only |
 | Retrieval | Hybrid vector + BM25/keyword retrieval |
-| Query rewrite | On for retrieval only; generation receives original user query |
-| Context builder | RSE |
+| Query rewrite | Corpus-aware rewrite on for retrieval only; legacy named-standard `query_rewrite` off; generation receives original user query |
+| Multi-query retrieval | On, using original plus expanded retrieval fusion |
+| Context builder | Budgeted RSE |
+| Evidence cards | On for citation/facet/debug metadata only; no evidence-card context replacement |
 | Rerank | On |
-| Reranker fallback | Off unless explicitly accepted as a degraded rollout state |
+| Reranker fallback | Off |
 | Compression | Off |
 | Document Augmentation | Off |
 | Judge | Qwen2.5-7B not used for production approval |
 
 ## Allowed Answers
 
-`V12` may answer descriptive, static document questions when it has source support and citations.
+`V15B` may answer descriptive, static document questions when it has source support and citations.
 
 Allowed examples:
 
@@ -58,7 +72,7 @@ Static document/checklist recall should still answer with citations. Do not over
 
 ## Required Refusals
 
-`V12` must refuse:
+`V15B` must refuse:
 
 - Compliance certification.
 - Attestation or audit sign-off.
@@ -100,7 +114,7 @@ Track rates separately where possible for answerable prompts, boundary prompts, 
 
 ## Rollback Triggers
 
-Immediately roll back by setting `RAG_ADVISORY_VARIANT=default` and restarting the Factory Agent service if any of these appear:
+Immediately roll back by setting `RAG_ADVISORY_VARIANT=V12` or `RAG_ADVISORY_VARIANT=default` and restarting the Factory Agent service if any of these appear:
 
 - Unsafe advice appears, especially live machine start/jog/reenergize/lock or tag removal guidance.
 - Compliance certification, attestation, sign-off, approval language, or current-state proof appears.
@@ -109,7 +123,7 @@ Immediately roll back by setting `RAG_ADVISORY_VARIANT=default` and restarting t
 - No-evidence fallback rate spikes on answerable static document questions.
 - Latency becomes unacceptable for advisory chat use.
 
-After rollback, keep the affected prompts, logs, citations, and source pages for manual review. Do not re-enable `V12` until the failure class is understood and remediated.
+After rollback, keep the affected prompts, logs, citations, and source pages for manual review. Do not re-enable `V15B` until the failure class is understood and remediated.
 
 ## First-Week Sampling Plan
 
@@ -133,4 +147,4 @@ For each sampled answer, record prompt, answer, cited source IDs/pages, support 
 
 ## Rollout Status
 
-Limited advisory rollout is conditionally approved only under this runbook. Full production authority remains not approved.
+`V15B` is active only for school/demo advisory RAG under this runbook. Full production authority, autonomous safety/compliance authority, compliance certification, sign-off, live machine-action approval, and current-state proof remain not approved.
