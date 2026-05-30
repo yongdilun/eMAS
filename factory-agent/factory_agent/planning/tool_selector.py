@@ -853,7 +853,7 @@ class ToolSelector:
             return ToolSelectionResult(tool_names=candidate_names, backend_used="retrieval", llm_calls=1)
         if not isinstance(parsed, dict):
             log_event("tool_selector_rerank_fallback", level="WARNING", intent=intent, reason="invalid_llm_response")
-            return ToolSelectionResult(tool_names=candidate_names, backend_used="retrieval", llm_calls=0)
+            return ToolSelectionResult(tool_names=candidate_names, backend_used="retrieval", llm_calls=1)
 
         primary = parsed.get("primary_tool")
         additional = parsed.get("additional_tools")

@@ -1033,6 +1033,62 @@ async def test_selector_force_llm_trace_reranker_exception_records_attempt(monke
 
 
 @pytest.mark.asyncio
+async def test_selector_force_llm_trace_invalid_reranker_response_records_attempt(monkeypatch):
+    selector = ToolSelector(
+        _settings(
+            tool_selector_backend="auto",
+            tool_selector_top_k=5,
+            tool_selector_candidate_pool=8,
+            tool_selector_reranker_enabled=True,
+            force_llm_trace_all=True,
+            tool_selector_openai_base_url="http://selector.test/v1",
+            openai_api_key="test-key",
+        )
+    )
+    tools = {
+        "get__machines_utilization": ToolInfo(
+            name="get__machines_utilization",
+            description="Machine utilization",
+            endpoint="/machines/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["machine", "utilization"],
+        ),
+        "get__reports_utilization": ToolInfo(
+            name="get__reports_utilization",
+            description="Utilization report",
+            endpoint="/reports/utilization",
+            method="GET",
+            input_schema={"type": "object", "properties": {}},
+            is_read_only=True,
+            requires_approval=False,
+            capability_tags=["utilization", "report"],
+        ),
+    }
+    called = {"count": 0}
+
+    async def _fake_invoke_reranker(*, prompt: str):
+        called["count"] += 1
+        return None
+
+    monkeypatch.setattr(selector, "_invoke_reranker", _fake_invoke_reranker)
+
+    result = await selector.select_tools(
+        intent="show utilization",
+        tools_by_name=tools,
+        mode="normal",
+        max_tools=10,
+    )
+
+    assert called["count"] == 1
+    assert result.backend_used == "retrieval"
+    assert result.llm_calls == 1
+    assert result.tool_names
+
+
+@pytest.mark.asyncio
 async def test_selector_respects_disabled_reranker_even_when_trace_forced(monkeypatch):
     selector = ToolSelector(
         _settings(
