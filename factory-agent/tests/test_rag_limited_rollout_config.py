@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from tests.rag_eval.variants import get_variant
 
 from factory_agent.config import get_settings
 from factory_agent.planning.v2_graph_adapters import _rag_runtime_diagnostic_metadata
@@ -47,6 +48,21 @@ def test_v15b_advisory_config_matches_school_demo_defaults():
     assert budgeted_rse["evidence_card_context_mode"] == "metadata_only"
 
 
+def _rag_config_signature(config):
+    data = config.to_dict()
+    data.pop("operating_mode", None)
+    return data
+
+
+@pytest.mark.parametrize("variant", ["V15", "V15A", "V15B", "V15C"])
+def test_v15_advisory_configs_match_eval_variant_runtime_knobs(variant):
+    advisory = advisory_rag_pipeline_config_for_variant(variant)
+    eval_config = get_variant(variant).to_pipeline_config()
+
+    assert advisory.operating_mode == "advisory"
+    assert _rag_config_signature(advisory) == _rag_config_signature(eval_config)
+
+
 def test_env_unset_advisory_config_defaults_to_v15b(monkeypatch):
     monkeypatch.delenv("RAG_ADVISORY_VARIANT", raising=False)
 
@@ -75,9 +91,11 @@ def test_unknown_advisory_variant_fails_closed():
         advisory_rag_pipeline_config_for_variant("V13")
 
 
-def test_v15c_is_not_enabled_for_advisory_runtime():
-    with pytest.raises(ValueError, match="Unsupported RAG advisory variant"):
-        advisory_rag_pipeline_config_for_variant("V15C")
+def test_v15c_is_available_for_explicit_advisory_runtime_selection():
+    config = advisory_rag_pipeline_config_for_variant("V15C")
+
+    assert config.variant_id == "V15C"
+    assert config.context_builder_settings["budgeted_rse"]["evidence_card_context_mode"] == "mode_aware"
 
 
 def test_optional_config_runner_passes_config_only_to_new_pipeline_adapters():
