@@ -2,8 +2,10 @@ import asyncio
 
 import pytest
 
-from factory_agent.rag.pipeline import RAGPipeline, RAGPipelineConfig
+import factory_agent.rag.pipeline as pipeline_module
+from factory_agent.rag.pipeline import RAGPipeline, RAGPipelineConfig, build_retrieval_query_plan
 from factory_agent.rag.schemas import AnswerResult, Chunk, ScoredChunk
+from tests.rag_eval.variants import get_variant
 
 
 class FakeRetriever:
@@ -18,6 +20,8 @@ class FakeRetriever:
                     "chunk_index": 1,
                     "section_title": "Main",
                     "section_path": "Doc > Main",
+                    "title": "Alpha Source",
+                    "use_for": ["explain alpha bravo"],
                 },
             ),
             Chunk(
@@ -28,12 +32,20 @@ class FakeRetriever:
                     "chunk_index": 2,
                     "section_title": "Main",
                     "section_path": "Doc > Main",
+                    "title": "Alpha Source",
+                    "use_for": ["explain alpha bravo"],
                 },
             ),
         ]
+        self.bm25_chunks = list(self.chunks)
 
     def retrieve(self, **kwargs):
         self.calls.append(kwargs)
+        if "expanded vocabulary" in str(kwargs.get("query") or ""):
+            return [
+                ScoredChunk(chunk=self.chunks[1], vector_score=0.95, fusion_score=0.95),
+                ScoredChunk(chunk=self.chunks[0], vector_score=0.75, fusion_score=0.75),
+            ]
         return [
             ScoredChunk(chunk=self.chunks[0], vector_score=0.9, fusion_score=0.9),
             ScoredChunk(chunk=self.chunks[1], vector_score=0.8, fusion_score=0.8),
@@ -207,3 +219,99 @@ def test_pipeline_records_explicit_reranker_fallback_when_allowed():
     assert trace["fallback_allowed"] is True
     assert trace["attempted"] is True
     assert [chunk.chunk_id for chunk in generator.calls[0]["chunks"]] == ["doc_c0001"]
+
+
+def test_pipeline_passes_budgeted_rse_settings_to_context_builder():
+    retriever = FakeRetriever()
+    reranker = FakeReranker()
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(retriever=retriever, reranker=reranker, generator=generator)
+
+    config = RAGPipelineConfig(
+        retrieval_mode="hybrid",
+        use_rerank=False,
+        expand_neighbors=False,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": {"max_context_tokens": 28, "max_segment_tokens": 28}},
+    )
+
+    result = asyncio.run(pipeline.run(query="alpha bravo", route="RAG_ONLY", config=config))
+
+    generated_chunks = generator.calls[0]["chunks"]
+    assert generated_chunks[0].metadata["context_builder"] == "budgeted_rse"
+    assert result.metadata["context_building"]["global_budget"]["max_context_tokens"] == 28
+
+
+def test_pipeline_runs_corpus_expanded_retrieval_separately_and_keeps_generation_query_original():
+    retriever = FakeRetriever()
+    retriever.bm25_chunks = [
+        Chunk(
+            chunk_id="lexicon_c0001",
+            text="Metadata carrier.",
+            metadata={
+                "doc_id": "lexicon",
+                "title": "Expanded Vocabulary Source",
+                "section_title": "Overview",
+                "section_path": ["Expanded Vocabulary Source", "Overview"],
+                "use_for": ["explain alpha expanded vocabulary"],
+            },
+        )
+    ]
+    reranker = FakeReranker()
+    generator = FakeGenerator()
+    pipeline = RAGPipeline(retriever=retriever, reranker=reranker, generator=generator)
+
+    config = RAGPipelineConfig(
+        retrieval_mode="hybrid",
+        use_rerank=False,
+        expand_neighbors=False,
+        corpus_aware_query_rewrite=True,
+        multi_query_retrieval=True,
+    )
+
+    result = asyncio.run(pipeline.run(query="alpha overview", route="RAG_ONLY", config=config))
+
+    assert len(retriever.calls) == 2
+    assert retriever.calls[0]["query"] == "alpha overview"
+    assert "Corpus retrieval focus:" in retriever.calls[1]["query"]
+    assert "expanded vocabulary" in retriever.calls[1]["query"].lower()
+    assert generator.calls[0]["query"] == "alpha overview"
+    assert result.metadata["query_rewrite"]["mode"] == "corpus_aware"
+    assert result.metadata["query_rewrite"]["original_query"] == "alpha overview"
+    assert result.metadata["query_rewrite"]["normalized_query"] == "alpha overview"
+    assert result.metadata["query_rewrite"]["expansion_terms"]
+    assert result.metadata["query_rewrite"]["expansion_sources"]
+    assert result.metadata["query_rewrite"]["confidence"] > 0
+
+
+def test_v15a_query_plan_uses_corpus_rewrite_without_legacy_named_table(monkeypatch):
+    retriever = FakeRetriever()
+    retriever.bm25_chunks = [
+        Chunk(
+            chunk_id="lexicon_c0001",
+            text="Metadata carrier.",
+            metadata={
+                "doc_id": "lexicon",
+                "title": "Expanded Vocabulary Source",
+                "section_title": "Overview",
+                "section_path": ["Expanded Vocabulary Source", "Overview"],
+                "use_for": ["explain alpha expanded vocabulary"],
+            },
+        )
+    ]
+
+    def fail_legacy_rewrite(_query):
+        raise AssertionError("legacy named-standard rewrite should not run")
+
+    monkeypatch.setattr(pipeline_module, "rewrite_query_for_retrieval", fail_legacy_rewrite)
+
+    config = get_variant("V15A").to_pipeline_config()
+    plan = build_retrieval_query_plan(query="alpha overview", config=config, retriever=retriever)
+
+    assert plan["mode"] == "corpus_aware"
+    assert plan["original_query"] == "alpha overview"
+    assert plan["retrieval_queries"][0] == "alpha overview"
+    assert "Corpus retrieval focus:" in plan["retrieval_queries"][1]
+    assert plan["expansion_sources"]
+    assert all(source.get("reason") for source in plan["expansion_sources"])
+    assert all(source.get("confidence", 0) > 0 for source in plan["expansion_sources"])

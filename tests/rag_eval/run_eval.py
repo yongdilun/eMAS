@@ -59,10 +59,9 @@ if str(FACTORY_AGENT_DIR) not in sys.path:
 
 # Imports below need ``factory-agent`` on sys.path, hence the insert above.
 from factory_agent.config import get_settings  # noqa: E402
-from factory_agent.rag.context_building import rewrite_query_for_retrieval  # noqa: E402
 from factory_agent.rag.document_registry import default_source_register_path  # noqa: E402
 from factory_agent.rag.ingestion import IngestionEngine  # noqa: E402
-from factory_agent.rag.pipeline import RAGPipeline  # noqa: E402
+from factory_agent.rag.pipeline import RAGPipeline, retrieve_candidates_for_config  # noqa: E402
 from factory_agent.rag.retrieval import HybridRetriever  # noqa: E402
 
 from tests.rag_eval.audit import build_judge_audit_sample  # noqa: E402
@@ -301,10 +300,8 @@ async def _run_case(
 
     query = str(case.get("query") or "")
     pipeline_config = variant.to_pipeline_config()
-    retrieval_query = rewrite_query_for_retrieval(query) if pipeline_config.query_rewrite else query
     retrieval_settings = {
         **variant.retrieval_settings(),
-        "retrieval_query": retrieval_query,
     }
     error: str | None = None
     route_decision: dict[str, Any] | None = None
@@ -348,19 +345,16 @@ async def _run_case(
         )
     else:
         try:
-            scored = retriever.retrieve(
-                query=retrieval_query,
+            scored, query_plan = retrieve_candidates_for_config(
+                retriever,
+                query=query,
                 route="RAG_ONLY",
-                vector_top_k=pipeline_config.vector_top_k,
-                keyword_top_k=pipeline_config.keyword_top_k,
-                fusion_top_k=pipeline_config.fusion_top_k,
-                expand_neighbors=pipeline_config.expand_neighbors,
-                retrieval_mode=pipeline_config.retrieval_mode,
+                config=pipeline_config,
             )
             retrieval_debug = serialize_retrieval_debug(
                 scored,
                 top_n=retrieval_top_n,
-                retrieval_settings=retrieval_settings,
+                retrieval_settings={**retrieval_settings, "query_plan": query_plan},
             )
         except Exception as exc:
             retrieval_debug = serialize_retrieval_debug(

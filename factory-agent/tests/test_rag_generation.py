@@ -537,6 +537,107 @@ def test_extract_explicit_procedure_evidence_ignores_unmatched_or_truncated_list
     ) is None
 
 
+def test_extract_explicit_procedure_evidence_ignores_checklist_item_recall_query():
+    procedure_chunk = Chunk(
+        chunk_id="release_procedure_c001",
+        text=(
+            "Before beginning a release, the following steps must be accomplished in sequence: "
+            "(1) Open the change record; (2) Notify reviewers; (3) Freeze the deployment window; "
+            "(4) Apply the approval marker."
+        ),
+        metadata={
+            "doc_id": "release_procedure",
+            "title": "Release Procedure",
+            "organization": "Example Ops",
+            "authority_level": "mandatory_procedure",
+            "domain": "operations",
+            "subdomain": "release_control",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 4,
+        },
+    )
+
+    evidence = extract_explicit_procedure_evidence(
+        query="Which release-readiness checks are listed in the deployment inspection checklist?",
+        doc_order=["release_procedure"],
+        doc_chunks={"release_procedure": [procedure_chunk]},
+    )
+
+    assert evidence is None
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_checklist_recall_does_not_replace_answer_with_related_procedure(
+    mock_build_llm,
+    mock_settings,
+):
+    procedure_chunk = Chunk(
+        chunk_id="release_procedure_c001",
+        text=(
+            "Before beginning a release, the following steps must be accomplished in sequence: "
+            "(1) Open the change record; (2) Notify reviewers; (3) Freeze the deployment window; "
+            "(4) Apply the approval marker."
+        ),
+        metadata={
+            "doc_id": "release_procedure",
+            "title": "Release Procedure",
+            "organization": "Example Ops",
+            "authority_level": "mandatory_procedure",
+            "domain": "operations",
+            "subdomain": "release_control",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 4,
+        },
+    )
+    checklist_chunk = Chunk(
+        chunk_id="deployment_checklist_c008",
+        text=(
+            "Deployment inspection checklist items ask whether owners confirmed rollback contacts before rollout, "
+            "whether multiple approvals are present when several teams share a release, and whether staff are "
+            "trained on the release-control procedure before deployment tasks."
+        ),
+        metadata={
+            "doc_id": "deployment_checklist",
+            "title": "Deployment Inspection Checklist",
+            "organization": "Example Ops",
+            "authority_level": "official_public_guidance",
+            "domain": "operations",
+            "subdomain": "deployment_inspection",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 2,
+        },
+    )
+    response = MagicMock()
+    response.content = (
+        "- Check that owners confirmed rollback contacts before rollout. [^2]\n"
+        "- Check that multiple approvals are present when several teams share a release. [^2]\n"
+        "- Check that staff are trained on the release-control procedure before deployment tasks. [^2]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "What release-readiness checks are listed in the deployment inspection checklist?",
+        [procedure_chunk, checklist_chunk],
+    )
+
+    assert "owners confirmed rollback contacts" in result.answer
+    assert "multiple approvals" in result.answer
+    assert "Open the change record" not in result.answer
+    assert result.metadata["generation_validation"].get("procedure_evidence_repaired") is not True
+
+
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")
 def test_generate_answer_uses_deterministic_procedure_evidence_when_llm_would_omit_step(
     mock_build_llm,
@@ -1085,6 +1186,544 @@ def test_generate_uses_extractive_recall_when_repair_still_denies_evidence(
     assert "[^1]" in result.answer
     assert result.metadata["generation_validation"]["repair_reason"] == "answer_negates_matching_retrieved_evidence"
     assert result.metadata["generation_validation"]["extractive_supported_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_uses_extractive_relationship_when_repair_still_falls_back(
+    mock_build_llm,
+    mock_settings,
+):
+    nonmechanical_chunk = Chunk(
+        chunk_id="equipment_review_c001",
+        text=(
+            "The nonmechanical hazards section includes noise hazards and harmful substances used "
+            "during equipment operation. Special guards, enclosures, or protective equipment are "
+            "listed where necessary."
+        ),
+        metadata={
+            "doc_id": "equipment_review",
+            "title": "Equipment Review Checklist",
+            "organization": "Example Safety Team",
+            "authority_level": "internal_reference",
+            "domain": "safety",
+            "subdomain": "equipment_review",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Nonmechanical Hazards",
+        },
+    )
+    ppe_chunk = Chunk(
+        chunk_id="equipment_review_c002",
+        text=(
+            "Protective equipment checks ask whether protective equipment is required. "
+            "If required, the equipment should be appropriate, in good condition, clean and sanitary, "
+            "and stored carefully. Proper clothing checks ask whether the operator is dressed safely "
+            "with no loose clothing or jewelry."
+        ),
+        metadata={
+            "doc_id": "equipment_review",
+            "title": "Equipment Review Checklist",
+            "organization": "Example Safety Team",
+            "authority_level": "internal_reference",
+            "domain": "safety",
+            "subdomain": "equipment_review",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Protective Equipment and Proper Clothing",
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    still_refused_response = MagicMock()
+    still_refused_response.content = insufficient_context_answer(has_sources=True)
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, still_refused_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "For an equipment audit, how do PPE/clothing checks connect with the nonmechanical hazards section?",
+        [nonmechanical_chunk, ppe_chunk],
+    )
+
+    assert "nonmechanical hazards" in result.answer.lower()
+    assert "harmful substances" in result.answer
+    assert "Protective equipment checks" in result.answer
+    assert "Proper clothing checks" in result.answer
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.metadata["generation_validation"]["repair_reason"] == "answer_negates_matching_retrieved_evidence"
+    assert result.metadata["generation_validation"]["extractive_relationship_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_uses_extractive_relationship_for_adjacent_policy_sections(
+    mock_build_llm,
+    mock_settings,
+):
+    distractor_chunk = Chunk(
+        chunk_id="policy_map_c000",
+        text=(
+            "General risk reviews ask whether teams log operational risks. "
+            "Risk reviews also ask whether teams assign an owner. "
+            "Risk reviews ask whether open issues are tracked. "
+            "Risk reviews ask whether exceptions expire. "
+            "Risk reviews ask whether dashboards are updated. "
+            "Risk reviews ask whether managers receive status reports."
+        ),
+        metadata={
+            "doc_id": "policy_map",
+            "title": "Policy Map",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "policy",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "General Risk Review",
+        },
+    )
+    risk_chunk = Chunk(
+        chunk_id="policy_map_c001",
+        text=(
+            "The privacy-risk section identifies collection limits, user consent needs, and disclosure "
+            "risks for customer records."
+        ),
+        metadata={
+            "doc_id": "policy_map",
+            "title": "Policy Map",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "policy",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Privacy Risk",
+        },
+    )
+    retention_chunk = Chunk(
+        chunk_id="policy_map_c002",
+        text=(
+            "Retention checks ask whether records have a retention period, an owner, and a disposal "
+            "trigger. Access-review checks ask whether owners periodically confirm who can view "
+            "the records."
+        ),
+        metadata={
+            "doc_id": "policy_map",
+            "title": "Policy Map",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "policy",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Retention Checks",
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    still_refused_response = MagicMock()
+    still_refused_response.content = insufficient_context_answer(has_sources=True)
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, still_refused_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate(
+        "How do retention checks connect with the privacy-risk section?",
+        [distractor_chunk, risk_chunk, retention_chunk],
+    )
+
+    assert "privacy-risk section identifies collection limits" in result.answer
+    assert "Retention checks ask whether records have a retention period" in result.answer
+    assert result.answer != insufficient_context_answer(has_sources=True)
+    assert result.metadata["generation_validation"]["extractive_relationship_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_does_not_treat_hyphenated_related_checklist_recall_as_relationship(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="access_review_c001",
+        text=(
+            "The access checklist asks whether quarterly account reviews are complete, whether "
+            "dormant users are disabled, and whether privileged access changes are approved."
+        ),
+        metadata={
+            "doc_id": "access_review",
+            "title": "Access Review Checklist",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "access_review",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Access Review",
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    still_refused_response = MagicMock()
+    still_refused_response.content = insufficient_context_answer(has_sources=True)
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, still_refused_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Which security-related checklist items mention account reviews?", [chunk])
+
+    assert "quarterly account reviews" in result.answer
+    assert result.metadata["generation_validation"]["extractive_supported_answer"] is True
+    assert result.metadata["generation_validation"].get("extractive_relationship_answer") is not True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_does_not_use_relationship_extractive_fallback_for_boundary_purchase_query(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="connectivity_guide_c001",
+        text=(
+            "The guide discusses connectivity planning, shop-floor devices, network infrastructure, "
+            "and integration considerations for machine data. Machine connectors can publish data "
+            "to a network service. Integration teams connect machines after requirements are known."
+        ),
+        metadata={
+            "doc_id": "connectivity_guide",
+            "title": "Connectivity Guide",
+            "organization": "Example Standards",
+            "authority_level": "official_public_guidance",
+            "domain": "manufacturing",
+            "subdomain": "connectivity",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Connectivity Planning",
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = refused_response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Which vendor platform should I buy for connecting all machines?", [chunk])
+
+    assert result.answer == insufficient_context_answer(has_sources=True)
+    assert result.metadata["generation_validation"]["repair_attempted"] is False
+    assert result.metadata["generation_validation"].get("extractive_relationship_answer") is not True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_uses_nested_source_evidence_for_relationship_fallback(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="section_bundle_c001",
+        text=(
+            "General control checks ask whether teams receive training and whether owners review "
+            "open issues."
+        ),
+        metadata={
+            "doc_id": "section_bundle",
+            "title": "Section Bundle",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "policy",
+            "risk_level": "medium",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "General Controls",
+            "source_chunk_evidence": [
+                {
+                    "chunk_id": "section_bundle_c002",
+                    "section_title": "Privacy Risk",
+                    "snippet": (
+                        "The privacy-risk section identifies collection limits, consent needs, and "
+                        "disclosure risks for customer records."
+                    ),
+                },
+                {
+                    "chunk_id": "section_bundle_c003",
+                    "section_title": "Retention Checks",
+                    "snippet": (
+                        "Retention checks ask whether records have a retention period, an owner, "
+                        "and a disposal trigger."
+                    ),
+                },
+            ],
+        },
+    )
+    refused_response = MagicMock()
+    refused_response.content = insufficient_context_answer(has_sources=True)
+    still_refused_response = MagicMock()
+    still_refused_response.content = insufficient_context_answer(has_sources=True)
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [refused_response, still_refused_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("How do retention checks connect with the privacy-risk section?", [chunk])
+
+    assert "privacy-risk section identifies collection limits" in result.answer
+    assert "Retention checks ask whether records have a retention period" in result.answer
+    assert result.metadata["generation_validation"]["extractive_relationship_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_repairs_section_summary_that_omits_supported_caveat_scope_and_cadence(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="framework_core_c001",
+        text=(
+            "The Core section is a taxonomy of high-level cybersecurity outcomes arranged by function, "
+            "category, and subcategory. It is not a checklist and does not imply a sequence. The functions "
+            "are addressed concurrently and continuously, and the section applies across current and future "
+            "technology environments."
+        ),
+        metadata={
+            "doc_id": "framework_core",
+            "title": "Framework Core",
+            "organization": "Example Standards",
+            "authority_level": "official_public_guidance",
+            "domain": "cybersecurity",
+            "subdomain": "risk_management",
+            "risk_level": "medium",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 8,
+        },
+    )
+    initial_response = MagicMock()
+    initial_response.content = (
+        "The Core section organizes cybersecurity outcomes into functions, categories, and subcategories "
+        "so organizations can manage risk in plain English. [^1]"
+    )
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "The Core section organizes cybersecurity outcomes into functions, categories, and subcategories. "
+        "It is not a checklist and does not imply a sequence; the functions are addressed concurrently and "
+        "continuously, and the section applies across current and future technology environments. [^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [initial_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Summarize the Core section in plain English.", [chunk])
+
+    assert mock_llm.invoke.call_count == 2
+    assert "not a checklist" in result.answer
+    assert "concurrently and continuously" in result.answer
+    assert "current and future technology environments" in result.answer
+    assert result.metadata["generation_validation"]["repair_reason"].startswith("summary_omits_supported_")
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_repairs_adjacent_policy_summary_that_omits_supported_caveat_and_scope(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="handoff_policy_c001",
+        text=(
+            "The handoff policy section summarizes ownership outcomes for issue transfers. It is not an "
+            "approval procedure and has no fixed order. It applies to internal teams and external service "
+            "partners, and reviews continue throughout the engagement."
+        ),
+        metadata={
+            "doc_id": "handoff_policy",
+            "title": "Handoff Policy",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "handoffs",
+            "risk_level": "low",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 3,
+        },
+    )
+    initial_response = MagicMock()
+    initial_response.content = "The handoff policy explains ownership outcomes for issue transfers. [^1]"
+    repaired_response = MagicMock()
+    repaired_response.content = (
+        "The handoff policy explains ownership outcomes for issue transfers. It is not an approval procedure "
+        "and has no fixed order; it applies to internal teams and external service partners, with reviews "
+        "continuing throughout the engagement. [^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [initial_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Summarize the handoff policy section.", [chunk])
+
+    assert mock_llm.invoke.call_count == 2
+    assert "not an approval procedure" in result.answer
+    assert "internal teams and external service partners" in result.answer
+    assert result.metadata["generation_validation"]["repair_reason"].startswith("summary_omits_supported_")
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_augments_section_summary_when_repair_still_omits_supported_facets(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="framework_core_c002",
+        text=(
+            "The Core section is a taxonomy of high-level outcomes arranged by function, category, "
+            "and subcategory. These outcomes are not a checklist of actions to perform; specific actions "
+            "vary by organization. The order does not imply the sequence or importance of achieving them. "
+            "Managing risks must be a continuous process, and the section is designed to be valuable for "
+            "any type of organization."
+        ),
+        metadata={
+            "doc_id": "framework_core",
+            "title": "Framework Core",
+            "organization": "Example Standards",
+            "authority_level": "official_public_guidance",
+            "domain": "risk_management",
+            "subdomain": "outcomes",
+            "risk_level": "medium",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 8,
+        },
+    )
+    incomplete_response = MagicMock()
+    incomplete_response.content = (
+        "The Core section organizes high-level outcomes into functions, categories, and subcategories. [^1]"
+    )
+    still_incomplete_response = MagicMock()
+    still_incomplete_response.content = (
+        "The Core section is a hierarchy of functions, categories, and subcategories. [^1]"
+    )
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [incomplete_response, still_incomplete_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Summarize the Core section in plain English.", [chunk])
+
+    assert mock_llm.invoke.call_count == 2
+    assert "not a checklist of actions" in result.answer
+    assert "does not imply the sequence" in result.answer
+    assert "continuous process" in result.answer
+    assert result.metadata["generation_validation"]["summary_facet_extract_augmented"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_augments_adjacent_summary_when_repair_still_omits_policy_scope(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="handoff_policy_c002",
+        text=(
+            "The handoff policy section summarizes issue-transfer outcomes. It is not an approval procedure "
+            "and has no fixed order. It applies to internal teams and external service partners."
+        ),
+        metadata={
+            "doc_id": "handoff_policy",
+            "title": "Handoff Policy",
+            "organization": "Example Ops",
+            "authority_level": "internal_reference",
+            "domain": "operations",
+            "subdomain": "handoffs",
+            "risk_level": "low",
+            "license": "internal",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "page": 3,
+        },
+    )
+    incomplete_response = MagicMock()
+    incomplete_response.content = "The handoff policy summarizes issue-transfer outcomes. [^1]"
+    still_incomplete_response = MagicMock()
+    still_incomplete_response.content = "The handoff policy explains issue-transfer outcomes. [^1]"
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [incomplete_response, still_incomplete_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Summarize the handoff policy section.", [chunk])
+
+    assert mock_llm.invoke.call_count == 2
+    assert "not an approval procedure" in result.answer
+    assert "internal teams and external service partners" in result.answer
+    assert result.metadata["generation_validation"]["summary_facet_extract_augmented"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_does_not_require_scope_facet_for_task_scope_wording(
+    mock_build_llm,
+    mock_settings,
+):
+    chunk = Chunk(
+        chunk_id="planning_activity_c001",
+        text=(
+            "The planning activity defines materials, processes, resources, routings, setups, "
+            "and facility changes needed for a product line. Determine which possible engineering "
+            "activities are within the scope of the task before choosing the detailed plan."
+        ),
+        metadata={
+            "doc_id": "planning_activity",
+            "title": "Planning Activity",
+            "organization": "Example Standards",
+            "authority_level": "official_public_guidance",
+            "domain": "manufacturing",
+            "subdomain": "planning",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "Planning Activity",
+        },
+    )
+    initial_response = MagicMock()
+    initial_response.content = (
+        "The planning activity defines the materials, processes, resources, routings, setups, "
+        "and facility changes needed for a product line.[^1]"
+    )
+    repaired_response = MagicMock()
+    repaired_response.content = "Determine which possible engineering activities are within the scope of the task.[^1]"
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = [initial_response, repaired_response]
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("Give me a concise summary of the planning activity.", [chunk])
+
+    assert "materials, processes, resources" in result.answer
+    assert "within the scope of the task" not in result.answer
+    assert mock_llm.invoke.call_count == 1
+    assert result.metadata["generation_validation"]["repair_attempted"] is False
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

@@ -648,23 +648,69 @@ class AnswerGenerator:
                     return repaired_validation.answer, repaired_sources, metadata
                 metadata["repair_valid"] = False
                 metadata["repair_failure_reason"] = repaired_completeness_reason
+                augmented_answer = _augment_summary_answer_with_supported_facets(
+                    query=query,
+                    answer=repaired_validation.answer,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                if augmented_answer:
+                    augmented_sources = self._build_sources_for_answer(
+                        query=query,
+                        answer=augmented_answer,
+                        doc_order=doc_order,
+                        doc_chunks=doc_chunks,
+                    )
+                    augmented_validation = validate_knowledge_answer(augmented_answer, augmented_sources)
+                    augmented_completeness_reason = self._supported_answer_completeness_issue(
+                        query=query,
+                        answer=augmented_validation.answer,
+                        doc_chunks=doc_chunks,
+                    )
+                    if (
+                        augmented_validation.valid
+                        and not augmented_validation.insufficient_context
+                        and not augmented_completeness_reason
+                    ):
+                        metadata["summary_facet_extract_augmented"] = True
+                        metadata["repair_valid"] = True
+                        metadata["repair_failure_reason"] = None
+                        return augmented_validation.answer, augmented_sources, metadata
 
-        extractive_answer = _extractive_supported_recall_answer(
-            query=query,
-            doc_order=doc_order,
-            doc_chunks=doc_chunks,
-        )
-        if extractive_answer:
-            extractive_sources = self._build_sources_for_answer(
+        if not _is_boundary_query(query):
+            relationship_answer = _extractive_supported_relationship_answer(
                 query=query,
-                answer=extractive_answer,
                 doc_order=doc_order,
                 doc_chunks=doc_chunks,
             )
-            extractive_validation = validate_knowledge_answer(extractive_answer, extractive_sources)
-            if extractive_validation.valid and not extractive_validation.insufficient_context:
-                metadata["extractive_supported_answer"] = True
-                return extractive_validation.answer, extractive_sources, metadata
+            if relationship_answer:
+                relationship_sources = self._build_sources_for_answer(
+                    query=query,
+                    answer=relationship_answer,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                relationship_validation = validate_knowledge_answer(relationship_answer, relationship_sources)
+                if relationship_validation.valid and not relationship_validation.insufficient_context:
+                    metadata["extractive_relationship_answer"] = True
+                    return relationship_validation.answer, relationship_sources, metadata
+
+            extractive_answer = _extractive_supported_recall_answer(
+                query=query,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
+            if extractive_answer:
+                extractive_sources = self._build_sources_for_answer(
+                    query=query,
+                    answer=extractive_answer,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                extractive_validation = validate_knowledge_answer(extractive_answer, extractive_sources)
+                if extractive_validation.valid and not extractive_validation.insufficient_context:
+                    metadata["extractive_supported_answer"] = True
+                    return extractive_validation.answer, extractive_sources, metadata
 
         if validation.valid:
             return validation.answer, sources, metadata
@@ -684,6 +730,14 @@ class AnswerGenerator:
         )
         if negated_evidence_reason:
             return negated_evidence_reason
+
+        summary_reason = _summary_breadth_completeness_issue(
+            query=query,
+            answer=answer,
+            doc_chunks=doc_chunks,
+        )
+        if summary_reason:
+            return summary_reason
 
         requested_count = _requested_item_count(query)
         if requested_count is None:
@@ -1199,6 +1253,8 @@ def _negates_available_evidence_issue(
         return None
     if not _has_matching_retrieved_evidence(query=query, doc_chunks=doc_chunks):
         return None
+    if _negated_answer_claims_are_supported(answer=answer, doc_chunks=doc_chunks):
+        return None
 
     query_terms = _support_tokens(query) - {
         "answer",
@@ -1227,6 +1283,47 @@ def _negates_available_evidence_issue(
     if len(overlap) >= max(2, min(4, len(query_terms) // 2)):
         return "answer_negates_matching_retrieved_evidence"
     return None
+
+
+def _negated_answer_claims_are_supported(*, answer: str, doc_chunks: dict[str, list[Chunk]]) -> bool:
+    negated_sentences = [
+        _clean_extractive_sentence(sentence)
+        for sentence in _evidence_sentences(answer)
+        if NEGATES_RETRIEVED_EVIDENCE_RE.search(sentence)
+    ]
+    if not negated_sentences:
+        return False
+
+    evidence_sentences = [
+        _clean_extractive_sentence(sentence)
+        for chunks in doc_chunks.values()
+        for chunk in chunks
+        for sentence in _evidence_sentences(_chunk_text_with_metadata_for_support(chunk))
+    ]
+    evidence_blob = " ".join(
+        re.sub(r"\s+", " ", sentence).strip().lower()
+        for sentence in evidence_sentences
+    )
+    for sentence in negated_sentences:
+        normalized = re.sub(r"\s+", " ", _strip_inline_citation_markers(sentence)).strip().lower()
+        if not normalized:
+            continue
+        if normalized in evidence_blob:
+            continue
+        sentence_terms = _support_tokens(normalized)
+        if not sentence_terms:
+            return False
+        best_coverage = 0.0
+        best_overlap = 0
+        for evidence_sentence in evidence_sentences:
+            evidence_terms = _support_tokens(evidence_sentence)
+            overlap = len(sentence_terms & evidence_terms)
+            coverage = overlap / max(1, len(sentence_terms))
+            best_overlap = max(best_overlap, overlap)
+            best_coverage = max(best_coverage, coverage)
+        if best_overlap < 4 or best_coverage < 0.72:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -1258,6 +1355,117 @@ class ProcedureEvidenceStep:
             "text_search": self.text_search,
         }
         return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+
+
+@dataclass(frozen=True)
+class SummaryCompletenessFacet:
+    name: str
+    evidence_patterns: tuple[str, ...]
+    answer_patterns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SummaryCompletenessSettings:
+    facets: tuple[SummaryCompletenessFacet, ...]
+    max_sentences_per_facet: int = 2
+    max_augmented_sentences: int = 5
+
+
+SUMMARY_COMPLETENESS_SETTINGS = SummaryCompletenessSettings(
+    facets=(
+        SummaryCompletenessFacet(
+            name="limitations",
+            evidence_patterns=(
+                r"\bnot\s+(?:a\s+|an\s+)?(?:checklist|procedure|sequence|ordered?\s+list)\b",
+                r"\bdoes\s+not\b.{0,120}\b(?:checklist|sequence|order|procedure|replace|imply)\b",
+                r"\bno\s+(?:fixed\s+)?(?:sequence|order)\b",
+                r"\blimitations?\b",
+                r"\bcaveats?\b",
+            ),
+            answer_patterns=(
+                r"\bnot\s+(?:a\s+|an\s+)?(?:checklist|procedure|sequence|ordered?\s+list)\b",
+                r"\bdoes\s+not\b.{0,120}\b(?:checklist|sequence|order|procedure|replace|imply)\b",
+                r"\bno\s+(?:fixed\s+)?(?:sequence|order)\b",
+                r"\blimitations?\b",
+                r"\bcaveats?\b",
+            ),
+        ),
+        SummaryCompletenessFacet(
+            name="scope",
+            evidence_patterns=(
+                r"\b(?:applies|apply|applicable)\b",
+                r"\bcurrent\s+and\s+future\b",
+                r"\bacross\b.{0,120}\b(?:environment|environments|systems?|teams?|organizations?|partners?)\b",
+                r"\bto\b.{0,80}\b(?:teams?|partners?|organizations?|environments|systems?)\b",
+            ),
+            answer_patterns=(
+                r"\b(?:applies|apply|applicable)\b",
+                r"\bcurrent\s+and\s+future\b",
+                r"\bacross\b.{0,120}\b(?:environment|environments|systems?|teams?|organizations?|partners?)\b",
+                r"\bto\b.{0,80}\b(?:teams?|partners?|organizations?|environments|systems?)\b",
+            ),
+        ),
+        SummaryCompletenessFacet(
+            name="cadence",
+            evidence_patterns=(
+                r"\bconcurrent(?:ly)?\b",
+                r"\bcontinu(?:e|es|ed|ing|ous(?:ly)?)\b",
+                r"\bongoing\b",
+                r"\bat\s+all\s+times\b",
+                r"\bin\s+parallel\b",
+            ),
+            answer_patterns=(
+                r"\bconcurrent(?:ly)?\b",
+                r"\bcontinu(?:e|es|ed|ing|ous(?:ly)?)\b",
+                r"\bongoing\b",
+                r"\bat\s+all\s+times\b",
+                r"\bin\s+parallel\b",
+            ),
+        ),
+    )
+)
+
+
+@dataclass(frozen=True)
+class ExtractiveRelationshipSettings:
+    cue_patterns: tuple[str, ...]
+    stopwords: tuple[str, ...]
+    max_sentences: int = 6
+    neighbor_window: int = 2
+    min_sentence_tokens: int = 4
+    min_query_overlap: int = 1
+
+
+EXTRACTIVE_RELATIONSHIP_SETTINGS = ExtractiveRelationshipSettings(
+    cue_patterns=(
+        r"\bconnect(?:s|ed|ing|ion)?\b",
+        r"\brelat(?:e|es|ing)\b",
+        r"\brelated\s+to\b",
+        r"\brelationship\b",
+        r"\bcompar(?:e|es|ed|ing|ison)\b",
+        r"\bcontrast(?:s|ed|ing)?\b",
+        r"\bdiffer(?:s|ed|ence|ent)?\b",
+        r"\bversus\b|\bvs\.?\b",
+    ),
+    stopwords=(
+        "area",
+        "audit",
+        "between",
+        "compare",
+        "comparison",
+        "connect",
+        "connection",
+        "contrast",
+        "differ",
+        "difference",
+        "different",
+        "relate",
+        "relationship",
+        "review",
+        "section",
+        "versus",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -1358,6 +1566,8 @@ def _is_static_procedure_recall_query(query: str) -> bool:
     lowered = text.lower()
     if _requires_certification_boundary(text):
         return False
+    if _is_static_checklist_or_item_recall_query(text):
+        return False
     if not _PROCEDURE_CONTEXT_RE.search(text):
         return False
     if re.search(r"\b(can|may|should)\s+i\b", lowered) and re.search(
@@ -1368,6 +1578,26 @@ def _is_static_procedure_recall_query(query: str) -> bool:
     return bool(
         re.search(r"\b(what|which|list|identify|according|steps?|procedure|complete|accomplished)\b", lowered)
         or re.search(r"\bbefore\b.{0,80}\b(service|maintenance|shutdown|remov|reenerg)", lowered)
+    )
+
+
+def _is_static_checklist_or_item_recall_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    if not re.search(
+        r"\b(what|which|list|listed|identify|mention|mentions|pull\s+out|extract|show)\b",
+        lowered,
+    ):
+        return False
+    if not re.search(
+        r"\b(check|checks|checklist|question|questions|item|items|criteria|areas?|requirements?)\b",
+        lowered,
+    ):
+        return False
+    return not bool(
+        re.search(
+            r"\b(steps?|sequence|ordered|procedure|procedures|how\s+to|complete|completed|accomplished)\b",
+            lowered,
+        )
     )
 
 
@@ -1632,6 +1862,198 @@ def _dedupe_procedure_evidence_items(items: list[dict[str, Any]]) -> list[dict[s
         seen.add(key)
         deduped.append(item)
     return deduped
+
+
+def _extractive_supported_relationship_answer(
+    *,
+    query: str,
+    doc_order: list[str],
+    doc_chunks: dict[str, list[Chunk]],
+    settings: ExtractiveRelationshipSettings = EXTRACTIVE_RELATIONSHIP_SETTINGS,
+) -> str | None:
+    if not _is_extractive_relationship_query(query, settings=settings):
+        return None
+
+    focus_terms = _support_tokens(query) - EXTRACTIVE_RECALL_STOPWORDS - set(settings.stopwords)
+    if not focus_terms:
+        return None
+
+    candidates: list[tuple[float, int, frozenset[str], str, str]] = []
+    sequence = 0
+
+    for doc_id in doc_order:
+        marker = _source_marker_for_doc(doc_order, doc_id)
+        if not marker:
+            continue
+        for chunk in doc_chunks.get(doc_id, []):
+            for item_text, metadata_text in _relationship_extraction_text_items(chunk):
+                chunk_sentences = [
+                    _clean_extractive_sentence(sentence)
+                    for sentence in _evidence_sentences(item_text)
+                ]
+                match_details = _relationship_sentence_matches(
+                    query_terms=focus_terms,
+                    sentences=chunk_sentences,
+                    metadata_text=metadata_text,
+                    settings=settings,
+                )
+                if not match_details:
+                    continue
+                for index in _expand_neighbor_indexes(
+                    list(match_details.keys()),
+                    sentence_count=len(chunk_sentences),
+                    window=settings.neighbor_window,
+                ):
+                    clean_sentence = chunk_sentences[index]
+                    if len(re.findall(r"[A-Za-z0-9]+", clean_sentence)) < settings.min_sentence_tokens:
+                        continue
+                    score, matched_terms = _relationship_sentence_score(
+                        query_terms=focus_terms,
+                        sentence=clean_sentence,
+                        metadata_text=metadata_text,
+                        settings=settings,
+                    )
+                    if index not in match_details:
+                        nearest_index = min(match_details, key=lambda matched_index: abs(matched_index - index))
+                        nearest_score, nearest_terms = match_details[nearest_index]
+                        distance = abs(nearest_index - index)
+                        score = max(score, nearest_score - (0.45 * distance))
+                        if not matched_terms:
+                            matched_terms = nearest_terms
+                    if score <= 0:
+                        continue
+                    candidates.append((score, sequence, frozenset(matched_terms), clean_sentence, marker))
+                    sequence += 1
+
+    selected = _select_relationship_sentences(candidates, max_sentences=settings.max_sentences)
+    if len(selected) < 2:
+        return None
+    return "\n".join(f"- {sentence} {marker}" for sentence, marker in selected)
+
+
+def _is_extractive_relationship_query(
+    query: str,
+    *,
+    settings: ExtractiveRelationshipSettings = EXTRACTIVE_RELATIONSHIP_SETTINGS,
+) -> bool:
+    text = (query or "").lower()
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in settings.cue_patterns)
+
+
+def _relationship_sentence_matches(
+    *,
+    query_terms: set[str],
+    sentences: list[str],
+    metadata_text: str,
+    settings: ExtractiveRelationshipSettings,
+) -> dict[int, tuple[float, set[str]]]:
+    matched: dict[int, tuple[float, set[str]]] = {}
+    for index, sentence in enumerate(sentences):
+        score, matched_terms = _relationship_sentence_score(
+            query_terms=query_terms,
+            sentence=sentence,
+            metadata_text=metadata_text,
+            settings=settings,
+        )
+        if score > 0:
+            matched[index] = (score, matched_terms)
+    return matched
+
+
+def _relationship_sentence_score(
+    *,
+    query_terms: set[str],
+    sentence: str,
+    metadata_text: str,
+    settings: ExtractiveRelationshipSettings,
+) -> tuple[float, set[str]]:
+    sentence_terms = _support_tokens(sentence)
+    if not sentence_terms:
+        return 0.0, set()
+
+    metadata_terms = _support_tokens(metadata_text)
+    metadata_query_terms = query_terms & metadata_terms
+    query_overlap = query_terms & sentence_terms
+    metadata_overlap = sentence_terms & metadata_terms if metadata_query_terms else set()
+    if len(query_overlap) < settings.min_query_overlap and not metadata_overlap:
+        return 0.0, set()
+
+    matched_terms = set(query_overlap or metadata_query_terms)
+    score = (2.0 * len(query_overlap)) + (1.0 * len(metadata_query_terms & sentence_terms))
+    if metadata_overlap:
+        score += min(1.0, 0.25 * len(metadata_overlap))
+    return score, matched_terms
+
+
+def _select_relationship_sentences(
+    candidates: list[tuple[float, int, frozenset[str], str, str]],
+    *,
+    max_sentences: int,
+) -> list[tuple[str, str]]:
+    selected: list[tuple[str, str]] = []
+    deferred: list[tuple[float, int, frozenset[str], str, str]] = []
+    covered_terms: set[str] = set()
+    seen: set[str] = set()
+
+    for candidate in sorted(candidates, key=lambda item: (-item[0], item[1])):
+        score, sequence, matched_terms, sentence, marker = candidate
+        normalized = re.sub(r"\s+", " ", sentence).strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        if set(matched_terms) - covered_terms:
+            selected.append((sentence, marker))
+            covered_terms.update(matched_terms)
+            seen.add(normalized)
+            if len(selected) >= max_sentences:
+                return selected
+            continue
+        deferred.append((score, sequence, matched_terms, sentence, marker))
+
+    for _score, _sequence, _matched_terms, sentence, marker in sorted(deferred, key=lambda item: (-item[0], item[1])):
+        normalized = re.sub(r"\s+", " ", sentence).strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        selected.append((sentence, marker))
+        seen.add(normalized)
+        if len(selected) >= max_sentences:
+            break
+    return selected
+
+
+def _expand_neighbor_indexes(indexes: list[int], *, sentence_count: int, window: int) -> list[int]:
+    expanded: list[int] = []
+    seen: set[int] = set()
+    for index in indexes:
+        start = max(0, index - window)
+        end = min(sentence_count, index + window + 1)
+        for neighbor_index in range(start, end):
+            if neighbor_index in seen:
+                continue
+            seen.add(neighbor_index)
+            expanded.append(neighbor_index)
+    return expanded
+
+
+def _chunk_relationship_metadata_text(chunk: Chunk) -> str:
+    metadata = chunk.metadata or {}
+    section_path = metadata.get("section_path")
+    if isinstance(section_path, list):
+        section_path = " > ".join(str(part) for part in section_path if part)
+    return f"{metadata.get('section_title', '')} {section_path or ''}"
+
+
+def _relationship_extraction_text_items(chunk: Chunk) -> list[tuple[str, str]]:
+    items = [(chunk.text or "", _chunk_relationship_metadata_text(chunk))]
+    for evidence_item in _source_chunk_evidence_items(chunk):
+        text = _source_chunk_evidence_item_text(evidence_item)
+        if not text:
+            continue
+        section_path = evidence_item.get("section_path")
+        if isinstance(section_path, list):
+            section_path = " > ".join(str(part) for part in section_path if part)
+        metadata_text = f"{evidence_item.get('section_title', '')} {section_path or ''}"
+        items.append((text, metadata_text))
+    return items
 
 
 def _extractive_supported_recall_answer(
@@ -1934,15 +2356,153 @@ def _has_matching_retrieved_evidence(*, query: str, doc_chunks: dict[str, list[C
     return best_overlap >= 1 and len(query_tokens) <= 2
 
 
+def _summary_breadth_completeness_issue(
+    *,
+    query: str,
+    answer: str,
+    doc_chunks: dict[str, list[Chunk]],
+    settings: SummaryCompletenessSettings = SUMMARY_COMPLETENESS_SETTINGS,
+) -> str | None:
+    missing_facets = _missing_summary_facets(
+        query=query,
+        answer=answer,
+        doc_chunks=doc_chunks,
+        settings=settings,
+    )
+    if missing_facets:
+        return f"summary_omits_supported_{missing_facets[0].name}"
+    return None
+
+
+def _missing_summary_facets(
+    *,
+    query: str,
+    answer: str,
+    doc_chunks: dict[str, list[Chunk]],
+    settings: SummaryCompletenessSettings = SUMMARY_COMPLETENESS_SETTINGS,
+) -> list[SummaryCompletenessFacet]:
+    if not _is_summary_breadth_query(query):
+        return []
+
+    evidence_text = " ".join(
+        _chunk_text_with_metadata_for_support(chunk)
+        for chunks in doc_chunks.values()
+        for chunk in chunks
+    ).lower()
+    answer_text = (answer or "").lower()
+    if not evidence_text.strip() or not answer_text.strip():
+        return []
+
+    missing: list[SummaryCompletenessFacet] = []
+    for facet in settings.facets:
+        if not _matches_any_pattern(evidence_text, facet.evidence_patterns):
+            continue
+        if _matches_any_pattern(answer_text, facet.answer_patterns):
+            continue
+        missing.append(facet)
+    return missing
+
+
+def _augment_summary_answer_with_supported_facets(
+    *,
+    query: str,
+    answer: str,
+    doc_order: list[str],
+    doc_chunks: dict[str, list[Chunk]],
+    settings: SummaryCompletenessSettings = SUMMARY_COMPLETENESS_SETTINGS,
+) -> str | None:
+    missing_facets = _missing_summary_facets(
+        query=query,
+        answer=answer,
+        doc_chunks=doc_chunks,
+        settings=settings,
+    )
+    if not missing_facets:
+        return None
+
+    missing_by_name = {facet.name: facet for facet in missing_facets}
+    selected: list[str] = []
+    selected_counts: dict[str, int] = {facet.name: 0 for facet in missing_facets}
+    seen_sentences = {
+        re.sub(r"\s+", " ", sentence).strip().lower()
+        for sentence in _evidence_sentences(answer)
+    }
+    answer_lower = (answer or "").lower()
+
+    for doc_id in doc_order:
+        marker = _source_marker_for_doc(doc_order, doc_id)
+        if not marker:
+            continue
+        for chunk in doc_chunks.get(doc_id, []):
+            for sentence in _evidence_sentences(chunk.text):
+                clean_sentence = _clean_extractive_sentence(sentence)
+                if len(re.findall(r"[A-Za-z0-9]+", clean_sentence)) < 5:
+                    continue
+                normalized = re.sub(r"\s+", " ", clean_sentence).strip().lower()
+                if not normalized or normalized in seen_sentences or normalized in answer_lower:
+                    continue
+                for facet_name, facet in missing_by_name.items():
+                    if selected_counts[facet_name] >= settings.max_sentences_per_facet:
+                        continue
+                    if not _matches_any_pattern(normalized, facet.evidence_patterns):
+                        continue
+                    selected.append(f"- {clean_sentence} {marker}")
+                    selected_counts[facet_name] += 1
+                    seen_sentences.add(normalized)
+                    break
+                if len(selected) >= settings.max_augmented_sentences:
+                    break
+            if len(selected) >= settings.max_augmented_sentences:
+                break
+        if len(selected) >= settings.max_augmented_sentences:
+            break
+
+    if not selected:
+        return None
+    base = sanitize_rag_answer_text(answer).strip()
+    if not base:
+        return "\n".join(selected)
+    return f"{base}\n" + "\n".join(selected)
+
+
+def _is_summary_breadth_query(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(summary|summarize|summarise|overview|explain|describe)\b",
+            (query or "").lower(),
+        )
+    )
+
+
+def _matches_any_pattern(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
 def _chunk_text_with_metadata_for_support(chunk: Chunk) -> str:
     metadata = chunk.metadata or {}
     section_path = metadata.get("section_path")
     if isinstance(section_path, list):
         section_path = " > ".join(str(part) for part in section_path if part)
+    source_evidence_text = " ".join(
+        _source_chunk_evidence_item_text(item)
+        for item in _source_chunk_evidence_items(chunk)
+    )
     return (
         f"{chunk.text} {metadata.get('snippet', '')} {metadata.get('text_search', '')} "
-        f"{metadata.get('section_title', '')} {section_path or ''}"
+        f"{metadata.get('section_title', '')} {section_path or ''} {source_evidence_text}"
     )
+
+
+def _source_chunk_evidence_items(chunk: Chunk) -> list[dict[str, Any]]:
+    metadata = chunk.metadata or {}
+    raw_items = metadata.get("source_chunk_evidence") or metadata.get("evidence_snippets") or []
+    if not isinstance(raw_items, list):
+        return []
+    return [item for item in raw_items if isinstance(item, dict)]
+
+
+def _source_chunk_evidence_item_text(item: dict[str, Any]) -> str:
+    return str(item.get("snippet") or item.get("text_search") or item.get("text") or "").strip()
 
 
 def _support_stem(token: str) -> str:

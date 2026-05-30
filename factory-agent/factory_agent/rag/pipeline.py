@@ -2,21 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 from factory_agent.rag.context_building import (
+    BudgetedRSESettings,
     RAGContextBuilder,
     normalize_compression,
     normalize_context_builder,
     rewrite_query_for_retrieval,
 )
 from factory_agent.rag.generation import AnswerGenerator
+from factory_agent.rag.query_rewriting import build_corpus_aware_query_rewrite_for_retriever
 from factory_agent.rag.reranking import LLMReranker
 from factory_agent.rag.retrieval import HybridRetriever
 from factory_agent.rag.schemas import AnswerResult, Chunk, ScoredChunk
 from factory_agent.rag.source_metadata import is_insufficient_context_answer
 from factory_agent.observability.telemetry import log_event
+
+
+@dataclass(frozen=True)
+class MultiQueryFusionSettings:
+    original_query_weight: float = 1.0
+    expanded_query_weight: float = 0.92
+    rrf_constant: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -38,9 +47,14 @@ class RAGPipelineConfig:
     rerank_top_k: int | None = None
     allow_rerank_fallback: bool = False
     query_rewrite: bool = False
+    corpus_aware_query_rewrite: bool = False
+    multi_query_retrieval: bool = False
+    source_register_path: str | None = None
     context_builder: str = "none"
     compression: str = "none"
     document_augmentation: bool = False
+    context_builder_settings: dict[str, Any] = field(default_factory=dict)
+    multi_query_fusion_settings: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "context_builder", normalize_context_builder(self.context_builder))
@@ -162,18 +176,29 @@ class RAGPipeline:
         config: RAGPipelineConfig | None = None,
     ) -> AnswerResult:
         config = config or RAGPipelineConfig()
-        retrieval_query = rewrite_query_for_retrieval(query) if config.query_rewrite else query
+        candidates, query_plan = retrieve_candidates_for_config(
+            self._retriever,
+            query=query,
+            route=route,
+            config=config,
+        )
+        retrieval_query = str(query_plan.get("retrieval_query") or query)
+        log_event(
+            "rag_query_rewrite_complete",
+            session_id=session_id,
+            rag_variant=config.variant_id,
+            mode=query_plan.get("mode"),
+            enabled=query_plan.get("enabled"),
+            original_query=query_plan.get("original_query"),
+            normalized_query=query_plan.get("normalized_query"),
+            retrieval_query=retrieval_query,
+            expansion_terms=query_plan.get("expansion_terms"),
+            expansion_sources=query_plan.get("expansion_sources"),
+            confidence=query_plan.get("confidence"),
+            retrieval_queries=query_plan.get("retrieval_queries"),
+        )
 
         # 1. Retrieval
-        candidates = self._retriever.retrieve(
-            query=retrieval_query,
-            route=route,
-            vector_top_k=config.vector_top_k,
-            keyword_top_k=config.keyword_top_k,
-            fusion_top_k=config.fusion_top_k,
-            expand_neighbors=config.expand_neighbors,
-            retrieval_mode=config.retrieval_mode,
-        )
         log_event(
             "rag_retrieval_complete",
             session_id=session_id,
@@ -222,8 +247,11 @@ class RAGPipeline:
         )
 
         # 3. Context building
-        context_result = RAGContextBuilder(self._retriever).build(
-            query=retrieval_query,
+        context_result = RAGContextBuilder(
+            self._retriever,
+            budgeted_rse_settings=_budgeted_rse_settings_from_config(config),
+        ).build(
+            query=query if config.corpus_aware_query_rewrite else retrieval_query,
             selected_chunks=selected_chunks,
             candidates=candidates,
             context_builder=config.context_builder,
@@ -251,9 +279,7 @@ class RAGPipeline:
             **(result.metadata or {}),
             "runtime_config": config.to_dict(),
             "query_rewrite": {
-                "enabled": config.query_rewrite,
-                "original_query": query,
-                "retrieval_query": retrieval_query,
+                **query_plan,
             },
             "rerank": rerank_trace,
             "context_building": context_result.metadata,
@@ -274,6 +300,143 @@ def _chunks_from_candidates(candidates: list[ScoredChunk], *, top_k: int | None 
     if top_k is None:
         return chunks
     return chunks[:top_k]
+
+
+def build_retrieval_query_plan(
+    *,
+    query: str,
+    config: RAGPipelineConfig,
+    retriever: HybridRetriever | Any | None = None,
+) -> dict[str, Any]:
+    if config.corpus_aware_query_rewrite:
+        rewrite = build_corpus_aware_query_rewrite_for_retriever(
+            query,
+            retriever,
+            source_register_path=config.source_register_path,
+        )
+        retrieval_queries = [rewrite.normalized_query]
+        if rewrite.expanded_query and rewrite.expanded_query != rewrite.normalized_query:
+            retrieval_queries.append(rewrite.expanded_query)
+        return {
+            "enabled": True,
+            "mode": rewrite.mode,
+            "original_query": rewrite.original_query,
+            "normalized_query": rewrite.normalized_query,
+            "retrieval_query": rewrite.expanded_query,
+            "expanded_query": rewrite.expanded_query,
+            "expansion_terms": rewrite.expansion_terms,
+            "expansion_sources": rewrite.expansion_sources,
+            "confidence": rewrite.confidence,
+            "multi_query_retrieval": config.multi_query_retrieval,
+            "retrieval_queries": retrieval_queries if config.multi_query_retrieval else [rewrite.expanded_query],
+        }
+
+    retrieval_query = rewrite_query_for_retrieval(query) if config.query_rewrite else query
+    return {
+        "enabled": config.query_rewrite,
+        "mode": "deterministic" if config.query_rewrite else "none",
+        "original_query": query,
+        "normalized_query": query,
+        "retrieval_query": retrieval_query,
+        "expanded_query": retrieval_query,
+        "expansion_terms": [],
+        "expansion_sources": [],
+        "confidence": 0.0,
+        "multi_query_retrieval": False,
+        "retrieval_queries": [retrieval_query],
+    }
+
+
+def retrieve_candidates_for_config(
+    retriever: HybridRetriever | Any,
+    *,
+    query: str,
+    route: str,
+    config: RAGPipelineConfig,
+) -> tuple[list[ScoredChunk], dict[str, Any]]:
+    query_plan = build_retrieval_query_plan(query=query, config=config, retriever=retriever)
+    retrieval_queries = list(query_plan.get("retrieval_queries") or [query_plan.get("retrieval_query") or query])
+    if not config.multi_query_retrieval:
+        retrieval_queries = [str(query_plan.get("retrieval_query") or query)]
+
+    result_sets: list[list[ScoredChunk]] = []
+    for retrieval_query in retrieval_queries:
+        if not retrieval_query:
+            continue
+        result_sets.append(
+            retriever.retrieve(
+                query=retrieval_query,
+                route=route,
+                vector_top_k=config.vector_top_k,
+                keyword_top_k=config.keyword_top_k,
+                fusion_top_k=config.fusion_top_k,
+                expand_neighbors=config.expand_neighbors,
+                retrieval_mode=config.retrieval_mode,
+            )
+        )
+
+    if len(result_sets) <= 1:
+        return (result_sets[0] if result_sets else []), query_plan
+    return (
+        _fuse_multi_query_results(
+            result_sets,
+            top_k=config.fusion_top_k,
+            settings=_multi_query_fusion_settings_from_config(config),
+        ),
+        query_plan,
+    )
+
+
+def _fuse_multi_query_results(
+    result_sets: list[list[ScoredChunk]],
+    *,
+    top_k: int,
+    settings: MultiQueryFusionSettings,
+) -> list[ScoredChunk]:
+    scores: dict[str, float] = {}
+    chunks: dict[str, Chunk] = {}
+    vector_scores: dict[str, float] = {}
+    keyword_scores: dict[str, float] = {}
+    boosted_scores: dict[str, float] = {}
+    for result_index, results in enumerate(result_sets):
+        query_weight = settings.original_query_weight if result_index == 0 else settings.expanded_query_weight
+        for rank, item in enumerate(results, start=1):
+            chunk_id = item.chunk.chunk_id
+            chunks[chunk_id] = item.chunk
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + (query_weight / (settings.rrf_constant + rank))
+            if item.vector_score is not None:
+                vector_scores[chunk_id] = max(vector_scores.get(chunk_id, 0.0), float(item.vector_score))
+            if item.keyword_score is not None:
+                keyword_scores[chunk_id] = max(keyword_scores.get(chunk_id, 0.0), float(item.keyword_score))
+            if item.boosted_score is not None:
+                boosted_scores[chunk_id] = max(boosted_scores.get(chunk_id, 0.0), float(item.boosted_score))
+
+    ordered_ids = sorted(scores, key=scores.get, reverse=True)[:top_k]
+    return [
+        ScoredChunk(
+            chunk=chunks[chunk_id],
+            vector_score=vector_scores.get(chunk_id),
+            keyword_score=keyword_scores.get(chunk_id),
+            fusion_score=scores[chunk_id],
+            boosted_score=boosted_scores.get(chunk_id, scores[chunk_id]),
+        )
+        for chunk_id in ordered_ids
+    ]
+
+
+def _budgeted_rse_settings_from_config(config: RAGPipelineConfig) -> BudgetedRSESettings:
+    raw_settings = dict(config.context_builder_settings or {})
+    nested = raw_settings.get("budgeted_rse")
+    if isinstance(nested, dict):
+        raw_settings = dict(nested)
+    allowed = {item.name for item in fields(BudgetedRSESettings)}
+    return BudgetedRSESettings(**{key: value for key, value in raw_settings.items() if key in allowed})
+
+
+def _multi_query_fusion_settings_from_config(config: RAGPipelineConfig) -> MultiQueryFusionSettings:
+    raw_settings = dict(config.multi_query_fusion_settings or {})
+    allowed = {item.name for item in fields(MultiQueryFusionSettings)}
+    return MultiQueryFusionSettings(**{key: value for key, value in raw_settings.items() if key in allowed})
 
 
 def _citation_details(sources: list[Any]) -> list[dict[str, Any]]:

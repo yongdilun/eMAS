@@ -8,7 +8,7 @@ changing default production RAG behavior.
 from __future__ import annotations
 
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ from factory_agent.rag.document_augmentation import (  # noqa: E402
     DEFAULT_BM25_PATH,
     DEFAULT_VECTOR_DB_PATH,
 )
+from factory_agent.rag.context_building import BudgetedRSESettings  # noqa: E402
 from factory_agent.rag.pipeline import RAGPipelineConfig  # noqa: E402
 
 DEFAULT_VARIANT_ID = "V3"
@@ -41,7 +42,42 @@ RUN_1_VARIANT_IDS = (
     "V11",
     "V12",
     "V13",
+    "V14",
+    "V15",
+    "V15A",
+    "V15B",
+    "V15C",
 )
+
+V14_BUDGETED_RSE_SETTINGS = {
+    **asdict(BudgetedRSESettings()),
+    "max_segment_tokens": 1500,
+    "max_context_tokens": 3200,
+    "max_neighbor_window": 2,
+}
+V15_BUDGETED_RSE_SETTINGS = {
+    **V14_BUDGETED_RSE_SETTINGS,
+    "use_evidence_cards": True,
+    "max_evidence_cards": 8,
+    "max_card_tokens": 180,
+    "evidence_card_token_budget": 2200,
+}
+V15A_BUDGETED_RSE_SETTINGS = {
+    **V14_BUDGETED_RSE_SETTINGS,
+    "use_evidence_cards": False,
+}
+V15B_BUDGETED_RSE_SETTINGS = {
+    **V14_BUDGETED_RSE_SETTINGS,
+    "use_evidence_cards": True,
+    "evidence_card_context_mode": "metadata_only",
+    "max_evidence_cards": 8,
+    "max_card_tokens": 180,
+    "evidence_card_token_budget": 2200,
+}
+V15C_BUDGETED_RSE_SETTINGS = {
+    **V15B_BUDGETED_RSE_SETTINGS,
+    "evidence_card_context_mode": "mode_aware",
+}
 
 
 @dataclass(frozen=True)
@@ -52,6 +88,8 @@ class RAGVariantConfig:
     use_rerank: bool
     expand_neighbors: bool
     query_rewrite: bool = False
+    corpus_aware_query_rewrite: bool = False
+    multi_query_retrieval: bool = False
     context_builder: str = "none"
     compression: str = "none"
     document_augmentation: bool = False
@@ -62,6 +100,7 @@ class RAGVariantConfig:
     allow_rerank_fallback: bool = False
     phase2_status: str = "executable"
     notes: str = ""
+    context_builder_settings: dict[str, Any] = field(default_factory=dict)
 
     @property
     def phase2_executable(self) -> bool:
@@ -80,9 +119,12 @@ class RAGVariantConfig:
             rerank_top_k=self.rerank_top_k,
             allow_rerank_fallback=self.allow_rerank_fallback,
             query_rewrite=self.query_rewrite,
+            corpus_aware_query_rewrite=self.corpus_aware_query_rewrite,
+            multi_query_retrieval=self.multi_query_retrieval,
             context_builder=self.context_builder,
             compression=self.compression,
             document_augmentation=self.document_augmentation,
+            context_builder_settings=self.context_builder_settings,
         )
 
     def index_paths(self) -> dict[str, str]:
@@ -105,10 +147,13 @@ class RAGVariantConfig:
             "fusion_top_k": config.fusion_top_k,
             "expand_neighbors": config.expand_neighbors,
             "query_rewrite": config.query_rewrite,
+            "corpus_aware_query_rewrite": config.corpus_aware_query_rewrite,
+            "multi_query_retrieval": config.multi_query_retrieval,
             "context_builder": config.context_builder,
             "compression": config.compression,
             "allow_rerank_fallback": config.allow_rerank_fallback,
             "document_augmentation": config.document_augmentation,
+            "context_builder_settings": config.context_builder_settings,
             "index_paths": self.index_paths(),
         }
 
@@ -247,6 +292,84 @@ RUN_1_VARIANTS: dict[str, RAGVariantConfig] = {
         context_builder="rse",
         document_augmentation=True,
         notes="Document-augmented retrieval index, chunk rerank, and RSE segment building.",
+    ),
+    "V14": RAGVariantConfig(
+        variant_id="V14",
+        name="Query Rewrite + Hybrid Search + Budgeted Evidence-Aware RSE + Rerank",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        query_rewrite=True,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": V14_BUDGETED_RSE_SETTINGS},
+        notes=(
+            "Deterministic retrieval query rewrite, chunk rerank, and budgeted evidence-aware "
+            "RSE with per-segment and global context budgets."
+        ),
+    ),
+    "V15": RAGVariantConfig(
+        variant_id="V15",
+        name="Corpus-Aware Multi-Query Rewrite + Evidence Cards + Budgeted RSE + Rerank",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        query_rewrite=False,
+        corpus_aware_query_rewrite=True,
+        multi_query_retrieval=True,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": V15_BUDGETED_RSE_SETTINGS},
+        notes=(
+            "Corpus-derived retrieval vocabulary, separate original and expanded retrieval, "
+            "chunk rerank, compact evidence cards, and budgeted evidence-aware RSE."
+        ),
+    ),
+    "V15A": RAGVariantConfig(
+        variant_id="V15A",
+        name="Corpus-Aware Multi-Query Rewrite + Budgeted RSE + Rerank",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        query_rewrite=False,
+        corpus_aware_query_rewrite=True,
+        multi_query_retrieval=True,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": V15A_BUDGETED_RSE_SETTINGS},
+        notes=(
+            "V14 budgeted RSE with corpus-aware multi-query retrieval and no legacy named-standard "
+            "rewrite or evidence-card context replacement."
+        ),
+    ),
+    "V15B": RAGVariantConfig(
+        variant_id="V15B",
+        name="V15A + Evidence Cards As Metadata",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        query_rewrite=False,
+        corpus_aware_query_rewrite=True,
+        multi_query_retrieval=True,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": V15B_BUDGETED_RSE_SETTINGS},
+        notes=(
+            "V15A with evidence-card citation, facet, and debug metadata only; generation remains "
+            "on budgeted RSE context."
+        ),
+    ),
+    "V15C": RAGVariantConfig(
+        variant_id="V15C",
+        name="V15B + Mode-Aware Evidence Card Context",
+        retrieval_mode="hybrid",
+        use_rerank=True,
+        expand_neighbors=False,
+        query_rewrite=False,
+        corpus_aware_query_rewrite=True,
+        multi_query_retrieval=True,
+        context_builder="budgeted_rse",
+        context_builder_settings={"budgeted_rse": V15C_BUDGETED_RSE_SETTINGS},
+        notes=(
+            "V15B with compact evidence-card context for direct/procedure answers and broader "
+            "RSE context for summaries, relationships, comparisons, and checklist reviews."
+        ),
     ),
 }
 
