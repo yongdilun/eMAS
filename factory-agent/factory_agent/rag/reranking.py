@@ -9,6 +9,7 @@ from factory_agent.llm.models import build_bge_reranker
 from factory_agent.rag.schemas import Chunk, ScoredChunk
 
 logger = logging.getLogger(__name__)
+LEGACY_RAG_RERANK_PROMPT_CONTRACT = "legacy_rag_rerank_v1"
 
 
 class RerankerError(RuntimeError):
@@ -277,7 +278,7 @@ class LLMReranker:
         allow_fallback: bool,
         start_time: float,
     ) -> List[Chunk]:
-        """Compatibility path for older tests and deployments that inject an LLM reranker."""
+        """Legacy compatibility path for older tests and deployments that inject an LLM reranker."""
         try:
             prompt = json.dumps(
                 {

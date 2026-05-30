@@ -14,6 +14,7 @@ from .result_normalizer import normalize_tool_result
 
 SummaryBackendName = Literal["deterministic", "langchain"]
 BundleNarrativeKind = Literal["awaiting_approval", "completed"]
+SUMMARY_PLAN_LANGCHAIN_PROMPT_CONTRACT = "summary_plan_langchain_v1"
 
 
 def awaiting_approval_markdown_from_bundle_ui(facts: dict[str, Any]) -> str | None:
@@ -364,6 +365,8 @@ class SummaryAdapter:
         return SummaryResult(text=text, backend_used="deterministic", llm_calls=0)
 
     async def _summarize_langchain(self, *, intent: str, draft: PlanDraft) -> SummaryResult:
+        # Optional prompt lane: most production narratives are deterministic; this
+        # branch is only used when SUMMARY_BACKEND explicitly resolves to langchain.
         try:
             from langchain_openai import ChatOpenAI
         except Exception as e:

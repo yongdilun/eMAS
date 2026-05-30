@@ -79,3 +79,13 @@ def test_prompt_contract_registry_has_required_metadata():
     }:
         assert required in contracts
 
+
+def test_non_primary_prompt_lanes_are_explicitly_labeled():
+    contracts = prompt_contracts_by_name()
+
+    assert contracts["summary_plan_langchain_v1"].status == "optional"
+    assert contracts["legacy_planner_prompt_v1"].status == "legacy"
+    assert contracts["legacy_rag_rerank_v1"].status == "legacy"
+    assert "planner_decision_v2" in contracts["legacy_planner_prompt_v1"].purpose
+    assert "BGE" in contracts["legacy_rag_rerank_v1"].purpose
+

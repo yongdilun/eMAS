@@ -6,6 +6,8 @@ from typing import Any
 from ..schemas import PlanDraft
 
 
+LEGACY_PLANNER_PROMPT_CONTRACT = "legacy_planner_prompt_v1"
+
 PLANNER_SYSTEM_INSTRUCTIONS = """You are the Factory Operations planning agent.
 
 Return ONLY valid JSON that matches the provided JSON Schema.
@@ -31,6 +33,8 @@ def get_plan_draft_json_schema() -> dict[str, Any]:
 
 
 def build_planner_prompt(*, user_goal: str, tools_markdown: str, scoped_tool_names: list[str]) -> str:
+    # Legacy compatibility prompt. Planner-owned graph decisions use
+    # planner_decision_v2 instead of this whole-plan prompt at runtime.
     schema = get_plan_draft_json_schema()
     scoped_list = "\n".join(f"- {name}" for name in scoped_tool_names)
 
