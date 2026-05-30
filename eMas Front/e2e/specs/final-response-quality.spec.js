@@ -1256,7 +1256,6 @@ test.describe('Final response quality response_document gate', () => {
         responseContracts: ['safety_notice_v1', 'knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
         forbiddenText: documentContentRagForbiddenProbeText,
         textIncludes: [
-          responseDocumentOshaReenergizingPrompt,
           'Before reenergizing, notify affected employees',
           'Control of Hazardous Energy Lockout/Tagout',
           'osha_3120_lockout_tagout',
@@ -1273,6 +1272,7 @@ test.describe('Final response quality response_document gate', () => {
       body: serializeSemanticProbe(summary),
       contentType: 'application/json',
     })
+    expect(summary.visible.latestUserPrompt).toContain(responseDocumentOshaReenergizingPrompt)
 
     const snapshot = await snapshotForPage(page)
     const knowledgeBlock = snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
@@ -1442,7 +1442,6 @@ test.describe('Final response quality response_document gate', () => {
         responseContracts: ['safety_notice_v1', 'knowledge_answer_v1', 'source_list_v1'],
         forbiddenText: documentContentRagForbiddenProbeText,
         textIncludes: [
-          responseDocumentLotoNotificationPrompt,
           'I do not have enough retrieved evidence to answer that safely.',
           'related sources checked',
           'Safety notice',
@@ -1463,6 +1462,7 @@ test.describe('Final response quality response_document gate', () => {
       body: serializeSemanticProbe(summary),
       contentType: 'application/json',
     })
+    expect(summary.visible.latestUserPrompt).toContain(responseDocumentLotoNotificationPrompt)
     const snapshot = await snapshotForPage(page)
     const safetyBlock = snapshot.response_document.blocks.find((block) => block.type === 'safety_notice')
     expect(safetyBlock).toBeTruthy()
@@ -1572,10 +1572,7 @@ test.describe('Final response quality response_document gate', () => {
         hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
         approvalActionCount: 0,
         responseContracts: ['knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
-        textIncludes: [
-          responseDocumentSourcePdfPrompt,
-          'Control of Hazardous Energy Lockout/Tagout',
-        ],
+        textIncludes: ['Control of Hazardous Energy Lockout/Tagout'],
         textExcludes: [/file_path/i, /C:\\/i, /\/Users\//i],
       },
     })
@@ -1583,6 +1580,7 @@ test.describe('Final response quality response_document gate', () => {
       body: serializeSemanticProbe(summary),
       contentType: 'application/json',
     })
+    expect(summary.visible.latestUserPrompt).toContain(responseDocumentSourcePdfPrompt)
     const snapshot = await snapshotForPage(page)
     const sourceBlock = snapshot.response_document.blocks.find((block) => block.type === 'source_list')
     const source = sourceBlock.sources[0]
