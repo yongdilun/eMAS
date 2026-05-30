@@ -3003,6 +3003,87 @@ async def test_rag_response_document_includes_knowledge_answer_and_source_blocks
     assert completed_step["summary"] == "Source-backed answer is ready."
 
 
+@pytest.mark.asyncio
+async def test_mixed_api_and_rag_response_keeps_api_claim_out_of_cited_knowledge_segments(db_session):
+    created_at = datetime(2026, 5, 18, 16, 0, 0)
+    session_id = "rd-mixed-api-rag-boundary"
+    plan_id = "rd-mixed-api-rag-plan"
+    mixed_summary = "Machine M-CNC-01 is running. Follow the lockout/tagout procedure.[^1]"
+    rag_answer = "Follow the lockout/tagout procedure.[^1]"
+    source = {
+        "source_id": "src-loto-1",
+        "source_number": 1,
+        "doc_id": "LOTO-M-CNC-01",
+        "chunk_id": "loto-step-1",
+        "title": "LOTO procedure",
+        "snippet": "Follow the lockout/tagout procedure.",
+    }
+    plan = _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1))
+    plan.plan_explanation = mixed_summary
+    plan.sources = [source]
+    plan.status = "COMPLETED"
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=8,
+                status="COMPLETED",
+                step_count=2,
+                current_intent="Show M-CNC-01 status, then explain lockout tagout procedure.",
+            ),
+            _user_message(
+                session_id=session_id,
+                created_at=created_at,
+                content="Show M-CNC-01 status, then explain lockout tagout procedure.",
+            ),
+            plan,
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-mixed-api-read",
+                step_index=0,
+                completed_at=created_at + timedelta(seconds=2),
+                rows=[{"machine_id": "M-CNC-01", "status": "running"}],
+                summary="Machine M-CNC-01 is running.",
+                tool_name="get__machines_{id}",
+                args={"id": "M-CNC-01", "fields": "machine_id,status"},
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-mixed-rag-read",
+                step_index=1,
+                completed_at=created_at + timedelta(seconds=3),
+                rows=[],
+                summary=rag_answer,
+                tool_name="rag_search_documents",
+                args={"query": "lockout tagout procedure"},
+                result={"answer": rag_answer, "sources": [source]},
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content=mixed_summary,
+                step_id=plan_id,
+                tool_name="__plan__",
+                created_at=created_at + timedelta(seconds=4),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+    knowledge_block = next(block for block in document["blocks"] if block["type"] == "knowledge_answer")
+    status_block = next(block for block in document["blocks"] if block["type"] == "status_result")
+
+    assert status_block["summary"] == "Machine M-CNC-01 is running."
+    assert "Follow the lockout/tagout procedure" in knowledge_block["answer"]
+    assert "Machine M-CNC-01 is running" not in knowledge_block["answer"]
+    assert all("Machine M-CNC-01" not in segment["text"] for segment in knowledge_block["segments"])
+    assert all(segment["citation_ids"] for segment in knowledge_block["segments"])
+
+
 def test_knowledge_answer_payload_keeps_procedure_steps_as_cited_segments():
     source = {
         "source_number": 1,

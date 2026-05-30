@@ -89,6 +89,7 @@ KNOWLEDGE_ANSWER_CONTRACT = "knowledge_answer_v1"
 SOURCE_CITATION_CONTRACT = "source_citation_v1"
 SOURCE_LIST_CONTRACT = "source_list_v1"
 SOURCE_LOCATOR_CONTRACT = "source_locator_v1"
+DOCUMENT_KNOWLEDGE_TOOL_NAMES = frozenset({"rag_search_documents"})
 READ_DISPLAY_PREVIEW_LIMIT = 5
 READ_SCOPE_STATUS_ONLY = "status_only"
 READ_SCOPE_DETAILS = "details"
@@ -1202,6 +1203,51 @@ def _knowledge_answer_text_for_sources(answer: Any, sources: list[dict[str, Any]
     return clean_answer
 
 
+def _document_knowledge_answer_from_result(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    candidates = [result]
+    for key in ("data", "result"):
+        nested = result.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    for candidate in candidates:
+        answer = sanitize_rag_answer_text(candidate.get("answer"))
+        if answer:
+            return answer
+    return ""
+
+
+def _document_knowledge_answer_text(
+    *,
+    steps: list[PlanStepResponse],
+    timeline: list[TimelineEventResponse],
+    fallback: Any,
+) -> str:
+    answers: list[str] = []
+    for step in steps:
+        if not _is_document_knowledge_tool_name(step.tool_name):
+            continue
+        if str(step.status or "").upper() not in {"DONE", "COMPLETED"}:
+            continue
+        answer = _document_knowledge_answer_from_result(step.result)
+        if answer:
+            answers.append(answer)
+    for event in timeline:
+        if event.event_type != "tool_result" or not _is_document_knowledge_tool_name(event.tool_name):
+            continue
+        if str(event.status or "").upper() not in {"DONE", "COMPLETED", "SUCCEEDED"}:
+            continue
+        details = event.details if isinstance(event.details, dict) else {}
+        answer = _document_knowledge_answer_from_result(details.get("result"))
+        if answer:
+            answers.append(answer)
+    deduped = [answer for answer in dict.fromkeys(answers) if answer]
+    if deduped:
+        return "\n\n".join(deduped)
+    return sanitize_rag_answer_text(fallback)
+
+
 def _action(action_id: str) -> dict[str, str]:
     return {"id": action_id, "label": _ACTION_LABELS.get(action_id, action_id.replace("_", " ").title())}
 
@@ -1585,6 +1631,10 @@ def _is_write_tool_name(tool_name: str | None) -> bool:
 
 def _is_read_tool_name(tool_name: str | None) -> bool:
     return bool(_READ_TOOL_RE.search(_trimmed(tool_name)))
+
+
+def _is_document_knowledge_tool_name(tool_name: str | None) -> bool:
+    return _trimmed(tool_name) in DOCUMENT_KNOWLEDGE_TOOL_NAMES
 
 
 def _row_identifier(row: dict[str, Any]) -> str | None:
@@ -2526,6 +2576,8 @@ def _read_evidence(
 
     for source_index, step in enumerate(steps):
         status = str(step.status or "").upper()
+        if _is_document_knowledge_tool_name(step.tool_name):
+            continue
         if status not in {"DONE", "FAILED", "AMBIGUOUS"} or _is_write_tool_name(step.tool_name):
             continue
         if not (_is_read_tool_name(step.tool_name) or isinstance(step.result, dict)):
@@ -2553,6 +2605,8 @@ def _read_evidence(
     timeline_order_offset = len(steps)
     for event_index, event in enumerate(timeline):
         if event.event_type != "tool_result" or _is_write_tool_name(event.tool_name):
+            continue
+        if _is_document_knowledge_tool_name(event.tool_name):
             continue
         details = event.details if isinstance(event.details, dict) else {}
         result = details.get("result") if isinstance(details.get("result"), dict) else None
@@ -3936,6 +3990,7 @@ def _compose_run_steps(
     status_result: dict[str, Any] | None,
     read_policy: ReadDisplayPolicy | None,
     presentation: PresentationResponse,
+    knowledge_answer_text: str,
     timeline: list[TimelineEventResponse],
     activity_steps: list[ActivityStepResponse],
     session: Any,
@@ -4172,7 +4227,7 @@ def _compose_run_steps(
             )
         )
 
-    knowledge_answer_text = _knowledge_answer_text_for_sources(presentation.summary, sources) if sources else ""
+    knowledge_answer_text = _knowledge_answer_text_for_sources(knowledge_answer_text, sources) if sources else ""
     if sources:
         insufficient_context = is_insufficient_context_answer(knowledge_answer_text)
         run_steps.append(
@@ -4421,6 +4476,7 @@ def _short_message(
     read_policy: ReadDisplayPolicy | None,
     sources: list[dict[str, Any]],
     presentation: PresentationResponse,
+    knowledge_answer_text: str,
     session: Any,
     failure_profile: FailureProfile | None,
 ) -> str:
@@ -4449,7 +4505,7 @@ def _short_message(
         return _trimmed(presentation.summary) or "Some rows failed while others succeeded."
 
     if sources:
-        knowledge_answer_text = _knowledge_answer_text_for_sources(presentation.summary, sources)
+        knowledge_answer_text = _knowledge_answer_text_for_sources(knowledge_answer_text, sources)
         if is_insufficient_context_answer(knowledge_answer_text):
             clean_summary = _strip_footnote_markup(knowledge_answer_text)
             if clean_summary:
@@ -4717,6 +4773,7 @@ def _compose_blocks(
     read_policy: ReadDisplayPolicy | None,
     sources: list[dict[str, Any]],
     presentation: PresentationResponse,
+    knowledge_answer_text: str,
     failure_profile: FailureProfile | None,
 ) -> list[ResponseBlock]:
     blocks: list[ResponseBlock] = []
@@ -4856,7 +4913,7 @@ def _compose_blocks(
                 )
             )
     if presentation.kind == "knowledge_answer":
-        answer, segments, citations = _knowledge_answer_payload(presentation.summary, sources)
+        answer, segments, citations = _knowledge_answer_payload(knowledge_answer_text, sources)
         if answer:
             knowledge_blocks.append(
                 KnowledgeAnswerBlock(
@@ -5037,6 +5094,11 @@ def compose_response_document(
     )
     for source in sources:
         source.setdefault("contract", SOURCE_LOCATOR_CONTRACT)
+    knowledge_answer_text = _document_knowledge_answer_text(
+        steps=steps,
+        timeline=timeline,
+        fallback=presentation.summary,
+    )
     safety_content = _trimmed(getattr(plan, "safety_content", None)) or None
     failure_profile = _failure_profile(
         state=state,
@@ -5059,6 +5121,7 @@ def compose_response_document(
         status_result=status_result,
         read_policy=read_policy,
         presentation=presentation,
+        knowledge_answer_text=knowledge_answer_text,
         timeline=timeline,
         activity_steps=activity_steps,
         session=session,
@@ -5075,6 +5138,7 @@ def compose_response_document(
         read_policy=read_policy,
         sources=sources,
         presentation=presentation,
+        knowledge_answer_text=knowledge_answer_text,
         session=session,
         failure_profile=failure_profile,
     ))
@@ -5096,6 +5160,7 @@ def compose_response_document(
         read_policy=read_policy,
         sources=sources,
         presentation=presentation,
+        knowledge_answer_text=knowledge_answer_text,
         failure_profile=failure_profile,
     )
 
