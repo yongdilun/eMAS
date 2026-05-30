@@ -4,6 +4,11 @@ import main  # noqa: F401
 
 from factory_agent.planning.prompting import get_plan_draft_json_schema
 from factory_agent.observability.telemetry import log_llm_prompt, log_llm_prompt_skipped
+from factory_agent.llm.prompt_contracts import (
+    PROMPT_CONTRACTS,
+    prompt_contracts_by_name,
+    validate_prompt_contract,
+)
 
 
 def test_plan_draft_json_schema_has_expected_shape():
@@ -51,4 +56,26 @@ def test_log_llm_prompt_skipped_emits_structured_log(caplog):
     assert payload["reason"] == "summary_backend=deterministic"
     assert payload["intent"] == "Check machine 5 status"
     assert payload["scoped_tool_count"] == 2
+
+
+def test_prompt_contract_registry_has_required_metadata():
+    assert PROMPT_CONTRACTS
+    names = [contract.name for contract in PROMPT_CONTRACTS]
+    assert len(names) == len(set(names))
+
+    for contract in PROMPT_CONTRACTS:
+        validate_prompt_contract(contract)
+        assert contract.version.startswith("v")
+        assert contract.owner_module.startswith("factory_agent.")
+        assert contract.status in {"active", "optional", "legacy", "retired"}
+
+    contracts = prompt_contracts_by_name()
+    for required in {
+        "planner_decision_v2",
+        "rag_answer_v1",
+        "rag_answer_repair_v1",
+        "tool_selector_rerank_v1",
+        "semantic_intake_v1",
+    }:
+        assert required in contracts
 
