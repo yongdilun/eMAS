@@ -1405,6 +1405,8 @@ def _failure_reason(
         return "unable_to_start_request"
     if "orphan_turn_state" in text:
         return "orphan_turn_state"
+    if legacy_reason == "reschedule_interaction_cancelled":
+        return None
     if presentation.kind == "cancelled" or legacy_reason == "cancelled_by_user":
         return "cancelled_by_user"
     if presentation.kind == "rejected" or legacy_reason == "approval_rejected":
@@ -2007,6 +2009,8 @@ def _response_document_state(
         return "waiting_approval"
     if session_status == "WAITING_CONFIRMATION":
         return "waiting_confirmation"
+    if session_status == "WAITING_USER_ACTION":
+        return "waiting_user_action"
     if presentation.state == "completed":
         return "completed"
     if presentation.state == "failed":
@@ -3686,10 +3690,13 @@ def _status_result_from_read_rows(
 
 def _is_non_terminal_progress_presentation(*, presentation: PresentationResponse, state: str) -> bool:
     diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
+    reason = _trimmed(diagnostics.get("reason"))
     return (
         presentation.kind == "diagnostic"
-        and state in {"running", "waiting_confirmation"}
-        and _trimmed(diagnostics.get("reason")) == "non_terminal_snapshot"
+        and (
+            (state in {"running", "waiting_confirmation"} and reason == "non_terminal_snapshot")
+            or (state == "waiting_user_action" and reason == "waiting_user_action")
+        )
     )
 
 
@@ -4482,6 +4489,16 @@ def _short_message(
 ) -> str:
     if failure_profile is not None:
         return failure_profile.user_message
+
+    diagnostics = presentation.diagnostics if isinstance(presentation.diagnostics, dict) else {}
+    if diagnostics.get("reason") in {
+        "reschedule_interaction_applied",
+        "reschedule_interaction_failed",
+        "reschedule_interaction_cancelled",
+    }:
+        summary = _trimmed(presentation.summary)
+        if summary:
+            return summary
 
     if latest_pending is not None:
         pending_rows = _approval_rows(latest_pending, operation_id=presentation.operation_id, default_status="pending")

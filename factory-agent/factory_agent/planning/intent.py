@@ -146,6 +146,11 @@ _REPORT_HINT = re.compile(r"\b(?:report|export|csv|pdf|dashboard)\b", re.IGNOREC
 # M-prefixed compound machine ids (e.g. M-LTH-02): used to suppress inner XXX-NN matches from _MACHINE_ID_RE.
 _COMPOUND_M_MACHINE_RE = re.compile(rf"\b{_MACHINE_ID_PATTERN}\b", re.IGNORECASE)
 _JOB_CREATE_RE = re.compile(r"\b(?:create|new|add|open)\s+job\s+", re.IGNORECASE)
+_RESCHEDULE_ALL_JOBS_RE = re.compile(
+    r"\b(?:reschedule|replan)\s+(?:all|every)\s+(?:jobs?|work\s*orders?)\b|"
+    r"\b(?:all|every)\s+(?:jobs?|work\s*orders?)\s+(?:reschedule|replan)\b",
+    re.IGNORECASE,
+)
 _LOTO_HINT_RE = re.compile(
     r"\b(?:loto|lock\s*out\s*/?\s*tag\s*out|lockout\s*/?\s*tagout|lockout|tagout|energy\s+isolation|hazardous\s+energy)\b",
     re.IGNORECASE,
@@ -1094,6 +1099,21 @@ def semantic_frame_for_text(text: str, *, previous_texts: Sequence[str] | None =
             question_type=question_type,
             clarification_reason=None,
             negative_route_assertions=["tool.read.machine_status"],
+        )
+
+    if _RESCHEDULE_ALL_JOBS_RE.search(raw):
+        return SemanticFrame(
+            domain_intent="job_reschedule_all",
+            action="update",
+            entity="job",
+            entities=entities,
+            normalized_entities=normalized,
+            missing_required_entities=[],
+            route="tool.write.scheduling_reschedule_all",
+            confidence=0.93,
+            clarification_reason=None,
+            negative_route_assertions=["tool.read.jobs_only", "approval_bypass"],
+            requires_approval=True,
         )
 
     if _is_job_mutation_request(raw, action):

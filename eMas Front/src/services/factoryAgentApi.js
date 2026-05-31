@@ -184,6 +184,9 @@ export const factoryAgentApi = {
 
   reject: (approvalId, payload = {}, options) =>
     request('POST', `/approvals/${approvalId}/reject`, payload, options),
+
+  decideInteraction: (sessionId, interactionId, payload = {}, options) =>
+    request('POST', `/sessions/${sessionId}/interactions/${interactionId}/decide`, payload, options),
 }
 
 export const FACTORY_AGENT_STATUS = {
@@ -191,6 +194,7 @@ export const FACTORY_AGENT_STATUS = {
   PLANNING: 'PLANNING',
   WAITING_APPROVAL: 'WAITING_APPROVAL',
   WAITING_CONFIRMATION: 'WAITING_CONFIRMATION',
+  WAITING_USER_ACTION: 'WAITING_USER_ACTION',
   EXECUTING: 'EXECUTING',
   BLOCKED: 'BLOCKED',
   FAILED: 'FAILED',

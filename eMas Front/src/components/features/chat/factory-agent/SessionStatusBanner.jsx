@@ -11,6 +11,10 @@ const statusCopy = {
         tone: 'bg-surface-2 border-hairline text-ink-muted',
         text: 'Waiting for operator approval.',
     },
+    WAITING_USER_ACTION: {
+        tone: 'bg-surface-2 border-hairline text-ink-muted',
+        text: 'Waiting for schedule review.',
+    },
     EXECUTING: {
         tone: 'bg-primary/10 border-primary/20 text-primary',
         text: 'Execution in progress.',

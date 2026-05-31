@@ -13,6 +13,7 @@ from .routers.dlq import build_dlq_router
 from .routers.documents import build_documents_router
 from .routers.events import build_events_router
 from .routers.execution import build_execution_router
+from .routers.interactions import build_interactions_router
 from .routers.messages import build_messages_router
 from .routers.plans import build_plans_router
 from .routers.session_controls import build_session_controls_router
@@ -160,6 +161,15 @@ def build_router(
     )
     router.include_router(build_plans_router(plan_creation_service=plan_creation_service, require_jwt=require_jwt))
     router.include_router(build_execution_router(execution_service=execution_service, require_jwt=require_jwt))
+    router.include_router(
+        build_interactions_router(
+            settings=settings,
+            session_mgr=session_mgr,
+            tool_registry=tool_registry,
+            event_bus=event_bus,
+            require_jwt=require_jwt,
+        )
+    )
     router.include_router(
         build_approvals_router(
             session_mgr=session_mgr,

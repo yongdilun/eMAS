@@ -10,6 +10,7 @@ import {
 import { TablePresentation } from '../turns/TurnBlocks'
 import { buildFactoryAgentUrl } from '../../../../services/factoryAgentApi.js'
 import { stripPrematureTerminalActivitySteps } from './activityTimelineUtils.js'
+import ApprovalCard from './ApprovalCard'
 
 const PREVIEW_LIMIT = 5
 const EVIDENCE_DRAWER_DEFAULT_WIDTH = 440
@@ -1665,6 +1666,20 @@ function ApprovalBlock({
   setApprovalReason,
 }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
+  const manualInputRequired = approvalRequiresManualInput(pendingApproval)
+  if (showApprovalActions && manualInputRequired) {
+    return (
+      <ApprovalCard
+        approval={pendingApproval}
+        reason={approvalReason}
+        onReasonChange={setApprovalReason}
+        onApprove={(args) => decideApproval?.('approve', args, pendingApproval)}
+        onReject={() => decideApproval?.('reject', undefined, pendingApproval)}
+        deciding={isDecidingApproval}
+      />
+    )
+  }
+
   return (
     <CompactCard title={block.title || 'Approval required'} blockType="approval_required" blockId={block.id} contract={block.contract}>
       <div className="mt-1 text-sm text-ink">{block.summary || 'Review the proposed change before it is applied.'}</div>
@@ -1705,6 +1720,14 @@ function ApprovalBlock({
       ) : null}
     </CompactCard>
   )
+}
+
+function approvalRequiresManualInput(approval) {
+  const args = approval?.args && typeof approval.args === 'object' ? approval.args : {}
+  const details = args.preview_details && typeof args.preview_details === 'object' ? args.preview_details : {}
+  if (details.manual_input_required === true) return true
+  const missing = details.missing_required_args || args.missing_required_args
+  return Array.isArray(missing) && missing.length > 0
 }
 
 function CompletedStepBlock({ block }) {
@@ -2178,7 +2201,7 @@ export default function ResponseDocumentRenderer({
   const selectedSourceKeys = useMemo(() => new Set(sourceLookupKeys(selectedSource)), [selectedSource])
   const selectedCitationId = safeText(selectedSource?.citation_id || selectedSource?.citationId)
   const documentActivitySteps = activityStepsFromResponseDocument(document)
-  const activeSessionStatus = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
+  const activeSessionStatus = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION', 'WAITING_USER_ACTION'])
   const liveActivityHasRetryStory = hasRetryStoryActivity(liveActivitySteps)
   const liveActivityHasTerminal = Array.isArray(liveActivitySteps)
     && liveActivitySteps.some((step) => step?.state === 'complete' || step?.state === 'error')

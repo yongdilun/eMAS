@@ -4,6 +4,7 @@ import GanttTable from '../components/features/gantt/GanttTable'
 import PageHeader from '../components/shared/PageHeader'
 import Modal from '../components/shared/Modal'
 import UrgentInsertModal from '../components/features/scheduling/UrgentInsertModal'
+import { RescheduleReviewPanel } from '../components/features/scheduling/RescheduleReviewModal'
 import ShortageResolution from './ShortageResolution'
 import {
     augmentScheduleBatchMessage,
@@ -1134,10 +1135,15 @@ const Scheduling = () => {
                 const approveKey = `apply-all-${batchId}-${p.proposal_id}-approve`
                 const applyKey = `apply-all-${batchId}-${p.proposal_id}-apply`
                 if ((p.status || 'draft') === 'draft') {
-                    await aiApi.scheduling.approveProposal(p.proposal_id, {
-                        skip_staleness_check: true,
-                        idempotency_key: approveKey,
-                    })
+                    try {
+                        await aiApi.scheduling.approveProposal(p.proposal_id, {
+                            skip_staleness_check: true,
+                            idempotency_key: approveKey,
+                        })
+                    } catch (err) {
+                        const msg = apiErrorMessage(err, '')
+                        if (!/only draft proposals can be approved/i.test(msg)) throw err
+                    }
                 }
                 await aiApi.scheduling.applyProposal(p.proposal_id, {
                     skip_staleness_check: true,
@@ -1565,6 +1571,38 @@ const Scheduling = () => {
                 title="Schedule Preview"
                 size="fullscreen"
             >
+                <RescheduleReviewPanel
+                    proposals={proposals}
+                    machines={machines}
+                    summary={batchSummary || {}}
+                    validation={verifyResult || {}}
+                    validationHardReasons={validationHardReasons}
+                    validationSoftReasons={validationSoftReasons}
+                    totalValidationPenalty={totalValidationPenalty}
+                    loading={loading || previewLoading}
+                    selectedJob={selectedJob}
+                    selectedSlot={selectedSlot}
+                    onSelectionChange={(job, slot) => {
+                        setSelectedJob(job)
+                        setSelectedSlot(slot)
+                    }}
+                    onApplyAll={handleApplyAll}
+                    onDiscardAll={handleRejectAll}
+                    onCancel={handlePreviewClose}
+                    onResolve={handleOpenResolutionCenter}
+                    onApplyProposal={handleApplyProposal}
+                    onRejectProposal={handleRejectProposal}
+                    disableApplyAll={hasOverlaps || hasValidationHardReasons || previewLoading || proposals.filter((p) => p.proposal_id && isProposalFeasible(p)).length === 0}
+                    showResolveAction={true}
+                    framed={false}
+                    showHeader={false}
+                    title="Schedule Preview"
+                    message="Review draft proposals below. Apply to create slots in the job plan, or close to cancel and discard."
+                    cancelLabel={previewLoading ? 'Discarding...' : 'Cancel (discard drafts)'}
+                    discardLabel="Discard All"
+                    applyLabel="Apply All"
+                />
+                {false && (
                 <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
                     <p className="text-sm text-ink-subtle mb-3">
                         Review draft proposals below. Apply to create slots in the job plan, or close to cancel and discard.
@@ -2196,6 +2234,7 @@ const Scheduling = () => {
                         )}
                     </div>
                 </div>
+                )}
             </Modal>
 
             <UrgentInsertModal

@@ -417,24 +417,32 @@ const ShortageResolution = ({
 
   return (
     <div className={`${embedded ? 'h-full' : 'p-6'} flex flex-col min-h-0`}>
-      <PageHeader
-        title="Shortage Resolution Center"
-        subtitle="Resolve blocked jobs in one page with editable recommended arrivals and bulk-assisted actions."
-      >
-        {embedded ? (
+      {embedded ? (
+        <header className="mb-4 flex shrink-0 items-start justify-between gap-4 border-b border-hairline pb-4">
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold text-ink">Shortage Resolution Center</h2>
+            <p className="mt-1 max-w-3xl text-sm text-ink-muted">
+              Resolve blocked jobs with editable recommended arrivals before returning to the schedule review.
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="h-9 px-3 rounded-md border border-hairline text-sm inline-flex items-center"
+            className="relative z-10 inline-flex h-9 shrink-0 items-center rounded-md border border-hairline px-3 text-sm hover:bg-surface-2"
           >
             Close
           </button>
-        ) : (
+        </header>
+      ) : (
+        <PageHeader
+          title="Shortage Resolution Center"
+          subtitle="Resolve blocked jobs in one page with editable recommended arrivals and bulk-assisted actions."
+        >
           <Link to="/scheduling" className="h-9 px-3 rounded-md border border-hairline text-sm inline-flex items-center">
             Back to Scheduling
           </Link>
-        )}
-      </PageHeader>
+        </PageHeader>
+      )}
 
 
       {hasAggregateLines && (

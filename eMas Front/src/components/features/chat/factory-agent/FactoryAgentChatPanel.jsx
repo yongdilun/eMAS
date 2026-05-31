@@ -26,6 +26,7 @@ import {
   stripSourceFootnoteDefinitions,
 } from '../sourceFormatting'
 import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
+import RescheduleReviewModal from '../../scheduling/RescheduleReviewModal'
 
 const CHAT_VIEW_MODE = (import.meta.env?.VITE_FACTORY_AGENT_CHAT_MODE || 'user').trim().toLowerCase() === 'dev' ? 'dev' : 'user'
 const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
@@ -386,12 +387,26 @@ function pendingApprovalFromResponseDocument(document) {
   const blocks = Array.isArray(document.blocks) ? document.blocks : []
   const block = [...blocks].reverse().find((item) => item?.type === 'approval_required' && item.approval_id)
   if (!block) return null
+  const blockArgs = block.args && typeof block.args === 'object' ? block.args : {}
+  const details = block.details && typeof block.details === 'object' ? block.details : {}
+  const args = { ...blockArgs }
+  for (const key of ['preview', 'selected_graph_tool_call', 'staged_graph_tool_calls', 'bundle_ui']) {
+    if (args[key] == null && block[key] != null) args[key] = block[key]
+  }
+  if (args.preview_details == null && Object.keys(details).length > 0) args.preview_details = details
+  const toolName =
+    block.tool_name ||
+    details.tool_name ||
+    args.selected_graph_tool_call?.tool_name ||
+    args.bundle_ui?.write_tool_name ||
+    null
   return {
     approval_id: block.approval_id,
     operation_id: block.operation_id || document.operation_id || null,
+    tool_name: toolName,
     risk_summary: block.summary || block.title || 'Review the proposed change before it is applied.',
     status: 'PENDING',
-    ...(block.args && typeof block.args === 'object' ? { args: block.args } : {}),
+    ...(Object.keys(args).length > 0 ? { args } : {}),
   }
 }
 
@@ -692,7 +707,7 @@ function AssistantTurnBubble({
               pendingApproval={effectivePendingApproval}
               showApprovalActions={showApprovalCard || showResponseDocumentApprovalActions}
               decideApproval={decideApproval}
-              isDecidingApproval={isDecidingApproval}
+              isDecidingApproval={isDecidingApproval || isSending}
               approvalReason={approvalReason}
               setApprovalReason={setApprovalReason}
               onOpenSourceEvidence={onOpenSourceEvidence}
@@ -736,7 +751,7 @@ function AssistantTurnBubble({
                     onReasonChange={setApprovalReason}
                     onApprove={(args) => decideApproval('approve', args)}
                     onReject={() => decideApproval('reject')}
-                    deciding={isDecidingApproval}
+                    deciding={isDecidingApproval || isSending}
                   />
                 </div>
               ) : null}
@@ -753,6 +768,7 @@ function statusLoadingText(status) {
   if (status === FACTORY_AGENT_STATUS.EXECUTING) return 'Gathering information...'
   if (status === FACTORY_AGENT_STATUS.WAITING_APPROVAL) return 'Waiting for approval...'
   if (status === FACTORY_AGENT_STATUS.WAITING_CONFIRMATION) return 'Waiting for confirmation...'
+  if (status === FACTORY_AGENT_STATUS.WAITING_USER_ACTION) return 'Waiting for your schedule decision...'
   return 'Working...'
 }
 
@@ -762,6 +778,7 @@ function displayStatusFromActivity(steps, sessionStatus) {
     FACTORY_AGENT_STATUS.EXECUTING,
     FACTORY_AGENT_STATUS.WAITING_APPROVAL,
     FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+    FACTORY_AGENT_STATUS.WAITING_USER_ACTION,
   ])
   if (!activeStatuses.has(sessionStatus)) return null
   const rows = truncateActivityAfterTerminal(steps)
@@ -914,16 +931,20 @@ const FactoryAgentChatPanel = ({
     error,
     streamDiagnostics,
     pendingApproval,
+    pendingInteraction,
     approvalReason,
     clientProgress,
     setApprovalReason,
     isDecidingApproval,
+    isDecidingInteraction,
+    decidingInteractionDecision,
     getStashedBundlePresentation,
     isResumingAfterApproval,
     handleSend,
     handleCancel,
     retryConnection,
     decideApproval,
+    decideInteraction,
     decideConfirmation,
     startNewSession,
     switchSession,
@@ -988,7 +1009,7 @@ const FactoryAgentChatPanel = ({
     if (!chatRef.current) return
     if (!shouldAutoScrollRef.current) return
     chatRef.current.scrollTop = chatRef.current.scrollHeight
-  }, [turns, messages, isSending, pendingApproval, session?.status])
+  }, [turns, messages, isSending, pendingApproval, pendingInteraction, session?.status])
 
   const handleChatScroll = () => {
     if (!chatRef.current) return
@@ -1005,7 +1026,9 @@ const FactoryAgentChatPanel = ({
     loading ||
     isSending ||
     isDecidingApproval ||
-    session?.status === FACTORY_AGENT_STATUS.PLANNING
+    isDecidingInteraction ||
+    session?.status === FACTORY_AGENT_STATUS.PLANNING ||
+    session?.status === FACTORY_AGENT_STATUS.WAITING_USER_ACTION
   const effectiveSessionStatus = pendingApproval
     ? FACTORY_AGENT_STATUS.WAITING_APPROVAL
     : session?.status
@@ -1014,6 +1037,7 @@ const FactoryAgentChatPanel = ({
     FACTORY_AGENT_STATUS.EXECUTING,
     FACTORY_AGENT_STATUS.WAITING_APPROVAL,
     FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+    FACTORY_AGENT_STATUS.WAITING_USER_ACTION,
   ].includes(effectiveSessionStatus)
 
   const showTopSessionProgress = Boolean(
@@ -1023,16 +1047,23 @@ const FactoryAgentChatPanel = ({
       sessionShowsActiveProgress),
   )
   const terminalResponseDocumentAvailable = latestTurnHasTerminalResponseDocument(turns)
-  const canCancel = Boolean(session?.session_id) && sessionShowsActiveProgress && !terminalResponseDocumentAvailable
+  const canCancel = Boolean(session?.session_id) &&
+    sessionShowsActiveProgress &&
+    effectiveSessionStatus !== FACTORY_AGENT_STATUS.WAITING_USER_ACTION &&
+    !terminalResponseDocumentAvailable
   const mode = CHAT_VIEW_MODE === 'dev' ? 'dev' : 'user'
 
   let placeholder = 'Ask factory agent...'
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.PLANNING) placeholder = 'Planning in progress...'
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.EXECUTING) placeholder = 'Send a follow-up message for the next replan point...'
   if (effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_APPROVAL) placeholder = 'Send a revision; pending approval stays open...'
+  if (effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_USER_ACTION) placeholder = 'Review the schedule window before continuing...'
   const displayStatus =
     displayStatusFromActivity(activitySteps, effectiveSessionStatus) ||
     friendlySessionStatus(effectiveSessionStatus, isSending)
+  const showPendingInteractionModal =
+    effectiveSessionStatus === FACTORY_AGENT_STATUS.WAITING_USER_ACTION &&
+    pendingInteraction?.kind === 'reschedule_all_review'
   const runStartedWithProgress = Boolean(
     session?.session_id &&
     sessionShowsActiveProgress &&
@@ -1073,6 +1104,16 @@ const FactoryAgentChatPanel = ({
           }
         }}
       />
+      {showPendingInteractionModal ? (
+        <RescheduleReviewModal
+          interaction={pendingInteraction}
+          layer="fixed"
+          deciding={isDecidingInteraction}
+          decidingAction={decidingInteractionDecision}
+          onApply={(interaction, proposalIds) => decideInteraction('apply', interaction, proposalIds)}
+          onCancel={(interaction) => decideInteraction('cancel', interaction)}
+        />
+      ) : null}
       <FactoryAgentSessionSidebar
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
@@ -1264,6 +1305,11 @@ const FactoryAgentChatPanel = ({
                 .filter((m) => String(m.id || '').startsWith('optimistic-') && m.role === 'user')
                 .map((m) => (
                   <ChatMessage key={m.id} message={m.content} isUser timestamp={m.timestamp} />
+                ))}
+              {messages
+                .filter((m) => String(m.id || '').startsWith('optimistic-') && m.role !== 'user')
+                .map((m) => (
+                  <ChatMessage key={m.id} message={m.content} isUser={false} timestamp={m.timestamp} />
                 ))}
             </>
           )}

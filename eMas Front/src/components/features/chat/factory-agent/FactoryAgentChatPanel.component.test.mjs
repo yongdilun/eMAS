@@ -40,12 +40,14 @@ function createChatState(overrides = {}) {
     error: null,
     streamDiagnostics: [],
     pendingApproval: null,
+    pendingInteraction: null,
     approvalReason: '',
     messageMode: 'normal',
     clientProgress: null,
     setApprovalReason: () => {},
     setMessageMode: () => {},
     isDecidingApproval: false,
+    isDecidingInteraction: false,
     isPollingSession: false,
     getStashedBundlePresentation: () => null,
     isResumingAfterApproval: false,
@@ -53,12 +55,47 @@ function createChatState(overrides = {}) {
     handleCancel: () => {},
     retryConnection: () => {},
     decideApproval: () => {},
+    decideInteraction: () => {},
     decideConfirmation: () => {},
     startNewSession: () => {},
     switchSession: () => {},
     renameSession: () => {},
     deleteSession: () => {},
     clearAllSessions: () => {},
+    ...overrides,
+  }
+}
+
+function pendingRescheduleInteraction(overrides = {}) {
+  return {
+    interaction_id: 'ia-reschedule-1',
+    kind: 'reschedule_all_review',
+    status: 'pending',
+    session_id: 'session-reschedule-review',
+    approval_id: 'approval-reschedule-all',
+    proposal_ids: ['PROP-001', 'PROP-002'],
+    proposals: [
+      {
+        proposal_id: 'PROP-001',
+        job_id: 'JOB-001',
+        machine_id: 'M-001',
+        start_time: '2026-06-01T08:00:00+08:00',
+        end_time: '2026-06-01T09:00:00+08:00',
+        status: 'draft',
+      },
+      {
+        proposal_id: 'PROP-002',
+        job_id: 'JOB-002',
+        machine_id: 'M-002',
+        start_time: '2026-06-01T09:00:00+08:00',
+        end_time: '2026-06-01T10:00:00+08:00',
+        status: 'draft',
+      },
+    ],
+    summary: { feasible_count: 2 },
+    validation: { conflict_count: 0 },
+    title: 'Review reschedule proposal',
+    message: 'Review 2 generated reschedule proposal(s) before applying.',
     ...overrides,
   }
 }
@@ -939,6 +976,226 @@ test('FactoryAgentChatPanel renders pending response_document approval compact b
   )
   assert.equal(affectedDetails?.hasAttribute('open'), false)
   assert.equal(view.container.querySelectorAll('[data-response-block-type="approval_required"]').length, 1)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel keeps response_document graph tool metadata for approval resume', async () => {
+  let decided = null
+  const selectedGraphToolCall = {
+    tool_name: 'post__ai_scheduling_reschedule-all',
+    args: {},
+  }
+  const document = baseResponseDocument({
+    state: 'waiting_approval',
+    status: 'waiting_approval',
+    run_steps: [
+      { step_id: 'analysis-1', kind: 'analysis', state: 'completed', title: 'Understood request' },
+      { step_id: 'approval-rd-reschedule', kind: 'approval', state: 'waiting', title: 'Waiting for approval 1', current: true },
+    ],
+    blocks: [
+      {
+        id: 'approval:approval-rd-reschedule',
+        type: 'approval_required',
+        approval_id: 'approval-rd-reschedule',
+        title: 'Approval required',
+        summary: 'Approve 1 backend write: post__ai_scheduling_reschedule-all',
+        details: { tool_name: 'post__ai_scheduling_reschedule-all' },
+        selected_graph_tool_call: selectedGraphToolCall,
+        rows: [{}],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-reschedule', name: 'RD reschedule', status: 'WAITING_APPROVAL' },
+    sessionList: [{ session_id: 'session-rd-reschedule', name: 'RD reschedule', status: 'WAITING_APPROVAL' }],
+    activeSessionName: 'RD reschedule',
+    pendingApproval: null,
+    decideApproval: (...args) => {
+      decided = args
+    },
+    turns: [
+      responseDocumentTurn(document, {
+        approvals: [{ event_type: 'approval_required', approval_id: 'approval-rd-reschedule' }],
+      }),
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const approveButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
+    button.textContent.trim() === 'Approve',
+  )
+  assert.ok(approveButton)
+  await click(approveButton)
+
+  assert.equal(decided?.[0], 'approve')
+  assert.equal(decided?.[1]?.selected_graph_tool_call?.tool_name, 'post__ai_scheduling_reschedule-all')
+  assert.equal(decided?.[2]?.tool_name, 'post__ai_scheduling_reschedule-all')
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel renders embedded reschedule review without opening a scheduling tab', async () => {
+  const originalOpen = globalThis.window.open
+  let openCalls = 0
+  let decided = null
+  globalThis.window.open = () => {
+    openCalls += 1
+  }
+  const chatState = createChatState({
+    session: { session_id: 'session-reschedule-review', name: 'Reschedule review', status: 'WAITING_USER_ACTION' },
+    sessionList: [{ session_id: 'session-reschedule-review', name: 'Reschedule review', status: 'WAITING_USER_ACTION' }],
+    activeSessionName: 'Reschedule review',
+    pendingInteraction: pendingRescheduleInteraction(),
+    decideInteraction: (...args) => {
+      decided = args
+    },
+    turns: [
+      {
+        id: 'turn-reschedule-review',
+        created_at: '2026-05-31T10:00:00.000Z',
+        user: { content: 'help me to reschedule all job', created_at: '2026-05-31T10:00:00.000Z' },
+        summary: 'Review generated schedule before applying.',
+        approvals: [],
+        confirmations: [],
+        tools: [],
+        status: [],
+        sources: [],
+        safetyContent: null,
+      },
+    ],
+  })
+
+  try {
+    const view = await renderPanelWithState(chatState)
+
+    assert.match(view.text(), /Review reschedule proposal/)
+    assert.match(view.text(), /PROP-001/)
+    assert.match(view.text(), /JOB-002/)
+    assert.match(view.text(), /Resolve in Resolution Center/)
+    assert.equal(openCalls, 0)
+
+    const applyButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
+      button.textContent.trim() === 'Apply all',
+    )
+    assert.ok(applyButton)
+    await click(applyButton)
+
+    assert.equal(decided?.[0], 'apply')
+    assert.equal(decided?.[1]?.interaction_id, 'ia-reschedule-1')
+    assert.deepEqual(decided?.[2], ['PROP-001', 'PROP-002'])
+    assert.equal(openCalls, 0)
+
+    await view.unmount()
+  } finally {
+    globalThis.window.open = originalOpen
+  }
+})
+
+test('FactoryAgentChatPanel embedded reschedule review shows infeasible jobs and cancel loading copy', async () => {
+  const chatState = createChatState({
+    session: { session_id: 'session-reschedule-infeasible', name: 'Reschedule review', status: 'WAITING_USER_ACTION' },
+    sessionList: [{ session_id: 'session-reschedule-infeasible', name: 'Reschedule review', status: 'WAITING_USER_ACTION' }],
+    activeSessionName: 'Reschedule review',
+    isDecidingInteraction: true,
+    decidingInteractionDecision: 'cancel',
+    pendingInteraction: pendingRescheduleInteraction({
+      session_id: 'session-reschedule-infeasible',
+      summary: { feasible_count: 1 },
+      proposals: [
+        {
+          proposal_id: 'PROP-001',
+          job_id: 'JOB-001',
+          machine_id: 'M-001',
+          status: 'draft',
+        },
+        {
+          proposal_id: 'PROP-002',
+          job_id: 'JOB-002',
+          machine_id: 'M-002',
+          status: 'draft',
+          feasible: false,
+          blocked_reason: 'reason_code=material_shortage',
+        },
+      ],
+    }),
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  assert.match(view.text(), /1 proposal\(s\) are infeasible/)
+  assert.match(view.text(), /JOB-002: reason_code=material_shortage/)
+  assert.match(view.text(), /Resolve in Resolution Center/)
+  assert.match(view.text(), /Cancelling\.\.\./)
+  assert.doesNotMatch(view.text(), /Applying\.\.\./)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel treats embedded reschedule close as cancel decision', async () => {
+  let decided = null
+  const chatState = createChatState({
+    session: { session_id: 'session-reschedule-cancel', name: 'Reschedule cancel', status: 'WAITING_USER_ACTION' },
+    sessionList: [{ session_id: 'session-reschedule-cancel', name: 'Reschedule cancel', status: 'WAITING_USER_ACTION' }],
+    activeSessionName: 'Reschedule cancel',
+    pendingInteraction: pendingRescheduleInteraction({
+      interaction_id: 'ia-reschedule-cancel',
+      session_id: 'session-reschedule-cancel',
+    }),
+    decideInteraction: (...args) => {
+      decided = args
+    },
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const closeButton = view.container.querySelector('button[aria-label="Cancel reschedule"]')
+  assert.ok(closeButton)
+  await click(closeButton)
+
+  assert.equal(decided?.[0], 'cancel')
+  assert.equal(decided?.[1]?.interaction_id, 'ia-reschedule-cancel')
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel disables approval actions while initial send is finishing', async () => {
+  const pendingApproval = {
+    approval_id: 'approval-sending-1',
+    tool_name: 'post__ai_scheduling_reschedule-all',
+    side_effect_level: 'HIGH',
+    risk_summary: 'Approve 1 backend write: post__ai_scheduling_reschedule-all',
+    args: { selected_graph_tool_call: { tool_name: 'post__ai_scheduling_reschedule-all', args: {} } },
+  }
+  const chatState = createChatState({
+    session: { session_id: 'session-sending-approval', name: 'Sending approval', status: 'WAITING_APPROVAL' },
+    sessionList: [{ session_id: 'session-sending-approval', name: 'Sending approval', status: 'WAITING_APPROVAL' }],
+    activeSessionName: 'Sending approval',
+    pendingApproval,
+    isSending: true,
+    turns: [
+      {
+        id: 'turn-sending-approval',
+        created_at: '2026-05-31T10:00:00.000Z',
+        user: { content: 'help me to reschedule all job', created_at: '2026-05-31T10:00:00.000Z' },
+        summary: 'Approve 1 backend write: post__ai_scheduling_reschedule-all',
+        approvals: [{ event_type: 'approval_required', approval_id: 'approval-sending-1' }],
+        confirmations: [],
+        tools: [],
+        status: [],
+        sources: [],
+        safetyContent: null,
+      },
+    ],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const approveButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
+    button.textContent.includes('Approving'),
+  )
+  assert.equal(approveButton?.disabled, true)
 
   await view.unmount()
 })

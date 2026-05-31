@@ -426,6 +426,36 @@ async def test_phase6_v2_contract_three_read_satisfies_typed_evidence_without_co
 
 
 @pytest.mark.asyncio
+async def test_phase6_single_job_read_accepts_api_id_case_difference():
+    selector = RecordingSelector(["get__jobs_{id}"])
+
+    run = await build_direct_v2_compatibility_run(
+        tool_selector=selector,
+        intent="show job with job id JOB-e4ac2059",
+        tools_by_name=_base_tools(),
+        engine_mode="v2",
+        direct_test_evidence=[
+            _api_evidence(
+                "ev-job",
+                "req-001",
+                entity="job",
+                entity_id="JOB-e4ac2059",
+                fields={"job_id": "JOB-e4ac2059", "status": "planned"},
+            )
+        ],
+    )
+
+    requirement = run.state.requirement_ledger.requirements[0]  # type: ignore[union-attr]
+    checks = {check.check: check for check in requirement.satisfaction_checks}
+
+    assert requirement.constraints["job_id"] == "JOB-E4AC2059"
+    assert requirement.status == "satisfied"
+    assert checks["entity_match"].passed is True
+    assert checks["locked_constraint:job_id"].passed is True
+    assert run.state.execution_trace.final_validator_status == "passed"
+
+
+@pytest.mark.asyncio
 async def test_phase6_requested_fields_reject_unrelated_full_object_fields():
     selector = RecordingSelector(["get__machines_{id}"])
 

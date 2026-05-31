@@ -2,6 +2,7 @@ const DOCUMENT_STATES = new Set([
   'running',
   'waiting_approval',
   'waiting_confirmation',
+  'waiting_user_action',
   'completed',
   'failed',
   'blocked',

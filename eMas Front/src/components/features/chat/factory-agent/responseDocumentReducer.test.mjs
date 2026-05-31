@@ -261,6 +261,80 @@ test('response document reducer accepts terminal equal revision over active prog
   assert.equal(result.state.document.message, 'Some rows were updated, but other rows failed.')
 })
 
+test('response document reducer accepts waiting approval equal revision over active progress', () => {
+  const active = doc({
+    revision: 14,
+    state: 'running',
+    status: 'running',
+    message: "I'm working on the request and waiting for the next backend update.",
+    summary: "I'm working on the request and waiting for the next backend update.",
+    run_steps: [
+      {
+        step_id: 'rendering-response',
+        kind: 'analysis',
+        state: 'current',
+        title: 'Rendering response',
+        summary: 'Rendering the response',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['rendering-response'] },
+      {
+        id: 'message:active-revision-14',
+        type: 'short_message',
+        message: "I'm working on the request and waiting for the next backend update.",
+        status: 'running',
+      },
+    ],
+  })
+  const state = applyResponseDocumentSnapshotUpdate(
+    createResponseDocumentReducerState(),
+    snapshot(active, { snapshot_revision: 14 }),
+    { transport: 'sse' },
+  ).state
+
+  const waiting = doc({
+    revision: 14,
+    state: 'waiting_approval',
+    status: 'waiting_approval',
+    message: 'Approval required before I can continue.',
+    summary: 'Approval required before I can continue.',
+    run_steps: [
+      {
+        step_id: 'waiting-approval',
+        kind: 'approval',
+        state: 'current',
+        title: 'Waiting for approval',
+        summary: 'Reviewing approval requirements',
+      },
+    ],
+    blocks: [
+      { id: 'activity:rd-session-1-turn-1', type: 'run_activity', step_ids: ['waiting-approval'] },
+      {
+        id: 'message:waiting-approval-14',
+        type: 'approval_required',
+        approval_id: 'approval-14',
+        message: 'Approval required before I can continue.',
+        status: 'waiting_approval',
+      },
+    ],
+  })
+
+  const result = applyResponseDocumentSnapshotUpdate(
+    state,
+    snapshot(waiting, {
+      snapshot_revision: 14,
+      session: { session_id: 'session-1', status: 'WAITING_APPROVAL' },
+      pending_approval: { approval_id: 'approval-14' },
+    }),
+    { transport: 'polling' },
+  )
+  assert.equal(result.accepted, true)
+  assert.equal(result.decision, 'accepted_waiting_equal_revision_over_active')
+  assert.equal(result.state.document.state, 'waiting_approval')
+  assert.equal(result.state.document.message, 'Approval required before I can continue.')
+})
+
 test('response document reducer accepts terminal lower revision over active progress', () => {
   const active = doc({
     revision: 8,

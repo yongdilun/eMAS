@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
@@ -16,6 +17,16 @@ from ..testing.tool_faults import maybe_inject_tool_fault
 from ..tools.arguments import normalize_tool_args
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+_SCHEDULING_LONG_TIMEOUT_S = 120.0
+
+
+def planner_identity_headers() -> dict[str, str]:
+    user_id = (os.getenv("GO_API_USER_ID") or os.getenv("VITE_USER_ID") or "").strip() or "local-planner"
+    role = (os.getenv("GO_API_USER_ROLE") or "").strip().lower() or "planner"
+    return {
+        "X-User-Id": user_id,
+        "X-User-Role": role,
+    }
 
 
 def materialize_tool_endpoint(*, endpoint: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -59,6 +70,15 @@ def compute_planner_write_idempotency_key(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _http_timeout_for_tool(settings: Settings, tool: ToolInfo) -> float:
+    timeout = float(settings.http_timeout_s)
+    endpoint = str(tool.endpoint or "")
+    name = str(tool.name or "")
+    if "/ai/scheduling/reschedule-all" in endpoint or name == "post__ai_scheduling_reschedule-all":
+        timeout = max(timeout, float(os.getenv("SCHEDULING_LONG_TIMEOUT_S", _SCHEDULING_LONG_TIMEOUT_S)))
+    return timeout
+
+
 async def execute_tool_http(
     settings: Settings,
     tool: ToolInfo,
@@ -82,13 +102,14 @@ async def execute_tool_http(
         path_args.update(leftover_path)
     url = f"{settings.go_api_base_url}{rendered_endpoint}"
     headers = {
+        **planner_identity_headers(),
         "Idempotency-Key": idempotency_key,
         "X-Idempotency-Key": idempotency_key,
         **(extra_headers or {}),
     }
     start = time.time()
     try:
-        async with httpx.AsyncClient(timeout=settings.http_timeout_s) as client:
+        async with httpx.AsyncClient(timeout=_http_timeout_for_tool(settings, tool)) as client:
             if tool.method == "GET":
                 params = query_args or body_args
                 resp = await client.get(url, params=params, headers=headers)
@@ -139,6 +160,11 @@ async def execute_tool_http(
         "body": body,
         "latency_ms": latency_ms,
         "infrastructure_error": resp.status_code >= 500,
+        "request_url": str(resp.request.url),
+        "request_headers": {
+            "has_x_user_id": bool(resp.request.headers.get("X-User-Id")),
+            "has_x_user_role": bool(resp.request.headers.get("X-User-Role")),
+        },
     }
 
 
@@ -146,5 +172,6 @@ __all__ = [
     "compute_planner_write_idempotency_key",
     "execute_tool_http",
     "materialize_tool_endpoint",
+    "planner_identity_headers",
     "stable_json",
 ]

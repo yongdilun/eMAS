@@ -5,6 +5,7 @@ const statusTone = {
     IDLE: 'text-ink-muted',
     PLANNING: 'text-ink-muted',
     WAITING_APPROVAL: 'text-ink-muted',
+    WAITING_USER_ACTION: 'text-ink-muted',
     EXECUTING: 'text-primary',
     BLOCKED: 'text-ink-muted',
     FAILED: 'text-ink',
@@ -26,6 +27,8 @@ const ExecutionTracker = ({ session, lastSyncedAt, isPollingSession }) => {
                     ? 'Waiting for your approval before continuing.'
                     : session.status === 'WAITING_CONFIRMATION'
                         ? 'Waiting for your confirmation before continuing.'
+                        : session.status === 'WAITING_USER_ACTION'
+                            ? 'Waiting for your schedule decision before continuing.'
                         : session.status === 'FAILED' || session.status === 'BLOCKED'
                             ? 'Something needs attention before this can continue.'
                             : 'The assistant is working through your request.'}

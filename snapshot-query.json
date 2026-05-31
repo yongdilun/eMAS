@@ -1,0 +1,6 @@
+{
+  "sessionId": "e4f150cb-35e5-4a81-9f0e-e1e610f4c575",
+  "base": "http://localhost:8000",
+  "status": 404,
+  "text": "{\"detail\":\"Not Found\"}"
+}

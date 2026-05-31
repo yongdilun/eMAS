@@ -507,6 +507,388 @@ async def test_phase14_active_pending_approval_uses_actionable_write_set_and_rej
 
 
 @pytest.mark.asyncio
+async def test_graph_approval_recovers_stale_row_when_session_still_points_to_it(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Approval, Session
+
+    monkeypatch.setattr(
+        "factory_agent.services.approval_resume_service.ApprovalResumeService.should_resume_graph_approval_inline",
+        lambda self: False,
+    )
+    monkeypatch.setattr(
+        "factory_agent.services.approval_resume_service.ApprovalResumeService.start_graph_approval_resume_task",
+        lambda self, db, approval_id: None,
+    )
+
+    session_id = "api-recover-stale-current-approval"
+    approval_id = "approval-stale-current-reschedule-all"
+    now = datetime.utcnow()
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_APPROVAL",
+            current_intent="help me to reschedule all job",
+            replan_context={
+                "langgraph_pending_approval": {
+                    "approval_id": approval_id,
+                    "thread_id": session_id,
+                    "source": "planner_owned_agent_graph",
+                    "ledger_revision": 1,
+                },
+                "requirement_ledger_revision": 1,
+            },
+        )
+    )
+    db_session.add(
+        Approval(
+            approval_id=approval_id,
+            session_id=session_id,
+            subject_type="graph",
+            tool_name="post__ai_scheduling_reschedule-all",
+            args={
+                "summary": "Approve 1 backend write: post__ai_scheduling_reschedule-all",
+                "requirement_ledger_revision": 1,
+                "selected_graph_tool_call": {
+                    "tool_name": "post__ai_scheduling_reschedule-all",
+                    "args": {},
+                },
+            },
+            risk_summary="Approve 1 backend write: post__ai_scheduling_reschedule-all",
+            side_effect_level="HIGH",
+            status="EXPIRED",
+            decided_by="frontend-operator",
+            decided_at=now,
+            rejection_reason="Approval is stale because the session changed state",
+            expires_at=now + timedelta(hours=1),
+            created_at=now,
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        approved = await client.post(f"/approvals/{approval_id}/approve", json={"decided_by": "u1"})
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "APPROVED"
+
+    refreshed_approval = (
+        await db_session.execute(
+            select(Approval)
+            .where(Approval.approval_id == approval_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().one()
+    refreshed_session = (
+        await db_session.execute(
+            select(Session)
+            .where(Session.session_id == session_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().one()
+    assert refreshed_approval.status == "APPROVED"
+    assert refreshed_approval.rejection_reason is None
+    assert refreshed_session.status == "EXECUTING"
+    assert "langgraph_pending_approval" not in (refreshed_session.replan_context or {})
+    assert "reschedule_all_handoff" not in (refreshed_session.replan_context or {})
+    assert refreshed_session.replan_context["langgraph_approval_resume"]["approval_id"] == approval_id
+
+
+def _pending_reschedule_interaction_context(*, session_id: str, interaction_id: str = "ia-reschedule-1") -> dict:
+    return {
+        "pending_interaction": {
+            "interaction_id": interaction_id,
+            "kind": "reschedule_all_review",
+            "status": "pending",
+            "session_id": session_id,
+            "approval_id": "approval-reschedule-all",
+            "proposal_ids": ["PROP-001", "PROP-002"],
+            "proposals": [
+                {"proposal_id": "PROP-001", "job_id": "JOB-001", "machine_id": "M-001"},
+                {"proposal_id": "PROP-002", "job_id": "JOB-002", "machine_id": "M-002"},
+            ],
+            "summary": {"feasible_count": 2},
+            "validation": {"overlap_status": "not_checked"},
+            "title": "Review reschedule proposal",
+            "message": "Review 2 generated reschedule proposal(s) before applying.",
+            "created_at": "2026-05-31T04:00:00Z",
+            "payload": {
+                "tool_name": "post__ai_scheduling_reschedule-all",
+                "graph_checkpoint_identity": {"thread_id": session_id, "checkpoint_id": "cp-1"},
+            },
+        },
+        "planner_owned_agent_graph": {
+            "thread_id": session_id,
+            "checkpoint_id": "cp-1",
+        },
+    }
+
+
+async def _seed_reschedule_interaction_tools(db_session, *, include_apply: bool = True, include_cancel: bool = True) -> None:
+    await _seed_tool(
+        db_session,
+        name="post__ai_scheduling_verify-overlaps",
+        endpoint="/api/v1/ai/scheduling/verify-overlaps",
+        method="POST",
+        input_schema={"type": "object", "properties": {}},
+        capability_tags='["scheduling"]',
+        is_read_only=False,
+    )
+    await _seed_tool(
+        db_session,
+        name="post__ai_scheduling_proposals_{id}_approve",
+        endpoint="/api/v1/ai/scheduling/proposals/{id}/approve",
+        method="POST",
+        input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
+        capability_tags='["scheduling"]',
+        is_read_only=False,
+    )
+    if include_apply:
+        await _seed_tool(
+            db_session,
+            name="post__ai_scheduling_proposals_{id}_apply",
+            endpoint="/api/v1/ai/scheduling/proposals/{id}/apply",
+            method="POST",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
+            capability_tags='["scheduling"]',
+            is_read_only=False,
+        )
+    if include_cancel:
+        await _seed_tool(
+            db_session,
+            name="post__ai_scheduling_proposals_{id}_reject",
+            endpoint="/api/v1/ai/scheduling/proposals/{id}/reject",
+            method="POST",
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
+            capability_tags='["scheduling"]',
+            is_read_only=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reschedule_interaction_apply_completes_same_session(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Message, Session
+
+    session_id = "api-reschedule-interaction-apply"
+    interaction_id = "ia-apply-1"
+    await _seed_reschedule_interaction_tools(db_session)
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_USER_ACTION",
+            current_intent="help me to reschedule all job",
+            replan_context=_pending_reschedule_interaction_context(
+                session_id=session_id,
+                interaction_id=interaction_id,
+            ),
+        )
+    )
+    await db_session.commit()
+
+    calls = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        calls.append({"tool_name": tool.name, "args": dict(args), "idempotency_key": idempotency_key})
+        if tool.name == "post__ai_scheduling_verify-overlaps":
+            return {"ok": True, "body": {"data": {"valid": True}}}
+        return {"ok": True, "body": {"data": {"id": args.get("id"), "status": "ok"}}}
+
+    monkeypatch.setattr("factory_agent.api.routers.interactions.execute_tool_http", fake_execute_tool_http)
+
+    app, event_bus = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/sessions/{session_id}/interactions/{interaction_id}/decide",
+            json={"decision": "apply", "proposal_ids": ["PROP-001", "PROP-002"], "decided_by": "u1"},
+        )
+        snapshot_response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    assert snapshot_response.status_code == 200
+    assert response.json()["session_id"] == session_id
+    assert response.json()["status"] == "COMPLETED"
+    assert "Reschedule applied successfully" in snapshot_response.json()["response_document"]["message"]
+    assert [call["tool_name"] for call in calls] == [
+        "post__ai_scheduling_verify-overlaps",
+        "post__ai_scheduling_proposals_{id}_approve",
+        "post__ai_scheduling_proposals_{id}_apply",
+        "post__ai_scheduling_proposals_{id}_approve",
+        "post__ai_scheduling_proposals_{id}_apply",
+    ]
+    assert all(call["idempotency_key"].startswith(f"interaction:{session_id}:{interaction_id}:") for call in calls)
+
+    refreshed_session = (
+        await db_session.execute(select(Session).where(Session.session_id == session_id).execution_options(populate_existing=True))
+    ).scalars().one()
+    assert refreshed_session.status == "COMPLETED"
+    assert "pending_interaction" not in (refreshed_session.replan_context or {})
+    assert refreshed_session.replan_context["interaction_result"]["applied"] == 2
+    assert refreshed_session.replan_context["interaction_result"]["proposal_ids"] == ["PROP-001", "PROP-002"]
+    messages = (
+        await db_session.execute(select(Message).where(Message.session_id == session_id).execution_options(populate_existing=True))
+    ).scalars().all()
+    assert any("Reschedule applied successfully" in message.content for message in messages)
+    assert event_bus.published[-1].payload["runtime"] == "pending_interaction"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_interaction_cancel_returns_cancelled_chat_result(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Message, Session
+    from factory_agent.session_state import USER_CANCELLED_MESSAGE
+
+    session_id = "api-reschedule-interaction-cancel"
+    interaction_id = "ia-cancel-1"
+    await _seed_reschedule_interaction_tools(db_session)
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_USER_ACTION",
+            current_intent="help me to reschedule all job",
+            replan_context=_pending_reschedule_interaction_context(
+                session_id=session_id,
+                interaction_id=interaction_id,
+            ),
+        )
+    )
+    await db_session.commit()
+
+    calls = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        calls.append({"tool_name": tool.name, "args": dict(args), "idempotency_key": idempotency_key})
+        return {"ok": True, "body": {"data": {"id": args.get("id"), "status": "rejected"}}}
+
+    monkeypatch.setattr("factory_agent.api.routers.interactions.execute_tool_http", fake_execute_tool_http)
+
+    app, _ = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/sessions/{session_id}/interactions/{interaction_id}/decide",
+            json={"decision": "cancel", "decided_by": "u1"},
+        )
+        snapshot_response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    assert snapshot_response.status_code == 200
+    assert response.json()["session_id"] == session_id
+    assert response.json()["status"] == "IDLE"
+    assert "Reschedule cancelled" in snapshot_response.json()["response_document"]["message"]
+    assert [call["tool_name"] for call in calls] == [
+        "post__ai_scheduling_proposals_{id}_reject",
+        "post__ai_scheduling_proposals_{id}_reject",
+    ]
+
+    refreshed_session = (
+        await db_session.execute(select(Session).where(Session.session_id == session_id).execution_options(populate_existing=True))
+    ).scalars().one()
+    assert refreshed_session.status == "IDLE"
+    assert refreshed_session.error == USER_CANCELLED_MESSAGE
+    assert "pending_interaction" not in (refreshed_session.replan_context or {})
+    assert refreshed_session.replan_context["interaction_result"]["decision"] == "cancel"
+    messages = (
+        await db_session.execute(select(Message).where(Message.session_id == session_id).execution_options(populate_existing=True))
+    ).scalars().all()
+    assert any("Reschedule cancelled" in message.content for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_interaction_stale_id_returns_409_without_mutation(
+    sessionmaker_override,
+    db_session,
+    monkeypatch,
+):
+    from factory_agent.persistence.models import Session
+
+    session_id = "api-reschedule-interaction-stale"
+    interaction_id = "ia-current"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_USER_ACTION",
+            current_intent="help me to reschedule all job",
+            replan_context=_pending_reschedule_interaction_context(
+                session_id=session_id,
+                interaction_id=interaction_id,
+            ),
+        )
+    )
+    await db_session.commit()
+    calls = []
+
+    async def fake_execute_tool_http(settings, tool, args, *, idempotency_key, extra_headers=None):
+        calls.append(tool.name)
+        return {"ok": True, "body": {"data": {}}}
+
+    monkeypatch.setattr("factory_agent.api.routers.interactions.execute_tool_http", fake_execute_tool_http)
+
+    app, _ = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/sessions/{session_id}/interactions/ia-old/decide",
+            json={"decision": "apply", "proposal_ids": ["PROP-001"], "decided_by": "u1"},
+        )
+
+    assert response.status_code == 409
+    assert calls == []
+    refreshed_session = (
+        await db_session.execute(select(Session).where(Session.session_id == session_id).execution_options(populate_existing=True))
+    ).scalars().one()
+    assert refreshed_session.status == "WAITING_USER_ACTION"
+    assert refreshed_session.replan_context["pending_interaction"]["interaction_id"] == interaction_id
+
+
+@pytest.mark.asyncio
+async def test_session_snapshot_includes_pending_reschedule_interaction(
+    sessionmaker_override,
+    db_session,
+):
+    from factory_agent.persistence.models import Session
+
+    session_id = "api-reschedule-interaction-snapshot"
+    interaction_id = "ia-snapshot-1"
+    db_session.add(
+        Session(
+            session_id=session_id,
+            user_id="u1",
+            status="WAITING_USER_ACTION",
+            current_intent="help me to reschedule all job",
+            replan_context=_pending_reschedule_interaction_context(
+                session_id=session_id,
+                interaction_id=interaction_id,
+            ),
+        )
+    )
+    await db_session.commit()
+
+    app, _ = await _make_app(sessionmaker_override, enforce_tool_registry_health=False, min_healthy_tool_count=0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/sessions/{session_id}/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["status"] == "WAITING_USER_ACTION"
+    assert body["response_document"]["state"] == "waiting_user_action"
+    assert body["pending_interaction"]["interaction_id"] == interaction_id
+    assert body["pending_interaction"]["kind"] == "reschedule_all_review"
+    assert body["pending_interaction"]["proposal_ids"] == ["PROP-001", "PROP-002"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.legacy_architecture_quarantine
 async def test_phase14_historical_approval_payload_resume_queues_second_actionable_approval(
     sessionmaker_override,

@@ -39,6 +39,8 @@ _DOCUMENT_KNOWLEDGE_TAGS = {
     "knowledge_answer_v1",
     "rag",
 }
+_RESCHEDULE_ALL_TOOL_NAME = "post__ai_scheduling_reschedule-all"
+_RESCHEDULE_ALL_ENDPOINT = "/ai/scheduling/reschedule-all"
 
 
 @dataclass(frozen=True)
@@ -354,6 +356,8 @@ def _tool_matches_write_candidate(tool: ToolInfo, adapter_request: ToolSelectorA
         return False
     if bool(tool.is_read_only):
         return False
+    if _is_reschedule_all_tool(tool):
+        return _adapter_requests_reschedule_all(adapter_request)
     profile = build_tool_intent_profile(tool)
     if adapter_request.entity and profile.endpoint_root != adapter_request.entity:
         return False
@@ -387,6 +391,8 @@ def _write_candidate_rank(tool: ToolInfo, adapter_request: ToolSelectorAdapterRe
     actions = set(_actions_for_tool(tool))
     action_match = int(bool(actions.intersection(adapter_request.actions)))
     approval_match = int(bool(tool.requires_approval))
+    if _is_reschedule_all_tool(tool) and _adapter_requests_reschedule_all(adapter_request):
+        action_match += 1
     return (-action_match, -approval_match, tool.name)
 
 
@@ -534,6 +540,8 @@ def _actions_for_tool(tool: ToolInfo) -> list[CapabilityAction]:
     source = _source_of_truth_for_tool(tool)
     if source == "document_knowledge":
         return ["search_documents", "read"]
+    if _is_reschedule_all_tool(tool):
+        return ["update", "create"]
     method = (tool.method or "").upper()
     profile = build_tool_intent_profile(tool)
     tags = {_normalized_tag(tag) for tag in tool.capability_tags or []}
@@ -720,6 +728,29 @@ def _output_contract_for_tool(
     if "business_change_v1" in tags or any(action in actions for action in ("create", "update", "approve", "reject", "cancel")):
         return "business_change_v1"
     return None
+
+
+def _is_reschedule_all_tool(tool: ToolInfo) -> bool:
+    endpoint = str(tool.endpoint or "").strip().lower()
+    return tool.name == _RESCHEDULE_ALL_TOOL_NAME or endpoint == _RESCHEDULE_ALL_ENDPOINT
+
+
+def _adapter_requests_reschedule_all(adapter_request: ToolSelectorAdapterRequest) -> bool:
+    entity = str(adapter_request.entity or "").strip().lower()
+    if entity and entity not in {"job", "scheduling"}:
+        return False
+    actions = {str(action).strip().lower() for action in adapter_request.actions or []}
+    if not actions.intersection({"update", "create"}):
+        return False
+    constraints = dict(adapter_request.constraints or {})
+    operation = str(constraints.get("operation") or "").strip().lower()
+    scope = str(constraints.get("scope") or "").strip().lower()
+    phrase = str(adapter_request.retrieval_phrase or "").strip().lower()
+    return (
+        operation == "reschedule_all"
+        or (scope == "all" and "reschedule" in phrase)
+        or ("reschedule" in phrase and "all" in phrase and "job" in phrase)
+    )
 
 
 def _compatibility_fallback_used(

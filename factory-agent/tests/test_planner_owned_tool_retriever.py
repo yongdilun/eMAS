@@ -8,6 +8,7 @@ import pytest
 
 from factory_agent.config import Settings
 from factory_agent.planning.tool_selector import ToolSelectionResult, ToolSelector
+from factory_agent.planning.v2_capability_map import build_capability_needs_for_text, build_v2_capability_map
 from factory_agent.planning.v2_contracts import CapabilityNeed
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.schemas import ToolInfo
@@ -156,6 +157,46 @@ def _job_lookup_tool() -> ToolInfo:
         output_properties={"job_id": {"type": "string"}, "status": {"type": "string"}},
         entity="job",
         response_contract="entity_status_v1",
+    )
+
+
+def _job_create_tool() -> ToolInfo:
+    return _tool(
+        "post__jobs",
+        endpoint="/jobs",
+        method="POST",
+        tags=["job", "create"],
+        required=["product_id", "quantity_total"],
+        input_properties={
+            "product_id": {"type": "string"},
+            "quantity_total": {"type": "integer"},
+        },
+        output_properties={
+            "job_id": {"type": "string"},
+            "product_id": {"type": "string"},
+            "quantity_total": {"type": "integer"},
+        },
+        body_fields=["product_id", "quantity_total"],
+        required_body_fields=["product_id", "quantity_total"],
+        entity="job",
+        response_contract="business_change_v1",
+    )
+
+
+def _reschedule_all_tool() -> ToolInfo:
+    return _tool(
+        "post__ai_scheduling_reschedule-all",
+        endpoint="/ai/scheduling/reschedule-all",
+        method="POST",
+        tags=["ai", "scheduling", "reschedule", "all", "job", "create"],
+        input_properties={"order_by": {"type": "string", "enum": ["epo", "edd", "fifo", "readiness"]}},
+        output_properties={
+            "proposals": {"type": "array", "items": {"type": "object"}},
+            "summary": {"type": "object"},
+        },
+        body_fields=["order_by"],
+        entity=None,
+        response_contract="business_change_v1",
     )
 
 
@@ -335,6 +376,71 @@ async def test_phase4_write_need_completes_with_read_preflight_and_write_candida
     assert cards["get__jobs"].is_read_only is True
     assert cards["put__jobs_{id}"].is_read_only is False
     assert cards["put__jobs_{id}"].requires_approval is True
+
+
+@pytest.mark.asyncio
+async def test_phase4_create_job_need_retrieves_post_jobs_candidate_from_metadata_completion():
+    selector = RecordingSelector(ToolSelectionResult([], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]
+    tools = {"post__jobs": _job_create_tool()}
+    need = CapabilityNeed(
+        requirement_id="req-create",
+        source_of_truth="operational_state",
+        entity="job",
+        action="create",
+        constraints={"requires_approval": True},
+    )
+
+    result = await retriever.retrieve_tools_for_need(need, tools_by_name=tools)
+
+    assert result.status == "ok"
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == ["post__jobs"]
+    assert result.trace.diagnostics["metadata_candidate_completion"] == {
+        "read_preflight": [],
+        "write_candidates": ["post__jobs"],
+    }
+    assert result.hydrated_tool_cards.cards[0].required_args == ["product_id", "quantity_total"]
+
+
+def test_phase4_incomplete_create_job_intake_maps_to_create_capability_action():
+    tools = {"post__jobs": _job_create_tool()}
+    capability_map = build_v2_capability_map(tools)
+
+    needs = build_capability_needs_for_text("help me to create a job", capability_map=capability_map)
+
+    assert len(needs) == 1
+    assert needs[0].entity == "job"
+    assert needs[0].action == "create"
+
+
+@pytest.mark.asyncio
+async def test_phase4_reschedule_all_jobs_retrieves_scheduling_reschedule_candidate():
+    selector = RecordingSelector(ToolSelectionResult([], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]
+    tools = {
+        "get__jobs": _job_list_tool(),
+        "post__jobs": _job_create_tool(),
+        "post__ai_scheduling_reschedule-all": _reschedule_all_tool(),
+    }
+    capability_map = build_v2_capability_map(tools)
+    needs = build_capability_needs_for_text("help me to reschedule all job", capability_map=capability_map)
+
+    assert len(needs) == 1
+    assert needs[0].entity == "job"
+    assert needs[0].action == "update"
+    assert needs[0].constraints["operation"] == "reschedule_all"
+
+    result = await retriever.retrieve_tools_for_need(needs[0], tools_by_name=tools)
+
+    assert result.status == "ok"
+    assert "reschedule all" in (result.adapter_request.retrieval_phrase or "")
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "get__jobs",
+        "post__ai_scheduling_reschedule-all",
+    ]
+    assert result.trace.diagnostics["metadata_candidate_completion"]["write_candidates"] == [
+        "post__ai_scheduling_reschedule-all",
+    ]
 
 
 @pytest.mark.asyncio

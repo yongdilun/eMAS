@@ -11,12 +11,12 @@ from sqlalchemy import select
 
 from factory_agent.config import Settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedGraphResult
-from factory_agent.persistence.models import Session
+from factory_agent.persistence.models import Message, Plan, Session
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_contracts import CapabilityNeed, EvidenceLedgerEntry, RequirementLedgerEntry
 from factory_agent.planning.v2_agent_state import build_initial_planner_owned_agent_graph_state
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
-from factory_agent.schemas import PlanResponse, ToolInfo
+from factory_agent.schemas import PlanDraft, PlanResponse, ToolInfo
 from factory_agent.services.plan_creation_service import PlanCreationService
 from factory_agent.services import planner_owned_graph_runtime as runtime_module
 from factory_agent.services.planner_owned_graph_runtime import LiveGraphActivityRecorder, PlannerOwnedGraphRuntimeAdapter
@@ -99,6 +99,11 @@ def _job_tool(
     )
 
 
+class _FakeSummaryAdapter:
+    async def summarize_plan(self, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(text="", llm_calls=0)
+
+
 def _service() -> PlanCreationService:
     return PlanCreationService(
         settings=_settings(),
@@ -106,7 +111,7 @@ def _service() -> PlanCreationService:
         memory_manager=SimpleNamespace(),
         planner=SimpleNamespace(),
         tool_selector=SimpleNamespace(),
-        summary_adapter=SimpleNamespace(),
+        summary_adapter=_FakeSummaryAdapter(),
         tool_registry=SimpleNamespace(),
         uuid_factory=lambda: "uuid",
     )
@@ -157,6 +162,274 @@ def test_phase10_static_normal_runtime_adapter_uses_graph_not_direct_execution()
     assert "_build_graph" in runtime_calls
     assert "run" in runtime_calls
     assert '"thread_id": sess.session_id' in runtime_source
+
+
+def test_graph_approval_row_is_not_committed_before_waiting_session_state():
+    source = RUNTIME_ADAPTER_SOURCE.read_text(encoding="utf-8")
+    persist_approval = _function_node(source, "_persist_approval_row")
+    segment = ast.get_source_segment(source, persist_approval) or ""
+    calls = _called_names(persist_approval)
+
+    assert "commit" not in calls
+    assert "flush" not in calls
+    assert "db.add(approval)" in segment
+
+
+@pytest.mark.asyncio
+async def test_phase10_graph_pending_approval_empty_plan_is_not_planner_no_action(db_session):
+    service = _service()
+    session_id = "phase10-reschedule-all-pending-approval"
+    approval_id = "approval-reschedule-all"
+    sess = Session(
+        session_id=session_id,
+        user_id="u1",
+        status="PLANNING",
+        current_intent="help me to reschedule all job",
+        llm_call_count=0,
+    )
+    db_session.add(sess)
+    db_session.add(
+        Message(
+            message_id="phase10-reschedule-all-user",
+            session_id=session_id,
+            role="user",
+            content="help me to reschedule all job",
+            mode="normal",
+        )
+    )
+    await db_session.commit()
+
+    response = await service._persist_plan(
+        db=db_session,
+        sess=sess,
+        draft=PlanDraft(
+            plan_explanation="Approve 1 backend write: post__ai_scheduling_reschedule-all",
+            risk_summary="Waiting for graph-native approval before committing staged changes.",
+            steps=[],
+        ),
+        tools_by_name={},
+        backend_used="planner_owned_agent_graph",
+        kind="execution",
+        status="PENDING_APPROVAL",
+        intent="help me to reschedule all job",
+        context_to_keep={
+            "langgraph_pending_approval": {
+                "approval_id": approval_id,
+                "thread_id": session_id,
+                "source": "planner_owned_agent_graph",
+            }
+        },
+        tool_outputs=[],
+    )
+
+    refreshed = await db_session.get(Session, session_id)
+    plan = (
+        await db_session.execute(select(Plan).where(Plan.session_id == session_id))
+    ).scalars().one()
+    assistant = (
+        await db_session.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .where(Message.role == "assistant")
+        )
+    ).scalars().one()
+
+    assert response.status == "PENDING_APPROVAL"
+    assert plan.status == "PENDING_APPROVAL"
+    assert refreshed.status == "WAITING_APPROVAL"
+    assert refreshed.error is None
+    assert refreshed.replan_context["langgraph_pending_approval"]["approval_id"] == approval_id
+    assert "planner_no_action" not in (assistant.content or "")
+    assert "planner_no_action" not in str(refreshed.replan_context)
+
+
+@pytest.mark.asyncio
+async def test_phase10_graph_failed_tool_output_is_not_planner_no_action(db_session):
+    service = _service()
+    session_id = "phase10-reschedule-all-tool-failed"
+    sess = Session(
+        session_id=session_id,
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="help me to reschedule all job",
+        llm_call_count=0,
+    )
+    db_session.add(sess)
+    db_session.add(
+        Message(
+            message_id="phase10-reschedule-all-tool-failed-user",
+            session_id=session_id,
+            role="user",
+            content="help me to reschedule all job",
+            mode="normal",
+        )
+    )
+    await db_session.commit()
+
+    await service._persist_plan(
+        db=db_session,
+        sess=sess,
+        draft=PlanDraft(
+            plan_explanation="Reschedule-all tool failed: missing authenticated user or role",
+            risk_summary="Approved graph execution reached the backend tool and failed safely.",
+            steps=[],
+        ),
+        tools_by_name={},
+        backend_used="planner_owned_agent_graph",
+        kind="execution",
+        status="FAILED",
+        intent="help me to reschedule all job",
+        context_to_keep={},
+        tool_outputs=[
+            {
+                "tool_name": "post__ai_scheduling_reschedule-all",
+                "args": {},
+                "status": "FAILED",
+                "http_status": 401,
+                "summary": "missing authenticated user or role",
+                "result": {
+                    "error": {
+                        "code": "tool_error",
+                        "detail": "missing authenticated user or role",
+                    }
+                },
+            }
+        ],
+    )
+
+    refreshed = await db_session.get(Session, session_id)
+    plan = (
+        await db_session.execute(select(Plan).where(Plan.session_id == session_id))
+    ).scalars().one()
+
+    assert plan.status == "FAILED"
+    assert refreshed.status == "FAILED"
+    assert "planner_no_action" not in (refreshed.error or "")
+    assert "planner_no_action" not in str(refreshed.replan_context)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_all_graph_result_waits_for_embedded_user_action(db_session):
+    service = _service()
+    session_id = "phase20-reschedule-all-waiting-user-action"
+    sess = Session(
+        session_id=session_id,
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="help me to reschedule all job",
+        llm_call_count=0,
+    )
+    db_session.add(sess)
+    db_session.add(
+        Message(
+            message_id="phase20-reschedule-all-user",
+            session_id=session_id,
+            role="user",
+            content="help me to reschedule all job",
+            mode="normal",
+        )
+    )
+    await db_session.commit()
+
+    state = build_initial_planner_owned_agent_graph_state(
+        "help me to reschedule all job",
+        tools_by_name={},
+    )
+    requirement_id = state.requirement_ledger.requirements[0].id
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-reschedule-all",
+            requirement_id=requirement_id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="post__ai_scheduling_reschedule-all",
+            args={},
+            normalized_result={
+                "status_code": 200,
+                "data": {
+                    "proposal_ids": ["PROP-001", "PROP-002"],
+                    "proposals": [
+                        {"proposal_id": "PROP-001", "job_id": "JOB-001", "machine_id": "M-001"},
+                        {"proposal_id": "PROP-002", "job_id": "JOB-002", "machine_id": "M-002"},
+                    ],
+                    "summary": {"feasible_count": 2},
+                    "message": "Review 2 generated reschedule proposal(s) before applying.",
+                },
+            },
+            approval_id="approval-reschedule-all",
+            diagnostic_metadata={"graph_authorized_execution": True, "http_status": 200},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-reschedule-all"]
+    state.execution_trace.diagnostics["graph_checkpoint_identity"] = {
+        "thread_id": session_id,
+        "checkpoint_id": "checkpoint-reschedule-all",
+    }
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": session_id, "checkpoint_id": "checkpoint-reschedule-all"}},
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "reschedule-interaction",
+        persist_plan=service._persist_plan,
+        session_lookup=lambda db, session_id: db.get(Session, session_id),
+    )
+
+    response = await adapter.persist_result(
+        db=db_session,
+        sess=sess,
+        tools_by_name={
+            "post__ai_scheduling_reschedule-all": ToolInfo(
+                name="post__ai_scheduling_reschedule-all",
+                description="Reschedule all jobs",
+                endpoint="/ai/scheduling/reschedule-all",
+                method="POST",
+                input_schema={"type": "object", "properties": {}},
+                output_schema={"type": "object"},
+                is_read_only=False,
+                requires_approval=True,
+                side_effect_level="HIGH",
+                capability_tags=["scheduling", "reschedule", "all", "job"],
+            )
+        },
+        intent="help me to reschedule all job",
+        mode="normal",
+        result=result,
+    )
+
+    refreshed = await db_session.get(Session, session_id)
+    assert response.status == "COMPLETED"
+    assert refreshed.status == "WAITING_USER_ACTION"
+    assert refreshed.completed_at is None
+    context = refreshed.replan_context or {}
+    assert "reschedule_all_handoff" not in context
+    pending = context["pending_interaction"]
+    assert pending["interaction_id"] == "ia-reschedule-interaction"
+    assert pending["kind"] == "reschedule_all_review"
+    assert pending["status"] == "pending"
+    assert pending["session_id"] == session_id
+    assert pending["approval_id"] == "approval-reschedule-all"
+    assert pending["proposal_ids"] == ["PROP-001", "PROP-002"]
+    assert pending["payload"]["checkpoint_config"]["configurable"]["thread_id"] == session_id
+    assert context["planner_owned_agent_graph"]["pending_interaction_id"] == "ia-reschedule-interaction"
+    plan = (
+        await db_session.execute(select(Plan).where(Plan.session_id == session_id))
+    ).scalars().one()
+    assistant = (
+        await db_session.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .where(Message.role == "assistant")
+        )
+    ).scalars().one()
+    assert plan.plan_explanation == "Review 2 generated reschedule proposal(s) before applying."
+    assert assistant.content == "Review 2 generated reschedule proposal(s) before applying."
+    assert "proposals=[" not in assistant.content
+    assert len(assistant.content) < 255
 
 
 @pytest.mark.asyncio

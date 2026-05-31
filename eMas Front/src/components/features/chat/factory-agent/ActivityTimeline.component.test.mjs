@@ -108,6 +108,47 @@ test('ActivityTimeline marks only the newest retry activity as current', async (
   await view.unmount()
 })
 
+test('ActivityTimeline renders the current active row at the bottom of expanded activity', async () => {
+  const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
+  const view = await render(
+    React.createElement(ActivityTimeline, {
+      steps: [
+        {
+          id: 'step-1',
+          timestamp: 1,
+          group: 'planning',
+          label: 'Understood request',
+          detail: 'Reviewing your request and recent context',
+          state: 'success',
+        },
+        {
+          id: 'step-2',
+          timestamp: 2,
+          group: 'research',
+          label: 'Running selected tool',
+          detail: 'Checking relevant records',
+          state: 'running',
+        },
+        {
+          id: 'step-3',
+          timestamp: 3,
+          group: 'planning',
+          label: 'Selecting safe action',
+          detail: 'Selecting a safe action',
+          state: 'success',
+        },
+      ],
+    }),
+  )
+
+  await waitFor(() => assert.match(view.text(), /Session activity/))
+  const rows = Array.from(view.container.querySelectorAll('li')).map((row) => row.textContent)
+  assert.match(rows.at(-1) || '', /Running selected tool/)
+  assert.match(rows.at(-1) || '', /Current/)
+
+  await view.unmount()
+})
+
 test('ActivityTimeline keeps a terminal retry story expanded', async () => {
   const { default: ActivityTimeline } = await server.ssrLoadModule('/src/components/features/chat/factory-agent/ActivityTimeline.jsx')
   const view = await render(

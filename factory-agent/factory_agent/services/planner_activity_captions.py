@@ -7,7 +7,7 @@ from typing import Any
 from factory_agent.planning.v2_contracts import requirement_child_lineage
 
 
-_ACTIVE_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
+_ACTIVE_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION", "WAITING_USER_ACTION"}
 _READ_INTENT_OPERATIONS = {
     "report_status",
     "report_multi_status",

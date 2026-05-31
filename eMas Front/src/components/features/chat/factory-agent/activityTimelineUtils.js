@@ -32,6 +32,7 @@ export function assistantAnswerAllowed({
   const skipActivityRowTerminal =
     stu === 'WAITING_APPROVAL' ||
     stu === 'WAITING_CONFIRMATION' ||
+    stu === 'WAITING_USER_ACTION' ||
     stu === 'FAILED' ||
     stu === 'BLOCKED'
 
@@ -66,6 +67,9 @@ export function compareActivitySteps(a, b) {
   const aOrder = activityOrderValue(a)
   const bOrder = activityOrderValue(b)
   if (aOrder != null && bOrder != null && aOrder !== bOrder) return aOrder - bOrder
+  const aSemanticOrder = semanticActivityOrder(a)
+  const bSemanticOrder = semanticActivityOrder(b)
+  if (aOrder == null && bOrder == null && aSemanticOrder !== bSemanticOrder) return aSemanticOrder - bSemanticOrder
   const ts = Number(a?.timestamp || 0) - Number(b?.timestamp || 0)
   if (ts !== 0) return ts
   if (aOrder != null || bOrder != null) {
@@ -213,32 +217,134 @@ export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = 
     const group = String(step?.group || '').toLowerCase()
     return !(step?.state === 'complete' && group === 'response') && label !== 'run complete'
   })
-  if (status !== 'WAITING_APPROVAL') return withoutTerminal
+  const withoutResponseScaffolding = withoutTerminal.filter((step) => !isResponseScaffoldingStep(step))
+  if (status === 'WAITING_USER_ACTION') {
+    const isWaitingActionStep = (step) => {
+      const label = String(step?.label || '').toLowerCase()
+      return label === 'waiting for your action' || label === 'review generated schedule'
+    }
+    let latestWaitingAction = -1
+    for (let i = withoutResponseScaffolding.length - 1; i >= 0; i -= 1) {
+      if (isWaitingActionStep(withoutResponseScaffolding[i])) {
+        latestWaitingAction = i
+        break
+      }
+    }
+    const waitingStep = latestWaitingAction >= 0
+      ? { ...withoutResponseScaffolding[latestWaitingAction], state: 'waiting' }
+      : normalizeActivityStep({
+        id: 'snapshot_activity_waiting_user_action',
+        timestamp: Date.now() / 1000,
+        group: 'approval',
+        label: 'Waiting for your action',
+        detail: 'Review the generated schedule before applying it',
+        state: 'waiting',
+      })
+    const beforeWaiting = withoutResponseScaffolding.filter((step, index) => {
+      if (index === latestWaitingAction) return false
+      const label = String(step?.label || '').toLowerCase()
+      return label !== 'rendering response' && label !== 'preparing response' && label !== 'run complete'
+    })
+    return [...beforeWaiting, waitingStep].filter(Boolean).map((step, index, rows) => {
+      if (index >= rows.length - 1 || !FINALIZED_STATES.has(step?.state)) return step
+      return { ...step, state: 'success' }
+    })
+  }
+
+  if (status !== 'WAITING_APPROVAL') {
+    return ACTIVE_SESSION_STATUSES.has(status) ? withoutResponseScaffolding : withoutTerminal
+  }
 
   let latestWaitingApproval = -1
-  for (let i = withoutTerminal.length - 1; i >= 0; i -= 1) {
-    const step = withoutTerminal[i]
+  for (let i = withoutResponseScaffolding.length - 1; i >= 0; i -= 1) {
+    const step = withoutResponseScaffolding[i]
     const label = String(step?.label || '').toLowerCase()
+    const group = String(step?.group || '').toLowerCase()
     if (
-      step?.group === 'approval'
+      (group === 'approval' || label.includes('approval'))
       && (label === 'waiting for approval' || label === 'waiting for your approval')
-      && step?.state === 'waiting'
+      && (step?.state === 'waiting' || step?.state === 'success')
     ) {
       latestWaitingApproval = i
       break
     }
   }
-  if (latestWaitingApproval < 0) return withoutTerminal
+  if (latestWaitingApproval < 0) return withoutResponseScaffolding
 
-  return withoutTerminal.slice(0, latestWaitingApproval + 1).map((step, index) => {
-    if (index >= latestWaitingApproval || !FINALIZED_STATES.has(step?.state)) return step
+  const waitingStep = { ...withoutResponseScaffolding[latestWaitingApproval], state: 'waiting' }
+  const earlyPlanningAfterWaiting = withoutResponseScaffolding
+    .slice(latestWaitingApproval + 1)
+    .filter((step) => {
+      const label = String(step?.label || '').toLowerCase()
+      const group = String(step?.group || '').toLowerCase()
+      return (group === 'planning' || group === 'approval')
+        && step?.state !== 'retry'
+        && [
+          'understood request',
+          'structuring request',
+          'choosing next action',
+          'finding information path',
+          'selecting safe action',
+          'checking approvals',
+        ].includes(label)
+  })
+  const beforeWaiting = [
+    ...withoutResponseScaffolding.slice(0, latestWaitingApproval),
+    ...earlyPlanningAfterWaiting,
+  ]
+  return [...beforeWaiting, waitingStep].map((step, index, rows) => {
+    if (index >= rows.length - 1 || !FINALIZED_STATES.has(step?.state)) return step
     return { ...step, state: 'success' }
   })
 }
 
 const FINALIZED_STATES = new Set(['running', 'retry', 'waiting'])
 const MERGEABLE_STATES = new Set(['running', 'success'])
-const ACTIVE_SESSION_STATUSES = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION'])
+const ACTIVE_SESSION_STATUSES = new Set(['PLANNING', 'EXECUTING', 'WAITING_APPROVAL', 'WAITING_CONFIRMATION', 'WAITING_USER_ACTION'])
+
+const ACTIVITY_LABEL_ORDER = new Map([
+  ['understood request', 10],
+  ['understanding your request', 10],
+  ['structuring request', 20],
+  ['choosing next action', 30],
+  ['finding information path', 40],
+  ['selecting safe action', 50],
+  ['checking approvals', 60],
+  ['waiting for approval', 70],
+  ['waiting for your approval', 70],
+  ['approval received', 80],
+  ['approval updated', 80],
+  ['preparing changes', 90],
+  ['preparing next action', 90],
+  ['gathering information', 95],
+  ['running selected tool', 95],
+  ['applying approved changes', 95],
+  ['updating job records', 105],
+  ['checking result', 110],
+  ['checking evidence', 110],
+  ['verifying result', 115],
+  ['waiting for your action', 120],
+  ['review generated schedule', 120],
+  ['preparing response', 130],
+  ['rendering response', 140],
+  ['run complete', 150],
+  ['something needs attention', 150],
+])
+
+function semanticActivityOrder(step) {
+  const label = String(step?.label || '').trim().toLowerCase()
+  return ACTIVITY_LABEL_ORDER.get(label) ?? 1000
+}
+
+function isResponseScaffoldingStep(step) {
+  const label = String(step?.label || '').trim().toLowerCase()
+  const group = String(step?.group || '').trim().toLowerCase()
+  return group === 'response' && (
+    label === 'preparing response' ||
+    label === 'rendering response' ||
+    label === 'run complete'
+  )
+}
 
 const SAFE_DOMAIN_LABELS = [
   ['approval', 'approval requests'],
@@ -1327,6 +1433,17 @@ export function buildActivityStepsFromSnapshot(snapshot = {}) {
     })
   }
 
+  if (status === 'WAITING_USER_ACTION') {
+    steps = appendStep(steps, {
+      id: `snapshot_activity_${steps.length + 1}`,
+      timestamp: now,
+      group: 'approval',
+      label: 'Waiting for your action',
+      detail: 'Review the generated schedule before applying it',
+      state: 'waiting',
+    })
+  }
+
   if ((status === 'FAILED' || status === 'BLOCKED') && !typedIsNonCompletedTerminal) {
     steps = appendStep(steps, {
       id: `snapshot_activity_${steps.length + 1}`,
@@ -1381,6 +1498,7 @@ export function friendlySessionStatus(status, isSending = false) {
   if (status === 'EXECUTING') return 'Checking'
   if (status === 'WAITING_APPROVAL') return 'Waiting for approval'
   if (status === 'WAITING_CONFIRMATION') return 'Waiting for confirmation'
+  if (status === 'WAITING_USER_ACTION') return 'Waiting for action'
   if (status === 'BLOCKED') return 'Needs attention'
   if (status === 'FAILED') return 'Needs attention'
   if (status === 'COMPLETED') return 'Complete'

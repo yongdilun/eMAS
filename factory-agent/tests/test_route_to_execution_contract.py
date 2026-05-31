@@ -137,7 +137,11 @@ def _job_list_tool() -> ToolInfo:
     )
 
 
-async def _run_active_graph(prompt: str) -> dict[str, Any]:
+async def _run_active_graph(
+    prompt: str,
+    *,
+    job_lookup_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     settings = _settings()
     calls: list[dict[str, Any]] = []
 
@@ -147,7 +151,7 @@ async def _run_active_graph(prompt: str) -> dict[str, Any]:
         if tool.name == "get__machines_{id}":
             data: dict[str, Any] | list[dict[str, Any]] = {"machine_id": args.get("id"), "status": "running"}
         elif tool.name == "get__jobs_{id}":
-            data = {"job_id": args.get("id"), "status": "scheduled"}
+            data = dict(job_lookup_data or {"job_id": args.get("id"), "status": "scheduled"})
         else:
             data = [
                 {
@@ -216,6 +220,34 @@ async def test_job_status_route_reaches_active_graph_execution_with_preserved_jo
         {"tool_name": "get__jobs_{id}", "args": {"id": "JOB-SEED-001", "fields": "status"}}
     ]
     assert contract["result"].state.evidence_ledger.evidence[0].normalized_result["entity_id"] == "JOB-SEED-001"
+
+
+@pytest.mark.asyncio
+async def test_manual_regression_job_lookup_accepts_backend_preserved_id_case_without_retry():
+    contract = await _run_active_graph(
+        "show job with job id JOB-e4ac2059",
+        job_lookup_data={
+            "job_id": "JOB-e4ac2059",
+            "product_id": "P-001",
+            "quantity_total": 12,
+            "status": "planned",
+        },
+    )
+
+    result = contract["result"]
+    requirement = result.state.requirement_ledger.requirements[0]
+    checks = {check.check: check for check in requirement.satisfaction_checks}
+    evidence = result.state.evidence_ledger.evidence[0]
+
+    assert contract["frame"].route == "tool.read.jobs"
+    assert contract["executed"] == [{"tool_name": "get__jobs_{id}", "args": {"id": "JOB-E4AC2059"}}]
+    assert requirement.constraints["job_id"] == "JOB-E4AC2059"
+    assert requirement.status == "satisfied"
+    assert checks["entity_match"].passed is True
+    assert checks["locked_constraint:job_id"].passed is True
+    assert evidence.normalized_result["entity_id"] == "JOB-e4ac2059"
+    assert evidence.normalized_result["fields"]["status"] == "planned"
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

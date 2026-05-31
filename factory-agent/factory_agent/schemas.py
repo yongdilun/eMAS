@@ -12,6 +12,7 @@ SessionStatus = Literal[
     "PLANNING",
     "WAITING_APPROVAL",
     "WAITING_CONFIRMATION",
+    "WAITING_USER_ACTION",
     "EXECUTING",
     "BLOCKED",
     "FAILED",
@@ -383,6 +384,7 @@ ResponseDocumentState = Literal[
     "running",
     "waiting_approval",
     "waiting_confirmation",
+    "waiting_user_action",
     "completed",
     "failed",
     "blocked",
@@ -690,11 +692,34 @@ class ResumeHintResponse(BaseModel):
     decided_at: str | None = None
 
 
+class PendingInteractionResponse(BaseModel):
+    interaction_id: str = Field(min_length=1)
+    kind: Literal["reschedule_all_review"]
+    status: Literal["pending"] = "pending"
+    session_id: str | None = None
+    approval_id: str | None = None
+    proposal_ids: list[str] = Field(default_factory=list)
+    proposals: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    validation: dict[str, Any] = Field(default_factory=dict)
+    title: str = "Review reschedule proposal"
+    message: str | None = None
+    created_at: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionDecisionRequest(BaseModel):
+    decision: Literal["apply", "cancel"]
+    proposal_ids: list[str] = Field(default_factory=list)
+    decided_by: str | None = None
+
+
 class SessionSnapshotResponse(BaseModel):
     session: SessionResponse
     plan: PlanResponse | None = None
     steps: list[PlanStepResponse] = Field(default_factory=list)
     pending_approval: ApprovalResponse | None = None
+    pending_interaction: PendingInteractionResponse | None = None
     timeline: list[TimelineEventResponse] = Field(default_factory=list)
     snapshot_revision: int = Field(
         default=0,

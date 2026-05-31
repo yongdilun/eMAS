@@ -309,6 +309,22 @@ class FakeRAGPipeline:
         return result
 
 
+class CapturingKeyExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args), "idempotency_key": idempotency_key})
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 1,
+            "body": {"data": {"machine_id": args.get("id"), "status": "running"}},
+            "infrastructure_error": False,
+        }
+
+
 async def _successful_http_executor(settings, tool, args, *, idempotency_key, extra_headers=None):
     _ = settings, extra_headers
     assert idempotency_key.startswith("planner-owned-agent-graph:")
@@ -822,6 +838,29 @@ class ReadThenApprovalExecutor:
                     "job_id": args.get("id"),
                     "priority": args.get("priority"),
                     "status": "updated",
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
+class MixedCaseJobLookupExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 3,
+            "body": {
+                "data": {
+                    "job_id": "JOB-e4ac2059",
+                    "product_id": "P-001",
+                    "quantity_total": 12,
+                    "status": "planned",
                 }
             },
             "infrastructure_error": False,
@@ -1906,6 +1945,32 @@ async def test_job_requirement_prefers_entity_matched_single_read_over_machine_c
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
+@pytest.mark.asyncio
+async def test_job_lookup_with_mixed_case_api_id_completes_without_replan():
+    executor = MixedCaseJobLookupExecutor()
+    selector = RecordingSelector(["get__jobs_{id}"])
+
+    result = await _graph(
+        tools_by_name={"get__jobs_{id}": _job_status_tool()},
+        selector=selector,
+        http_executor=executor,
+        max_replans=0,
+    ).run(
+        "show job with job id JOB-e4ac2059",
+        session_context={"session_id": "mixed-case-job-id-read"},
+    )
+
+    requirement = result.state.requirement_ledger.requirements[0]
+    checks = {check.check: check for check in requirement.satisfaction_checks}
+
+    assert executor.calls == [{"tool_name": "get__jobs_{id}", "args": {"id": "JOB-E4AC2059"}}]
+    assert requirement.constraints["job_id"] == "JOB-E4AC2059"
+    assert requirement.status == "satisfied"
+    assert checks["entity_match"].passed is True
+    assert checks["locked_constraint:job_id"].passed is True
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
 def test_answer_instruction_does_not_become_executable_requirement():
     state = build_initial_planner_owned_agent_graph_state(
         "Read job JOB-SEED-001. If the job result includes a product id, read that product. Summarize the result.",
@@ -2405,6 +2470,41 @@ async def test_phase5_tool_execution_requires_persisted_validated_decision():
 
     assert result.ok is True
     assert result.tool_call.call_id == call.call_id
+
+
+@pytest.mark.asyncio
+async def test_phase5_graph_tool_idempotency_key_is_session_scoped():
+    keys: list[str] = []
+
+    for session_id in ["session-scope-a", "session-scope-b"]:
+        state, requirement, need, call = _state_with_persisted_choice()
+        executor = CapturingKeyExecutor()
+        adapters = PlannerOwnedAgentGraphAdapters(
+            settings=_settings(),
+            tools_by_name={"get__machines_{id}": _machine_status_tool()},
+            http_executor=executor,
+            session_id=session_id,
+        )
+        execute = PlannerDecisionRecord(
+            decision_id="dec-execute-machine",
+            decision_kind="execute_tool",
+            author="deterministic_guard",
+            requirement_id=requirement.id,
+            ledger_revision=state.requirement_ledger.revision,
+            capability_need=need,
+            selected_tool_call=call,
+            reason="Execute persisted planner-selected read.",
+        )
+        record_planner_decision(state, execute)
+        result = await adapters.execute_tool(state, execute)
+
+        assert result.ok is True
+        assert len(executor.calls) == 1
+        keys.append(executor.calls[0]["idempotency_key"])
+
+    assert keys[0].startswith("planner-owned-agent-graph:session-scope-a:")
+    assert keys[1].startswith("planner-owned-agent-graph:session-scope-b:")
+    assert keys[0] != keys[1]
 
 
 @pytest.mark.asyncio

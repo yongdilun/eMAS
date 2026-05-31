@@ -76,7 +76,18 @@ function hasRetryStory(rows) {
 }
 
 const ActivityTimeline = ({ steps = [] }) => {
-    const rows = useMemo(() => truncateActivityAfterTerminal(steps), [steps])
+    const rawRows = useMemo(() => truncateActivityAfterTerminal(steps), [steps])
+    const rows = useMemo(() => {
+        const activeIndex = findActiveStepIndex(rawRows)
+        const rawLatest = latestStep(rawRows)
+        const rawTerminal = rawLatest?.state === 'complete' || rawLatest?.state === 'error'
+        if (rawTerminal || activeIndex < 0 || activeIndex >= rawRows.length - 1) return rawRows
+        return [
+            ...rawRows.slice(0, activeIndex),
+            ...rawRows.slice(activeIndex + 1),
+            rawRows[activeIndex],
+        ]
+    }, [rawRows])
     const rowIds = useMemo(() => rows.map((step) => String(step?.id || '')).filter(Boolean), [rows])
     const rowIdsKey = rowIds.join('\u001f')
     const latest = latestStep(rows)

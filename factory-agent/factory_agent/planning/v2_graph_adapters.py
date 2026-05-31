@@ -109,6 +109,7 @@ async def execute_graph_tool_call(
         call=call,
         tool=tool,
         http_executor=http_executor,
+        session_id=session_id,
     )
 
 
@@ -145,6 +146,7 @@ async def execute_graph_api_tool_call(
     call: GraphToolCall,
     tool: ToolInfo,
     http_executor: GraphToolHttpExecutor | None = None,
+    session_id: str | None = None,
 ) -> GraphToolExecutionResult:
     executor = http_executor or _default_http_executor
     try:
@@ -152,7 +154,7 @@ async def execute_graph_api_tool_call(
             settings,
             tool,
             dict(call.args),
-            idempotency_key=_idempotency_key(state=state, decision=decision, call=call),
+            idempotency_key=_idempotency_key(state=state, decision=decision, call=call, session_id=session_id),
         )
     except Exception as exc:
         return _tool_execution_exception_result(
@@ -187,6 +189,10 @@ async def execute_graph_api_tool_call(
         "infrastructure_error": bool(env.get("infrastructure_error")),
         "direct_v2_execution": False,
     }
+    if isinstance(env.get("request_headers"), Mapping):
+        diagnostic_metadata["request_headers"] = dict(env["request_headers"])
+    if env.get("request_url"):
+        diagnostic_metadata["request_url"] = str(env["request_url"])
     if not ok:
         diagnostic_metadata["reason"] = "tool_error"
     if error_type:
@@ -403,9 +409,15 @@ async def _default_http_executor(
     *,
     idempotency_key: str,
 ) -> dict[str, Any]:
-    from factory_agent.graph.http_tool_client import execute_tool_http
+    from factory_agent.graph.http_tool_client import execute_tool_http, planner_identity_headers
 
-    return await execute_tool_http(settings, tool, args, idempotency_key=idempotency_key)
+    return await execute_tool_http(
+        settings,
+        tool,
+        args,
+        idempotency_key=idempotency_key,
+        extra_headers=planner_identity_headers(),
+    )
 
 
 def _tool_missing_result(
@@ -613,9 +625,13 @@ def _idempotency_key(
     state: PlannerOwnedAgentGraphState,
     decision: PlannerDecisionRecord,
     call: GraphToolCall,
+    session_id: str | None = None,
 ) -> str:
+    scope = str(session_id or "no-session").strip() or "no-session"
+    scope = scope.replace(":", "_")
     return (
         "planner-owned-agent-graph:"
+        f"{scope}:"
         f"{state.requirement_ledger.revision}:{decision.decision_id}:{call.call_id}:{call.tool_name}"
     )
 

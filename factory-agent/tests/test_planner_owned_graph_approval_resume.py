@@ -125,6 +125,27 @@ def _tools() -> dict[str, ToolInfo]:
     }
 
 
+def _create_job_tool() -> ToolInfo:
+    return _tool(
+        "post__jobs",
+        endpoint="/jobs",
+        tags=["job", "create"],
+        method="POST",
+        required=["product_id", "quantity_total"],
+        input_properties={
+            "product_id": {"type": "string"},
+            "quantity_total": {"type": "integer"},
+        },
+        output_properties={
+            "job_id": {"type": "string"},
+            "product_id": {"type": "string"},
+            "quantity_total": {"type": "integer"},
+        },
+        entity="job",
+        response_contract="business_change_v1",
+    )
+
+
 class Phase8Selector:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -206,6 +227,38 @@ class Phase8HttpExecutor:
         }
 
 
+class CreateJobSelector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+        self.calls.append(kwargs)
+        return ToolSelectionResult(["post__jobs"], backend_used="retrieval", llm_calls=0)
+
+
+class CreateJobHttpExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, extra_headers
+        assert idempotency_key.startswith("planner-owned-agent-graph:")
+        self.calls.append({"tool_name": tool.name, "args": dict(args), "idempotency_key": idempotency_key})
+        return {
+            "ok": True,
+            "http_status": 201,
+            "latency_ms": 4,
+            "body": {
+                "data": {
+                    "job_id": "JOB-CREATED-001",
+                    "product_id": args.get("product_id"),
+                    "quantity_total": args.get("quantity_total"),
+                }
+            },
+            "infrastructure_error": False,
+        }
+
+
 def _graph(*, preview: Phase8PreviewProvider | None = None):
     settings = _settings()
     selector = Phase8Selector()
@@ -224,6 +277,26 @@ def _graph(*, preview: Phase8PreviewProvider | None = None):
         ),
         proposer=OfflineStructuredPlannerDecisionProposer(),
         checkpointer=checkpointer,
+    )
+    return graph, selector, executor, persister
+
+
+def _create_job_graph():
+    settings = _settings()
+    selector = CreateJobSelector()
+    executor = CreateJobHttpExecutor()
+    persister = Phase8ApprovalPersister()
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name={"post__jobs": _create_job_tool()},
+            tool_selector=selector,  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_persister=persister,
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
     )
     return graph, selector, executor, persister
 
@@ -270,6 +343,89 @@ async def test_phase8_write_query_stages_preview_and_pauses_at_approval_node():
     assert context["approval_blocks"] == 1
     assert context["blocks"][-1]["type"] == "approval_required"
     assert context["blocks"][-1]["approval_label"] == "Approval 1"
+
+
+@pytest.mark.asyncio
+async def test_phase8_incomplete_create_job_stages_approval_form_without_direct_fill():
+    graph, selector, executor, persister = _create_job_graph()
+
+    result = await graph.run(
+        "help me to create a job",
+        session_context={"session_id": "phase8-create-job-form"},
+    )
+
+    pending = result.state.pending_approval
+    payload = pending.payload
+
+    assert pending.status == "pending"
+    assert executor.calls == []
+    assert persister.payloads
+    assert selector.calls[0]["context"]["v2_tool_selector_adapter_request"]["actions"] == ["create"]
+    assert payload["selected_graph_tool_call"]["tool_name"] == "post__jobs"
+    assert payload["selected_graph_tool_call"]["args"] == {}
+    assert payload["staged_graph_tool_calls"][0]["args"] == {}
+    assert payload["preview_rows"] == [{}]
+    assert payload["preview_details"]["manual_input_required"] is True
+    assert payload["preview_details"]["missing_required_args"] == ["product_id", "quantity_total"]
+    assert payload["legacy_shortcut_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_manual_regression_create_job_query_renders_manual_input_approval_contract():
+    graph, selector, executor, _persister = _create_job_graph()
+
+    result = await graph.run(
+        "help me to create a job",
+        session_context={"session_id": "manual-regression-create-job-form"},
+    )
+
+    pending = result.state.pending_approval
+    payload = pending.payload
+    context = result.state.response_document_context.diagnostics
+    approval_block = context["blocks"][-1]
+
+    assert pending.status == "pending"
+    assert result.state.response_document_context.state == "draft"
+    assert result.state.response_document_context.pending_approval_id == pending.approval_id
+    assert result.node_order[-3:] == ["approval_node", "finalize_node", "response_document_node"]
+    assert executor.calls == []
+    assert selector.calls[0]["context"]["v2_tool_selector_adapter_request"]["actions"] == ["create"]
+    assert payload["selected_graph_tool_call"]["tool_name"] == "post__jobs"
+    assert payload["selected_graph_tool_call"]["args"] == {}
+    assert payload["preview_details"]["manual_input_required"] is True
+    assert payload["preview_details"]["missing_required_args"] == ["product_id", "quantity_total"]
+    assert approval_block["type"] == "approval_required"
+    assert approval_block["selected_graph_tool_call"]["tool_name"] == "post__jobs"
+    assert approval_block["selected_graph_tool_call"]["args"] == {}
+    assert approval_block["details"]["manual_input_required"] is True
+    assert approval_block["details"]["missing_required_args"] == ["product_id", "quantity_total"]
+    assert approval_block["rows"] == [{}]
+
+
+@pytest.mark.asyncio
+async def test_phase8_create_job_resume_executes_with_approval_form_args():
+    graph, _selector, executor, _persister = _create_job_graph()
+    staged = await graph.run(
+        "help me to create a job",
+        session_context={"session_id": "phase8-create-job-commit"},
+    )
+
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-create-job-commit"},
+        _approval_decision(
+            staged,
+            decided_by="qa-user",
+            approved_args={"product_id": "P-001", "quantity_total": 10},
+        ),
+    )
+
+    requirement = resumed.state.requirement_ledger.requirements[0]
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["tool_name"] == "post__jobs"
+    assert executor.calls[0]["args"] == {"product_id": "P-001", "quantity_total": 10}
+    assert requirement.status == "satisfied"
+    assert resumed.state.pending_approval.status == "none"
 
 
 @pytest.mark.asyncio

@@ -512,7 +512,7 @@ def _evaluate_single_entity_requirement(
                 "entity_match",
                 expected={expected_id_key: expected_id},
                 actual=actual_id,
-                passed=_same_value(expected_id, actual_id),
+                passed=_same_identity_value(expected_id, actual_id),
                 evidence_ref=evidence.id,
             )
         )
@@ -561,7 +561,7 @@ def _evaluate_multi_entity_requirement(
             expected=expected_ids,
             actual=actual_ids,
             actual_count=len([item for item in actual_ids if item not in (None, "")]),
-            passed=bool(expected_ids) and set(map(str, expected_ids)) == set(map(str, actual_ids)),
+            passed=bool(expected_ids) and _identity_value_set(expected_ids) == _identity_value_set(actual_ids),
             evidence_ref=evidence.id,
         )
     )
@@ -988,7 +988,11 @@ def _locked_constraint_checks(
                 f"locked_constraint:{locked}",
                 expected=expected,
                 actual=actual,
-                passed=_constraint_actual_matches(expected, actual),
+                passed=_constraint_actual_matches(
+                    expected,
+                    actual,
+                    case_sensitive=not _locked_constraint_is_identity(locked),
+                ),
                 evidence_ref=evidence.id,
             )
         )
@@ -1283,16 +1287,30 @@ def _sort_value(value: Any) -> tuple[str, str]:
     return ("string", str(value))
 
 
-def _same_value(expected: Any, actual: Any) -> bool:
+def _same_value(expected: Any, actual: Any, *, case_sensitive: bool = True) -> bool:
     if isinstance(actual, Sequence) and not isinstance(actual, (str, bytes, bytearray)):
-        return all(_same_value(expected, item) for item in actual)
+        return all(_same_value(expected, item, case_sensitive=case_sensitive) for item in actual)
+    if not case_sensitive and isinstance(expected, str) and isinstance(actual, str):
+        return expected.casefold() == actual.casefold()
     return str(expected) == str(actual)
 
 
-def _constraint_actual_matches(expected: Any, actual: Any) -> bool:
+def _same_identity_value(expected: Any, actual: Any) -> bool:
+    return _same_value(expected, actual, case_sensitive=False)
+
+
+def _identity_value_set(values: Sequence[Any]) -> set[str]:
+    return {str(value).casefold() for value in values if value not in (None, "")}
+
+
+def _locked_constraint_is_identity(locked: str) -> bool:
+    return locked in {"id", "entity_id", "machine_ref"} or locked.endswith("_id")
+
+
+def _constraint_actual_matches(expected: Any, actual: Any, *, case_sensitive: bool = True) -> bool:
     if isinstance(actual, Sequence) and not isinstance(actual, (str, bytes, bytearray)):
-        return all(_same_value(expected, item) for item in actual)
-    return _same_value(expected, actual)
+        return all(_same_value(expected, item, case_sensitive=case_sensitive) for item in actual)
+    return _same_value(expected, actual, case_sensitive=case_sensitive)
 
 
 def _locked_value(requirement: RequirementLedgerEntry, locked: str) -> Any:

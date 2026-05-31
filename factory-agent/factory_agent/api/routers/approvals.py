@@ -21,6 +21,8 @@ PublishAgentEvent = Callable[[str, str, dict[str, Any]], Awaitable[None]]
 StartGraphApprovalResumeTask = Callable[[AsyncSession, str], None]
 ResumeApprovedGraphApproval = Callable[..., Awaitable[None]]
 
+STALE_SESSION_CHANGED_REASON = "Approval is stale because the session changed state"
+
 
 def _merge_approval_args(existing: Any, override: dict[str, Any]) -> dict[str, Any]:
     base = dict(existing) if isinstance(existing, dict) else {}
@@ -30,6 +32,35 @@ def _merge_approval_args(existing: Any, override: dict[str, Any]) -> dict[str, A
     if existing_bundle or override_bundle:
         merged["bundle_ui"] = {**existing_bundle, **override_bundle}
     return merged
+
+
+def _pending_graph_approval_id(context: dict[str, Any]) -> str | None:
+    pending = context.get("langgraph_pending_approval") if isinstance(context, dict) else None
+    return pending.get("approval_id") if isinstance(pending, dict) else None
+
+
+def _recover_stale_graph_approval_if_current(
+    *,
+    row: ApprovalRow,
+    sess: Any,
+    context: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Repair the narrow race where an approval row was clicked before the session commit settled."""
+    if row.status != "EXPIRED" or row.rejection_reason != STALE_SESSION_CHANGED_REASON:
+        return
+    if row.expires_at <= now:
+        return
+    if sess.status != "WAITING_APPROVAL":
+        return
+    if _pending_graph_approval_id(context) != row.approval_id:
+        return
+    if not approval_payload_matches_newest_ledger_revision(row.args if isinstance(row.args, dict) else {}, context):
+        return
+    row.status = "PENDING"
+    row.decided_by = None
+    row.decided_at = None
+    row.rejection_reason = None
 
 
 def build_approvals_router(
@@ -94,20 +125,18 @@ def build_approvals_router(
         require_session_owner(owner_session, user)
         if (getattr(row, "subject_type", "step") or "step") == "graph":
             now = datetime.utcnow()
-            if row.status == "APPROVED":
-                sess = await session_mgr.get_session(db, session_id=row.session_id)
-                context = sess.replan_context if sess and isinstance(sess.replan_context, dict) else {}
-                if isinstance(context.get("langgraph_approval_resume"), dict):
-                    start_graph_approval_resume_task(db, row.approval_id)
-                return approval_to_response(row)
-            if row.status != "PENDING":
-                raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
                 raise HTTPException(status_code=404, detail="session not found")
             context = dict(sess.replan_context or {})
-            pending = context.get("langgraph_pending_approval") if isinstance(context, dict) else None
-            pending_approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
+            pending_approval_id = _pending_graph_approval_id(context)
+            if row.status == "APPROVED":
+                if isinstance(context.get("langgraph_approval_resume"), dict):
+                    start_graph_approval_resume_task(db, row.approval_id)
+                return approval_to_response(row)
+            _recover_stale_graph_approval_if_current(row=row, sess=sess, context=context, now=now)
+            if row.status != "PENDING":
+                raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
             if row.expires_at <= now:
                 row.status = "EXPIRED"
                 row.decided_by = req.decided_by or "system"
@@ -127,7 +156,7 @@ def build_approvals_router(
                 row.status = "EXPIRED"
                 row.decided_by = req.decided_by or "system"
                 row.decided_at = now
-                row.rejection_reason = "Approval is stale because the session changed state"
+                row.rejection_reason = STALE_SESSION_CHANGED_REASON
                 await db.commit()
                 raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
             if not approval_payload_matches_newest_ledger_revision(row.args if isinstance(row.args, dict) else {}, context):
@@ -223,26 +252,27 @@ def build_approvals_router(
             raise HTTPException(status_code=404, detail="session not found")
         require_session_owner(owner_session, user)
         if (getattr(row, "subject_type", "step") or "step") == "graph":
+            now = datetime.utcnow()
             sess = await session_mgr.get_session(db, session_id=row.session_id)
             if not sess:
                 raise HTTPException(status_code=404, detail="session not found")
+            context = dict(sess.replan_context or {})
+            pending_approval_id = _pending_graph_approval_id(context)
+            _recover_stale_graph_approval_if_current(row=row, sess=sess, context=context, now=now)
             if row.status != "PENDING":
                 raise HTTPException(status_code=409, detail=f"approval is already {row.status.lower()}")
-            context = dict(sess.replan_context or {})
-            pending = context.get("langgraph_pending_approval") if isinstance(context, dict) else None
-            pending_approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
             if sess.status != "WAITING_APPROVAL" or (
                 pending_approval_id is not None and pending_approval_id != row.approval_id
             ):
                 row.status = "EXPIRED"
                 row.decided_by = req.decided_by or "system"
-                row.decided_at = datetime.utcnow()
-                row.rejection_reason = "Approval is stale because the session changed state"
+                row.decided_at = now
+                row.rejection_reason = STALE_SESSION_CHANGED_REASON
                 await db.commit()
                 raise HTTPException(status_code=409, detail="approval is stale because the session changed state")
             row.status = "REJECTED"
             row.decided_by = req.decided_by
-            row.decided_at = datetime.utcnow()
+            row.decided_at = now
             row.rejection_reason = req.rejection_reason
             context.pop("langgraph_pending_approval", None)
             context.pop("langgraph_approval_resume", None)

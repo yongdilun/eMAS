@@ -170,6 +170,74 @@
   ],
   "prompts": [
     {
+      "id": "phase20-create-job-manual-input-form",
+      "source_prompt": "help me to create a job",
+      "prompt": "help me to create a job",
+      "observed_failure": "The agent could ask a generic missing-field question or stage a backend write approval for post__jobs without showing the create-job review/edit form. The form could also expose product_id as an unhelpful raw selector, show scheduler-managed slots JSON, or clear product/quantity edits after a refresh.",
+      "expected_behavior": "Route the prompt as a job create request, stage a graph write approval with manual_input_required, keep selected_graph_tool_call.args empty until the user fills product and quantity, render a create-job form, use product records for the product picker, hide scheduler-managed slots, and preserve in-progress edits while the same approval refreshes.",
+      "artifact_link": "Codex chat manual regression 2026-05-31 create-job form",
+      "selected_oracle": null,
+      "proposed_oracle": "CJ-001",
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "pytest_graph",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_planner_owned_tool_retriever.py; factory-agent/tests/test_planner_owned_graph_approval_resume.py; eMas Front/src/components/features/chat/factory-agent/ApprovalCard.component.test.mjs; eMas Front/e2e/specs/real-langgraph-critical.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_planner_owned_tool_retriever.py::test_phase4_incomplete_create_job_intake_maps_to_create_capability_action tests/test_planner_owned_graph_approval_resume.py::test_manual_regression_create_job_query_renders_manual_input_approval_contract -q; Set-Location \"..\\eMas Front\"; node --test --test-concurrency=1 \"src/components/features/chat/factory-agent/ApprovalCard.component.test.mjs\"; npm run test:e2e:real-langgraph -- --grep \"CJ-001\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Manual chat showed the create-job prompt did not produce the expected create-job form and could proceed as an unsafe or unusable post__jobs approval.",
+        "passing_evidence": "Required after the graph manual-input approval and ApprovalCard product/slots/edit-refresh regressions pass."
+      },
+      "test_layer": "pytest_graph+frontend_component+real-langgraph-browser",
+      "expected": {
+        "primary_route": "tool.write.jobs.create",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": false,
+        "required_final_state": "WAITING_APPROVAL",
+        "required_answer_terms": ["Approval required", "product_id", "quantity_total"],
+        "forbidden_answer_terms": [
+          "Please provide the missing required field",
+          "slots",
+          "Enter JSON"
+        ]
+      },
+      "coverage": ["route", "pytest_graph", "frontend_unit", "real-langgraph-browser"]
+    },
+    {
+      "id": "phase20-reschedule-all-embedded-review",
+      "source_prompt": "help me to reschedule all job",
+      "prompt": "help me to reschedule all job",
+      "observed_failure": "The agent could treat reschedule-all as an incomplete generic job update, stop at backend approval, or open the standalone Scheduling page in a separate browser tab instead of staying in the chat flow.",
+      "expected_behavior": "Route the prompt to post__ai_scheduling_reschedule-all, require approval, execute the reschedule API after approval, enter WAITING_USER_ACTION with a pending reschedule_all_review interaction, render the embedded review modal in the same chat, and report applied or cancelled back to chat after the user decision.",
+      "artifact_link": "Codex chat manual regression 2026-05-31 embedded reschedule review",
+      "selected_oracle": null,
+      "proposed_oracle": "RS-001",
+      "owner": "qa",
+      "severity": "high",
+      "lowest_test_layer": "route",
+      "browser_coverage": true,
+      "regression": {
+        "test_file": "factory-agent/tests/test_planner_owned_tool_retriever.py; factory-agent/tests/test_api_endpoints.py; eMas Front/src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs; eMas Front/e2e/specs/real-langgraph-critical.spec.js",
+        "command": "Set-Location \"factory-agent\"; python -m pytest tests/test_planner_owned_tool_retriever.py::test_phase4_reschedule_all_jobs_retrieves_scheduling_reschedule_candidate tests/test_api_endpoints.py::test_reschedule_interaction_apply_completes_same_session tests/test_api_endpoints.py::test_reschedule_interaction_cancel_returns_cancelled_chat_result tests/test_api_endpoints.py::test_reschedule_interaction_stale_id_returns_409_without_mutation tests/test_api_endpoints.py::test_session_snapshot_includes_pending_reschedule_interaction -q; Set-Location \"..\\eMas Front\"; node --test --test-concurrency=1 \"src/components/features/chat/factory-agent/FactoryAgentChatPanel.component.test.mjs\"; npm run test:e2e:real-langgraph -- --grep \"RS-00[12]\"",
+        "failing_before_closure_required": true,
+        "failure_evidence": "Manual planning found this prompt needed an embedded approval-to-user-action flow instead of a generic direct fill/write path or standalone Scheduling handoff.",
+        "passing_evidence": "Route pytest, interaction endpoint tests, component modal tests, and RS-001/RS-002 real LangGraph browser proof pass."
+      },
+      "test_layer": "route+api+frontend_unit+real-langgraph-browser",
+      "expected": {
+        "primary_route": "tool.write.scheduling_reschedule_all",
+        "machine_ids": [],
+        "job_ids": [],
+        "clarification_expected": false,
+        "required_final_state": "WAITING_USER_ACTION_THEN_COMPLETED_OR_CANCELLED",
+        "required_answer_terms": ["Approval required", "reschedule", "Review reschedule proposal"],
+        "forbidden_answer_terms": ["Please provide the missing required field", "factory_agent_reschedule_handoff", "/scheduling"]
+      },
+      "coverage": ["route", "api", "frontend_unit", "real-langgraph-browser"]
+    },
+    {
       "id": "phase18-loto-m-cnc-01",
       "source_prompt": "What LOTO procedure applies before working on M-CNC-01?",
       "prompt": "What LOTO procedure applies before working on M-CNC-01?",

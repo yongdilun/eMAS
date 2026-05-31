@@ -258,7 +258,7 @@ async def lifespan(app: FastAPI):
             await db.execute(
                 select(func.count())
                 .select_from(SessionRow)
-                .where(SessionRow.status.in_(("PLANNING", "EXECUTING", "WAITING_APPROVAL", "BLOCKED")))
+                .where(SessionRow.status.in_(("PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_USER_ACTION", "BLOCKED")))
             )
         ).scalar_one()
         pending_approvals = (
@@ -348,7 +348,7 @@ async def lifespan(app: FastAPI):
         async with AsyncSessionLocal() as db:
             stuck_sessions = (
                 await db.execute(
-                    select(SessionRow).where(SessionRow.status.in_(("EXECUTING", "PLANNING", "WAITING_APPROVAL")))
+                    select(SessionRow).where(SessionRow.status.in_(("EXECUTING", "PLANNING", "WAITING_APPROVAL", "WAITING_USER_ACTION")))
                 )
             ).scalars().all()
             recovered_count = 0

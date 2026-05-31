@@ -51,6 +51,10 @@ async def _graph_write_approval_preview(
     http_executor: GraphToolHttpExecutor | None,
     supports_collection_read: Callable[[HydratedToolCard], bool],
 ) -> PlannerOwnedGraphApprovalPreview:
+    default_preview = _default_approval_preview(tool_call=tool_call, requirement=requirement, card=card)
+    if _should_use_direct_write_form_preview(card=card, preview=default_preview):
+        return default_preview
+
     read_card = _approval_preview_read_card(
         requirement,
         cards,
@@ -58,7 +62,7 @@ async def _graph_write_approval_preview(
     )
     read_tool = tools_by_name.get(read_card.tool_name) if read_card is not None else None
     if read_card is None or read_tool is None:
-        return _default_approval_preview(tool_call=tool_call, requirement=requirement, card=card)
+        return default_preview
 
     read_args = _approval_preview_read_args(read_card, requirement)
     env = await _execute_approval_preview_read(
@@ -383,15 +387,50 @@ def _default_approval_preview(
 ) -> PlannerOwnedGraphApprovalPreview:
     args = _commit_args_from_preview(card=card, requirement=requirement, rows=[])
     args.update(tool_call.args)
-    rows = [dict(args)] if args else []
+    missing_required_args = _missing_required_args(card=card, args=args)
+    manual_input_required = bool(missing_required_args) and _card_supports_manual_create_form(card)
+    rows = [dict(args)] if args or manual_input_required or _card_is_create_action(card) else []
+    details: dict[str, Any] = {
+        "source": "default_graph_write_preview",
+        "tool_name": tool_call.tool_name,
+    }
+    if missing_required_args:
+        details["missing_required_args"] = missing_required_args
+    if manual_input_required:
+        details["manual_input_required"] = True
+        details["reason"] = "approval_form_required_args"
     return PlannerOwnedGraphApprovalPreview(
         rows=rows,
-        details={
-            "source": "default_graph_write_preview",
-            "tool_name": tool_call.tool_name,
-        },
+        details=details,
         commit_args=args,
     )
+
+
+def _should_use_direct_write_form_preview(
+    *,
+    card: HydratedToolCard,
+    preview: PlannerOwnedGraphApprovalPreview,
+) -> bool:
+    if _card_is_create_action(card):
+        return True
+    return bool(preview.details.get("manual_input_required") is True)
+
+
+def _missing_required_args(*, card: HydratedToolCard, args: Mapping[str, Any]) -> list[str]:
+    return [
+        arg
+        for arg in card.required_args
+        if args.get(arg) in (None, "", [], {})
+    ]
+
+
+def _card_supports_manual_create_form(card: HydratedToolCard) -> bool:
+    method = str(card.metadata.get("method") or "").strip().upper()
+    return "create" in set(card.actions) or method == "POST"
+
+
+def _card_is_create_action(card: HydratedToolCard) -> bool:
+    return "create" in {str(action).strip().lower() for action in card.actions}
 
 
 def _commit_args_from_preview(

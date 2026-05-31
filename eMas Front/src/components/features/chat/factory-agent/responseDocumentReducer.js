@@ -195,6 +195,7 @@ function compareOrder(incoming, current) {
 }
 
 const TERMINAL_DOCUMENT_STATES = new Set(['completed', 'failed', 'blocked', 'rejected', 'expired', 'cancelled'])
+const WAITING_DOCUMENT_STATES = new Set(['waiting_approval', 'waiting_confirmation', 'waiting_user_action'])
 
 function documentState(value) {
   return cleanString(value?.state || value?.status).toLowerCase()
@@ -204,6 +205,14 @@ function terminalStateSupersedesCurrent(incoming, current) {
   const incomingState = documentState(incoming?.document)
   const currentState = documentState(current?.document)
   return TERMINAL_DOCUMENT_STATES.has(incomingState) && !TERMINAL_DOCUMENT_STATES.has(currentState)
+}
+
+function waitingStateSupersedesActiveCurrent(incoming, current) {
+  const incomingState = documentState(incoming?.document)
+  const currentState = documentState(current?.document)
+  return WAITING_DOCUMENT_STATES.has(incomingState)
+    && !WAITING_DOCUMENT_STATES.has(currentState)
+    && !TERMINAL_DOCUMENT_STATES.has(currentState)
 }
 
 export function applyResponseDocumentUpdate(currentState, rawIncoming) {
@@ -250,6 +259,15 @@ export function applyResponseDocumentUpdate(currentState, rawIncoming) {
       incoming.revision < current.revision
         ? 'accepted_terminal_lower_revision_over_active'
         : 'accepted_terminal_equal_revision_over_active',
+    )
+  }
+
+  if (waitingStateSupersedesActiveCurrent(incoming, current)) {
+    return accept(
+      incoming,
+      incoming.revision < current.revision
+        ? 'accepted_waiting_lower_revision_over_active'
+        : 'accepted_waiting_equal_revision_over_active',
     )
   }
 

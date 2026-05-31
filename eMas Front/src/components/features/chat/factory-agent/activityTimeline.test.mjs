@@ -665,6 +665,142 @@ test('server activity label for pending approval suppresses later retry rows', (
   assert.equal(steps.at(-1).state, 'waiting')
 })
 
+test('waiting approval owns current row even when server activity timestamps are out of order', () => {
+  const steps = stripPrematureTerminalActivitySteps([
+    {
+      id: 'activity-approval',
+      timestamp: 1,
+      group: 'system',
+      label: 'Waiting for your approval',
+      detail: 'Reviewing approval requirements',
+      state: 'waiting',
+    },
+    {
+      id: 'activity-understood',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'running',
+    },
+  ], 'WAITING_APPROVAL')
+
+  assert.equal(steps.length, 2)
+  assert.equal(steps[0].label, 'Understood request')
+  assert.equal(steps[0].state, 'success')
+  assert.equal(steps.at(-1).label, 'Waiting for your approval')
+  assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('waiting approval remains current when backend marks approval activity success', () => {
+  const steps = stripPrematureTerminalActivitySteps([
+    {
+      id: 'graph:000001:semantic_intake_node',
+      timestamp: 1,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'success',
+      order: 1,
+    },
+    {
+      id: 'act:approval-required:approval-1',
+      timestamp: 1,
+      group: 'approval',
+      label: 'Waiting for your approval',
+      detail: 'Reviewing approval requirements',
+      state: 'success',
+      order: 1,
+    },
+    {
+      id: 'graph:000011:response_document_node',
+      timestamp: 11,
+      group: 'response',
+      label: 'Rendering response',
+      detail: 'Rendering the response',
+      state: 'running',
+      order: 11,
+    },
+  ], 'WAITING_APPROVAL')
+
+  assert.equal(steps.some((step) => step.label === 'Preparing response'), false)
+  assert.equal(steps.some((step) => step.label === 'Rendering response'), false)
+  assert.equal(steps.at(-1).label, 'Waiting for your approval')
+  assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('waiting user action owns current row while embedded review is open', () => {
+  const steps = stripPrematureTerminalActivitySteps([
+    {
+      id: 'graph:000001:semantic_intake_node',
+      timestamp: 1,
+      group: 'planning',
+      label: 'Understood request',
+      detail: 'Reviewing your request and recent context',
+      state: 'success',
+      order: 1,
+    },
+    {
+      id: 'graph:000010:finalize_node',
+      timestamp: 10,
+      group: 'response',
+      label: 'Preparing response',
+      detail: 'Finalizing the answer',
+      state: 'running',
+      order: 10,
+    },
+    {
+      id: 'graph:000011:response_document_node',
+      timestamp: 11,
+      group: 'response',
+      label: 'Rendering response',
+      detail: 'Rendering the response',
+      state: 'running',
+      order: 11,
+    },
+  ], 'WAITING_USER_ACTION')
+
+  assert.equal(steps.some((step) => step.label === 'Preparing response'), false)
+  assert.equal(steps.some((step) => step.label === 'Rendering response'), false)
+  assert.equal(steps.at(-1).label, 'Waiting for your action')
+  assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('semantic activity sort keeps active execution after completed planning rows', () => {
+  const labels = [
+    {
+      id: 'running',
+      timestamp: 1,
+      group: 'research',
+      label: 'Running selected tool',
+      detail: 'Checking relevant records',
+      state: 'running',
+    },
+    {
+      id: 'safe',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Selecting safe action',
+      detail: 'Selecting a safe action',
+      state: 'success',
+    },
+    {
+      id: 'approval',
+      timestamp: 3,
+      group: 'approval',
+      label: 'Checking approvals',
+      detail: 'Checking approval requirements',
+      state: 'success',
+    },
+  ].sort(compareActivitySteps).map((step) => step.label)
+
+  assert.deepEqual(labels, [
+    'Selecting safe action',
+    'Checking approvals',
+    'Running selected tool',
+  ])
+})
+
 test('uses full operation-scoped timeline across turns when operation_id matches plan', () => {
   const steps = buildActivityStepsFromSnapshot({
     session: { status: 'COMPLETED', plan_id: 'plan-1', operation_id: 'plan-1' },

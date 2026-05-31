@@ -32,6 +32,7 @@ from factory_agent.schemas import (
     DiagnosticBlock,
     KnowledgeAnswerBlock,
     MutationResultBlock,
+    PendingInteractionResponse,
     PlanResponse,
     PlanStepResponse,
     PresentationResponse,
@@ -352,7 +353,7 @@ _SEMANTIC_EVENT_MAP: dict[str, str] = {
 _ACTIVITY_MAX_VISIBLE_STEPS = 12
 _ACTIVITY_FINALIZE_STATES = {"running", "retry", "waiting"}
 _ACTIVITY_MERGEABLE_STATES = {"running", "success"}
-_ACTIVITY_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
+_ACTIVITY_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION", "WAITING_USER_ACTION"}
 _LIVE_ACTIVITY_ALLOWED_GROUPS = {"planning", "research", "approval", "response", "system"}
 _LIVE_ACTIVITY_ALLOWED_STATES = {"running", "success", "retry", "waiting", "error", "complete"}
 _LIVE_ACTIVITY_ALLOWED_LABELS = {
@@ -2228,6 +2229,50 @@ def _derive_snapshot_presentation(
         pending_approval=pending_approval,
     )
     session_status = str(getattr(session, "status", "") or "").upper()
+    interaction_result = _interaction_result_from_session(session)
+
+    if interaction_result is not None:
+        decision = str(interaction_result.get("decision") or "").lower()
+        summary = str(interaction_result.get("summary") or "").strip()
+        rows = _rows_from_interaction_result(interaction_result)
+        if decision == "cancel":
+            return PresentationResponse(
+                kind="cancelled",
+                state="cancelled",
+                operation_id=operation_id,
+                summary=summary or "Reschedule cancelled. No proposal batch was applied.",
+                rows=rows,
+                sources=sources,
+                diagnostics=_presentation_diagnostics(
+                    session=session,
+                    terminal_event=terminal_event,
+                    reason="reschedule_interaction_cancelled",
+                    steps=steps,
+                ),
+                invariants={**invariants, "full_success_forbidden": True},
+            )
+        if decision == "apply":
+            applied = int(interaction_result.get("applied") or 0)
+            failed = int(interaction_result.get("failed") or 0)
+            return PresentationResponse(
+                kind="answer" if applied else "diagnostic",
+                state="completed" if applied else "failed",
+                operation_id=operation_id,
+                summary=summary or (
+                    f"Reschedule applied successfully. Applied {applied} proposal(s)."
+                    if applied
+                    else "Reschedule was not applied."
+                ),
+                rows=[] if applied else rows,
+                sources=sources,
+                diagnostics=_presentation_diagnostics(
+                    session=session,
+                    terminal_event=terminal_event,
+                    reason="reschedule_interaction_applied" if applied else "reschedule_interaction_failed",
+                    steps=steps,
+                ),
+                invariants={**invariants, "full_success_forbidden": bool(failed or not applied)},
+            )
 
     if is_user_cancelled_session(session):
         return PresentationResponse(
@@ -2342,6 +2387,33 @@ def _derive_snapshot_presentation(
                 reason="approval_expired",
                 steps=steps,
             ),
+            invariants={**invariants, "full_success_forbidden": True},
+        )
+
+    if session_status == "WAITING_USER_ACTION":
+        pending_interaction = _pending_interaction_from_session(session)
+        summary = (
+            pending_interaction.message
+            if pending_interaction is not None and pending_interaction.message
+            else "Review the generated reschedule proposal before applying it."
+        )
+        diagnostics = _presentation_diagnostics(
+            session=session,
+            terminal_event=terminal_event,
+            reason="waiting_user_action",
+            steps=steps,
+        )
+        if pending_interaction is not None:
+            diagnostics["pending_interaction"] = pending_interaction.model_dump(mode="json")
+        return PresentationResponse(
+            kind="diagnostic",
+            state="pending",
+            operation_id=operation_id,
+            approval_id=pending_interaction.approval_id if pending_interaction is not None else None,
+            summary=summary,
+            rows=step_rows,
+            sources=sources,
+            diagnostics=diagnostics,
             invariants={**invariants, "full_success_forbidden": True},
         )
 
@@ -2473,7 +2545,7 @@ def _derive_snapshot_presentation(
             invariants={**invariants, "full_success_forbidden": False},
         )
 
-    pending_state = "pending" if session_status in {"PLANNING", "EXECUTING", "WAITING_CONFIRMATION"} else "blocked"
+    pending_state = "pending" if session_status in {"PLANNING", "EXECUTING", "WAITING_CONFIRMATION", "WAITING_USER_ACTION"} else "blocked"
     return PresentationResponse(
         kind="diagnostic",
         state=pending_state,
@@ -2639,6 +2711,8 @@ def _response_document_state(
         return "waiting_approval"
     if session_status == "WAITING_CONFIRMATION":
         return "waiting_confirmation"
+    if session_status == "WAITING_USER_ACTION":
+        return "waiting_user_action"
     if presentation.state == "completed":
         return "completed"
     if presentation.state == "failed":
@@ -2652,6 +2726,90 @@ def _response_document_state(
     if presentation.state == "cancelled":
         return "cancelled"
     return "running"
+
+
+def _pending_interaction_from_session(session: Any) -> PendingInteractionResponse | None:
+    if str(getattr(session, "status", "") or "").upper() != "WAITING_USER_ACTION":
+        return None
+    context = getattr(session, "replan_context", None)
+    pending = context.get("pending_interaction") if isinstance(context, dict) else None
+    if not isinstance(pending, dict):
+        return None
+    if str(pending.get("status") or "").lower() != "pending":
+        return None
+    try:
+        return PendingInteractionResponse.model_validate(pending)
+    except Exception:
+        return None
+
+
+def _interaction_result_from_session(session: Any) -> dict[str, Any] | None:
+    context = getattr(session, "replan_context", None)
+    result = context.get("interaction_result") if isinstance(context, dict) else None
+    if not isinstance(result, dict):
+        return None
+    decision = str(result.get("decision") or "").lower()
+    if decision not in {"apply", "cancel"}:
+        return None
+    return dict(result)
+
+
+def _rows_from_interaction_result(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    decision = str(result.get("decision") or "").lower()
+    applied_ids = [
+        str(item).strip()
+        for item in (result.get("proposal_ids") if isinstance(result.get("proposal_ids"), list) else [])
+        if str(item or "").strip()
+    ]
+    failed_rows = result.get("failed_proposals") if isinstance(result.get("failed_proposals"), list) else []
+    failed_ids = [
+        str(item.get("proposal_id") or "").strip()
+        for item in failed_rows
+        if isinstance(item, Mapping) and str(item.get("proposal_id") or "").strip()
+    ]
+    total = int(result.get("total") or 0)
+    if decision == "cancel":
+        ids = applied_ids or failed_ids or [f"proposal-{index + 1}" for index in range(total)]
+        return [
+            {
+                "proposal_id": proposal_id,
+                "record_id": proposal_id,
+                "status": "cancelled",
+                "operation": "reschedule proposal",
+            }
+            for proposal_id in ids
+        ]
+
+    rows: list[dict[str, Any]] = []
+    for proposal_id in applied_ids:
+        rows.append(
+            {
+                "proposal_id": proposal_id,
+                "record_id": proposal_id,
+                "status": "succeeded",
+                "operation": "reschedule proposal",
+            }
+        )
+    for proposal_id in failed_ids:
+        rows.append(
+            {
+                "proposal_id": proposal_id,
+                "record_id": proposal_id,
+                "status": "failed",
+                "operation": "reschedule proposal",
+            }
+        )
+    if not rows and total > 0:
+        rows = [
+            {
+                "proposal_id": f"proposal-{index + 1}",
+                "record_id": f"proposal-{index + 1}",
+                "status": "failed",
+                "operation": "reschedule proposal",
+            }
+            for index in range(total)
+        ]
+    return rows
 
 
 def _run_step_kind_for_activity(step: ActivityStepResponse) -> str:
@@ -3831,6 +3989,7 @@ class SessionSnapshotService:
         _step_responses = checkpoint_step_responses or [step_to_response(step) for step in snapshot_step_rows]
         _pending_approval_response = approval_to_response(healed_pending_approval) if healed_pending_approval else None
         _approval_responses = [approval_to_response(row) for row in approval_rows]
+        _pending_interaction_response = _pending_interaction_from_session(_session_response)
         _presentation = _derive_snapshot_presentation(
             session=_session_response,
             plan=_plan_response,
@@ -3847,6 +4006,7 @@ class SessionSnapshotService:
             plan=_plan_response,
             steps=_step_responses,
             pending_approval=_pending_approval_response,
+            pending_interaction=_pending_interaction_response,
             timeline=events,
             presentation=_presentation,
         )
@@ -3869,6 +4029,7 @@ class SessionSnapshotService:
             plan=_plan_response,
             steps=_step_responses,
             pending_approval=_pending_approval_response,
+            pending_interaction=_pending_interaction_response,
             timeline=events,
             snapshot_revision=_response_document.revision,
             cursor=_cursor,

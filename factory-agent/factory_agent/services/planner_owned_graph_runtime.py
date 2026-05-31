@@ -34,7 +34,8 @@ PersistPlan = Callable[..., Awaitable[PlanResponse]]
 SessionLookup = Callable[..., Awaitable[Any]]
 UuidFactory = Callable[[], str]
 
-_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION"}
+_ACTIVE_SESSION_STATUSES = {"PLANNING", "EXECUTING", "WAITING_APPROVAL", "WAITING_CONFIRMATION", "WAITING_USER_ACTION"}
+_RESCHEDULE_ALL_TOOL = "post__ai_scheduling_reschedule-all"
 _LIVE_GRAPH_MAX_STEPS = 64
 _ACTIVITY_GRAPH_HISTORY_FIELDS = {
     "id",
@@ -360,6 +361,7 @@ class PlannerOwnedGraphRuntimeAdapter:
         ledger_revision: Any,
         checkpoint_id: Any,
         decided_by: str,
+        approval_args: dict[str, Any] | None = None,
         mode: str = "normal",
     ) -> PlannerOwnedGraphResult:
         tools_by_name = ensure_v2_rag_tool(tools_by_name)
@@ -380,6 +382,7 @@ class PlannerOwnedGraphRuntimeAdapter:
                     "ledger_revision": ledger_revision,
                     "checkpoint_id": checkpoint_id,
                     "decided_by": decided_by,
+                    "approved_args": dict(approval_args or {}),
                 },
                 options={"thread_id": sess.session_id},
             )
@@ -447,6 +450,52 @@ class PlannerOwnedGraphRuntimeAdapter:
 
         draft, tool_outputs = self._plan_artifacts(result, tools_by_name=tools_by_name)
         failed = self._graph_failed(result, tool_outputs)
+        pending_interaction = None if failed or mode == "plan" else self._reschedule_all_pending_interaction(
+            sess=sess,
+            result=result,
+            tool_outputs=tool_outputs,
+        )
+        if pending_interaction is not None:
+            context["pending_interaction"] = pending_interaction
+            planner_graph = context.get("planner_owned_agent_graph")
+            if isinstance(planner_graph, dict):
+                planner_graph["pending_interaction_id"] = pending_interaction["interaction_id"]
+                planner_graph["pending_interaction_kind"] = pending_interaction["kind"]
+            review_message = (
+                str(pending_interaction.get("message") or "").strip()
+                or "Review the generated reschedule proposal before applying."
+            )
+            draft = draft.model_copy(
+                update={
+                    "plan_explanation": review_message,
+                    "risk_summary": "Review generated schedule proposals before applying them.",
+                }
+            )
+            tool_outputs = self._compact_tool_outputs_for_pending_interaction(
+                tool_outputs,
+                pending_interaction=pending_interaction,
+            )
+            response = await self._persist_plan(
+                db=db,
+                sess=sess,
+                draft=draft,
+                tools_by_name=tools_by_name,
+                backend_used="planner_owned_agent_graph",
+                kind="execution",
+                status="COMPLETED",
+                intent=intent,
+                context_to_keep=context,
+                tool_outputs=tool_outputs,
+            )
+            refreshed = await self._session_lookup(db, session_id=sess.session_id) or sess
+            refreshed.status = "WAITING_USER_ACTION"
+            refreshed.completed_at = None
+            refreshed.error = pending_interaction.get("message") or "Review the generated reschedule proposal before applying it."
+            refreshed.replan_context = context
+            bump_session_revision(refreshed)
+            await db.commit()
+            metrics.inc("plan_backend_used_total", labels={"backend_used": "planner_owned_agent_graph"})
+            return response
         plan_status = "FAILED" if failed and mode != "plan" else "COMPLETED" if mode != "plan" else "DRAFT"
         response = await self._persist_plan(
             db=db,
@@ -481,6 +530,23 @@ class PlannerOwnedGraphRuntimeAdapter:
                 payload=payload,
             )
 
+        async def _http_executor(
+            settings: Settings,
+            tool: ToolInfo,
+            args: dict[str, Any],
+            *,
+            idempotency_key: str,
+        ) -> dict[str, Any]:
+            from factory_agent.graph.http_tool_client import execute_tool_http, planner_identity_headers
+
+            return await execute_tool_http(
+                settings,
+                tool,
+                args,
+                idempotency_key=idempotency_key,
+                extra_headers=planner_identity_headers(),
+            )
+
         return PlannerOwnedAgentGraph(
             settings=self._settings,
             adapters=PlannerOwnedAgentGraphAdapters(
@@ -489,6 +555,7 @@ class PlannerOwnedGraphRuntimeAdapter:
                 tool_selector=self._tool_selector,
                 retrieval_mode=mode,
                 session_id=sess.session_id,
+                http_executor=_http_executor,
                 rag_pipeline=self._rag_pipeline,
                 approval_persister=_approval_persister,
             ),
@@ -548,7 +615,6 @@ class PlannerOwnedGraphRuntimeAdapter:
             expires_at=expires_at,
         )
         db.add(approval)
-        await db.commit()
         return {
             "approval_id": approval.approval_id,
             "persisted": True,
@@ -557,6 +623,10 @@ class PlannerOwnedGraphRuntimeAdapter:
         }
 
     def _with_approval_bundle_ui(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preview_details = payload.get("preview_details") if isinstance(payload.get("preview_details"), dict) else {}
+        if preview_details.get("manual_input_required") is True:
+            return payload
+
         existing_bundle = payload.get("bundle_ui") if isinstance(payload.get("bundle_ui"), dict) else None
         rows = payload.get("preview_rows") if isinstance(payload.get("preview_rows"), list) else []
         if existing_bundle is not None and not rows:
@@ -657,7 +727,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             tools_by_name=tools_by_name,
             backend_used="planner_owned_agent_graph",
             kind="execution",
-            status="COMPLETED",
+            status="PENDING_APPROVAL",
             intent=intent,
             context_to_keep=context,
             tool_outputs=[],
@@ -877,6 +947,127 @@ class PlannerOwnedGraphRuntimeAdapter:
                 }
             )
         return outputs
+
+    def _compact_tool_outputs_for_pending_interaction(
+        self,
+        tool_outputs: list[dict[str, Any]],
+        *,
+        pending_interaction: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        proposal_ids = [
+            str(item).strip()
+            for item in (pending_interaction.get("proposal_ids") or [])
+            if str(item or "").strip()
+        ]
+        proposal_count = len(proposal_ids)
+        if proposal_count <= 0:
+            proposals = pending_interaction.get("proposals")
+            proposal_count = len(proposals) if isinstance(proposals, list) else 0
+        message = (
+            str(pending_interaction.get("message") or "").strip()
+            or f"Generated {proposal_count} reschedule proposal(s) for review."
+        )
+        compact_outputs: list[dict[str, Any]] = []
+        for output in tool_outputs:
+            if not isinstance(output, dict):
+                continue
+            if str(output.get("tool_name") or "").strip() != _RESCHEDULE_ALL_TOOL:
+                compact_outputs.append(output)
+                continue
+            compact = dict(output)
+            compact["summary"] = message
+            compact["result"] = {
+                "data": {
+                    "proposal_count": proposal_count,
+                    "proposal_ids": proposal_ids,
+                    "message": message,
+                    "summary": pending_interaction.get("summary") if isinstance(pending_interaction.get("summary"), Mapping) else {},
+                }
+            }
+            compact_outputs.append(compact)
+        return compact_outputs
+
+    def _reschedule_all_pending_interaction(
+        self,
+        *,
+        sess: Any,
+        result: PlannerOwnedGraphResult,
+        tool_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        output = next(
+            (
+                item
+                for item in tool_outputs
+                if isinstance(item, Mapping)
+                and str(item.get("tool_name") or "").strip() == _RESCHEDULE_ALL_TOOL
+                and str(item.get("status") or "").upper() != "FAILED"
+            ),
+            None,
+        )
+        if output is None:
+            return None
+        result_payload = output.get("result") if isinstance(output.get("result"), Mapping) else {}
+        data = result_payload.get("data") if isinstance(result_payload.get("data"), Mapping) else result_payload
+        proposals = data.get("proposals") if isinstance(data, Mapping) and isinstance(data.get("proposals"), list) else []
+        proposals = [dict(item) for item in proposals if isinstance(item, Mapping)]
+        proposal_ids = self._proposal_ids_from_reschedule_output(output, proposals)
+        if not proposal_ids and not proposals:
+            return None
+        approval_id = str(output.get("approval_id") or "").strip() or None
+        summary = data.get("summary") if isinstance(data, Mapping) and isinstance(data.get("summary"), Mapping) else {}
+        message = (
+            str(data.get("message") or "").strip()
+            if isinstance(data, Mapping)
+            else ""
+        )
+        if not message:
+            message = f"Review {len(proposal_ids) or len(proposals)} generated reschedule proposal(s) before applying."
+        checkpoint = getattr(result, "checkpoint_config", {}) if result is not None else {}
+        graph_identity = result.state.execution_trace.diagnostics.get("graph_checkpoint_identity")
+        return {
+            "interaction_id": f"ia-{self._uuid_factory()}",
+            "kind": "reschedule_all_review",
+            "status": "pending",
+            "session_id": str(getattr(sess, "session_id", "") or ""),
+            "approval_id": approval_id,
+            "proposal_ids": proposal_ids,
+            "proposals": proposals,
+            "summary": dict(summary),
+            "validation": {
+                "overlap_status": "not_checked",
+                "source": "factory_agent_pending_interaction",
+            },
+            "title": "Review reschedule proposal",
+            "message": message,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "payload": {
+                "tool_name": _RESCHEDULE_ALL_TOOL,
+                "output_evidence_ref": output.get("evidence_ref"),
+                "graph_checkpoint_identity": graph_identity if isinstance(graph_identity, Mapping) else {},
+                "checkpoint_config": checkpoint if isinstance(checkpoint, Mapping) else {},
+            },
+        }
+
+    def _proposal_ids_from_reschedule_output(
+        self,
+        output: Mapping[str, Any],
+        proposals: list[dict[str, Any]],
+    ) -> list[str]:
+        ids: list[str] = []
+        result_payload = output.get("result") if isinstance(output.get("result"), Mapping) else {}
+        data = result_payload.get("data") if isinstance(result_payload.get("data"), Mapping) else result_payload
+        if isinstance(data, Mapping):
+            for key in ("proposal_ids", "proposalIds"):
+                raw_ids = data.get(key)
+                if isinstance(raw_ids, list):
+                    ids.extend(str(item).strip() for item in raw_ids if str(item or "").strip())
+        for proposal in proposals:
+            for key in ("proposal_id", "proposalId", "id"):
+                value = str(proposal.get(key) or "").strip()
+                if value:
+                    ids.append(value)
+                    break
+        return list(dict.fromkeys(ids))
 
     def _response_context_replan_limit_reached(self, state: Any) -> bool:
         context = getattr(state, "response_document_context", None)

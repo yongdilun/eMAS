@@ -10,6 +10,14 @@ function isIdLikeField(fieldName = '') {
   return String(fieldName || '').toLowerCase().endsWith('_id')
 }
 
+const preferredLookupEndpointsByField = {
+  product_id: ['/products'],
+  machine_id: ['/machines'],
+  material_id: ['/materials'],
+  inventory_id: ['/inventory'],
+  job_id: ['/jobs'],
+}
+
 function tokenize(value = '') {
   return String(value || '')
     .toLowerCase()
@@ -58,6 +66,9 @@ function scoreLookupToolForField(fieldName, tool) {
     const primary = fieldTokens[0]
     const canonical = `${primary}s`
     if (endpointLast === canonical || endpointLast === primary) score += 5
+    if (isIdField && endpoint.includes('/reference/') && endpointLast !== canonical && endpointLast !== primary) {
+      score -= 8
+    }
   }
 
   const blacklist = ['approval', 'metrics', 'health', 'debug', 'session', 'plan', 'chat']
@@ -66,6 +77,7 @@ function scoreLookupToolForField(fieldName, tool) {
 }
 
 export function pickLookupEndpoints(fieldName, tools = []) {
+  const preferred = preferredLookupEndpointsByField[String(fieldName || '').toLowerCase()] || []
   const candidates = []
   for (const tool of tools) {
     if (!isListLookupTool(tool)) continue
@@ -73,7 +85,19 @@ export function pickLookupEndpoints(fieldName, tools = []) {
     if (score >= 2) candidates.push({ endpoint: String(tool.endpoint || ''), score })
   }
   candidates.sort((a, b) => b.score - a.score || a.endpoint.localeCompare(b.endpoint))
-  return candidates.map((c) => c.endpoint)
+  return dedupeEndpoints([...preferred, ...candidates.map((c) => c.endpoint)])
+}
+
+function dedupeEndpoints(endpoints = []) {
+  const seen = new Set()
+  const out = []
+  for (const endpoint of endpoints) {
+    const value = String(endpoint || '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
 }
 
 function normalizeOption(item, { fieldName = '', valueKeys = [], labelKeys = [], fallbackStem = '' } = {}) {
@@ -111,10 +135,13 @@ function normalizeOption(item, { fieldName = '', valueKeys = [], labelKeys = [],
 
   const labelCandidates = [`${stem}_name`, ...labelKeys, 'display', 'name', 'title', 'label', 'description', 'id', 'value']
   const value = pick(valueCandidates)
-  const label = pick(labelCandidates) || value
+  let label = pick(labelCandidates) || value
   if (!value) return null
   const valueKey = (valueCandidates.map((key) => resolveActualKey(key)).find((k) => k && item[k] != null && item[k] !== '') || '').toLowerCase()
   const labelKey = (labelCandidates.map((key) => resolveActualKey(key)).find((k) => k && item[k] != null && item[k] !== '') || '').toLowerCase()
+  if (isIdLikeField(fieldName) && label && label !== value && !label.includes(value)) {
+    label = `${label} (${value})`
+  }
   return { value, label, valueKey, labelKey }
 }
 

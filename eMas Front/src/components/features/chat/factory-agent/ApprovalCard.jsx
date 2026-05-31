@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { factoryAgentApi } from '../../../../services/factoryAgentApi'
 import { isInterruptBundleApprovalText, shortenApprovalRiskSummary } from './approvalInterruptDisplay.js'
 import { castApprovalFieldValue } from './approvalFieldUtils.js'
@@ -30,6 +30,25 @@ function humanizeFieldName(name) {
  .replace(/\bid\b/gi, 'ID')
  .replace(/\s+/g, ' ')
  .trim()
+}
+
+function displayFieldName(name, schema = {}, { devMode = false } = {}) {
+ if (devMode) return name
+ const entity = String(schema?.['x-ai-entity'] || '').trim()
+ if (entity && String(name || '').toLowerCase() === `${entity.toLowerCase()}_id`) {
+ const label = humanizeFieldName(entity)
+ return label ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : label
+ }
+ return humanizeFieldName(name)
+}
+
+function shouldHideApprovalField(name, schema = {}, tool = null, requiredSet = new Set()) {
+ if (requiredSet.has(name)) return false
+ const normalizedName = String(name || '').toLowerCase()
+ const toolName = String(tool?.name || '').toLowerCase()
+ if (toolName === 'post__jobs' && normalizedName === 'slots') return true
+ if (normalizedName === 'slots' && String(schema?.description || '').toLowerCase().includes('optional split')) return true
+ return false
 }
 
 function resolveSchemaType(schema = {}) {
@@ -83,9 +102,12 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  const [showValidationErrors, setShowValidationErrors] = useState(false)
  const approvalId = safeApproval.approval_id
  const approvalArgs = safeApproval.args
+ const requestedToolName = safeApproval.tool_name
+ const approvalIdRef = useRef(approvalId)
 
  useEffect(() => {
- // Keep user edits stable while this same approval stays open.
+ if (approvalIdRef.current === approvalId) return
+ approvalIdRef.current = approvalId
  setFormValues(normalizeArgs(approvalArgs))
  setShowValidationErrors(false)
  }, [approvalId, approvalArgs])
@@ -94,8 +116,18 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  let cancelled = false
  const loadTools = async () => {
  try {
- const rows = await factoryAgentApi.listTools({ max_tools: 100 })
- if (!cancelled) setTools(Array.isArray(rows) ? rows : [])
+ const rows = await factoryAgentApi.listTools({ max_tools: 200 })
+ let nextRows = Array.isArray(rows) ? rows : []
+ if (requestedToolName && !nextRows.some((row) => row?.name === requestedToolName)) {
+ const scoped = await factoryAgentApi.listTools({ intent: requestedToolName, max_tools: 200 })
+ const scopedRows = Array.isArray(scoped) ? scoped : []
+ const byName = new Map(nextRows.map((row) => [row?.name, row]))
+ for (const row of scopedRows) {
+ if (row?.name) byName.set(row.name, row)
+ }
+ nextRows = [...byName.values()]
+ }
+ if (!cancelled) setTools(nextRows)
  } catch {
  if (!cancelled) setTools([])
  }
@@ -104,7 +136,7 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  return () => {
  cancelled = true
  }
- }, [])
+ }, [requestedToolName])
 
  const tool = useMemo(() => (tools || []).find((t) => t?.name === safeApproval.tool_name) || null, [tools, safeApproval?.tool_name])
  const schema = useMemo(() => tool?.input_schema || {}, [tool?.input_schema])
@@ -115,8 +147,8 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
 
  const fields = useMemo(() => {
  const properties = schema?.properties || {}
- const names = Object.keys(properties)
  const requiredSet = new Set(required)
+ const names = Object.keys(properties).filter((name) => !shouldHideApprovalField(name, properties[name] || {}, tool, requiredSet))
  names.sort((a, b) => {
  const aReq = requiredSet.has(a) ? 0 : 1
  const bReq = requiredSet.has(b) ? 0 : 1
@@ -141,7 +173,7 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  sourceEndpoints,
  }
  })
- }, [required, schema, tools])
+ }, [required, schema, tool, tools])
 
  useEffect(() => {
  let cancelled = false
@@ -210,11 +242,11 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  const raw = formValues[field.name]
  const casted = castApprovalFieldValue(raw, field)
  if (field.required && (casted === undefined || casted === null || casted === '')) {
- errors.push(`${humanizeFieldName(field.name)} is required`)
+ errors.push(`${displayFieldName(field.name, field.schema, { devMode: isDevMode })} is required`)
  continue
  }
  if (Number.isNaN(casted)) {
- errors.push(`${humanizeFieldName(field.name)} has invalid value`)
+ errors.push(`${displayFieldName(field.name, field.schema, { devMode: isDevMode })} has invalid value`)
  continue
  }
  if (casted !== undefined) {
@@ -222,7 +254,7 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  }
  }
  return { args: nextArgs, errors }
- }, [fields, formValues, safeApproval.args])
+ }, [fields, formValues, isDevMode, safeApproval.args])
 
  const handleApprove = () => {
  if (resolved.errors.length > 0) {
@@ -265,7 +297,7 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  : 'bg-surface-3 text-ink-subtle'
  }`}
  >
- {isDevMode ? k : humanizeFieldName(k)}
+ {displayFieldName(k, schema?.properties?.[k] || {}, { devMode: isDevMode })}
  </span>
  ))}
  </div>
@@ -294,7 +326,7 @@ const ApprovalCard = ({ approval, mode = 'user', reason, onReasonChange, onAppro
  return (
  <label key={field.name} htmlFor={id} className="block">
  <span className="text-[11px] text-ink-subtle">
- {isDevMode ? field.name : humanizeFieldName(field.name)}{field.required ? ' *' : ''}
+ {displayFieldName(field.name, field.schema, { devMode: isDevMode })}{field.required ? ' *' : ''}
  </span>
  {hasSelectSource && allSelectOptions.length > 0 ? (
  <select

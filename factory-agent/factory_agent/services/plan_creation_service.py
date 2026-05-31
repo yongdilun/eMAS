@@ -325,6 +325,16 @@ class PlanCreationService:
             )
         return "I need one more detail before I can route this safely. Please provide the missing required field."
 
+    def _semantic_clarification_should_use_graph_form(self, frame: Any) -> bool:
+        missing = set(getattr(frame, "missing_required_entities", []) or [])
+        return (
+            str(getattr(frame, "route", "") or "") == "clarification.job_mutation_incomplete"
+            and str(getattr(frame, "domain_intent", "") or "") == "job_mutation"
+            and str(getattr(frame, "action", "") or "") == "create"
+            and str(getattr(frame, "entity", "") or "") == "job"
+            and missing.issubset({"job_spec"})
+        )
+
     def _seeded_planner_handles_intent(self, intent: str) -> bool:
         handles = getattr(self._planner, "handles_seeded_intent", None)
         return bool(handles(intent)) if callable(handles) else False
@@ -614,6 +624,7 @@ class PlanCreationService:
             and str(getattr(semantic_frame, "route", "") or "").startswith("clarification.")
             and getattr(semantic_frame, "missing_required_entities", None)
             and not self._seeded_planner_handles_intent(intent)
+            and not self._semantic_clarification_should_use_graph_form(semantic_frame)
         ):
             context = dict(sess.replan_context or {})
             if hasattr(semantic_frame, "to_payload"):
@@ -684,6 +695,7 @@ class PlanCreationService:
         ledger_revision: Any,
         checkpoint_id: Any,
         decided_by: str,
+        approval_args: dict[str, Any] | None = None,
     ) -> Any:
         return await self._planner_owned_graph_runtime().resume_approval(
             db=db,
@@ -695,6 +707,7 @@ class PlanCreationService:
             ledger_revision=ledger_revision,
             checkpoint_id=checkpoint_id,
             decided_by=decided_by,
+            approval_args=approval_args,
         )
 
     async def persist_planner_owned_graph_result(
@@ -731,15 +744,23 @@ class PlanCreationService:
         tool_outputs: list[dict[str, Any]] | None = None,
     ) -> PlanResponse:
         draft_steps = getattr(draft, "steps", []) or []
+        graph_pending_approval = (
+            backend_used == "planner_owned_agent_graph"
+            and status == "PENDING_APPROVAL"
+            and isinstance(context_to_keep, dict)
+            and isinstance(context_to_keep.get("langgraph_pending_approval"), dict)
+            and bool(context_to_keep["langgraph_pending_approval"].get("approval_id"))
+        )
         planner_no_action = (
             kind == "execution"
             and not draft_steps
+            and not graph_pending_approval
+            and not tool_outputs
             and (
                 status != "COMPLETED"
                 or (
                     backend_used not in EMPTY_PLAN_COMPLETION_BACKENDS
                     and not is_historical_direct_v2_created_by(backend_used)
-                    and not tool_outputs
                 )
             )
         )

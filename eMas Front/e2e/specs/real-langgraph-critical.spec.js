@@ -65,6 +65,22 @@ async function visibleText(page) {
   return page.locator('body').evaluate((body) => body.innerText)
 }
 
+async function pendingApprovalByTool(page, toolName) {
+  const pending = await pendingApprovalsForPage(page)
+  return pending.find((approval) => (
+    approval?.tool_name === toolName
+    || approval?.args?.selected_graph_tool_call?.tool_name === toolName
+    || (Array.isArray(approval?.args?.staged_graph_tool_calls) && approval.args.staged_graph_tool_calls.some((call) => call?.tool_name === toolName))
+    || (Array.isArray(approval?.args?.preview) && approval.args.preview.some((call) => call?.tool_name === toolName))
+  )) || null
+}
+
+async function pendingRescheduleInteraction(page) {
+  const snapshot = await snapshotForPage(page)
+  const interaction = snapshot?.pending_interaction || snapshot?.pendingInteraction || null
+  return interaction?.kind === 'reschedule_all_review' ? interaction : null
+}
+
 function planRows(snapshot) {
   return Array.isArray(snapshot?.steps) ? snapshot.steps : []
 }
@@ -84,6 +100,194 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
   test.beforeEach(async () => {
     await resetFactoryAgentSessions()
     await resetSeededJobPriorities()
+  })
+
+  test('CJ-001 create-job prompt opens real LangGraph manual-input form @critical', async ({ page }) => {
+    await openChat(page)
+    await sendPrompt(page, 'help me to create a job')
+
+    await expect
+      .poll(async () => (await pendingApprovalByTool(page, 'post__jobs'))?.approval_id || null, { timeout: 90_000 })
+      .not.toBeNull()
+
+    const approval = await pendingApprovalByTool(page, 'post__jobs')
+    expect(approval?.args?.preview_details).toMatchObject({
+      manual_input_required: true,
+      missing_required_args: ['product_id', 'quantity_total'],
+    })
+    expect(approval?.args?.selected_graph_tool_call).toMatchObject({
+      tool_name: 'post__jobs',
+      args: {},
+    })
+
+    const snapshot = await snapshotForPage(page)
+    expect(snapshot.session.status).toBe('WAITING_APPROVAL')
+    expect(snapshot.pending_approval?.approval_id).toBe(approval.approval_id)
+
+    const productSelect = page
+      .locator('label')
+      .filter({ hasText: /Product \*/i })
+      .locator('select')
+      .last()
+    const quantityInput = page
+      .locator('label')
+      .filter({ hasText: /quantity total \*/i })
+      .locator('input')
+      .last()
+
+    await expect(page.getByText('Review and edit request').last()).toBeVisible()
+    await expect(productSelect).toBeVisible()
+    await expect(quantityInput).toBeVisible()
+    await expect
+      .poll(
+        async () => productSelect.evaluate((select) => Array.from(select.options).map((option) => option.textContent || '').join('|')),
+        { timeout: 30_000 },
+      )
+      .toMatch(/P-00[12]|Precision|Valve|Gear/i)
+
+    await productSelect.selectOption({ index: 1 })
+    const selectedProduct = await productSelect.inputValue()
+    await quantityInput.fill('12')
+    await expect(productSelect).toHaveValue(selectedProduct)
+    await expect(quantityInput).toHaveValue('12')
+
+    const text = await visibleText(page)
+    expect(text).toMatch(/Approval required/i)
+    expect(text).toMatch(/Review and edit request/i)
+    expect(text).not.toMatch(/Please provide the missing required field/i)
+    expect(text).not.toMatch(/\bslots\b/i)
+    expect(text).not.toMatch(/Enter JSON/i)
+  })
+
+  test('RS-001 reschedule-all prompt opens embedded review and applies in the same chat @critical', async ({ page }) => {
+    test.setTimeout(240_000)
+    await openChat(page)
+    const initialUrl = page.url()
+    const initialPageCount = page.context().pages().length
+    let openedNewPage = false
+    const onPage = () => {
+      openedNewPage = true
+    }
+    page.context().on('page', onPage)
+    await sendPrompt(page, 'help me to reschedule all job')
+
+    try {
+      await expect
+        .poll(
+          async () => (await pendingApprovalByTool(page, 'post__ai_scheduling_reschedule-all'))?.approval_id || null,
+          { timeout: 90_000 },
+        )
+        .not.toBeNull()
+
+      const approval = await pendingApprovalByTool(page, 'post__ai_scheduling_reschedule-all')
+      expect(approval?.args?.selected_graph_tool_call).toMatchObject({
+        tool_name: 'post__ai_scheduling_reschedule-all',
+      })
+
+      const snapshot = await snapshotForPage(page)
+      expect(snapshot.session.status).toBe('WAITING_APPROVAL')
+      expect(snapshot.pending_approval?.approval_id).toBe(approval.approval_id)
+
+      const text = await visibleText(page)
+      expect(text).toMatch(/Approval required/i)
+      expect(text).toMatch(/reschedule/i)
+      expect(text).not.toMatch(/Please provide the missing required field/i)
+      expect(text).not.toMatch(/Rendering response\s+Current|Current\s+Rendering response/i)
+      expect(text).not.toMatch(/Preparing response\s+Current|Current\s+Preparing response/i)
+      await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+      await expect(page.getByText(/Waiting for (your )?approval/i).first()).toBeVisible()
+
+      await page.getByRole('button', { name: 'Approve' }).click()
+      await expect
+        .poll(async () => (await pendingRescheduleInteraction(page))?.interaction_id || null, { timeout: 120_000 })
+        .not.toBeNull()
+      await expect(page.getByText(/missing authenticated user or role/i)).toHaveCount(0)
+      await expect(page.getByText(/Data too long/i)).toHaveCount(0)
+      await expect(page.getByText(/Rendering response\s+Current|Current\s+Rendering response/i)).toHaveCount(0)
+      await expect(page.getByText(/Preparing response\s+Current|Current\s+Preparing response/i)).toHaveCount(0)
+      await expect(page.getByText(/Waiting for your action/i).first()).toBeVisible()
+
+      expect(openedNewPage).toBe(false)
+      expect(page.context().pages().length).toBe(initialPageCount)
+      expect(page.url()).toBe(initialUrl)
+      await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
+      await expect(page.getByText(/proposal\(s\) are infeasible/i).first()).toBeVisible()
+      await expect(page.getByRole('button', { name: /Resolve in Resolution Center/i })).toBeVisible()
+      await expect(page.getByRole('button', { name: /Apply all/i })).toBeEnabled()
+
+      await page.getByRole('button', { name: /Apply all/i }).click()
+      await expect
+        .poll(async () => (await snapshotForPage(page))?.session?.status || null, { timeout: 120_000 })
+        .toBe('COMPLETED')
+      await expect(page.getByText(/Reschedule (?:partially )?applied/i).first()).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByText(/missing authenticated user or role|Data too long/i)).toHaveCount(0)
+      expect(page.context().pages().length).toBe(initialPageCount)
+      expect(page.url()).toBe(initialUrl)
+    } finally {
+      page.context().off('page', onPage)
+    }
+  })
+
+  test('RS-002 reschedule-all embedded review cancels in the same chat @critical', async ({ page }) => {
+    test.setTimeout(240_000)
+    await openChat(page)
+    const initialUrl = page.url()
+    const initialPageCount = page.context().pages().length
+    let openedNewPage = false
+    const onPage = () => {
+      openedNewPage = true
+    }
+    page.context().on('page', onPage)
+    await sendPrompt(page, 'help me to reschedule all job')
+
+    try {
+      await expect
+        .poll(
+          async () => (await pendingApprovalByTool(page, 'post__ai_scheduling_reschedule-all'))?.approval_id || null,
+          { timeout: 90_000 },
+        )
+        .not.toBeNull()
+      await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+      await expect(page.getByText(/Rendering response\s+Current|Current\s+Rendering response/i)).toHaveCount(0)
+      await expect(page.getByText(/Preparing response\s+Current|Current\s+Preparing response/i)).toHaveCount(0)
+
+      await page.getByRole('button', { name: 'Approve' }).click()
+      await expect
+        .poll(async () => (await pendingRescheduleInteraction(page))?.interaction_id || null, { timeout: 120_000 })
+        .not.toBeNull()
+      await expect(page.getByText(/missing authenticated user or role/i)).toHaveCount(0)
+      await expect(page.getByText(/Data too long/i)).toHaveCount(0)
+      await expect(page.getByText(/Rendering response\s+Current|Current\s+Rendering response/i)).toHaveCount(0)
+      await expect(page.getByText(/Preparing response\s+Current|Current\s+Preparing response/i)).toHaveCount(0)
+      await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
+      await expect(page.getByText(/proposal\(s\) are infeasible/i).first()).toBeVisible()
+      await expect(page.getByRole('button', { name: /Resolve in Resolution Center/i })).toBeVisible()
+
+      expect(openedNewPage).toBe(false)
+      expect(page.context().pages().length).toBe(initialPageCount)
+      expect(page.url()).toBe(initialUrl)
+
+      await page.getByRole('button', { name: /Resolve in Resolution Center/i }).click()
+      await expect(page.getByRole('heading', { name: /Shortage Resolution Center/i })).toBeVisible()
+      expect(openedNewPage).toBe(false)
+      expect(page.context().pages().length).toBe(initialPageCount)
+      expect(page.url()).toBe(initialUrl)
+      await page.getByRole('button', { name: 'Close' }).click()
+      await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
+
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect
+        .poll(async () => {
+          const snapshot = await snapshotForPage(page)
+          return `${snapshot?.session?.status || ''}:${snapshot?.response_document?.state || ''}`
+        }, { timeout: 120_000 })
+        .toMatch(/^(IDLE|COMPLETED):cancelled$/)
+      await expect(page.getByText(/Reschedule cancelled/i).first()).toBeVisible({ timeout: 30_000 })
+      expect(page.context().pages().length).toBe(initialPageCount)
+      expect(page.url()).toBe(initialUrl)
+    } finally {
+      page.context().off('page', onPage)
+    }
   })
 
   test('SO-001/SO-035 uses real LangGraph approvals, original-state rows, and terminal evidence', async ({ page }) => {

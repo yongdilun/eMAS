@@ -386,6 +386,7 @@ class ApprovalResumeService:
             ledger_revision=payload.get("ledger_revision") or payload.get("requirement_ledger_revision"),
             checkpoint_id=payload.get("checkpoint_id"),
             decided_by=row.decided_by or "user",
+            approval_args=payload,
         )
         await db.refresh(sess)
         if execution_result_is_stale_after_interrupt(
@@ -409,12 +410,13 @@ class ApprovalResumeService:
             mode="normal",
             result=result,
         )
+        await db.refresh(sess)
         await self.publish_agent_event(
             "session_resume",
             sess.session_id,
             {
                 "approval_id": row.approval_id,
-                "status": "WAITING_APPROVAL" if result.state.pending_approval.status == "pending" else "COMPLETED",
+                "status": sess.status,
                 "subject_type": "graph",
                 "runtime": "planner_owned_agent_graph",
             },

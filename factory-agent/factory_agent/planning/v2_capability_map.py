@@ -57,6 +57,11 @@ _FIELD_SEGMENT_RE = re.compile(
     r"(?P<fields>.+?)(?:\s+\b(?:sorted|ordered|ranked|limit|top|next|where|for|with)\b|[.;]|$)",
     re.IGNORECASE | re.DOTALL,
 )
+_RESCHEDULE_ALL_JOBS_RE = re.compile(
+    r"\b(?:reschedule|replan)\s+(?:all|every)\s+(?:jobs?|work\s*orders?)\b|"
+    r"\b(?:all|every)\s+(?:jobs?|work\s*orders?)\s+(?:reschedule|replan)\b",
+    re.IGNORECASE,
+)
 _NEGATIVE_SAFETY_RE = re.compile(
     r"\b(?:do\s+not|don't|never|without|exclude|except)\b[^.;\n]*",
     re.IGNORECASE,
@@ -230,7 +235,11 @@ def build_capability_needs_for_text(
 def build_capability_needs_from_sketch(sketch: RequirementSketch) -> list[CapabilityNeed]:
     needs: list[CapabilityNeed] = []
     for requirement in sketch.requirements:
-        action = _capability_action_for_requirement(requirement.requirement_type, requirement.source_of_truth)
+        action = _capability_action_for_requirement(
+            requirement.requirement_type,
+            requirement.source_of_truth,
+            goal=requirement.goal,
+        )
         id_args = {
             key: value
             for key, value in requirement.constraints.items()
@@ -735,7 +744,14 @@ def build_requirement_sketch_for_text(
                 text=clause,
                 source_of_truth_hint=source,
                 entity=entity,
-                actions=[_capability_action_for_requirement(requirement_type, source)],
+                actions=[
+                    _capability_action_for_requirement(
+                        requirement_type,
+                        source,
+                        goal=clause,
+                        frame_action=frame.action,
+                    )
+                ],
                 constraints=constraints,
                 requested_fields=requested_fields,
             )
@@ -1270,6 +1286,9 @@ def _compact_tool_metadata(tool: ToolInfo, *, entity: str | None) -> dict[str, A
 
 
 def _tool_entity(tool: ToolInfo) -> str | None:
+    if _is_reschedule_all_tool(tool):
+        return "job"
+
     for schema in (tool.input_schema, tool.output_schema, tool.body_schema):
         entity = _schema_ai_entity(schema)
         if entity:
@@ -1326,6 +1345,9 @@ def _endpoint_root(tool: ToolInfo) -> str | None:
 
 
 def _actions_for_tool(tool: ToolInfo) -> list[CapabilityAction]:
+    if _is_reschedule_all_tool(tool):
+        return ["update", "create"]
+
     profile = build_tool_intent_profile(tool)
     method = (tool.method or "").upper()
     tags = {normalize_token(tag) for tag in tool.capability_tags or []}
@@ -1366,6 +1388,11 @@ def _supports_for_tool(tool: ToolInfo) -> list[str]:
     if tool.requires_approval:
         supports.add("approval_required")
     return sorted(supports)
+
+
+def _is_reschedule_all_tool(tool: ToolInfo) -> bool:
+    endpoint = str(tool.endpoint or "").strip().lower()
+    return tool.name == "post__ai_scheduling_reschedule-all" or endpoint == "/ai/scheduling/reschedule-all"
 
 
 def _output_contract_for_tool(tool: ToolInfo, *, actions: list[CapabilityAction]) -> str | None:
@@ -1571,6 +1598,11 @@ def _constraints_for_clause(
     safety_constraints = _safety_constraints_for_clause(clause)
     if safety_constraints:
         constraints["safety_constraints"] = safety_constraints
+
+    if frame.domain_intent == "job_reschedule_all" or _RESCHEDULE_ALL_JOBS_RE.search(clause):
+        constraints["operation"] = "reschedule_all"
+        constraints["scope"] = "all"
+        constraints["requires_approval"] = True
 
     if frame.requires_approval or re.search(r"\b(?:approval|approve|ask\s+approval|before\s+applying)\b", clause, re.I):
         constraints["requires_approval"] = True
@@ -2267,6 +2299,9 @@ def _has_multiple_entity_ids(constraints: Mapping[str, Any]) -> bool:
 def _capability_action_for_requirement(
     requirement_type: RequirementType,
     source: SourceOfTruth,
+    *,
+    goal: str | None = None,
+    frame_action: str | None = None,
 ) -> CapabilityAction:
     if source == "document_knowledge" or requirement_type == "document_answer":
         return "search_documents"
@@ -2277,8 +2312,34 @@ def _capability_action_for_requirement(
     if requirement_type == "approval_request":
         return "approve"
     if requirement_type == "mutation_request":
-        return "update"
+        return _mutation_capability_action(goal=goal, frame_action=frame_action)
     return "read"
+
+
+def _mutation_capability_action(
+    *,
+    goal: str | None,
+    frame_action: str | None,
+) -> CapabilityAction:
+    action = str(frame_action or "").strip().lower()
+    if action == "create":
+        return "create"
+    if action in {"delete", "remove", "cancel"}:
+        return "cancel"
+    if action == "update":
+        return "update"
+
+    normalized_goal = _normalize_phrase(goal or "")
+    if _RESCHEDULE_ALL_JOBS_RE.search(normalized_goal):
+        return "update"
+    if re.search(r"\b(?:create|add)\b", normalized_goal) or re.search(
+        r"\bnew\s+(?:job|record|work\s+order|workorder)\b",
+        normalized_goal,
+    ):
+        return "create"
+    if re.search(r"\b(?:delete|remove|cancel)\b", normalized_goal):
+        return "cancel"
+    return "update"
 
 
 def _normalize_phrase(value: str) -> str:

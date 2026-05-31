@@ -69,6 +69,8 @@ class ExecutionService:
             return sess
         if sess.status == "WAITING_APPROVAL":
             return sess
+        if sess.status == "WAITING_USER_ACTION":
+            return sess
         if sess.status in {"BLOCKED", "FAILED"}:
             detail = sess.error or f"session is {sess.status.lower()}"
             raise HTTPException(status_code=400, detail={"errors": [detail]})
@@ -95,7 +97,7 @@ class ExecutionService:
                     log_event("background_execute_failed", session_id=session_id, error=str(e))
                     async with bg_sessionmaker() as bg_db:
                         failed_sess = await self._session_mgr.get_session(bg_db, session_id=session_id)
-                        if failed_sess and failed_sess.status not in {"COMPLETED", "WAITING_APPROVAL", "BLOCKED", "FAILED"}:
+                        if failed_sess and failed_sess.status not in {"COMPLETED", "WAITING_APPROVAL", "WAITING_USER_ACTION", "BLOCKED", "FAILED"}:
                             failed_sess.status = "FAILED"
                             failed_sess.error = (
                                 "unable_to_start_request: Background execution stopped before a terminal result. "

@@ -1821,6 +1821,7 @@ class PlannerOwnedAgentGraph:
             for staged_call in staged_tool_calls
         ]
         payload = build_approval_required_payload(staged, intent_text=state.original_query)
+        payload.update(_approval_form_args_for_tool_call(card, staged_tool_calls[0]))
         checkpoint_identity = _graph_checkpoint_identity_for_current_revision(state)
         state.execution_trace.diagnostics["graph_checkpoint_identity"] = checkpoint_identity
         payload.update(
@@ -1926,7 +1927,11 @@ class PlannerOwnedAgentGraph:
         requirement = _requirement_by_id(state, call.requirement_id)
         need = _capability_need_for_requirement(state, call.requirement_id)
         _record_node_visit(state, "tool_execution_node", self._tracer)
-        staged_calls = _pending_staged_tool_calls(pending, fallback=call)
+        approved_args = approval_decision.get("approved_args")
+        staged_calls = [
+            _tool_call_with_approved_args(state, staged_call, approved_args)
+            for staged_call in _pending_staged_tool_calls(pending, fallback=call)
+        ]
         executions: list[GraphToolExecutionResult] = []
         action_events: list[dict[str, Any]] = []
         for staged_call in staged_calls:
@@ -2772,6 +2777,85 @@ def _approval_decision_matches_pending(
     if checkpoint_id is not None and str(checkpoint_id) != str(pending.checkpoint_id):
         return False
     return True
+
+
+_APPROVAL_PAYLOAD_RESERVED_KEYS = {
+    "approval_id",
+    "approval_index",
+    "approval_label",
+    "approval_persistence",
+    "blocked_rows_excluded",
+    "bundle_ui",
+    "checkpoint_id",
+    "count",
+    "entity_type",
+    "excluded_rows",
+    "graph_checkpoint_identity",
+    "graph_tool_action",
+    "kind",
+    "ledger_revision",
+    "locked_constraints",
+    "narrative_markdown",
+    "preview",
+    "preview_details",
+    "preview_rows",
+    "requirement_id",
+    "requirement_ledger_revision",
+    "risk_summary",
+    "selected_graph_tool_call",
+    "selected_graph_tool_decision_id",
+    "session_id",
+    "source_intent",
+    "staged_graph_tool_calls",
+    "staged_graph_tool_decision_ids",
+    "summary",
+}
+
+
+def _approval_form_args_for_tool_call(
+    card: HydratedToolCard,
+    call: GraphToolCall,
+) -> dict[str, Any]:
+    allowed = _tool_input_arg_names(card)
+    return {
+        key: value
+        for key, value in call.args.items()
+        if key in allowed and key not in _APPROVAL_PAYLOAD_RESERVED_KEYS and value not in (None, "", [], {})
+    }
+
+
+def _tool_call_with_approved_args(
+    state: PlannerOwnedAgentGraphState,
+    call: GraphToolCall,
+    approved_args: Any,
+) -> GraphToolCall:
+    if not isinstance(approved_args, Mapping) or not approved_args:
+        return call
+    card = _hydrated_card_for_tool_call(state, call)
+    if card is None:
+        return call
+    allowed = _tool_input_arg_names(card)
+    filtered = {
+        key: value
+        for key, value in approved_args.items()
+        if key in allowed and key not in _APPROVAL_PAYLOAD_RESERVED_KEYS and value not in (None, "", [], {})
+    }
+    if not filtered:
+        return call
+    return call.model_copy(update={"args": {**dict(call.args), **filtered}})
+
+
+def _tool_input_arg_names(card: HydratedToolCard) -> set[str]:
+    properties = card.input_schema.get("properties", {}) if isinstance(card.input_schema, Mapping) else {}
+    names = {str(name) for name in properties if str(name)}
+    names.update(str(name) for name in card.required_args if str(name))
+    names.update(str(name) for name in card.path_params if str(name))
+    names.update(str(name) for name in card.query_params if str(name))
+    for key in ("body_fields", "required_body_fields"):
+        value = card.metadata.get(key)
+        if isinstance(value, list):
+            names.update(str(name) for name in value if str(name))
+    return names
 
 
 def _record_graph_resume_no_pending_approval(

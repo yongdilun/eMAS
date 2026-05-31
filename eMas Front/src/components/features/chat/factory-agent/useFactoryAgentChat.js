@@ -149,8 +149,11 @@ export function useFactoryAgentChat() {
   const [isCancelling, setIsCancelling] = useState(false)
   const [error, setError] = useState(null)
   const [pendingApproval, setPendingApproval] = useState(null)
+  const [pendingInteraction, setPendingInteraction] = useState(null)
   const [approvalReason, setApprovalReason] = useState('')
   const [isDecidingApproval, setIsDecidingApproval] = useState(false)
+  const [isDecidingInteraction, setIsDecidingInteraction] = useState(false)
+  const [decidingInteractionDecision, setDecidingInteractionDecision] = useState(null)
   const [isPollingSession, setIsPollingSession] = useState(false)
   const [isRetryingConnection, setIsRetryingConnection] = useState(false)
   const [resumeHint, setResumeHint] = useState(null)
@@ -166,6 +169,7 @@ export function useFactoryAgentChat() {
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
+  const lastSnapshotRef = useRef(null)
   const responseDocumentStateRef = useRef(createResponseDocumentReducerState())
   const {
     clientProgress,
@@ -206,6 +210,22 @@ export function useFactoryAgentChat() {
     return id
   }, [])
 
+  const appendOptimisticAssistantMessage = useCallback((content) => {
+    const id = `optimistic-assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setOptimisticMessages((prev) => [
+      ...prev,
+      {
+        id,
+        role: 'assistant',
+        eventType: 'session_completed',
+        content,
+        timestamp: nowTime(),
+        createdAt: new Date().toISOString(),
+      },
+    ])
+    return id
+  }, [])
+
   const applySnapshot = useCallback((snapshot, meta = {}) => {
     const requestedSessionId = meta?.requestedSessionId ?? null
     const nextSession = snapshot?.session || null
@@ -229,15 +249,9 @@ export function useFactoryAgentChat() {
       transport: meta?.transport || 'snapshot',
     })
     responseDocumentStateRef.current = responseDocumentUpdate.state
-    const canApplySnapshotWithCurrentDocument = [
-      'ignored_duplicate_revision',
-      'ignored_absent_after_response_document',
-    ].includes(responseDocumentUpdate.decision)
-    if (!responseDocumentUpdate.accepted && !canApplySnapshotWithCurrentDocument) {
-      return null
-    }
 
     lastSnapshotSessionIdRef.current = sid
+    lastSnapshotRef.current = snapshot
 
     setSession(nextSession)
     setPlan(snapshot?.plan || null)
@@ -264,6 +278,7 @@ export function useFactoryAgentChat() {
           'EXECUTING',
           'WAITING_APPROVAL',
           'WAITING_CONFIRMATION',
+          'WAITING_USER_ACTION',
         ].includes(nextSession?.status)
 
         let result
@@ -283,7 +298,7 @@ export function useFactoryAgentChat() {
               byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
             }
             const merged = Array.from(byId.values()).sort(compareActivitySteps)
-            result = coalesceActivitySteps(merged)
+            result = stripPrematureTerminalActivitySteps(coalesceActivitySteps(merged), nextSession?.status)
           } else {
             // Session no longer in an active stream: drop client placeholder rows so a
             // stale `client_activity_pending` "Reviewing results..." cannot sit after
@@ -319,7 +334,7 @@ export function useFactoryAgentChat() {
                 byId.set(s.id, { ...s })
               }
               const merged = Array.from(byId.values()).sort(compareActivitySteps)
-              result = coalesceActivitySteps(merged)
+              result = stripPrematureTerminalActivitySteps(coalesceActivitySteps(merged), nextSession?.status)
             } else {
               result = finalizeHistoricalActivityStates(built)
             }
@@ -347,6 +362,7 @@ export function useFactoryAgentChat() {
     // The snapshot loader self-heals stale approvals, so we trust it directly.
     const serverPending = snapshot?.pending_approval || null
     setPendingApproval(serverPending)
+    setPendingInteraction(snapshot?.pending_interaction || null)
 
     // Server-derived resume hint replaces the isResumingAfterApproval client flag.
     setResumeHint(snapshot?.resume_hint || null)
@@ -373,9 +389,11 @@ export function useFactoryAgentChat() {
     responseDocumentStateRef.current = createResponseDocumentReducerState()
     setActivitySteps([])
     setPendingApproval(null)
+    setPendingInteraction(null)
     setResumeHint(null)
     bundleTableByApprovalIdRef.current.clear()
     lastSnapshotSessionIdRef.current = null
+    lastSnapshotRef.current = null
   }, [])
 
   const getStashedBundlePresentation = useCallback((approvalId) => {
@@ -431,7 +449,10 @@ export function useFactoryAgentChat() {
       if (idx >= 0) next[idx] = mergeLiveActivityStep(next[idx], incoming)
       else next.push(incoming)
       next.sort(compareActivitySteps)
-      return coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus))
+      return stripPrematureTerminalActivitySteps(
+        coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus)),
+        currentSessionStatus,
+      )
     })
     if (terminalActivity && currentSessionId) {
       window.setTimeout(() => {
@@ -472,6 +493,7 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+        FACTORY_AGENT_STATUS.WAITING_USER_ACTION,
       ].includes(session?.status))
 
   useActivityStream(session?.session_id || null, applyStreamActivityStep, {
@@ -487,6 +509,7 @@ export function useFactoryAgentChat() {
         FACTORY_AGENT_STATUS.EXECUTING,
         FACTORY_AGENT_STATUS.WAITING_APPROVAL,
         FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+        FACTORY_AGENT_STATUS.WAITING_USER_ACTION,
       ].includes(session?.status)),
   )
 
@@ -518,7 +541,8 @@ export function useFactoryAgentChat() {
     if (!session?.status) return null
     if (
       [FACTORY_AGENT_STATUS.PLANNING, FACTORY_AGENT_STATUS.EXECUTING,
-      FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION].includes(session.status)
+      FACTORY_AGENT_STATUS.WAITING_APPROVAL, FACTORY_AGENT_STATUS.WAITING_CONFIRMATION,
+      FACTORY_AGENT_STATUS.WAITING_USER_ACTION].includes(session.status)
     ) {
       return 3000
     }
@@ -670,7 +694,13 @@ export function useFactoryAgentChat() {
 
   const handleSend = useCallback(async (overrideText) => {
     const text = (overrideText ?? input).trim()
-    if (!text || sendingGuardRef.current || isSending || session?.status === FACTORY_AGENT_STATUS.PLANNING) return
+    if (
+      !text ||
+      sendingGuardRef.current ||
+      isSending ||
+      session?.status === FACTORY_AGENT_STATUS.PLANNING ||
+      session?.status === FACTORY_AGENT_STATUS.WAITING_USER_ACTION
+    ) return
     sendingGuardRef.current = true
 
     const optimisticId = appendOptimisticUserMessage(text)
@@ -803,10 +833,10 @@ export function useFactoryAgentChat() {
 
     try {
       if (decision === 'approve') {
-        const payload = { decided_by: DEFAULT_USER_ID }
-        if (argsOverride && typeof argsOverride === 'object') payload.args = argsOverride
         const snapshotApproval = activeApproval
         const resolvedId = snapshotApproval.approval_id
+        const payload = { decided_by: DEFAULT_USER_ID }
+        if (argsOverride && typeof argsOverride === 'object') payload.args = argsOverride
         // Optimistically clear the pending approval card immediately so the UI
         // does not re-show the stale card while the next snapshot arrives.
         setPendingApproval(null)
@@ -835,7 +865,11 @@ export function useFactoryAgentChat() {
             const hasPostApprovalResult = snapshotTimeline.some((event) => event?.event_type === 'tool_result')
             if (
               status &&
-              ![FACTORY_AGENT_STATUS.EXECUTING, FACTORY_AGENT_STATUS.WAITING_APPROVAL].includes(status) &&
+              ![
+                FACTORY_AGENT_STATUS.EXECUTING,
+                FACTORY_AGENT_STATUS.WAITING_APPROVAL,
+                FACTORY_AGENT_STATUS.WAITING_USER_ACTION,
+              ].includes(status) &&
               !snapshot?.pending_approval &&
               (status !== FACTORY_AGENT_STATUS.COMPLETED || !hasApprovalDecision || hasPostApprovalResult)
             ) {
@@ -862,6 +896,30 @@ export function useFactoryAgentChat() {
       setIsDecidingApproval(false)
     }
   }, [approvalReason, isDecidingApproval, pendingApproval, refreshSessionList, safelyRefreshSnapshot, session?.session_id])
+
+  const decideInteraction = useCallback(async (decision, interactionOverride = null, proposalIdsOverride = null) => {
+    const activeInteraction = interactionOverride?.interaction_id ? interactionOverride : pendingInteraction
+    const sessionId = activeInteraction?.session_id || session?.session_id
+    if (!sessionId || !activeInteraction?.interaction_id || isDecidingInteraction) return
+    setIsDecidingInteraction(true)
+    setDecidingInteractionDecision(decision)
+    setError(null)
+    try {
+      await factoryAgentApi.decideInteraction(sessionId, activeInteraction.interaction_id, {
+        decision,
+        decided_by: DEFAULT_USER_ID,
+        proposal_ids: Array.isArray(proposalIdsOverride) ? proposalIdsOverride : activeInteraction.proposal_ids || [],
+      })
+      setPendingInteraction(null)
+      await safelyRefreshSnapshot(sessionId)
+      await refreshSessionList()
+    } catch (err) {
+      setError(normalizeFactoryAgentError(err, 'Failed to submit reschedule decision'))
+    } finally {
+      setIsDecidingInteraction(false)
+      setDecidingInteractionDecision(null)
+    }
+  }, [isDecidingInteraction, pendingInteraction, refreshSessionList, safelyRefreshSnapshot, session?.session_id])
 
   const retryFromCurrent = useCallback(async () => {
     if (!session?.session_id) return
@@ -981,11 +1039,14 @@ export function useFactoryAgentChat() {
     error,
     streamDiagnostics,
     pendingApproval,
+    pendingInteraction,
     approvalReason,
     messageMode,
     setApprovalReason,
     setMessageMode,
     isDecidingApproval,
+    isDecidingInteraction,
+    decidingInteractionDecision,
     isPollingSession,
     resumeHint,
     isResumingAfterApproval: !!(resumeHint?.applying_after_approval),
@@ -996,6 +1057,7 @@ export function useFactoryAgentChat() {
     handleCancel,
     retryConnection,
     decideApproval,
+    decideInteraction,
     decideConfirmation,
     startNewSession,
     switchSession,
