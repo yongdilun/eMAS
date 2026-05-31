@@ -14,9 +14,27 @@ const DISPLAY_TIME_OPTIONS = {
   minute: '2-digit',
 }
 
+export function parseFactoryAgentTime(dateLike) {
+  if (dateLike instanceof Date) return dateLike
+  if (typeof dateLike === 'number') {
+    const millis = Math.abs(dateLike) < 1_000_000_000_000 ? dateLike * 1000 : dateLike
+    return new Date(millis)
+  }
+  if (typeof dateLike === 'string') {
+    const trimmed = dateLike.trim()
+    if (!trimmed) return new Date(NaN)
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      return parseFactoryAgentTime(Number(trimmed))
+    }
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)
+    return new Date(hasTimezone ? trimmed : `${trimmed}Z`)
+  }
+  return new Date(dateLike)
+}
+
 export function formatFactoryAgentTime(dateLike) {
   try {
-    const d = dateLike instanceof Date ? dateLike : new Date(dateLike)
+    const d = parseFactoryAgentTime(dateLike)
     if (Number.isNaN(d.getTime())) {
       return new Date().toLocaleTimeString(undefined, DISPLAY_TIME_OPTIONS)
     }
