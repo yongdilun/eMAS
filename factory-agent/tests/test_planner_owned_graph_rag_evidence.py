@@ -117,6 +117,21 @@ def _non_proving_source() -> dict[str, Any]:
     }
 
 
+def _csf_source(*, source_id: str, snippet: str) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "source_number": 1,
+        "doc_id": "nist_csf_2_0",
+        "chunk_id": source_id.rsplit("#", 1)[-1],
+        "title": "The NIST Cybersecurity Framework 2.0",
+        "organization": "NIST",
+        "snippet": snippet,
+        "page": 4,
+        "section_title": "Framework Core",
+        "text_search": snippet[:120],
+    }
+
+
 @pytest.mark.asyncio
 async def test_phase7_document_requirement_uses_graph_rag_tool_with_citation_evidence():
     rag = Phase7RAGPipeline(
@@ -165,6 +180,73 @@ async def test_phase7_document_requirement_uses_graph_rag_tool_with_citation_evi
     assert graph_action["legacy_shortcut_used"] is False
     assert graph_evidence["source_type"] == "rag_tool"
     assert graph_evidence["legacy_shortcut_used"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt", "answer", "source"),
+    [
+        (
+            "How do GOVERN and IDENTIFY relate in CSF 2.0?",
+            (
+                "GOVERN sets the governance context for cybersecurity risk management, while "
+                "IDENTIFY helps understand assets, suppliers, risks, and improvement opportunities; "
+                "IDENTIFY activities are shaped by the priorities and oversight established by GOVERN. [1]"
+            ),
+            _csf_source(
+                source_id="nist-csf-2-0#govern-identify",
+                snippet=(
+                    "The GOVERN Function establishes cybersecurity risk management strategy and oversight. "
+                    "The IDENTIFY Function helps determine current cybersecurity risks to systems, assets, "
+                    "data, suppliers, and capabilities, so IDENTIFY work is informed by GOVERN priorities."
+                ),
+            ),
+        ),
+        (
+            "In CSF 2.0, what is the difference between a Current Profile and a Target Profile?",
+            (
+                "A Current Profile describes the cybersecurity outcomes an organization is currently "
+                "achieving, while a Target Profile describes the outcomes it wants to achieve; the gap "
+                "between them guides improvement planning. [1]"
+            ),
+            _csf_source(
+                source_id="nist-csf-2-0#current-target-profile",
+                snippet=(
+                    "An Organizational Profile describes selected Framework Core outcomes. A Current "
+                    "Profile indicates outcomes currently being achieved, and a Target Profile indicates "
+                    "desired outcomes to achieve. Comparing them helps identify gaps."
+                ),
+            ),
+        ),
+    ],
+)
+async def test_csf_anchor_questions_run_real_graph_path_to_rag(prompt, answer, source):
+    rag = Phase7RAGPipeline(answer=answer, sources=[source])
+    graph, selector = _graph(rag)
+
+    result = await graph.run(prompt, session_context={"session_id": f"csf-anchor-{abs(hash(prompt))}"})
+
+    evidence = result.state.evidence_ledger.evidence[0]
+    requirement = result.state.requirement_ledger.requirements[0]
+    choose_decision = next(
+        decision for decision in result.state.planner_decisions if decision.decision_kind == "choose_tool"
+    )
+
+    assert selector.calls
+    assert rag.calls[0]["route"] == "RAG_ONLY"
+    assert requirement.goal == prompt
+    assert requirement.source_of_truth == "document_knowledge"
+    assert result.state.candidate_tool_windows[0].candidates[0].tool_name == "rag_search_documents"
+    assert choose_decision.selected_tool_call is not None
+    assert choose_decision.selected_tool_call.kind == "rag_tool"
+    assert choose_decision.selected_tool_call.tool_name == "rag_search_documents"
+    assert evidence.source_type == "rag_tool"
+    assert evidence.source_of_truth == "document_knowledge"
+    assert evidence.tool_name == "rag_search_documents"
+    assert evidence.normalized_result["answer"] == answer
+    assert result.state.response_document_context.state == "rendered"
+    assert result.state.response_document_context.evidence_refs == [evidence.id]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from factory_agent.rag.corpus_routing import match_corpus_document_route
+
 from ..schemas import Intent, ToolInfo
 from .intent import SemanticFrame, semantic_frame_for_text, split_user_intents
 from .semantic_intake import (
@@ -258,12 +260,16 @@ def build_requirement_sketch_for_text(
 ) -> RequirementSketch:
     capability_map = capability_map or CapabilityMap()
     aliases = capability_map.field_aliases
-    intents = _prepare_requirement_intents(split_user_intents(text), aliases)
+    split_intents = split_user_intents(text)
+    if _should_merge_back_corpus_document_query(text, split_intents):
+        split_intents = [_corpus_document_intent(text)]
+    intents = _prepare_requirement_intents(split_intents, aliases)
     semantic_intake = semantic_intake or propose_semantic_intake_for_text(
         text,
         proposer=semantic_intake_proposer,
         prepared_clauses=[intent.description for intent in intents],
     )
+    semantic_intake = _merge_back_corpus_document_semantic_intake(text, semantic_intake)
     intents_by_clause: dict[str, Intent] = {}
     for intent in intents:
         intents_by_clause.setdefault(intent.description, intent)
@@ -764,6 +770,67 @@ def _prepare_requirement_intents(intents: list[Intent], aliases: FieldAliases) -
     for intent in coalesced:
         prepared.extend(_expand_mixed_entity_intent(intent))
     return prepared
+
+
+def _should_merge_back_corpus_document_query(text: str, intents: list[Intent]) -> bool:
+    if len(intents) < 2:
+        return False
+    route = match_corpus_document_route(text)
+    if not route.is_match:
+        return False
+    frames = [semantic_frame_for_text(intent.description) for intent in intents if intent.description.strip()]
+    if not frames:
+        return False
+    if any(frame.route.startswith("tool.") or frame.requires_approval for frame in frames):
+        return False
+    return all(frame.route == "unknown" or frame.route.startswith("clarification.") for frame in frames)
+
+
+def _corpus_document_intent(text: str) -> Intent:
+    return Intent(
+        intent_id="intent-001-corpus-anchor",
+        description=str(text or "").strip(),
+        category="general",
+    )
+
+
+def _merge_back_corpus_document_semantic_intake(
+    text: str,
+    semantic_intake: SemanticIntakeResult,
+) -> SemanticIntakeResult:
+    normalized_text = _normalize_phrase(text)
+    if not normalized_text or not match_corpus_document_route(text).is_match:
+        return semantic_intake
+
+    work_items = [
+        item
+        for item in semantic_intake.items
+        if item.role in {"required_requirement", "mutation_or_approval_request", "clarification_need"}
+    ]
+    if len(work_items) == 1 and _normalize_phrase(work_items[0].text) == normalized_text:
+        return semantic_intake
+    if any(semantic_frame_for_text(item.text).route.startswith("tool.") for item in work_items):
+        return semantic_intake
+
+    return semantic_intake.model_copy(
+        update={
+            "items": [
+                SemanticIntakeItem(
+                    id="intake-001",
+                    role="required_requirement",
+                    text=str(text or "").strip(),
+                    reason="corpus_anchor_merge_back",
+                    diagnostics={"source": "full_query_corpus_anchor"},
+                )
+            ],
+            "diagnostics": {
+                **dict(semantic_intake.diagnostics),
+                "corpus_anchor_merge_back": True,
+                "corpus_anchor_original_item_texts": [item.text for item in semantic_intake.items],
+            },
+        },
+        deep=True,
+    )
 
 
 def _parent_requirement_id_for_intake_item(
@@ -1417,6 +1484,8 @@ def _source_for_frame(frame: SemanticFrame, clause: str) -> SourceOfTruth:
         return "document_knowledge"
     if frame.route.startswith("tool.") or frame.route in {"approval_action", "cancel_run"}:
         return "operational_state"
+    if match_corpus_document_route(clause).is_match:
+        return "document_knowledge"
     if frame.route.startswith("clarification.") and _DOC_HINT_RE.search(clause):
         return "document_knowledge"
     if frame.entity in {"machine", "job", "inventory", "product", "approval", "session"}:

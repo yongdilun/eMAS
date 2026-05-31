@@ -60,6 +60,43 @@ def test_split_multi_part_machine_then_schedule():
     assert any(str(c.value) == "001" or c.value == "001" for c in job_constraints)
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "How do GOVERN and IDENTIFY relate in CSF 2.0?",
+        "In CSF 2.0, what is the difference between a Current Profile and a Target Profile?",
+        "Compare lockout and tagout.",
+    ],
+)
+def test_relationship_and_comparison_document_questions_stay_one_clause(prompt):
+    intents = split_user_intents(prompt)
+
+    assert [intent.description for intent in intents] == [prompt]
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_clauses"),
+    [
+        (
+            "Show machine M-CNC-01 status and list active jobs.",
+            ["Show machine M-CNC-01 status", "list active jobs."],
+        ),
+        (
+            "Check M-CNC-01 status and create a maintenance task if it is down.",
+            ["Check M-CNC-01 status", "create a maintenance task if it is down."],
+        ),
+        (
+            "Show job JOB-SEED-001 and list its slots.",
+            ["Show job JOB-SEED-001", "list its slots."],
+        ),
+    ],
+)
+def test_independent_executable_and_clauses_still_split(prompt, expected_clauses):
+    intents = split_user_intents(prompt)
+
+    assert [intent.description for intent in intents] == expected_clauses
+
+
 def test_split_multi_part_dependencies_are_stable():
     q = "Find available CNC machines and then schedule job J-101 on 2026-05-15 with operator Alice"
     first = split_user_intents(q)

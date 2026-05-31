@@ -40,7 +40,30 @@ _QUESTION_RE = re.compile(
     re.IGNORECASE,
 )
 _CLAUSE_SPLIT_RE = re.compile(
-    r"\s*\b(?:and then|then|next(?!\s+\d)|after that|afterwards|finally)\b\s*|\s+\band\s+|\s+;\s*|\n+|(?<=[.!?])\s+(?=[A-Z])",
+    r"\s*\b(?:and then|then|next(?!\s+\d)|after that|afterwards|finally)\b\s*|\s+;\s*|\n+|(?<=[.!?])\s+(?=[A-Z])",
+    re.IGNORECASE,
+)
+_PLAIN_AND_RE = re.compile(r"\s+\band\s+", re.IGNORECASE)
+_RELATIONSHIP_COMPARISON_RE = re.compile(
+    r"\b(?:compare|contrast|differentiate)\b|"
+    r"\b(?:difference|differences|distinction)\s+between\b|"
+    r"\b(?:relationship|relation)\s+between\b|"
+    r"\brelat(?:e|es|ed|ing|ionship)\b|"
+    r"\bversus\b|\bvs\.?\b",
+    re.IGNORECASE,
+)
+_ANSWER_INSTRUCTION_START_RE = re.compile(
+    r"^\s*(?:explain|summari[sz]e|describe)\b",
+    re.IGNORECASE,
+)
+_APPROVAL_MODIFIER_RE = re.compile(
+    r"^\s*(?:ask|request|require)\b.*\bapproval\b",
+    re.IGNORECASE,
+)
+_ROUTABLE_OBJECT_HINT_RE = re.compile(
+    r"\b(?:approvals?|change|changes|condition|deadline|fields?|health|inventory|jobs?|"
+    r"machines?|materials?|priority|products?|reports?|schedule|slots?|status|tasks?|"
+    r"work\s*orders?)\b",
     re.IGNORECASE,
 )
 _MACHINE_ID_PATTERN = r"(?:M-[A-Z0-9]+(?:-[A-Z0-9]+)*\d[A-Z0-9-]*|[A-Z]{1,3}-\d{2,})"
@@ -253,7 +276,13 @@ def _split_clauses(text: str) -> list[str]:
     raw = (text or "").strip()
     if not raw:
         return []
-    parts = [p.strip(" \t,;") for p in _CLAUSE_SPLIT_RE.split(raw) if p and p.strip(" \t,;")]
+    hard_parts = [p.strip(" \t,;") for p in _CLAUSE_SPLIT_RE.split(raw) if p and p.strip(" \t,;")]
+    parts = [
+        part
+        for hard_part in hard_parts
+        for part in _split_plain_and_clauses(hard_part)
+        if part
+    ]
     if not parts:
         return [raw]
     merged: list[str] = []
@@ -263,6 +292,79 @@ def _split_clauses(text: str) -> list[str]:
         else:
             merged.append(part)
     return merged
+
+
+def _split_plain_and_clauses(clause: str) -> list[str]:
+    text = (clause or "").strip(" \t,;")
+    if not text or not _PLAIN_AND_RE.search(text):
+        return [text] if text else []
+    if _blocks_plain_and_split(text):
+        return [text]
+
+    for match in _PLAIN_AND_RE.finditer(text):
+        left = text[: match.start()].strip(" \t,;")
+        right = text[match.end() :].strip(" \t,;")
+        if not left or not right:
+            continue
+        if _should_split_plain_and(left, right):
+            return [
+                *_split_plain_and_clauses(left),
+                *_split_plain_and_clauses(right),
+            ]
+    return [text]
+
+
+def _blocks_plain_and_split(clause: str) -> bool:
+    if not _RELATIONSHIP_COMPARISON_RE.search(clause):
+        return False
+    if _ANSWER_INSTRUCTION_START_RE.match(clause):
+        return False
+    return True
+
+
+def _should_split_plain_and(left: str, right: str) -> bool:
+    if _blocks_plain_and_split(left) or _blocks_plain_and_split(right):
+        return False
+    if _is_bare_concept_continuation_clause(right):
+        return False
+    return _clause_side_looks_executable(left) and _clause_side_looks_executable(right)
+
+
+def _clause_side_looks_executable(clause: str) -> bool:
+    text = (clause or "").strip(" \t,;.?!")
+    if not text:
+        return False
+    if _ANSWER_INSTRUCTION_START_RE.match(text):
+        return True
+    if _APPROVAL_MODIFIER_RE.match(text):
+        return True
+    action_names = {name for name, pattern in _ACTION_PATTERNS if pattern.search(text)}
+    if not action_names:
+        return False
+    if action_names & {"create", "update", "delete", "approval"}:
+        return True
+    return bool(
+        _ROUTABLE_OBJECT_HINT_RE.search(text)
+        or _MACHINE_ID_RE.search(text)
+        or _BARE_JOB_ID_RE.search(text)
+        or _JOB_TOKEN_RE.search(text)
+        or _MATERIAL_REF_RE.search(text)
+        or _PRODUCT_RE.search(text)
+    )
+
+
+def _is_bare_concept_continuation_clause(clause: str) -> bool:
+    text = (clause or "").strip(" \t,;.?!")
+    if not text:
+        return True
+    if _ANSWER_INSTRUCTION_START_RE.match(text) or _APPROVAL_MODIFIER_RE.match(text):
+        return False
+    if any(pattern.search(text) for _name, pattern in _ACTION_PATTERNS):
+        return False
+    if re.search(r"\b(?:for|with|if|when|where|sorted|limit|only|fields?)\b", text, re.IGNORECASE):
+        return False
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]*", text)
+    return 1 <= len(words) <= 6
 
 
 def _is_entity_id_continuation_clause(clause: str) -> bool:
