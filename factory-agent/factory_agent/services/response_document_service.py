@@ -476,6 +476,10 @@ _SOURCE_PAGE_TEXT_RE = re.compile(
     r"\[Source page\s+(\d+)\s+text\]\s*(.*?)(?=\n\s*\[Source page\s+\d+\s+text\]|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
+_FRONT_MATTER_SECTION_RE = re.compile(
+    r"\b(?:abstract|background|executive\s+summary|front\s+matter|introduction|overview|preface|table\s+of\s+contents)\b",
+    re.IGNORECASE,
+)
 _CLAIM_TOKEN_STOPWORDS = {
     "according",
     "after",
@@ -741,6 +745,26 @@ def _evidence_text(evidence: dict[str, Any]) -> str:
     return " ".join(str(part or "") for part in parts)
 
 
+def _section_text(value: dict[str, Any]) -> str:
+    section_path = value.get("section_path")
+    if isinstance(section_path, list):
+        section_path = " ".join(str(part) for part in section_path if part)
+    return f"{value.get('section_title') or ''} {section_path or ''}"
+
+
+def _is_front_matter_evidence(evidence: dict[str, Any]) -> bool:
+    return bool(_FRONT_MATTER_SECTION_RE.search(_section_text(evidence)))
+
+
+def _citation_query_text(citation: dict[str, Any]) -> str:
+    parts = [
+        citation.get("query"),
+        citation.get("user_query"),
+        citation.get("question"),
+    ]
+    return " ".join(str(part or "") for part in parts)
+
+
 def _inherit_evidence_fields(
     child: dict[str, Any],
     parent: dict[str, Any],
@@ -872,6 +896,8 @@ def _claim_evidence_payload(
         "snippet": support_text or evidence.get("snippet") or evidence.get("text") or evidence.get("text_search"),
         "page": evidence.get("page") or citation.get("page"),
         "page_label": evidence.get("page_label") or citation.get("page_label"),
+        "section_title": evidence.get("section_title") or citation.get("section_title"),
+        "section_path": evidence.get("section_path") or citation.get("section_path"),
         "pdf_url": evidence.get("pdf_url") or citation.get("pdf_url"),
         "page_count": evidence.get("page_count") or citation.get("page_count"),
     }
@@ -892,25 +918,47 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
     claim_tokens = _claim_support_tokens(claim)
     if not claim_tokens:
         return []
+    query_tokens = _claim_support_tokens(_citation_query_text(citation))
 
-    scored: list[tuple[float, int, dict[str, Any]]] = []
+    scored: list[tuple[float, int, int, bool, dict[str, Any]]] = []
     for evidence in evidence_items:
         evidence_tokens = _claim_support_tokens(_evidence_text(evidence))
         overlap = len(claim_tokens & evidence_tokens)
-        if overlap <= 0:
+        query_overlap = len(query_tokens & evidence_tokens)
+        if overlap <= 0 and query_overlap <= 0:
             continue
         support_text = _support_text_from_evidence_snippet(claim, evidence)
         coverage = overlap / max(1, len(claim_tokens))
         locator = 1 if any(evidence.get(key) not in (None, "", [], {}) for key in ("char_range", "bbox", "text_search")) else 0
         score = (100.0 if support_text else 0.0) + 10.0 * locator + 5.0 * overlap + coverage
-        scored.append((score, overlap, evidence))
+        if query_tokens:
+            query_coverage = query_overlap / max(1, len(query_tokens))
+            score += 12.0 * query_overlap + 3.0 * query_coverage
+            if query_overlap >= min(2, len(query_tokens)):
+                score += 20.0
+        scored.append((score, overlap, query_overlap, _is_front_matter_evidence(evidence), evidence))
 
     if not scored:
         return []
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    has_better_context_candidate = any(
+        not is_front_matter and (query_overlap > 0 or overlap >= 2)
+        for _score, overlap, query_overlap, is_front_matter, _evidence in scored
+    )
+    if has_better_context_candidate:
+        scored = [
+            (
+                score - 120.0 if is_front_matter else score,
+                overlap,
+                query_overlap,
+                is_front_matter,
+                evidence,
+            )
+            for score, overlap, query_overlap, is_front_matter, evidence in scored
+        ]
+    scored.sort(key=lambda item: (item[0], item[2], item[1], not item[3]), reverse=True)
     payloads: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for _score, _overlap, evidence in scored:
+    for _score, _overlap, _query_overlap, _is_front_matter, evidence in scored:
         payload = _claim_evidence_payload(
             claim_text=claim_text,
             evidence=evidence,
@@ -946,9 +994,11 @@ def _filter_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict
         return payloads
 
     non_parent_exact = [payload for payload in exact_payloads if not _is_expanded_parent_payload(payload)]
-    if non_parent_exact:
-        return _dedupe_claim_evidence_payloads(non_parent_exact)
-    return _dedupe_claim_evidence_payloads(exact_payloads)
+    best_exact = non_parent_exact or exact_payloads
+    non_front_matter_exact = [payload for payload in best_exact if not _is_front_matter_evidence(payload)]
+    if non_front_matter_exact:
+        return _dedupe_claim_evidence_payloads(non_front_matter_exact)
+    return _dedupe_claim_evidence_payloads(best_exact)
 
 
 def _is_expanded_parent_payload(payload: dict[str, Any]) -> bool:
@@ -1108,6 +1158,9 @@ def _citation_payload(source: dict[str, Any]) -> dict[str, Any]:
         "supporting_pages",
         "supporting_sections",
         "evidence_snippets",
+        "query",
+        "user_query",
+        "question",
         "policy_only",
         "source_kind",
     ):

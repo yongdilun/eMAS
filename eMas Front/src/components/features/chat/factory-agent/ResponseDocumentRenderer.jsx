@@ -1982,6 +1982,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, selecte
     ? block.segments
     : [{ text: safeText(block.answer), citation_ids: blockCitations.map((citation) => citationKey(citationFromSource(citation))).filter(Boolean) }]
   const procedureStepSegments = segments.length > 1 && segments.every((segment) => /^\s*\d+[\.)]\s+/.test(safeText(segment.text)))
+  const fallbackTitle = procedureStepSegments ? 'Procedure guidance' : 'Source-backed answer'
   const exactSelectedCitationId = safeText(selectedCitationId)
   const blockHasExactSelectedCitation = Boolean(
     exactSelectedCitationId &&
@@ -1989,7 +1990,7 @@ function KnowledgeAnswerBlock({ block, sourceLookup, selectedSourceKeys, selecte
   )
   return (
     <CompactCard
-      title={block.title || 'Procedure guidance'}
+      title={block.title || fallbackTitle}
       blockType="knowledge_answer"
       blockId={block.id}
       contract={block.contract || 'knowledge_answer_v1'}

@@ -1,5 +1,6 @@
 import pytest
 import json
+import re
 from unittest.mock import MagicMock, patch
 from factory_agent.rag.schemas import Chunk, ScoredChunk, AnswerResult
 from factory_agent.rag.generation import AnswerGenerator, SAFETY_WARNING_BLOCK, extract_explicit_procedure_evidence
@@ -1257,6 +1258,46 @@ def test_generate_uses_extractive_relationship_when_repair_still_falls_back(
     assert result.answer != insufficient_context_answer(has_sources=True)
     assert result.metadata["generation_validation"]["repair_reason"] == "answer_negates_matching_retrieved_evidence"
     assert result.metadata["generation_validation"]["extractive_relationship_answer"] is True
+
+
+@patch("factory_agent.rag.generation.build_rag_answer_chat_model")
+def test_generate_repairs_overinterpreted_relationship_language(mock_build_llm, mock_settings):
+    chunk = Chunk(
+        chunk_id="framework_core_c009",
+        text=(
+            "The PLANNING function establishes risk strategy and mission priorities. "
+            "PLANNING priorities inform INVENTORY scoping. "
+            "The INVENTORY function identifies assets, suppliers, and related risks consistent "
+            "with the strategy and mission needs established under PLANNING."
+        ),
+        metadata={
+            "doc_id": "framework-guide",
+            "title": "Framework Guide",
+            "organization": "Standards Body",
+            "authority_level": "official_public_guidance",
+            "domain": "governance",
+            "subdomain": "framework",
+            "risk_level": "low",
+            "license": "public",
+            "version": "1.0",
+            "retrieved_date": "2026-05-25",
+            "section_title": "PLANNING and INVENTORY",
+        },
+    )
+    response = MagicMock()
+    response.content = "PLANNING is foundational for INVENTORY because it enables INVENTORY to manage assets and risks [^1]."
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = response
+    mock_build_llm.return_value = mock_llm
+
+    generator = AnswerGenerator(mock_settings)
+    result = generator.generate("How do PLANNING and INVENTORY relate in this framework?", [chunk])
+
+    assert "foundational" not in result.answer.lower()
+    assert not re.search(r"\benabl\w*\b.{0,80}\bmanag\w*\b", result.answer, flags=re.IGNORECASE)
+    assert "inform INVENTORY scoping" in result.answer
+    assert "identifies assets, suppliers" in result.answer
+    assert result.metadata["generation_validation"]["relationship_language_repaired"] is True
 
 
 @patch("factory_agent.rag.generation.build_rag_answer_chat_model")

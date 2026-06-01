@@ -118,6 +118,19 @@ NEGATES_RETRIEVED_EVIDENCE_RE = re.compile(
     re.IGNORECASE,
 )
 
+RELATIONSHIP_FOUNDATIONAL_RE = re.compile(
+    r"\b(?:foundational\s+(?:for|to)|foundation\s+(?:for|of)|the\s+foundation\s+(?:for|of))\b",
+    re.IGNORECASE,
+)
+RELATIONSHIP_FOUNDATIONAL_EVIDENCE_RE = re.compile(
+    r"\b(?:foundational\s+(?:for|to)|foundation\s+(?:for|of)|basis\s+(?:for|of)|the\s+foundation\s+(?:for|of))\b",
+    re.IGNORECASE,
+)
+RELATIONSHIP_ENABLES_MANAGE_RE = re.compile(
+    r"\benabl(?:e|es|ed|ing)\b.{0,120}\bmanag(?:e|es|ed|ing|ement)\b",
+    re.IGNORECASE,
+)
+
 ANSWER_PROMPT = """
 You are eMAS Assistant, an expert in industrial maintenance, safety, and operations.
 
@@ -146,6 +159,7 @@ If the context does not prove the answer, respond exactly with:
 - For section summaries or multi-part questions, cover every major dimension that the retrieved evidence supports, including purpose, scope, hierarchy, relationships, limitations, and named items.
 - For list questions that ask for a specific number of items, include all supported items and preserve visible item labels or headings when the context provides them.
 - For comparison questions, define each named concept separately before explaining the difference or relationship.
+- For relationship or comparison questions, keep relationship verbs as close as possible to the source wording. Do not call one concept "foundational for" another, or say one concept "enables" another to "manage" something, unless that stronger relationship is explicitly stated in the context.
 - For safety procedures, answer from the retrieved procedure evidence when it exists, include every required procedural category the evidence states, and rely on the structured safety warning outside the answer.
 - For OSHA or other static safety checklist questions that ask what checks, areas, items, or training requirements are listed, treat the question as descriptive document recall. Answer from the checklist evidence with citations; do not refuse unless the user asks for live permission, live machine status, current compliance certification, or operational authorization.
 - If the user asks you to certify, attest, declare, approve, sign off, confirm compliance, write compliance/sign-off language, say the user passed, or prove a current compliant/secure/safe state from static retrieved text, refuse that certification boundary. You may summarize what the retrieved checklist/manual evidence says, but clearly state that the answer cannot certify current compliance or replace qualified safety/compliance review.
@@ -193,6 +207,7 @@ The retrieved context has relevant evidence for the user's question, so do not o
 - Do not add uncited safety warnings, conclusions, source titles, footnote definitions, or bibliographies.
 - If evidence is split across chunks from the same source, synthesize it into a complete cited answer.
 - For section summaries, list/group questions, comparisons, and procedures, include all supported dimensions and required categories.
+- For relationship or comparison questions, preserve the source's relationship wording. Avoid stronger inferred labels such as "foundational for" or "enables X to manage Y" unless those phrases are explicitly supported by the context.
 - For procedures, output a flat numbered list and cite each step.
 - If the user asks for a specific number of listed items, include that many supported items and preserve item labels or headings.
 - For OSHA or other static checklist questions, answer the listed checks descriptively from the document. Keep live-action permission, machine status, compliance certification, and unsupported current-state claims out of the answer.
@@ -573,18 +588,47 @@ class AnswerGenerator:
             answer=validation.answer or answer,
             doc_chunks=doc_chunks,
         )
+        relationship_language_reason = _unsupported_relationship_language_issue(
+            query=query,
+            answer=validation.answer or answer,
+            doc_chunks=doc_chunks,
+        )
         if validation.valid and not validation.insufficient_context:
-            if not completeness_reason:
+            if not completeness_reason and not relationship_language_reason:
                 return validation.answer, sources, metadata
 
         repair_reason = None
-        if completeness_reason:
+        if relationship_language_reason and not _is_boundary_query(query):
+            metadata["repair_attempted"] = True
+            metadata["repair_reason"] = relationship_language_reason
+            relationship_answer = _extractive_supported_relationship_answer(
+                query=query,
+                doc_order=doc_order,
+                doc_chunks=doc_chunks,
+            )
+            if relationship_answer:
+                relationship_sources = self._build_sources_for_answer(
+                    query=query,
+                    answer=relationship_answer,
+                    doc_order=doc_order,
+                    doc_chunks=doc_chunks,
+                )
+                relationship_validation = validate_knowledge_answer(relationship_answer, relationship_sources)
+                if relationship_validation.valid and not relationship_validation.insufficient_context:
+                    metadata["repair_valid"] = True
+                    metadata["repair_failure_reason"] = None
+                    metadata["relationship_language_repaired"] = True
+                    metadata["extractive_relationship_answer"] = True
+                    return relationship_validation.answer, relationship_sources, metadata
+            if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
+                repair_reason = relationship_language_reason
+        if repair_reason is None and completeness_reason:
             if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
                 repair_reason = completeness_reason
-        elif validation.insufficient_context:
+        elif repair_reason is None and validation.insufficient_context:
             if self._should_repair_generation(query=query, doc_chunks=doc_chunks):
                 repair_reason = "insufficient_context_with_matching_evidence"
-        elif self._should_repair_generation(query=query, doc_chunks=doc_chunks):
+        elif repair_reason is None and self._should_repair_generation(query=query, doc_chunks=doc_chunks):
             repair_reason = validation.reason or "invalid_answer_with_matching_evidence"
 
         if repair_reason:
@@ -975,6 +1019,7 @@ class AnswerGenerator:
             supporting_pages=self._supporting_pages(support_chunks or [chunk]),
             supporting_sections=self._supporting_sections(support_chunks or [chunk]),
             evidence_snippets=self._evidence_snippets(support_chunks or [chunk], source_number=source_number),
+            query=query,
         )
 
     def _select_representative_source_chunk(self, *, query: str, answer: str, chunks: List[Chunk]) -> Chunk:
@@ -2354,6 +2399,30 @@ def _has_matching_retrieved_evidence(*, query: str, doc_chunks: dict[str, list[C
             return True
 
     return best_overlap >= 1 and len(query_tokens) <= 2
+
+
+def _unsupported_relationship_language_issue(
+    *,
+    query: str,
+    answer: str,
+    doc_chunks: dict[str, list[Chunk]],
+) -> str | None:
+    if not _is_extractive_relationship_query(query):
+        return None
+    clean_answer = sanitize_rag_answer_text(answer)
+    if not clean_answer or is_insufficient_context_answer(clean_answer):
+        return None
+
+    evidence_text = " ".join(
+        _chunk_text_with_metadata_for_support(chunk)
+        for chunks in doc_chunks.values()
+        for chunk in chunks
+    )
+    if RELATIONSHIP_FOUNDATIONAL_RE.search(clean_answer) and not RELATIONSHIP_FOUNDATIONAL_EVIDENCE_RE.search(evidence_text):
+        return "relationship_language_overstates_foundation"
+    if RELATIONSHIP_ENABLES_MANAGE_RE.search(clean_answer) and not RELATIONSHIP_ENABLES_MANAGE_RE.search(evidence_text):
+        return "relationship_language_overstates_enablement"
+    return None
 
 
 def _summary_breadth_completeness_issue(

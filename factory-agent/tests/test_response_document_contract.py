@@ -3717,6 +3717,85 @@ def test_knowledge_answer_payload_treats_brse_parent_as_context_when_exact_child
     assert all(item["page"] == 8 for item in citation["evidence"])
 
 
+def test_knowledge_answer_payload_prefers_query_rich_evidence_over_front_matter():
+    claim = "One function establishes priorities; the other identifies assets and suppliers consistent with mission needs."
+    source = {
+        "source_number": 1,
+        "source_id": "framework-guide#relationship",
+        "doc_id": "framework-guide",
+        "chunk_id": "framework_background",
+        "title": "Framework Guide",
+        "organization": "Standards Body",
+        "query": "How do PLANNING and INVENTORY relate in this framework?",
+        "snippet": claim,
+        "text_search": claim,
+        "page": 2,
+        "pdf_url": "/documents/framework-guide/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "framework-guide",
+                "chunk_id": "framework_background",
+                "section_title": "Abstract",
+                "page": 2,
+                "pdf_url": "/documents/framework-guide/pdf",
+                "snippet": claim,
+                "text_search": claim,
+            },
+            {
+                "source_number": 1,
+                "doc_id": "framework-guide",
+                "chunk_id": "brse:framework-guide:01:planning-inventory",
+                "section_title": "Framework Core",
+                "page": 9,
+                "pdf_url": "/documents/framework-guide/pdf",
+                "snippet": "PLANNING and INVENTORY relationship context.",
+                "source_chunk_evidence": [
+                    {
+                        "source_number": 1,
+                        "doc_id": "framework-guide",
+                        "chunk_id": "planning_inventory_core",
+                        "section_title": "PLANNING and INVENTORY",
+                        "section_path": ["Framework Core", "PLANNING and INVENTORY"],
+                        "page": 9,
+                        "pdf_url": "/documents/framework-guide/pdf",
+                        "snippet": (
+                            "PLANNING and INVENTORY relationship: One function establishes priorities; "
+                            "the other identifies assets and suppliers consistent with mission needs."
+                        ),
+                        "text_search": claim,
+                    },
+                    {
+                        "source_number": 1,
+                        "doc_id": "FRAMEWORK-GUIDE",
+                        "chunk_id": "planning_inventory_core",
+                        "section_title": "PLANNING and INVENTORY",
+                        "page": 9,
+                        "pdf_url": "/documents/framework-guide/pdf",
+                        "snippet": (
+                            "PLANNING and INVENTORY relationship: One function establishes priorities; "
+                            "the other identifies assets and suppliers consistent with mission needs."
+                        ),
+                        "text_search": claim,
+                    },
+                ],
+            },
+        ],
+    }
+    answer = f"{claim}[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["chunk_id"] == "planning_inventory_core"
+    assert citation["page"] == 9
+    assert citation["section_title"] == "PLANNING and INVENTORY"
+    assert citation["text_search"] == claim.rstrip(".")
+    assert [item["chunk_id"] for item in citation["evidence"]] == ["planning_inventory_core"]
+    assert all(not str(item["chunk_id"]).startswith("brse:") for item in citation["evidence"])
+
+
 def test_knowledge_answer_payload_keeps_multiple_verified_evidence_items_for_compound_claim():
     source = {
         "source_number": 1,

@@ -1885,6 +1885,75 @@ test('FactoryAgentChatPanel renders RAG source block from response_document type
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel labels non-procedure RAG answers as source-backed answers', async () => {
+  const relationshipAnswer = 'GOVERN informs risk priorities, while IDENTIFY describes assets, suppliers, and related risks.'
+  const procedureAnswer = '1. Prepare for shutdown.\n2. Shut down the machine.'
+  const relationshipCitation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:framework-relationship',
+    source_id: 'framework-relationship',
+    source_number: 1,
+    title: 'Framework Guide',
+    doc_id: 'framework-guide',
+    chunk_id: 'chunk-relationship',
+    organization: 'Standards Body',
+    snippet: relationshipAnswer,
+  }
+  const procedureCitation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:procedure',
+    source_id: 'procedure',
+    source_number: 2,
+    title: 'Procedure Guide',
+    doc_id: 'procedure-guide',
+    chunk_id: 'chunk-procedure',
+    organization: 'Safety Team',
+    snippet: 'Prepare for shutdown. Shut down the machine.',
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'knowledge:relationship',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: relationshipAnswer,
+        segments: [{ text: relationshipAnswer, citation_ids: [relationshipCitation.citation_id] }],
+        citations: [relationshipCitation],
+      },
+      {
+        id: 'knowledge:procedure',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: procedureAnswer,
+        segments: [
+          { text: '1. Prepare for shutdown.', citation_ids: [procedureCitation.citation_id] },
+          { text: '2. Shut down the machine.', citation_ids: [procedureCitation.citation_id] },
+        ],
+        citations: [procedureCitation],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-answer-label', name: 'RD answer label', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-answer-label', name: 'RD answer label', status: 'COMPLETED' }],
+    activeSessionName: 'RD answer label',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /GOVERN informs risk priorities/))
+  const relationshipCard = view.container.querySelector('[data-response-block-id="knowledge:relationship"]')
+  const procedureCard = view.container.querySelector('[data-response-block-id="knowledge:procedure"]')
+  assert.ok(relationshipCard)
+  assert.ok(procedureCard)
+  assert.match(relationshipCard.textContent || '', /Source-backed answer/)
+  assert.doesNotMatch(relationshipCard.textContent || '', /Procedure guidance/)
+  assert.match(procedureCard.textContent || '', /Procedure guidance/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel keeps repeated source-chip hover to one tooltip', async () => {
   const citationId = 'citation:LOTO-M-CNC-01#chunk-1'
   const rd = baseResponseDocument({

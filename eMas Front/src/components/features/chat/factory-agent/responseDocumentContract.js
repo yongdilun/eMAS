@@ -317,7 +317,7 @@ function defaultBlockTitle(type) {
   if (type === 'result_table') return 'Affected records'
   if (type === 'status_result') return 'Status'
   if (type === 'record_preview') return 'Records'
-  if (type === 'knowledge_answer') return 'Procedure guidance'
+  if (type === 'knowledge_answer') return ''
   if (type === 'safety_notice') return 'Safety notice'
   if (type === 'source_list') return 'Knowledge sources'
   if (type === 'diagnostic') return 'Needs attention'
