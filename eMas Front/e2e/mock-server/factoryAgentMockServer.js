@@ -414,7 +414,12 @@ function sendJson(req, url, res, status, body, logMeta = {}) {
 }
 
 function pdfFixtureBytes(label = 'Factory Agent PDF evidence') {
-  const safeLabel = String(label).replace(/[()\\]/g, ' ')
+  const searchableEvidence = [
+    'After removing the lockout or tagout devices but before reenergizing the machine',
+    'Before lockout or tagout devices are removed and energy is restored',
+    'Affected employees must be notified by the employer before lockout or tagout devices are applied.',
+  ].join(' ')
+  const safeLabel = `${searchableEvidence} ${String(label)}`.replace(/[()\\]/g, ' ')
   const stream = `BT /F1 12 Tf 24 100 Td (${safeLabel}) Tj ET`
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',

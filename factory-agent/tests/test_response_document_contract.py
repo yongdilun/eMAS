@@ -3415,6 +3415,53 @@ def test_knowledge_answer_payload_drops_stale_exact_locator_for_extracted_suppor
     assert "bbox" not in citation["evidence"][0]
 
 
+def test_knowledge_answer_payload_extracts_search_locator_for_paraphrased_claim_without_reusing_stale_coordinates():
+    source_sentence = (
+        "The CSF Core Functions - GOVERN, IDENTIFY, PROTECT, DETECT, RESPOND, and RECOVER - "
+        "organize cybersecurity outcomes at their highest level."
+    )
+    stale_locator = "Category, and finally Subcategory, as depicted in Fig. 1."
+    source = {
+        "source_number": 1,
+        "source_id": "nist_csf_2_0#c0012",
+        "doc_id": "nist_csf_2_0",
+        "chunk_id": "nist_csf_2_0_c0012",
+        "title": "The NIST Cybersecurity Framework (CSF) 2.0",
+        "organization": "NIST",
+        "query": "What are the CSF Core Functions?",
+        "snippet": f"{stale_locator} {source_sentence}",
+        "page": 8,
+        "pdf_url": "/documents/nist_csf_2_0/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "nist_csf_2_0",
+                "chunk_id": "nist_csf_2_0_c0012",
+                "page": 8,
+                "pdf_url": "/documents/nist_csf_2_0/pdf",
+                "snippet": f"{stale_locator} {source_sentence}",
+                "text_search": stale_locator,
+                "char_range": [100, 154],
+                "bbox": [18, 30, 280, 45],
+            }
+        ],
+    }
+    answer = "NIST says the CSF Core Functions organize high-level cybersecurity outcomes.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["page"] == 8
+    assert citation["text_search"] == source_sentence.rstrip(".")
+    assert citation["evidence"][0]["locator_confidence"] == "exact"
+    assert citation["evidence"][0]["text_search"] == source_sentence.rstrip(".")
+    assert "char_range" not in citation
+    assert "bbox" not in citation
+    assert "char_range" not in citation["evidence"][0]
+    assert "bbox" not in citation["evidence"][0]
+
+
 def test_knowledge_answer_payload_preserves_exact_locator_when_it_matches_support_text():
     support_sentence = "ALPHA informs risk priorities while BETA identifies assets and supplier risks."
     source = {

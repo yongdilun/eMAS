@@ -575,7 +575,8 @@ function sourceOpenTarget(source) {
   const url = resolvePdfUrl(source?.pdf_url || source?.pdfUrl)
   if (!url) return { mode: 'drawer', href: null, highlightKind: null }
   const page = safeText(source?.page)
-  if (source?.reference_only || source?.referenceOnly) {
+  const expandedParentWithoutVisibleEvidence = isExpandedParentEvidence(source) && !visibleEvidenceItemsFromSource(source).length
+  if (source?.reference_only || source?.referenceOnly || expandedParentWithoutVisibleEvidence) {
     if (page) return { mode: 'page', href: appendPdfFragment(url, { page }), highlightKind: null }
     return { mode: 'pdf', href: url, highlightKind: null }
   }

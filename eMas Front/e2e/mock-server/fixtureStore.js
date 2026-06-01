@@ -81,6 +81,7 @@ import {
   cascadeWaitingDocument,
   closedApprovalDocument,
   collapsedResultsDocument,
+  expandedParentPageOnlyDocument,
   jobStatusDocument,
   lotoDocument,
   lotoNotificationDocument,
@@ -89,6 +90,7 @@ import {
   multiStatusDocument,
   oshaReenergizingDocument,
   sourcePdfLocatorDocument,
+  textSearchPdfLocatorDocument,
   noResultsDocument,
   partialFailureDocument,
   partialNoOpApprovalPayload,
@@ -103,6 +105,7 @@ import {
   responseDocumentCascadePrompt,
   responseDocumentCompatibilityPrompt,
   responseDocumentExpiredApprovalPrompt,
+  responseDocumentExpandedParentPageOnlyPrompt,
   responseDocumentJobStatusPrompt,
   responseDocumentLotoPrompt,
   responseDocumentLotoNotificationPrompt,
@@ -111,6 +114,7 @@ import {
   responseDocumentMultiStatusPrompt,
   responseDocumentOshaReenergizingPrompt,
   responseDocumentSourcePdfPrompt,
+  responseDocumentTextSearchPdfPrompt,
   responseDocumentNoResultsPrompt,
   responseDocumentPartialNoOpPrompt,
   responseDocumentPartialFailurePrompt,
@@ -1100,6 +1104,22 @@ export const scenarioCatalog = {
     operationId: 'pw-plan-rd-source-pdf',
     objective: 'Render response_document source PDF locator and highlight evidence.',
     buildDocument: sourcePdfLocatorDocument,
+  }),
+
+  responseDocumentTextSearchPdfLocator: responseDocumentCompletionScenario({
+    name: 'responseDocumentTextSearchPdfLocator',
+    prompt: responseDocumentTextSearchPdfPrompt,
+    operationId: 'pw-plan-rd-text-search-pdf',
+    objective: 'Render response_document source PDF text-search locator and highlight evidence.',
+    buildDocument: textSearchPdfLocatorDocument,
+  }),
+
+  responseDocumentExpandedParentPageOnly: responseDocumentCompletionScenario({
+    name: 'responseDocumentExpandedParentPageOnly',
+    prompt: responseDocumentExpandedParentPageOnlyPrompt,
+    operationId: 'pw-plan-rd-expanded-parent-page-only',
+    objective: 'Render response_document expanded parent PDF source as page-only.',
+    buildDocument: expandedParentPageOnlyDocument,
   }),
 
   responseDocumentNoResults: responseDocumentCompletionScenario({

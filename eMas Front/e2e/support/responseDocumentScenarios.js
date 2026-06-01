@@ -16,6 +16,9 @@ export const responseDocumentLotoNotificationPrompt = responseDocumentOshaUnsupp
 export const responseDocumentMixedOperationRagPrompt =
   'Show M-CNC-01 status and OSHA lockout/tagout reenergizing notification guidance as separate sections'
 export const responseDocumentSourcePdfPrompt = 'Render response_document source PDF highlight fixture'
+export const responseDocumentTextSearchPdfPrompt = 'Render response_document source PDF text-search highlight fixture'
+export const responseDocumentExpandedParentPageOnlyPrompt =
+  'Render response_document expanded parent PDF page-only fixture'
 export const responseDocumentNoResultsPrompt = 'Find response_document jobs that do not exist'
 export const responseDocumentPartialFailurePrompt = 'Run response_document partial failure fixture'
 export const responseDocumentTimeoutPrompt = 'Run response_document planner timeout fixture'
@@ -1358,6 +1361,157 @@ export function sourcePdfLocatorDocument(session) {
     invariants: {
       source_locator_contract: SOURCE_LOCATOR_CONTRACT,
       pdf_source_locator: true,
+    },
+  })
+}
+
+export function textSearchPdfLocatorDocument(session) {
+  const answer = 'The cited LOTO source opens with a claim-specific text-search highlight.'
+  const textSearch = 'After removing the lockout'
+  const citation = {
+    contract: SOURCE_CITATION_CONTRACT,
+    citation_id: 'citation:osha_3120_lockout_tagout#text-search-claim',
+    source_id: 'osha_3120_lockout_tagout#text-search-claim',
+    source_number: 1,
+    title: 'Control of Hazardous Energy Lockout/Tagout',
+    doc_id: 'osha_3120_lockout_tagout',
+    chunk_id: 'osha_3120_lockout_tagout_c0029',
+    organization: 'OSHA',
+    snippet: textSearch,
+    pdf_url: '/documents/osha_3120_lockout_tagout/pdf',
+    page: 15,
+    text_search: textSearch,
+    evidence: [
+      {
+        contract: 'source_evidence_v1',
+        evidence_id: 'citation:osha_3120_lockout_tagout#text-search-claim:evidence-1',
+        source_id: 'osha_3120_lockout_tagout#text-search-claim:evidence-1',
+        source_number: 1,
+        title: 'Control of Hazardous Energy Lockout/Tagout',
+        doc_id: 'osha_3120_lockout_tagout',
+        chunk_id: 'osha_3120_lockout_tagout_c0029',
+        organization: 'OSHA',
+        snippet: textSearch,
+        pdf_url: '/documents/osha_3120_lockout_tagout/pdf',
+        page: 15,
+        text_search: textSearch,
+        locator_confidence: 'exact',
+      },
+    ],
+  }
+  return baseDocument(session, {
+    operationId: 'pw-plan-rd-text-search-pdf',
+    revision: 3,
+    state: 'completed',
+    message: 'I found PDF-backed text-search locator evidence.',
+    currentStepId: 'completed-text-search-pdf',
+    runSteps: [
+      { step_id: 'knowledge-text-search-pdf', kind: 'knowledge', state: 'completed', title: 'Prepared sourced answer', summary: '1 text-search PDF source attached.' },
+      { step_id: 'completed-text-search-pdf', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'PDF text-search locator is ready.' },
+    ],
+    blocks: [
+      {
+        id: 'knowledge:text-search-pdf',
+        type: 'knowledge_answer',
+        contract: KNOWLEDGE_ANSWER_CONTRACT,
+        operation_id: 'pw-plan-rd-text-search-pdf',
+        answer,
+        segments: [{ text: answer, citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+      {
+        id: 'sources:text-search-pdf',
+        type: 'source_list',
+        contract: SOURCE_LIST_CONTRACT,
+        operation_id: 'pw-plan-rd-text-search-pdf',
+        sources: [
+          {
+            contract: SOURCE_LOCATOR_CONTRACT,
+            source_id: citation.source_id,
+            source_number: citation.source_number,
+            title: citation.title,
+            doc_id: citation.doc_id,
+            chunk_id: citation.chunk_id,
+            organization: citation.organization,
+            snippet: citation.snippet,
+            pdf_url: citation.pdf_url,
+            page: citation.page,
+            text_search: citation.text_search,
+          },
+        ],
+      },
+    ],
+    invariants: {
+      source_locator_contract: SOURCE_LOCATOR_CONTRACT,
+      pdf_source_locator: true,
+      pdf_text_search_locator: true,
+    },
+  })
+}
+
+export function expandedParentPageOnlyDocument(session) {
+  const answer = 'The cited CSF source opens on the source page without creating hidden parent highlights.'
+  const hiddenParentText =
+    'The GOVERN Function provides outcomes to inform what an organization may do to achieve and prioritize the outcomes of the other five Functions.'
+  const citation = {
+    contract: SOURCE_CITATION_CONTRACT,
+    citation_id: 'citation:nist_csf_2_0#brse-parent',
+    source_id: 'nist_csf_2_0#brse-parent',
+    source_number: 1,
+    title: 'The NIST Cybersecurity Framework (CSF) 2.0',
+    doc_id: 'nist_csf_2_0',
+    chunk_id: 'brse:nist_csf_2_0:01:nist_csf_2_0_c0013',
+    organization: 'NIST',
+    snippet: hiddenParentText,
+    pdf_url: '/documents/nist_csf_2_0/pdf',
+    page: 8,
+    text_search: hiddenParentText,
+  }
+  return baseDocument(session, {
+    operationId: 'pw-plan-rd-expanded-parent-page-only',
+    revision: 3,
+    state: 'completed',
+    message: 'I found a source-backed answer with a parent source reference.',
+    currentStepId: 'completed-expanded-parent-page-only',
+    runSteps: [
+      { step_id: 'knowledge-expanded-parent-page-only', kind: 'knowledge', state: 'completed', title: 'Prepared sourced answer', summary: '1 parent PDF source attached.' },
+      { step_id: 'completed-expanded-parent-page-only', kind: 'completed', state: 'completed', title: 'Run complete', summary: 'Parent source locator is page-only.' },
+    ],
+    blocks: [
+      {
+        id: 'knowledge:expanded-parent-page-only',
+        type: 'knowledge_answer',
+        contract: KNOWLEDGE_ANSWER_CONTRACT,
+        operation_id: 'pw-plan-rd-expanded-parent-page-only',
+        answer,
+        segments: [{ text: answer, citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+      {
+        id: 'sources:expanded-parent-page-only',
+        type: 'source_list',
+        contract: SOURCE_LIST_CONTRACT,
+        operation_id: 'pw-plan-rd-expanded-parent-page-only',
+        sources: [
+          {
+            contract: SOURCE_LOCATOR_CONTRACT,
+            source_id: citation.source_id,
+            source_number: citation.source_number,
+            title: citation.title,
+            doc_id: citation.doc_id,
+            chunk_id: citation.chunk_id,
+            organization: citation.organization,
+            snippet: citation.snippet,
+            pdf_url: citation.pdf_url,
+            page: citation.page,
+            text_search: citation.text_search,
+          },
+        ],
+      },
+    ],
+    invariants: {
+      source_locator_contract: SOURCE_LOCATOR_CONTRACT,
+      expanded_parent_page_only: true,
     },
   })
 }

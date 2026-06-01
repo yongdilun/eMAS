@@ -385,6 +385,7 @@ export function RescheduleReviewPanel({
   const applyDisabled = loading || disableApplyAll || ids.length === 0
   const isApplying = loading && actionState !== 'cancel'
   const isCancelling = loading && actionState === 'cancel'
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false)
 
   const setSelection = (job, slot = null) => {
     if (onSelectionChange) {
@@ -424,109 +425,120 @@ export function RescheduleReviewPanel({
         </div>
       )}
 
-      <div className="grid shrink-0 grid-cols-2 border-b border-hairline text-xs md:grid-cols-4">
-        <div className="border-b border-r border-hairline px-4 py-3 md:border-b-0">
-          <p className="text-[11px] font-medium uppercase text-ink-tertiary">Proposals</p>
-          <p className="mt-1 text-lg font-semibold text-ink">{ids.length}</p>
+      <div className="shrink-0 border-b border-hairline px-4 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+            {[
+              ['Proposals', ids.length],
+              ['Feasible', feasibleCount],
+              ['Conflicts', conflictCount],
+              ['Late', lateCount],
+            ].map(([label, value]) => (
+              <div key={label} className="inline-flex items-baseline gap-1.5 rounded-md border border-hairline bg-surface-2 px-2 py-1">
+                <span className="text-[10px] font-medium uppercase text-ink-tertiary">{label}</span>
+                <span className="text-sm font-semibold text-ink">{value}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-md bg-amber-400/80 px-2 py-1 text-[10px] font-bold uppercase text-amber-950">
+              Draft
+            </span>
+            {onApplyAll && (
+              <button
+                type="button"
+                onClick={() => onApplyAll(ids)}
+                disabled={applyDisabled}
+                className="inline-flex min-w-[6.5rem] items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isApplying ? <InlineBusyIndicator label="Applying" /> : applyLabel}
+              </button>
+            )}
+            {onDiscardAll && (
+              <button
+                type="button"
+                onClick={onDiscardAll}
+                disabled={loading}
+                className="rounded-md border border-hairline px-3 py-1.5 text-xs font-medium text-ink-subtle hover:bg-surface-2 disabled:opacity-60"
+              >
+                {discardLabel}
+              </button>
+            )}
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={loading}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+              >
+                {isCancelling ? <InlineBusyIndicator label="Cancelling" /> : cancelLabel}
+              </button>
+            )}
+            {showResolveAction && onResolve && (
+              <button
+                type="button"
+                onClick={onResolve}
+                disabled={loading}
+                className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60"
+              >
+                Resolve in Resolution Center
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSummaryCollapsed((prev) => !prev)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-hairline text-ink-subtle hover:bg-surface-2"
+              aria-expanded={!summaryCollapsed}
+              aria-label={summaryCollapsed ? 'Show proposal details' : 'Hide proposal details'}
+              title={summaryCollapsed ? 'Show proposal details' : 'Hide proposal details'}
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                {summaryCollapsed ? 'unfold_more' : 'unfold_less'}
+              </span>
+            </button>
+          </div>
         </div>
-        <div className="border-b border-hairline px-4 py-3 md:border-b-0 md:border-r">
-          <p className="text-[11px] font-medium uppercase text-ink-tertiary">Feasible</p>
-          <p className="mt-1 text-lg font-semibold text-ink">{feasibleCount}</p>
-        </div>
-        <div className="border-r border-hairline px-4 py-3">
-          <p className="text-[11px] font-medium uppercase text-ink-tertiary">Conflicts</p>
-          <p className="mt-1 text-lg font-semibold text-ink">{conflictCount}</p>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] font-medium uppercase text-ink-tertiary">Late</p>
-          <p className="mt-1 text-lg font-semibold text-ink">{lateCount}</p>
-        </div>
-      </div>
 
-      {(conflictCount > 0 || validationHardReasons.length > 0 || blockedRows.length > 0) && (
-        <div className="shrink-0 space-y-2 border-b border-hairline px-5 py-3">
-          {conflictCount > 0 && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              Schedule conflicts were detected. Resolve conflicts before applying.
-            </div>
-          )}
-          {validationHardReasons.length > 0 && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              <p className="font-semibold">Blocking validation issues ({validationHardReasons.length})</p>
-              <ul className="mt-1 list-inside list-disc space-y-0.5">
-                {validationHardReasons.slice(0, 5).map((item, index) => (
-                  <li key={`${item.job_id || index}-${item.message || index}`}>{item.job_id ? `${item.job_id}: ` : ''}{item.message || String(item)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {blockedRows.length > 0 && (
-            <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-800">
-              <p className="font-semibold">{blockedRows.length} proposal(s) are infeasible</p>
-              <p className="mt-1">{blockedRows.slice(0, 3).map((row) => `${row.job}: ${row.blockedReason}`).join('; ')}</p>
-            </div>
-          )}
-          {validationSoftReasons.length > 0 && (
-            <details className="text-xs text-blue-700">
-              <summary className="cursor-pointer font-medium">
-                Soft validation issues ({validationSoftReasons.length}) - penalty {totalValidationPenalty}
-              </summary>
-              <ul className="mt-1 list-inside list-disc space-y-0.5">
-                {validationSoftReasons.slice(0, 5).map((item, index) => (
-                  <li key={`${item.job_id || index}-${item.message || index}`}>{item.job_id ? `${item.job_id}: ` : ''}{item.message || String(item)}</li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      )}
+        {!summaryCollapsed && (conflictCount > 0 || validationHardReasons.length > 0 || blockedRows.length > 0 || validationSoftReasons.length > 0) && (
+          <div className="mt-2 space-y-1.5">
+            {conflictCount > 0 && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+                Schedule conflicts were detected. Resolve conflicts before applying.
+              </div>
+            )}
+            {validationHardReasons.length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+                <p className="font-semibold">Blocking validation issues ({validationHardReasons.length})</p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {validationHardReasons.slice(0, 5).map((item, index) => (
+                    <li key={`${item.job_id || index}-${item.message || index}`}>{item.job_id ? `${item.job_id}: ` : ''}{item.message || String(item)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {blockedRows.length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-800">
+                <span className="font-semibold">{blockedRows.length} proposal(s) are infeasible</span>
+                <span className="ml-2">{blockedRows.slice(0, 3).map((row) => `${row.job}: ${row.blockedReason}`).join('; ')}</span>
+              </div>
+            )}
+            {validationSoftReasons.length > 0 && (
+              <details className="text-xs text-blue-700">
+                <summary className="cursor-pointer font-medium">
+                  Soft validation issues ({validationSoftReasons.length}) - penalty {totalValidationPenalty}
+                </summary>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {validationSoftReasons.slice(0, 5).map((item, index) => (
+                    <li key={`${item.job_id || index}-${item.message || index}`}>{item.job_id ? `${item.job_id}: ` : ''}{item.message || String(item)}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-5 py-3">
-        <span className="inline-flex items-center gap-1 rounded-md bg-amber-400/80 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-950">
-          Draft
-        </span>
-        {onApplyAll && (
-          <button
-            type="button"
-            onClick={() => onApplyAll(ids)}
-            disabled={applyDisabled}
-            className="inline-flex min-w-[7rem] items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isApplying ? <InlineBusyIndicator label="Applying" /> : applyLabel}
-          </button>
-        )}
-        {onDiscardAll && (
-          <button
-            type="button"
-            onClick={onDiscardAll}
-            disabled={loading}
-            className="rounded-md border border-hairline px-3 py-1.5 text-xs font-medium text-ink-subtle hover:bg-surface-2 disabled:opacity-60"
-          >
-            {discardLabel}
-          </button>
-        )}
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-          >
-            {isCancelling ? <InlineBusyIndicator label="Cancelling" /> : cancelLabel}
-          </button>
-        )}
-        {showResolveAction && onResolve && (
-          <button
-            type="button"
-            onClick={onResolve}
-            disabled={loading}
-            className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60"
-          >
-            Resolve in Resolution Center
-          </button>
-        )}
-        {showIndividualActions && rows.length > 0 && (
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {!summaryCollapsed && showIndividualActions && rows.length > 0 && (
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
             {rows.slice(0, 10).map((row) => (
               <span key={row.id} className="inline-flex items-center gap-0.5">
                 <button

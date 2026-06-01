@@ -16,6 +16,7 @@ import {
   responseDocumentAllNoOpPrompt,
   responseDocumentCascadePrompt,
   responseDocumentCollapsedResultsPrompt,
+  responseDocumentExpandedParentPageOnlyPrompt,
   responseDocumentExpiredApprovalPrompt,
   responseDocumentJobStatusPrompt,
   responseDocumentLotoPrompt,
@@ -31,6 +32,7 @@ import {
   responseDocumentRejectedApprovalPrompt,
   responseDocumentReverseCascadePrompt,
   responseDocumentSourcePdfPrompt,
+  responseDocumentTextSearchPdfPrompt,
   responseDocumentStaleApprovalPrompt,
   responseDocumentTimeoutPrompt,
   responseDocumentZeroMatchApprovalPrompt,
@@ -1588,6 +1590,136 @@ test.describe('Final response quality response_document gate', () => {
     expect(source.page).toBe(9)
     expect(source.char_range).toEqual([488, 606])
     expect(JSON.stringify(snapshot.response_document)).not.toMatch(/file_path|C:\\|\/Users\//i)
+  })
+
+  test('source PDF text-search locator opens matching highlight without stale coordinates', async ({ page }, testInfo) => {
+    test.setTimeout(45_000)
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentTextSearchPdfPrompt)
+
+    await expect(page.getByText(/claim-specific text-search highlight/i).first()).toBeVisible()
+    const sourceChip = page.locator('[data-source-chip][data-source-id="osha_3120_lockout_tagout#text-search-claim"]').first()
+    await expect(sourceChip).toBeVisible()
+    await expect(sourceChip).toHaveAttribute('data-source-open-mode', 'search')
+    await expect(sourceChip).toHaveAttribute('data-source-highlight-kind', 'text_search')
+    await sourceChip.click()
+
+    const drawer = page.locator('[data-source-drawer][data-source-open-mode="search"][data-source-highlight-kind="text_search"]').first()
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('[data-source-drawer-snippet]')).toContainText(/After removing the lockout/i)
+    const link = drawer.locator('[data-source-evidence-item] [data-source-pdf-link]').first()
+    await expect(link).toBeVisible()
+    await expect(link).toHaveAttribute('data-source-highlight-kind', 'text_search')
+    const pdfPath = '/documents/osha_3120_lockout_tagout/pdf#page=15&search=After+removing+the+lockout'
+    await expectFactoryAgentPdfUrl(page, link, 'data-source-pdf-href', pdfPath)
+    await expectFactoryAgentPdfResponse(page, () => link.click(), pdfPath)
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
+    await expectFactoryAgentPdfUrl(page, drawer.locator('[data-source-pdf-frame]'), 'data-source-pdf-src', pdfPath)
+    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-pdf-renderer', 'pdfjs')
+    await expect(drawer.locator('[data-source-pdf-frame]')).toHaveAttribute('data-source-id', 'osha_3120_lockout_tagout#text-search-claim:evidence-1')
+    await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Matching text on page 15/i)
+    const highlightLayer = drawer.locator('[data-source-pdf-highlight-layer]').first()
+    await expect(highlightLayer).toHaveAttribute('data-source-pdf-highlight-kind', 'text_search')
+    await expect.poll(async () => Number(await highlightLayer.getAttribute('data-source-pdf-highlight-count') || 0)).toBeGreaterThan(0)
+    await expect(drawer.locator('[data-source-pdf-highlight]').first()).toBeVisible()
+
+    const summary = await expectTransitionCheckpoint(page, {
+      checkpoint: 'source PDF text-search highlight locator',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['knowledge_answer', 'source_list'],
+        backendBlockTypes: ['knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        approvalActionCount: 0,
+        responseContracts: ['knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
+        textIncludes: ['Control of Hazardous Energy Lockout/Tagout'],
+        textExcludes: [/file_path/i, /C:\\/i, /\/Users\//i],
+      },
+    })
+    await testInfo.attach('source-pdf-text-search-highlight-semantic-probe.json', {
+      body: serializeSemanticProbe(summary),
+      contentType: 'application/json',
+    })
+    expect(summary.visible.latestUserPrompt).toContain(responseDocumentTextSearchPdfPrompt)
+    const snapshot = await snapshotForPage(page)
+    const knowledgeBlock = snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
+    const citation = knowledgeBlock.citations?.[0]
+    expect(citation?.text_search).toContain('After removing the lockout')
+    expect(citation?.char_range).toBeUndefined()
+    expect(citation?.bbox).toBeUndefined()
+    expect(citation?.evidence?.[0]?.text_search).toContain('After removing the lockout')
+    expect(citation?.evidence?.[0]?.char_range).toBeUndefined()
+    expect(citation?.evidence?.[0]?.bbox).toBeUndefined()
+  })
+
+  test('expanded parent PDF source opens page-only without hidden highlight', async ({ page }, testInfo) => {
+    test.setTimeout(45_000)
+    await openChat(page)
+    await sendChatPrompt(page, responseDocumentExpandedParentPageOnlyPrompt)
+
+    await expect(page.getByText(/parent source reference/i).first()).toBeVisible()
+    const sourceChip = page.locator('[data-source-chip][data-source-id="nist_csf_2_0#brse-parent"]').first()
+    await expect(sourceChip).toBeVisible()
+    await expect(sourceChip).toHaveAttribute('data-source-open-mode', 'page')
+    await expect(sourceChip).not.toHaveAttribute('data-source-highlight-kind', /.+/)
+    await sourceChip.click()
+
+    const drawer = page.locator('[data-source-drawer][data-source-open-mode="page"]').first()
+    await expect(drawer).toBeVisible()
+    await expect(drawer).not.toHaveAttribute('data-source-highlight-kind', /.+/)
+    await expect(drawer.locator('[data-source-evidence-item]')).toHaveCount(0)
+    await expect(drawer.locator('[data-source-drawer-snippet]')).toContainText(/GOVERN Function provides outcomes/i)
+    const link = drawer.locator('[data-source-pdf-link]').first()
+    await expect(link).toBeVisible()
+    await expect(link).not.toHaveAttribute('data-source-highlight-kind', /.+/)
+    const pdfPath = '/documents/nist_csf_2_0/pdf#page=8'
+    await expectFactoryAgentPdfUrl(page, link, 'data-source-pdf-href', pdfPath)
+    await expectFactoryAgentPdfResponse(page, () => link.click(), pdfPath)
+    await expect(drawer).toHaveAttribute('data-source-drawer-view', 'pdf')
+    const pdfFrame = drawer.locator('[data-source-pdf-frame]').first()
+    await expectFactoryAgentPdfUrl(page, pdfFrame, 'data-source-pdf-src', pdfPath)
+    await expect(pdfFrame).toHaveAttribute('data-source-pdf-renderer', 'pdfjs')
+    await expect(pdfFrame).toHaveAttribute('data-source-id', 'nist_csf_2_0#brse-parent')
+    await expect(pdfFrame).not.toHaveAttribute('data-source-highlight-kind', /.+/)
+    await expect(drawer.locator('[data-source-pdf-evidence]')).toContainText(/Showing page 8/i)
+    const highlightLayer = drawer.locator('[data-source-pdf-highlight-layer]').first()
+    await expect(highlightLayer).not.toHaveAttribute('data-source-pdf-highlight-kind', /.+/)
+    await expect(highlightLayer).toHaveAttribute('data-source-pdf-highlight-count', '0')
+    await expect(drawer.locator('[data-source-pdf-highlight]')).toHaveCount(0)
+
+    const summary = await expectTransitionCheckpoint(page, {
+      checkpoint: 'expanded parent PDF source page-only locator',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['knowledge_answer', 'source_list'],
+        backendBlockTypes: ['knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        approvalActionCount: 0,
+        responseContracts: ['knowledge_answer_v1', 'source_list_v1', 'source_locator_v1'],
+        textIncludes: ['The NIST Cybersecurity Framework (CSF) 2.0'],
+        textExcludes: [/file_path/i, /C:\\/i, /\/Users\//i],
+      },
+    })
+    await testInfo.attach('expanded-parent-page-only-semantic-probe.json', {
+      body: serializeSemanticProbe(summary),
+      contentType: 'application/json',
+    })
+    expect(summary.visible.latestUserPrompt).toContain(responseDocumentExpandedParentPageOnlyPrompt)
+    const snapshot = await snapshotForPage(page)
+    const knowledgeBlock = snapshot.response_document.blocks.find((block) => block.type === 'knowledge_answer')
+    const citation = knowledgeBlock.citations?.[0]
+    expect(citation?.text_search).toContain('GOVERN Function provides outcomes')
+    expect(citation?.evidence).toBeUndefined()
   })
 
   test('diagnostic documents cover no-result, partial failure, timeout, expired, and stale approvals', async ({ page }) => {

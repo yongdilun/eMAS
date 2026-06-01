@@ -854,6 +854,44 @@ def _strip_support_text(value: Any) -> str:
     return text
 
 
+def _evidence_sentence_candidates(value: Any) -> list[str]:
+    text = _strip_footnote_markup(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    raw_candidates = re.split(r"(?<=[.!?])\s+|\s+(?=-\s+[A-Z][A-Za-z0-9()/-]+\s*[(-])", text)
+    candidates: list[str] = []
+    for raw in raw_candidates:
+        sentence = _strip_support_text(raw)
+        if len(sentence) < 24:
+            continue
+        candidates.append(sentence)
+    return candidates
+
+
+def _best_claim_support_sentence(claim: str, evidence_text: str) -> str | None:
+    claim_tokens = _claim_support_tokens(claim)
+    if len(claim_tokens) < 2:
+        return None
+    best: tuple[float, int, str] | None = None
+    for sentence in _evidence_sentence_candidates(evidence_text):
+        sentence_tokens = _claim_support_tokens(sentence)
+        if not sentence_tokens:
+            continue
+        overlap = len(claim_tokens & sentence_tokens)
+        if overlap < min(3, len(claim_tokens)):
+            continue
+        coverage = overlap / max(1, len(claim_tokens))
+        density = overlap / max(1, len(sentence_tokens))
+        if coverage < 0.25 and density < 0.18:
+            continue
+        score = (coverage * 3.0) + (density * 2.0) + (overlap * 0.05)
+        current = (score, overlap, sentence)
+        if best is None or current > best:
+            best = current
+    return best[2] if best else None
+
+
 def _support_text_from_evidence_snippet(claim: str, evidence: dict[str, Any]) -> str | None:
     evidence_text = _evidence_text(evidence)
     evidence_snippet = _strip_support_text(evidence.get("text_search") or evidence.get("snippet") or evidence.get("text"))
@@ -872,6 +910,9 @@ def _support_text_from_evidence_snippet(claim: str, evidence: dict[str, Any]) ->
     compact_claim = _compact_evidence_text(_strip_support_text(claim))
     if compact_claim and compact_claim in _compact_evidence_text(evidence_text):
         return _strip_support_text(claim)
+    support_sentence = _best_claim_support_sentence(claim, evidence_text)
+    if support_sentence:
+        return support_sentence
     return None
 
 

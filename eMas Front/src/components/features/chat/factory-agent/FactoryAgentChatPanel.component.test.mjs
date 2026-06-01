@@ -1076,6 +1076,12 @@ test('FactoryAgentChatPanel renders embedded reschedule review without opening a
     assert.match(view.text(), /Resolve in Resolution Center/)
     assert.equal(openCalls, 0)
 
+    const collapseButton = view.container.querySelector('button[aria-label="Hide proposal details"]')
+    assert.ok(collapseButton)
+    await click(collapseButton)
+    assert.ok(view.container.querySelector('button[aria-label="Show proposal details"]'))
+    assert.match(view.text(), /Apply all/)
+
     const applyButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
       button.textContent.trim() === 'Apply all',
     )
@@ -2625,6 +2631,72 @@ test('FactoryAgentChatPanel does not expand nested RSE children as citation evid
   assert.equal(drawer.querySelectorAll('[data-source-evidence-item]').length, 0)
   assert.equal(drawer.querySelectorAll('[data-source-pdf-link]').length, 1)
   assert.doesNotMatch(drawer.textContent || '', /Nested child evidence 8/)
+
+  await view.unmount()
+})
+
+test('FactoryAgentChatPanel opens expanded parent citation locators page-only when no visible evidence row exists', async () => {
+  const citation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:nist-csf-parent:claim-1',
+    source_id: 'nist_csf_2_0#brse-parent',
+    source_number: 1,
+    title: 'The NIST Cybersecurity Framework (CSF) 2.0',
+    doc_id: 'nist_csf_2_0',
+    chunk_id: 'brse:nist_csf_2_0:01:nist_csf_2_0_c0013',
+    organization: 'NIST',
+    snippet: 'The GOVERN Function provides outcomes to inform what an organization may do.',
+    text_search: 'The GOVERN Function provides outcomes to inform what an organization may do.',
+    pdf_url: '/documents/nist_csf_2_0/pdf',
+    page: 8,
+    page_count: 32,
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'knowledge:expanded-parent-page-only',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: 'GOVERN provides context for IDENTIFY.',
+        segments: [{ text: 'GOVERN provides context for IDENTIFY.', citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-expanded-parent-page-only', name: 'RD expanded parent page only', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-expanded-parent-page-only', name: 'RD expanded parent page only', status: 'COMPLETED' }],
+    activeSessionName: 'RD expanded parent page only',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const sourceChip = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-chip]')
+    assert.ok(node)
+    return node
+  })
+  assert.equal(sourceChip.getAttribute('data-source-open-mode'), 'page')
+  assert.equal(sourceChip.getAttribute('data-source-highlight-kind'), null)
+  await click(sourceChip)
+  const drawer = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-drawer]')
+    assert.ok(node)
+    return node
+  })
+  assert.equal(drawer.getAttribute('data-source-open-mode'), 'page')
+  assert.equal(drawer.getAttribute('data-source-highlight-kind'), null)
+  assert.equal(drawer.querySelectorAll('[data-source-evidence-item]').length, 0)
+  const sourceLink = drawer.querySelector('[data-source-pdf-link]')
+  assert.ok(sourceLink)
+  assert.match(sourceLink.textContent || '', /View page 8/)
+  assert.match(sourceLink.getAttribute('data-source-pdf-href'), /^http:\/\/127\.0\.0\.1:8000\/documents\/nist_csf_2_0\/pdf#page=8$/)
+  assert.doesNotMatch(sourceLink.getAttribute('data-source-pdf-href') || '', /search=|highlight=/)
+  await click(sourceLink)
+  await waitFor(() => assert.ok(view.container.querySelector('[data-source-pdf-frame]')))
+  assert.equal(view.container.querySelector('[data-source-pdf-frame]')?.getAttribute('data-source-highlight-kind'), null)
+  assert.equal(view.container.querySelector('[data-source-pdf-highlight-layer]')?.getAttribute('data-source-pdf-highlight-count'), '0')
 
   await view.unmount()
 })
