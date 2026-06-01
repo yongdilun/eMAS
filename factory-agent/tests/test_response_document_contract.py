@@ -3372,6 +3372,90 @@ def test_knowledge_answer_payload_uses_claim_specific_evidence_locator():
     assert shutdown_citation["text_search"] == "Shut down the machine"
 
 
+def test_knowledge_answer_payload_drops_stale_exact_locator_for_extracted_support_text():
+    support_sentence = "ALPHA informs risk priorities while BETA identifies assets and supplier risks."
+    source = {
+        "source_number": 1,
+        "source_id": "framework-guide#relationship",
+        "doc_id": "framework-guide",
+        "chunk_id": "framework_relationship",
+        "title": "Framework Guide",
+        "organization": "Standards Body",
+        "query": "How do ALPHA and BETA relate?",
+        "snippet": f"Background taxonomy describes category levels. {support_sentence}",
+        "page": 9,
+        "pdf_url": "/documents/framework-guide/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "framework-guide",
+                "chunk_id": "framework_relationship",
+                "section_title": "Framework Relationships",
+                "page": 9,
+                "pdf_url": "/documents/framework-guide/pdf",
+                "snippet": f"Background taxonomy describes category levels. {support_sentence}",
+                "text_search": "Background taxonomy describes category levels.",
+                "char_range": [10, 51],
+                "bbox": [12, 24, 160, 36],
+            },
+        ],
+    }
+    answer = f"{support_sentence}[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["text_search"] == support_sentence.rstrip(".")
+    assert "char_range" not in citation
+    assert "bbox" not in citation
+    assert citation["evidence"][0]["text_search"] == support_sentence.rstrip(".")
+    assert citation["evidence"][0]["locator_confidence"] == "exact"
+    assert "char_range" not in citation["evidence"][0]
+    assert "bbox" not in citation["evidence"][0]
+
+
+def test_knowledge_answer_payload_preserves_exact_locator_when_it_matches_support_text():
+    support_sentence = "ALPHA informs risk priorities while BETA identifies assets and supplier risks."
+    source = {
+        "source_number": 1,
+        "source_id": "framework-guide#relationship",
+        "doc_id": "framework-guide",
+        "chunk_id": "framework_relationship",
+        "title": "Framework Guide",
+        "organization": "Standards Body",
+        "query": "How do ALPHA and BETA relate?",
+        "snippet": support_sentence,
+        "page": 9,
+        "pdf_url": "/documents/framework-guide/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "framework-guide",
+                "chunk_id": "framework_relationship",
+                "section_title": "Framework Relationships",
+                "page": 9,
+                "pdf_url": "/documents/framework-guide/pdf",
+                "snippet": support_sentence,
+                "text_search": support_sentence,
+                "char_range": [90, 162],
+                "bbox": [24, 40, 260, 54],
+            },
+        ],
+    }
+    answer = f"{support_sentence}[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["char_range"] == [90, 162]
+    assert citation["bbox"] == [24, 40, 260, 54]
+    assert citation["evidence"][0]["locator_confidence"] == "exact"
+    assert citation["evidence"][0]["char_range"] == [90, 162]
+    assert citation["evidence"][0]["bbox"] == [24, 40, 260, 54]
+
+
 def test_knowledge_answer_payload_keeps_snippet_only_evidence_page_only():
     source = {
         "source_number": 1,

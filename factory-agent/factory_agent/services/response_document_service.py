@@ -875,6 +875,38 @@ def _support_text_from_evidence_snippet(claim: str, evidence: dict[str, Any]) ->
     return None
 
 
+def _support_text_matches_locator_text(support_text: Any, locator_text: Any) -> bool:
+    support = _strip_support_text(support_text)
+    locator = _strip_support_text(locator_text)
+    compact_support = _compact_evidence_text(support)
+    compact_locator = _compact_evidence_text(locator)
+    if not compact_support or not compact_locator:
+        return False
+    if compact_support == compact_locator:
+        return True
+    if compact_support in compact_locator or compact_locator in compact_support:
+        support_tokens = _claim_support_tokens(support)
+        locator_tokens = _claim_support_tokens(locator)
+        if not support_tokens or not locator_tokens:
+            return False
+        overlap = len(support_tokens & locator_tokens)
+        return overlap / max(1, min(len(support_tokens), len(locator_tokens))) >= 0.6
+    return False
+
+
+def _evidence_locator_matches_support_text(support_text: Any, evidence: dict[str, Any]) -> bool:
+    if not _strip_support_text(support_text):
+        return False
+    explicit = evidence.get("text_search")
+    if explicit not in (None, "", [], {}):
+        return _support_text_matches_locator_text(support_text, explicit)
+    return any(
+        _compact_evidence_text(_strip_support_text(value)) == _compact_evidence_text(_strip_support_text(support_text))
+        for value in (evidence.get("snippet"), evidence.get("text"))
+        if value not in (None, "", [], {})
+    )
+
+
 def _claim_evidence_payload(
     *,
     claim_text: Any,
@@ -901,8 +933,9 @@ def _claim_evidence_payload(
         "pdf_url": evidence.get("pdf_url") or citation.get("pdf_url"),
         "page_count": evidence.get("page_count") or citation.get("page_count"),
     }
+    locator_matches_support = _evidence_locator_matches_support_text(support_text, evidence)
     for key in ("bbox", "char_range"):
-        if evidence.get(key) not in (None, "", [], {}):
+        if locator_matches_support and evidence.get(key) not in (None, "", [], {}):
             payload[key] = evidence.get(key)
             payload["locator_confidence"] = "exact"
     if support_text:
@@ -1116,8 +1149,9 @@ def _with_claim_level_citations(
                 text_search = _claim_specific_text_search(segment.get("text"), base)
                 if text_search:
                     claim["text_search"] = text_search
+                    locator_matches_support = _evidence_locator_matches_support_text(text_search, base)
                     for key in ("bbox", "char_range"):
-                        if base.get(key) not in (None, "", [], {}):
+                        if locator_matches_support and base.get(key) not in (None, "", [], {}):
                             claim[key] = base.get(key)
             claim_citations_by_id[claim_id] = claim
             claim_ids.append(claim_id)
