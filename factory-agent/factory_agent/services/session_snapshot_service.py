@@ -1233,6 +1233,28 @@ def _live_activity_steps_for_snapshot(
     )
 
 
+def _is_noop_approval_activity_step(step: Mapping[str, Any]) -> bool:
+    label = str(step.get("label") or "").strip().lower()
+    if label != "checking approvals":
+        return False
+    detail = str(step.get("detail") or "").strip().lower()
+    step_id = str(step.get("id") or "").strip().lower()
+    return (
+        detail in {"", "checking approval requirements", "reviewing approval requirements"}
+        or "approval_node" in step_id
+    )
+
+
+def _filter_noop_approval_activity_steps(
+    rows: list[dict[str, Any]],
+    *,
+    has_pending_approval: bool,
+) -> list[dict[str, Any]]:
+    if has_pending_approval:
+        return rows
+    return [row for row in rows if not _is_noop_approval_activity_step(row)]
+
+
 def _snapshot_plan_scoped_steps(
     plan_steps: list[PlanStepResponse], plan: PlanResponse | None
 ) -> list[PlanStepResponse]:
@@ -1397,7 +1419,10 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         if ev.event_type == "replan_requested":
             prior_replans += 1
 
-    live_steps = _live_activity_steps_for_snapshot(snapshot, session_status=session_status)
+    live_steps = _filter_noop_approval_activity_steps(
+        _live_activity_steps_for_snapshot(snapshot, session_status=session_status),
+        has_pending_approval=has_pending_approval,
+    )
     active_live_sort_key = None
     if live_steps:
         live_label_groups = {

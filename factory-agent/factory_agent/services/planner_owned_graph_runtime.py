@@ -77,11 +77,25 @@ def _graph_event_is_rag(event: Mapping[str, Any]) -> bool:
     return any("rag" in item or "search_documents" in item for item in [*tool_names, *source_types])
 
 
+def _graph_event_has_pending_approval(event: Mapping[str, Any]) -> bool:
+    context = event.get("activity_caption_context")
+    if not isinstance(context, Mapping):
+        return False
+    pending = context.get("pending_approval")
+    if not isinstance(pending, Mapping):
+        return False
+    status = str(pending.get("status") or "").strip().lower()
+    approval_id = str(pending.get("approval_id") or "").strip()
+    return bool(approval_id and status in {"pending", "waiting", "waiting_approval", "required"})
+
+
 def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, Any] | None:
     if event.get("event") != "planner_owned_agent_graph_node":
         return None
     node = str(event.get("node") or "").strip()
     if not node:
+        return None
+    if node == "approval_node" and not _graph_event_has_pending_approval(event):
         return None
     rag = _graph_event_is_rag(event)
     mapping: dict[str, tuple[str, str, str]] = {

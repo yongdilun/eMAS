@@ -390,13 +390,74 @@ function rawEvidenceItemsFromSource(source) {
   return output
 }
 
+function compactEvidenceKey(value) {
+  return safeText(value).replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function evidenceChunkId(source) {
+  return safeText(source?.chunk_id || source?.chunkId)
+}
+
+function evidenceTextKey(source) {
+  const text = safeText(source?.text_search || source?.textSearch || source?.highlight_text || source?.highlightText || source?.snippet || source?.text)
+  if (text) return compactEvidenceKey(text)
+  const locator = source?.char_range || source?.charRange || source?.text_range || source?.textRange || source?.bbox || source?.bounding_box || source?.boundingBox
+  if (!locator) return ''
+  try {
+    return compactEvidenceKey(JSON.stringify(locator))
+  } catch {
+    return compactEvidenceKey(locator)
+  }
+}
+
+function evidenceDedupeKey(source) {
+  return [
+    compactEvidenceKey(source?.doc_id || source?.docId),
+    safeText(source?.page),
+    compactEvidenceKey(evidenceChunkId(source)),
+    evidenceTextKey(source),
+  ].join('\u001f')
+}
+
+function isExpandedParentEvidence(source) {
+  const chunkId = evidenceChunkId(source).trim().toLowerCase()
+  return chunkId.startsWith('rse:') || chunkId.startsWith('brse:')
+}
+
+function evidenceHasExactLocator(source) {
+  if (!source || typeof source !== 'object') return false
+  if (safeText(source.locator_confidence || source.locatorConfidence).toLowerCase() === 'exact') return true
+  return Boolean(
+    safeText(source.text_search || source.textSearch || source.highlight_text || source.highlightText) ||
+    source.bbox || source.bounding_box || source.boundingBox ||
+    source.char_range || source.charRange || source.text_range || source.textRange,
+  )
+}
+
+function visibleEvidenceItemsFromSource(source) {
+  const rawEvidence = rawEvidenceItemsFromSource(source)
+  const exactEvidence = rawEvidence.filter(evidenceHasExactLocator)
+  const nonParentExact = exactEvidence.filter((item) => !isExpandedParentEvidence(item))
+  const candidates = exactEvidence.length
+    ? (nonParentExact.length ? nonParentExact : exactEvidence)
+    : rawEvidence
+  const seen = new Set()
+  const output = []
+  for (const item of candidates) {
+    const key = evidenceDedupeKey(item)
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(item)
+  }
+  return output
+}
+
 function citationFromSource(source) {
   if (!source || typeof source !== 'object') return null
   const sourceId = safeText(source.source_id || source.sourceId || source.doc_id || source.docId)
   const sourceNumber = source.source_number || source.sourceNumber
   const citationId = safeText(source.citation_id || source.citationId) || `citation:${sourceId || sourceNumber || 'source'}`
-  const rawEvidence = rawEvidenceItemsFromSource(source)
-  const evidence = rawEvidence
+  const evidence = visibleEvidenceItemsFromSource(source)
     .map((item, index) => (item && typeof item === 'object'
       ? citationFromSource({
         ...withoutNestedEvidenceFields(withoutPrecisionLocatorFields(source)),

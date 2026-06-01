@@ -954,6 +954,135 @@ async def test_response_document_reports_approval_received_before_mutation_resul
 
 
 @pytest.mark.asyncio
+async def test_completed_no_approval_snapshot_hides_noop_approval_activity(db_session):
+    created_at = datetime(2026, 5, 27, 15, 0, 0)
+    session_id = "rd-noop-approval-activity"
+    plan_id = "rd-noop-approval-activity-plan"
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=5,
+                status="COMPLETED",
+                current_intent="answer the document question",
+                replan_context={
+                    "intent_contract": {
+                        "activity_graph_steps": [
+                            {
+                                "id": "graph:000001:satisfaction_node",
+                                "timestamp": int((created_at + timedelta(seconds=2)).timestamp()),
+                                "order": 1,
+                                "group": "response",
+                                "label": "Verifying result",
+                                "detail": "Verifying the result",
+                                "state": "success",
+                            },
+                            {
+                                "id": "graph:000002:approval_node",
+                                "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+                                "order": 2,
+                                "group": "planning",
+                                "label": "Checking approvals",
+                                "detail": "Checking approval requirements",
+                                "state": "running",
+                            },
+                            {
+                                "id": "graph:000003:response_document_node",
+                                "timestamp": int((created_at + timedelta(seconds=4)).timestamp()),
+                                "order": 3,
+                                "group": "response",
+                                "label": "Rendering response",
+                                "detail": "Rendering the response",
+                                "state": "running",
+                            },
+                        ],
+                        "activity_caption_context": {
+                            "pending_approval": {"status": "none", "approval_id": None},
+                        },
+                    }
+                },
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content="What does the policy say?"),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _assistant_message(
+                session_id=session_id,
+                content="The document answer is complete.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=4),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    body = await _snapshot(db_session, session_id)
+
+    assert body["pending_approval"] is None
+    labels = [step["label"] for step in body["activity_steps"]]
+    details = [step.get("detail") or "" for step in body["activity_steps"]]
+    assert "Checking approvals" not in labels
+    assert "Checking approval requirements" not in details
+    assert labels[-1] == "Run complete"
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_snapshot_keeps_real_approval_activity(db_session):
+    created_at = datetime(2026, 5, 27, 15, 15, 0)
+    session_id = "rd-real-approval-activity"
+    plan_id = "rd-real-approval-activity-plan"
+    approval_id = "approval-rd-real-activity"
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=5,
+                status="WAITING_APPROVAL",
+                current_intent="change one job priority",
+                replan_context={
+                    "intent_contract": {
+                        "activity_graph_steps": [
+                            {
+                                "id": "graph:000001:approval_node",
+                                "timestamp": int((created_at + timedelta(seconds=3)).timestamp()),
+                                "order": 1,
+                                "group": "planning",
+                                "label": "Checking approvals",
+                                "detail": "Checking approval requirements",
+                                "state": "success",
+                            },
+                        ],
+                        "activity_caption_context": {
+                            "pending_approval": {"status": "pending", "approval_id": approval_id},
+                        },
+                    },
+                    "langgraph_pending_approval": {"approval_id": approval_id, "thread_id": session_id},
+                },
+            ),
+            _user_message(session_id=session_id, created_at=created_at),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _approval(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                approval_id=approval_id,
+                status="PENDING",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    body = await _snapshot(db_session, session_id)
+
+    assert body["pending_approval"]["approval_id"] == approval_id
+    labels = [step["label"] for step in body["activity_steps"]]
+    assert any(label in {"Waiting for approval", "Waiting for your approval"} for label in labels)
+    assert labels[-1] in {"Waiting for approval", "Waiting for your approval"}
+
+
+@pytest.mark.asyncio
 async def test_orphan_idle_after_actionable_prompt_becomes_typed_blocked_diagnostic(db_session):
     created_at = datetime(2026, 5, 18, 10, 30, 0)
     session_id = "rd-orphan-idle-actionable"
@@ -3527,6 +3656,65 @@ def test_knowledge_answer_payload_filters_broad_and_unrelated_evidence_when_exac
     assert [item["page"] for item in citation["evidence"]] == [14]
     assert [item["chunk_id"] for item in citation["evidence"]] == ["osha_3120_lockout_tagout_c0015"]
     assert [item["snippet"] for item in citation["evidence"]] == ["Prepare for shutdown"]
+
+
+def test_knowledge_answer_payload_treats_brse_parent_as_context_when_exact_child_exists():
+    source = {
+        "source_number": 1,
+        "source_id": "nist_csf_2_0#brse-parent",
+        "doc_id": "nist_csf_2_0",
+        "chunk_id": "brse:nist_csf_2_0:01:nist_csf_2_0_c0008",
+        "title": "NIST Cybersecurity Framework 2.0",
+        "organization": "NIST",
+        "snippet": "The GOVERN function establishes organizational cybersecurity risk management context.",
+        "text_search": "Organizational cybersecurity risk management strategy, expectations, and policy are established.",
+        "page": 8,
+        "pdf_url": "/documents/nist_csf_2_0/pdf",
+        "evidence_snippets": [
+            {
+                "source_number": 1,
+                "doc_id": "nist_csf_2_0",
+                "chunk_id": "brse:nist_csf_2_0:01:nist_csf_2_0_c0008",
+                "page": 8,
+                "pdf_url": "/documents/nist_csf_2_0/pdf",
+                "snippet": "Organizational cybersecurity risk management strategy, expectations, and policy are established.",
+                "text_search": "Organizational cybersecurity risk management strategy, expectations, and policy are established.",
+                "source_chunk_evidence": [
+                    {
+                        "source_number": 1,
+                        "doc_id": "NIST_CSF_2_0",
+                        "chunk_id": "nist_csf_2_0_c0008",
+                        "page": 8,
+                        "pdf_url": "/documents/nist_csf_2_0/pdf",
+                        "snippet": "Organizational cybersecurity risk management strategy, expectations, and policy are established.",
+                        "text_search": "Organizational cybersecurity risk management strategy, expectations, and policy are established.",
+                    },
+                    {
+                        "source_number": 1,
+                        "doc_id": "nist_csf_2_0",
+                        "chunk_id": "nist_csf_2_0_c0019",
+                        "page": 19,
+                        "pdf_url": "/documents/nist_csf_2_0/pdf",
+                        "snippet": "A broader secondary page mentions cybersecurity outcomes and categories.",
+                    },
+                ],
+            }
+        ],
+    }
+    answer = "Organizational cybersecurity risk management strategy, expectations, and policy are established.[^1]"
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["chunk_id"] == "nist_csf_2_0_c0008"
+    assert citation["page"] == 8
+    assert citation["text_search"] == (
+        "Organizational cybersecurity risk management strategy, expectations, and policy are established"
+    )
+    assert [item["chunk_id"] for item in citation["evidence"]] == ["nist_csf_2_0_c0008"]
+    assert all(not str(item["chunk_id"]).startswith("brse:") for item in citation["evidence"])
+    assert all(item["page"] == 8 for item in citation["evidence"])
 
 
 def test_knowledge_answer_payload_keeps_multiple_verified_evidence_items_for_compound_claim():

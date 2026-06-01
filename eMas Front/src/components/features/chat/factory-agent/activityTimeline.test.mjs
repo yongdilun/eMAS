@@ -12,6 +12,7 @@ import {
   normalizeActivityStep,
   shouldAutoCollapseActivity,
   shouldShowActivityTimeline,
+  stripNoopApprovalActivitySteps,
   stripPrematureTerminalActivitySteps,
   truncateActivityAfterTerminal,
 } from './activityTimelineUtils.js'
@@ -727,6 +728,58 @@ test('waiting approval remains current when backend marks approval activity succ
   assert.equal(steps.some((step) => step.label === 'Rendering response'), false)
   assert.equal(steps.at(-1).label, 'Waiting for your approval')
   assert.equal(steps.at(-1).state, 'waiting')
+})
+
+test('no pending approval removes no-op approval check activity but keeps real approval flow rows', () => {
+  const noApproval = stripNoopApprovalActivitySteps([
+    {
+      id: 'graph:000001:satisfaction_node',
+      timestamp: 1,
+      group: 'response',
+      label: 'Verifying result',
+      detail: 'Verifying the result',
+      state: 'success',
+    },
+    {
+      id: 'graph:000002:approval_node',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Checking approvals',
+      detail: 'Checking approval requirements',
+      state: 'running',
+    },
+    {
+      id: 'graph:000003:complete',
+      timestamp: 3,
+      group: 'response',
+      label: 'Run complete',
+      detail: 'All steps finished. See the thread below.',
+      state: 'complete',
+    },
+  ], null)
+
+  assert.deepEqual(noApproval.map((step) => step.label), ['Verifying result', 'Run complete'])
+
+  const realApproval = stripNoopApprovalActivitySteps([
+    {
+      id: 'graph:000002:approval_node',
+      timestamp: 2,
+      group: 'planning',
+      label: 'Checking approvals',
+      detail: 'Checking approval requirements',
+      state: 'success',
+    },
+    {
+      id: 'act:approval-required',
+      timestamp: 3,
+      group: 'approval',
+      label: 'Waiting for approval',
+      detail: null,
+      state: 'waiting',
+    },
+  ], { approval_id: 'approval-1', status: 'PENDING' })
+
+  assert.deepEqual(realApproval.map((step) => step.label), ['Checking approvals', 'Waiting for approval'])
 })
 
 test('waiting user action owns current row while embedded review is open', () => {

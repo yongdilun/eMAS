@@ -81,11 +81,16 @@ def build_activity_caption_context_from_graph_state(state: Any) -> dict[str, Any
     response_diagnostics = _mapping(getattr(response_context, "diagnostics", {}))
     ledger = getattr(state, "requirement_ledger", None)
     branches = list(getattr(ledger, "conditional_branches", []) or [])
+    pending_approval = getattr(state, "pending_approval", None)
 
     return {
         "requirements": [_requirement_row(item) for item in requirements],
         "evidence": [_evidence_row(item) for item in evidence_items],
         "planner_decisions": [_planner_decision_row(item) for item in planner_decisions],
+        "pending_approval": {
+            "status": getattr(pending_approval, "status", None),
+            "approval_id": getattr(pending_approval, "approval_id", None),
+        },
         "dependency_plan": _jsonish(diagnostics.get("dependency_plan")),
         "dependency_plan_history": _jsonish(diagnostics.get("dependency_plan_history")) or [],
         "conditional_branches": [_jsonish(branch) for branch in branches],

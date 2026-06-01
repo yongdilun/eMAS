@@ -2254,6 +2254,147 @@ test('FactoryAgentChatPanel opens source-list PDFs as general references without
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel filters BRSE parent evidence while source cards stay general references', async () => {
+  const claimText = 'Organizational cybersecurity risk management strategy, expectations, and policy are established.'
+  const citation = {
+    contract: 'source_citation_v1',
+    citation_id: 'citation:nist-csf-govern:claim-1',
+    source_id: 'nist-csf-govern',
+    source_number: 1,
+    title: 'NIST Cybersecurity Framework 2.0',
+    doc_id: 'nist_csf_2_0',
+    chunk_id: 'brse:nist_csf_2_0:01:nist_csf_2_0_c0008',
+    organization: 'NIST',
+    snippet: claimText,
+    text_search: claimText,
+    pdf_url: '/documents/nist_csf_2_0/pdf',
+    page: 8,
+    page_count: 32,
+    evidence: [
+      {
+        evidence_id: 'citation:nist-csf-govern:claim-1:evidence-parent',
+        source_id: 'nist-csf-govern:parent',
+        source_number: 1,
+        title: 'NIST Cybersecurity Framework 2.0',
+        doc_id: 'nist_csf_2_0',
+        chunk_id: 'brse:nist_csf_2_0:01:nist_csf_2_0_c0008',
+        organization: 'NIST',
+        snippet: claimText,
+        text_search: claimText,
+        pdf_url: '/documents/nist_csf_2_0/pdf',
+        page: 8,
+        page_count: 32,
+        locator_confidence: 'exact',
+      },
+      {
+        evidence_id: 'citation:nist-csf-govern:claim-1:evidence-child',
+        source_id: 'nist-csf-govern:child',
+        source_number: 1,
+        title: 'NIST Cybersecurity Framework 2.0',
+        doc_id: 'NIST_CSF_2_0',
+        chunk_id: 'nist_csf_2_0_c0008',
+        organization: 'NIST',
+        snippet: claimText,
+        text_search: claimText,
+        pdf_url: '/documents/nist_csf_2_0/pdf',
+        page: 8,
+        page_count: 32,
+        locator_confidence: 'exact',
+      },
+      {
+        evidence_id: 'citation:nist-csf-govern:claim-1:evidence-duplicate',
+        source_id: 'nist-csf-govern:child-duplicate',
+        source_number: 1,
+        title: 'NIST Cybersecurity Framework 2.0',
+        doc_id: 'nist_csf_2_0',
+        chunk_id: 'nist_csf_2_0_c0008',
+        organization: 'NIST',
+        snippet: claimText,
+        text_search: claimText,
+        pdf_url: '/documents/nist_csf_2_0/pdf',
+        page: 8,
+        page_count: 32,
+        locator_confidence: 'exact',
+      },
+      {
+        evidence_id: 'citation:nist-csf-govern:claim-1:evidence-broad',
+        source_id: 'nist-csf-govern:broad',
+        source_number: 1,
+        title: 'NIST Cybersecurity Framework 2.0',
+        doc_id: 'nist_csf_2_0',
+        chunk_id: 'nist_csf_2_0_c0019',
+        organization: 'NIST',
+        snippet: 'A broader secondary page mentions cybersecurity outcomes and categories.',
+        pdf_url: '/documents/nist_csf_2_0/pdf',
+        page: 19,
+        page_count: 32,
+        locator_confidence: 'page_only',
+      },
+    ],
+  }
+  const document = baseResponseDocument({
+    blocks: [
+      {
+        id: 'knowledge:nist-csf',
+        type: 'knowledge_answer',
+        contract: 'knowledge_answer_v1',
+        answer: claimText,
+        segments: [{ text: claimText, citation_ids: [citation.citation_id] }],
+        citations: [citation],
+      },
+      {
+        id: 'sources:nist-csf',
+        type: 'source_list',
+        contract: 'source_list_v1',
+        sources: [{ ...citation, contract: 'source_locator_v1' }],
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-brse-filter', name: 'RD BRSE filter', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-brse-filter', name: 'RD BRSE filter', status: 'COMPLETED' }],
+    activeSessionName: 'RD BRSE filter',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  const sourceCard = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-list-open]')
+    assert.ok(node)
+    return node
+  })
+  await click(sourceCard)
+  const referenceDrawer = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-drawer]')
+    assert.ok(node)
+    return node
+  })
+  assert.match(referenceDrawer.textContent || '', /General reference 1/)
+  assert.equal(referenceDrawer.querySelectorAll('[data-source-evidence-item]').length, 0)
+  assert.doesNotMatch(referenceDrawer.textContent || '', /Evidence 1/)
+  assert.match(referenceDrawer.querySelector('[data-source-pdf-link]')?.textContent || '', /View page 8/)
+  assert.doesNotMatch(referenceDrawer.querySelector('[data-source-pdf-link]')?.getAttribute('data-source-pdf-href') || '', /search=/)
+
+  await click(sourceCard)
+  await waitFor(() => assert.equal(view.container.querySelector('[data-source-drawer]'), null))
+  await click(view.container.querySelector('[data-source-chip]'))
+  const claimDrawer = await waitFor(() => {
+    const node = view.container.querySelector('[data-source-drawer]')
+    assert.ok(node)
+    return node
+  })
+  const evidenceItems = Array.from(claimDrawer.querySelectorAll('[data-source-evidence-item]'))
+  assert.equal(evidenceItems.length, 1)
+  assert.equal(evidenceItems[0].getAttribute('data-chunk-id'), 'nist_csf_2_0_c0008')
+  assert.equal(evidenceItems[0].getAttribute('data-source-page'), '8')
+  assert.doesNotMatch(evidenceItems[0].getAttribute('data-chunk-id') || '', /^brse:/)
+  assert.doesNotMatch(claimDrawer.textContent || '', /broader secondary page/i)
+  assert.match(claimDrawer.querySelector('[data-source-evidence-item] [data-source-pdf-link]')?.textContent || '', /View matching text on page 8/)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders multiple evidence locators for one citation', async () => {
   const citation = {
     contract: 'source_citation_v1',

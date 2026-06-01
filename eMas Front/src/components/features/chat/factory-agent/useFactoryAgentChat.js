@@ -7,6 +7,7 @@ import {
   coalesceActivitySteps,
   compareActivitySteps,
   finalizeHistoricalActivityStates,
+  stripNoopApprovalActivitySteps,
   stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
@@ -270,7 +271,11 @@ export function useFactoryAgentChat() {
           : Array.isArray(snapshot?.activitySteps)
             ? snapshot.activitySteps
             : []
-        const visibleServerSteps = stripPrematureTerminalActivitySteps(serverSteps, nextSession?.status)
+        const snapshotPendingApproval = snapshot?.pending_approval || snapshot?.pendingApproval || null
+        const visibleServerSteps = stripNoopApprovalActivitySteps(
+          stripPrematureTerminalActivitySteps(serverSteps, nextSession?.status),
+          snapshotPendingApproval,
+        )
         const visibleWithoutClient = stripPrematureTerminalActivitySteps(withoutClient, nextSession?.status)
 
         const isStreamActive = [
@@ -311,7 +316,7 @@ export function useFactoryAgentChat() {
             plan: snapshot?.plan || null,
             steps: Array.isArray(snapshot?.steps) ? snapshot.steps : [],
             timeline: nextTimeline,
-            pending_approval: snapshot?.pending_approval || null,
+            pending_approval: snapshotPendingApproval,
             presentation: snapshot?.presentation || null,
           })
           if (built.length) {

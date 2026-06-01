@@ -202,6 +202,32 @@ export function shouldShowActivityTimeline(steps) {
   return Array.isArray(steps) && steps.length > 0
 }
 
+function hasRealPendingApproval(pendingApproval) {
+  if (!pendingApproval || typeof pendingApproval !== 'object') return false
+  const approvalId = String(pendingApproval.approval_id || pendingApproval.approvalId || '').trim()
+  const status = String(pendingApproval.status || '').trim().toUpperCase()
+  return Boolean(approvalId) && (!status || ['PENDING', 'WAITING', 'WAITING_APPROVAL', 'REQUIRED'].includes(status))
+}
+
+function isNoopApprovalCheckStep(step) {
+  const label = String(step?.label || '').trim().toLowerCase()
+  if (label !== 'checking approvals') return false
+  const detail = String(step?.detail || '').trim().toLowerCase()
+  const id = String(step?.id || '').trim().toLowerCase()
+  return (
+    detail === '' ||
+    detail === 'checking approval requirements' ||
+    detail === 'reviewing approval requirements' ||
+    id.includes('approval_node')
+  )
+}
+
+export function stripNoopApprovalActivitySteps(steps = [], pendingApproval = null) {
+  const rows = Array.isArray(steps) ? steps : []
+  if (hasRealPendingApproval(pendingApproval)) return rows
+  return rows.filter((step) => !isNoopApprovalCheckStep(step))
+}
+
 export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = '') {
   const status = String(sessionStatus || '').toUpperCase()
   const rows = Array.isArray(steps) ? steps : []

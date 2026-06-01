@@ -722,6 +722,10 @@ def _compact_evidence_text(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip().lower()
 
 
+def _compact_evidence_key(value: Any) -> str:
+    return _compact_evidence_text(value)
+
+
 def _evidence_text(evidence: dict[str, Any]) -> str:
     parts = [
         evidence.get("snippet"),
@@ -807,8 +811,8 @@ def _flatten_claim_evidence_items(citation: dict[str, Any]) -> list[dict[str, An
     seen: set[tuple[str, str, str, str]] = set()
     for item in flattened:
         key = (
-            str(item.get("doc_id") or ""),
-            str(item.get("chunk_id") or ""),
+            _compact_evidence_key(item.get("doc_id")),
+            _compact_evidence_key(item.get("chunk_id")),
             str(item.get("page") or ""),
             _compact_evidence_text(item.get("text_search") or item.get("snippet") or item.get("text"))[:160],
         )
@@ -905,7 +909,7 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
         return []
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     payloads: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for _score, _overlap, evidence in scored:
         payload = _claim_evidence_payload(
             claim_text=claim_text,
@@ -914,9 +918,10 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
             evidence_index=len(payloads) + 1,
         )
         key = (
-            str(payload.get("doc_id") or ""),
-            str(payload.get("chunk_id") or ""),
-            str(payload.get("text_search") or payload.get("snippet") or ""),
+            _compact_evidence_key(payload.get("doc_id")),
+            _compact_evidence_key(payload.get("chunk_id")),
+            str(payload.get("page") or ""),
+            _compact_evidence_text(payload.get("text_search") or payload.get("snippet"))[:160],
         )
         if key in seen:
             continue
@@ -940,15 +945,15 @@ def _filter_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict
     if not exact_payloads:
         return payloads
 
-    non_rse_exact = [payload for payload in exact_payloads if not _is_rse_parent_payload(payload)]
-    if non_rse_exact:
-        return _dedupe_claim_evidence_payloads(non_rse_exact)
+    non_parent_exact = [payload for payload in exact_payloads if not _is_expanded_parent_payload(payload)]
+    if non_parent_exact:
+        return _dedupe_claim_evidence_payloads(non_parent_exact)
     return _dedupe_claim_evidence_payloads(exact_payloads)
 
 
-def _is_rse_parent_payload(payload: dict[str, Any]) -> bool:
-    chunk_id = str(payload.get("chunk_id") or "")
-    return chunk_id.startswith("rse:")
+def _is_expanded_parent_payload(payload: dict[str, Any]) -> bool:
+    chunk_id = str(payload.get("chunk_id") or "").strip().lower()
+    return chunk_id.startswith(("rse:", "brse:"))
 
 
 def _dedupe_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -956,8 +961,8 @@ def _dedupe_claim_evidence_payloads(payloads: list[dict[str, Any]]) -> list[dict
     seen: set[tuple[str, str, str, str]] = set()
     for payload in payloads:
         key = (
-            str(payload.get("doc_id") or ""),
-            str(payload.get("chunk_id") or ""),
+            _compact_evidence_key(payload.get("doc_id")),
+            _compact_evidence_key(payload.get("chunk_id")),
             str(payload.get("page") or ""),
             _compact_evidence_text(payload.get("text_search") or payload.get("snippet"))[:160],
         )
