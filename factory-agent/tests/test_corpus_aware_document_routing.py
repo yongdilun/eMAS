@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,55 @@ def test_indexed_chunk_metadata_can_supply_document_route_anchor():
     assert route.is_match is True
     assert route.matched_sources[0]["source_type"] == "indexed_metadata"
     assert route.matched_sources[0]["doc_id"] == "widget_reliability_manual"
+
+
+def test_runtime_planner_uses_indexed_chunk_metadata_when_source_register_is_sparse(
+    monkeypatch,
+    tmp_path,
+):
+    register_path = tmp_path / "source_register.json"
+    bm25_path = tmp_path / "bm25_index.pkl"
+    _write_source_register(
+        register_path,
+        [
+            _source_doc(
+                "widget_manual",
+                "Widget Manual",
+                use_for=["explain widgets"],
+                related_entities=[],
+            )
+        ],
+    )
+    chunks = [
+        Chunk(
+            chunk_id="widget_manual_c0007",
+            text="The body text is intentionally generic.",
+            metadata={
+                "doc_id": "widget_manual",
+                "title": "Widget Manual",
+                "section_title": "Blue Valve Reset",
+                "section_path": ["Widget Manual", "Recovery", "Blue Valve Reset"],
+                "aliases": ["BVR"],
+                "related_entities": ["recovery"],
+                "use_for": ["explain Blue Valve Reset recovery"],
+            },
+        )
+    ]
+    bm25_path.write_bytes(pickle.dumps({"chunks": chunks}))
+    monkeypatch.setenv("RAG_SOURCE_REGISTER_PATH", str(register_path))
+    monkeypatch.setenv("RAG_ROUTING_BM25_PATH", str(bm25_path))
+
+    prompt = "How does Blue Valve Reset relate to recovery?"
+    source_register_route = match_corpus_document_route(prompt, source_register_path=register_path)
+    sketch = build_requirement_sketch_for_text(prompt)
+    needs = build_capability_needs_for_text(prompt)
+
+    assert source_register_route.is_match is False
+    assert [requirement.goal for requirement in sketch.requirements] == [prompt]
+    assert sketch.requirements[0].source_of_truth == "document_knowledge"
+    assert sketch.requirements[0].requirement_type == "document_answer"
+    assert needs[0].source_of_truth == "document_knowledge"
+    assert needs[0].action == "search_documents"
 
 
 def test_corpus_route_question_shape_alone_is_not_enough():

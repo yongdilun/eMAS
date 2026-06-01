@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from factory_agent.rag.corpus_routing import match_corpus_document_route
+from factory_agent.rag.corpus_routing import match_runtime_corpus_document_route
 
 from ..schemas import Intent, ToolInfo
 from .intent import SemanticFrame, semantic_frame_for_text, split_user_intents
@@ -791,7 +791,7 @@ def _prepare_requirement_intents(intents: list[Intent], aliases: FieldAliases) -
 def _should_merge_back_corpus_document_query(text: str, intents: list[Intent]) -> bool:
     if len(intents) < 2:
         return False
-    route = match_corpus_document_route(text)
+    route = match_runtime_corpus_document_route(text)
     if not route.is_match:
         return False
     frames = [semantic_frame_for_text(intent.description) for intent in intents if intent.description.strip()]
@@ -815,7 +815,7 @@ def _merge_back_corpus_document_semantic_intake(
     semantic_intake: SemanticIntakeResult,
 ) -> SemanticIntakeResult:
     normalized_text = _normalize_phrase(text)
-    if not normalized_text or not match_corpus_document_route(text).is_match:
+    if not normalized_text or not match_runtime_corpus_document_route(text).is_match:
         return semantic_intake
 
     work_items = [
@@ -1511,7 +1511,7 @@ def _source_for_frame(frame: SemanticFrame, clause: str) -> SourceOfTruth:
         return "document_knowledge"
     if frame.route.startswith("tool.") or frame.route in {"approval_action", "cancel_run"}:
         return "operational_state"
-    if match_corpus_document_route(clause).is_match:
+    if match_runtime_corpus_document_route(clause).is_match:
         return "document_knowledge"
     if frame.route.startswith("clarification.") and _DOC_HINT_RE.search(clause):
         return "document_knowledge"
