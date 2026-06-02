@@ -480,6 +480,14 @@ _FRONT_MATTER_SECTION_RE = re.compile(
     r"\b(?:abstract|background|executive\s+summary|front\s+matter|introduction|overview|preface|table\s+of\s+contents)\b",
     re.IGNORECASE,
 )
+_STRUCTURED_LOCATOR_RE = re.compile(
+    r"\b(?:"
+    r"\d{1,4}\s*CFR\s+\d{3,4}\.\d+(?:\([a-z0-9ivx]+\))*|"
+    r"\d{3,4}\.\d+(?:\([a-z0-9ivx]+\))*|"
+    r"CVE-\d{4}-\d{4,7}"
+    r")\b",
+    re.IGNORECASE,
+)
 _CLAIM_TOKEN_STOPWORDS = {
     "according",
     "after",
@@ -765,6 +773,82 @@ def _citation_query_text(citation: dict[str, Any]) -> str:
     return " ".join(str(part or "") for part in parts)
 
 
+def _compact_locator_text(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _structured_locator_terms(*values: Any) -> set[str]:
+    terms: set[str] = set()
+    for value in values:
+        text = str(value or "")
+        for match in _STRUCTURED_LOCATOR_RE.finditer(text):
+            raw = match.group(0)
+            compact = _compact_locator_text(raw)
+            if compact:
+                terms.add(compact)
+            for submatch in re.findall(r"\d{3,4}\.\d+(?:\([a-z0-9ivx]+\))*", raw, flags=re.IGNORECASE):
+                compact_submatch = _compact_locator_text(submatch)
+                if compact_submatch:
+                    terms.add(compact_submatch)
+    return terms
+
+
+def _matching_evidence_locator_terms(evidence: dict[str, Any], locator_terms: set[str]) -> set[str]:
+    if not locator_terms:
+        return set()
+    evidence_text = _compact_locator_text(
+        " ".join(
+            str(part or "")
+            for part in (
+                evidence.get("snippet"),
+                evidence.get("text"),
+                evidence.get("text_search"),
+                evidence.get("section_title"),
+                evidence.get("section_path"),
+                evidence.get("chunk_id"),
+            )
+        )
+    )
+    if not evidence_text:
+        return set()
+    return {term for term in locator_terms if term and term in evidence_text}
+
+
+def _evidence_locator_overlap(evidence: dict[str, Any], locator_terms: set[str]) -> int:
+    return len(_matching_evidence_locator_terms(evidence, locator_terms))
+
+
+def _citation_is_pdf_backed(citation: dict[str, Any]) -> bool:
+    source_format = str(citation.get("source_format") or citation.get("source_kind") or "").strip().lower()
+    if source_format == "pdf":
+        return True
+    return citation.get("pdf_url") not in (None, "", [], {}) or citation.get("page") not in (None, "", [], {})
+
+
+def _compact_non_pdf_evidence_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    locator_terms: set[str],
+) -> list[dict[str, Any]]:
+    if not payloads:
+        return payloads
+    if locator_terms:
+        locator_payloads: list[dict[str, Any]] = []
+        covered_terms: set[str] = set()
+        for payload in payloads:
+            matches = _matching_evidence_locator_terms(payload, locator_terms)
+            if not matches:
+                continue
+            if matches - covered_terms or not locator_payloads:
+                locator_payloads.append(payload)
+                covered_terms.update(matches)
+            if covered_terms >= locator_terms or len(locator_payloads) >= 2:
+                break
+        if locator_payloads:
+            return locator_payloads
+    return payloads[:2]
+
+
 def _inherit_evidence_fields(
     child: dict[str, Any],
     parent: dict[str, Any],
@@ -966,6 +1050,11 @@ def _claim_evidence_payload(
         "chunk_id": evidence.get("chunk_id") or citation.get("chunk_id"),
         "title": evidence.get("title") or citation.get("title"),
         "organization": evidence.get("organization") or citation.get("organization"),
+        "source_format": evidence.get("source_format") or citation.get("source_format"),
+        "source_family": evidence.get("source_family") or citation.get("source_family"),
+        "source_granularity": evidence.get("source_granularity") or citation.get("source_granularity"),
+        "source_kind": evidence.get("source_kind") or citation.get("source_kind"),
+        "source_type": evidence.get("source_type") or citation.get("source_type"),
         "snippet": support_text or evidence.get("snippet") or evidence.get("text") or evidence.get("text_search"),
         "page": evidence.get("page") or citation.get("page"),
         "page_label": evidence.get("page_label") or citation.get("page_label"),
@@ -993,30 +1082,34 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
     if not claim_tokens:
         return []
     query_tokens = _claim_support_tokens(_citation_query_text(citation))
+    locator_terms = _structured_locator_terms(claim, _citation_query_text(citation))
 
-    scored: list[tuple[float, int, int, bool, dict[str, Any]]] = []
+    scored: list[tuple[float, int, int, int, bool, dict[str, Any]]] = []
     for evidence in evidence_items:
         evidence_tokens = _claim_support_tokens(_evidence_text(evidence))
         overlap = len(claim_tokens & evidence_tokens)
         query_overlap = len(query_tokens & evidence_tokens)
-        if overlap <= 0 and query_overlap <= 0:
+        locator_overlap = _evidence_locator_overlap(evidence, locator_terms)
+        if overlap <= 0 and query_overlap <= 0 and locator_overlap <= 0:
             continue
         support_text = _support_text_from_evidence_snippet(claim, evidence)
         coverage = overlap / max(1, len(claim_tokens))
         locator = 1 if any(evidence.get(key) not in (None, "", [], {}) for key in ("char_range", "bbox", "text_search")) else 0
         score = (100.0 if support_text else 0.0) + 10.0 * locator + 5.0 * overlap + coverage
+        if locator_overlap:
+            score += 80.0 * locator_overlap
         if query_tokens:
             query_coverage = query_overlap / max(1, len(query_tokens))
             score += 12.0 * query_overlap + 3.0 * query_coverage
             if query_overlap >= min(2, len(query_tokens)):
                 score += 20.0
-        scored.append((score, overlap, query_overlap, _is_front_matter_evidence(evidence), evidence))
+        scored.append((score, overlap, query_overlap, locator_overlap, _is_front_matter_evidence(evidence), evidence))
 
     if not scored:
         return []
     has_better_context_candidate = any(
         not is_front_matter and (query_overlap > 0 or overlap >= 2)
-        for _score, overlap, query_overlap, is_front_matter, _evidence in scored
+        for _score, overlap, query_overlap, _locator_overlap, is_front_matter, _evidence in scored
     )
     if has_better_context_candidate:
         scored = [
@@ -1024,15 +1117,16 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
                 score - 120.0 if is_front_matter else score,
                 overlap,
                 query_overlap,
+                locator_overlap,
                 is_front_matter,
                 evidence,
             )
-            for score, overlap, query_overlap, is_front_matter, evidence in scored
+            for score, overlap, query_overlap, locator_overlap, is_front_matter, evidence in scored
         ]
-    scored.sort(key=lambda item: (item[0], item[2], item[1], not item[3]), reverse=True)
+    scored.sort(key=lambda item: (item[0], item[3], item[2], item[1], not item[4]), reverse=True)
     payloads: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for _score, _overlap, _query_overlap, _is_front_matter, evidence in scored:
+    for _score, _overlap, _query_overlap, _locator_overlap, _is_front_matter, evidence in scored:
         payload = _claim_evidence_payload(
             claim_text=claim_text,
             evidence=evidence,
@@ -1052,6 +1146,8 @@ def _ranked_evidence_for_claim(claim_text: Any, citation: dict[str, Any]) -> lis
         if len(payloads) >= 5:
             break
     payloads = _filter_claim_evidence_payloads(payloads)
+    if not _citation_is_pdf_backed(citation):
+        payloads = _compact_non_pdf_evidence_payloads(payloads, locator_terms=locator_terms)
     return payloads
 
 
@@ -1232,6 +1328,11 @@ def _citation_payload(source: dict[str, Any]) -> dict[str, Any]:
         "supporting_chunk_ids",
         "supporting_pages",
         "supporting_sections",
+        "source_format",
+        "source_family",
+        "source_granularity",
+        "source_type",
+        "retrieval_priority",
         "evidence_snippets",
         "query",
         "user_query",

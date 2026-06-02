@@ -40,6 +40,7 @@ const STARTER_PROMPTS = Object.freeze([
   'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
   'Read jobs JOB-SEED-001 and JOB-SEED-002. For each job that includes a product id, read that product. Summarize each job with its product.',
   'Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003.',
+  'According to OSHA 1910.147(c)(1), what must the energy control program consist of? Use the exact regulation clause.',
 ])
 
 function isProgressSummary(text) {

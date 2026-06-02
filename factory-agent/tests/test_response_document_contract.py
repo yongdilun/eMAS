@@ -3986,6 +3986,70 @@ def test_knowledge_answer_payload_keeps_multiple_verified_evidence_items_for_com
     assert all(item["locator_confidence"] == "exact" for item in citation["evidence"])
 
 
+def test_knowledge_answer_payload_compacts_non_pdf_evidence_to_best_locator_chunk():
+    exact_clause = (
+        "1910.147(c)(1) Energy control program. The employer shall establish a program consisting of "
+        "energy control procedures, employee training and periodic inspections."
+    )
+    source = {
+        "source_number": 1,
+        "source_id": "osha_1910_147_loto_html#brse-c0007",
+        "doc_id": "osha_1910_147_loto_html",
+        "chunk_id": "brse:osha_1910_147_loto_html:01:osha_1910_147_loto_html_c0007",
+        "title": "Control of Hazardous Energy",
+        "organization": "OSHA",
+        "source_format": "html",
+        "source_granularity": "regulation_clause",
+        "query": "According to OSHA 1910.147(c)(1), what must the energy control program consist of?",
+        "snippet": exact_clause,
+        "evidence_snippets": [
+            {
+                "doc_id": "osha_1910_147_loto_html",
+                "chunk_id": "brse:osha_1910_147_loto_html:01:osha_1910_147_loto_html_c0007",
+                "source_format": "html",
+                "snippet": "Nearby HTML clauses discuss energy control program requirements.",
+                "source_chunk_evidence": [
+                    {
+                        "doc_id": "osha_1910_147_loto_html",
+                        "chunk_id": "osha_1910_147_loto_html_c0008",
+                        "source_format": "html",
+                        "section_title": "1910.147(c)(2)",
+                        "snippet": "Energy control procedures shall clearly and specifically outline rules and techniques.",
+                    },
+                    {
+                        "doc_id": "osha_1910_147_loto_html",
+                        "chunk_id": "osha_1910_147_loto_html_c0007",
+                        "source_format": "html",
+                        "section_title": "1910.147(c)(1)",
+                        "snippet": exact_clause,
+                    },
+                    {
+                        "doc_id": "osha_1910_147_loto_html",
+                        "chunk_id": "osha_1910_147_loto_html_c0012",
+                        "source_format": "html",
+                        "section_title": "1910.147(c)(7)",
+                        "snippet": "Employee retraining shall be provided whenever job assignments change.",
+                    },
+                ],
+            }
+        ],
+    }
+    answer = (
+        "OSHA 1910.147(c)(1) says the energy control program must consist of energy control procedures, "
+        "employee training, and periodic inspections.[^1]"
+    )
+
+    _clean_answer, _segments, citations = _knowledge_answer_payload(answer, [source])
+
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation["source_format"] == "html"
+    assert citation["chunk_id"] == "osha_1910_147_loto_html_c0007"
+    assert [item["chunk_id"] for item in citation["evidence"]] == ["osha_1910_147_loto_html_c0007"]
+    assert citation["evidence"][0]["source_format"] == "html"
+    assert "1910.147(c)(1)" in citation["evidence"][0]["section_title"]
+
+
 @pytest.mark.asyncio
 async def test_phase32_positive_osha_reenergizing_response_document_is_pdf_source_backed(db_session):
     created_at = datetime(2026, 5, 19, 10, 0, 0)

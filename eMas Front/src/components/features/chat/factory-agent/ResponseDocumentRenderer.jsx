@@ -742,7 +742,7 @@ function sourcePdfEvidenceText(source, openTarget = sourceOpenTarget(source)) {
     return `Showing page ${page}${search ? ` with source excerpt: ${search}` : '.'}`
   }
   if (openTarget.mode === 'pdf') return 'PDF available, but page metadata was not provided.'
-  return 'PDF locator unavailable. Showing source metadata and snippet evidence.'
+  return 'Document preview unavailable. Showing source metadata and snippet evidence.'
 }
 
 function rectFromElement(element) {
