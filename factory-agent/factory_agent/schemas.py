@@ -741,6 +741,10 @@ class SessionSnapshotResponse(BaseModel):
         default_factory=list,
         description="Server-rendered activity timeline steps. Stable ids act:{event_id}. Clients should prefer these over client-side derivation.",
     )
+    activity_revision: int = Field(
+        default=0,
+        description="Monotonic revision for the server-rendered activity timeline. Clients should replace activity_steps when this advances.",
+    )
     presentation: PresentationResponse = Field(
         default_factory=lambda: PresentationResponse(
             kind="diagnostic",

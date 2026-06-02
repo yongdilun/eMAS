@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent.config import get_settings
 from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
 from factory_agent.planning.tool_selector import ToolSelectionResult
+from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
 from factory_agent.schemas import ToolInfo
 
@@ -84,7 +85,7 @@ def _tool(
 
 def _tools() -> dict[str, ToolInfo]:
     priority_schema = {"type": "string", "enum": ["low", "medium", "high"]}
-    status_schema = {"type": "string", "enum": ["queued", "blocked", "done"]}
+    status_schema = {"type": "string", "enum": ["queued", "planned", "blocked", "done"]}
     return {
         "get__jobs": _tool(
             "get__jobs",
@@ -108,6 +109,41 @@ def _tools() -> dict[str, ToolInfo]:
             entity="job",
             response_contract="result_collection_v1",
         ),
+        "get__jobs_{id}": _tool(
+            "get__jobs_{id}",
+            endpoint="/jobs/{id}",
+            tags=["job", "lookup", "status", "priority"],
+            required=["id"],
+            query_params=["fields"],
+            input_properties={
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "fields": {"type": "string"},
+            },
+            output_properties={
+                "job_id": {"type": "string"},
+                "priority": priority_schema,
+                "status": status_schema,
+            },
+            entity="job",
+            response_contract="entity_status_v1",
+        ),
+        "get__processes_{id}_steps": _tool(
+            "get__processes_{id}_steps",
+            endpoint="/processes/{id}/steps",
+            tags=["process", "step", "lookup", "status"],
+            required=["id"],
+            input_properties={
+                "id": {"type": "string", "x-ai-id-field": "process_id", "x-ai-entity": "process"},
+                "fields": {"type": "string"},
+            },
+            output_properties={
+                "process_id": {"type": "string"},
+                "step_id": {"type": "string"},
+                "status": status_schema,
+            },
+            entity="process",
+            response_contract="result_collection_v1",
+        ),
         "patch__jobs_{id}": _tool(
             "patch__jobs_{id}",
             endpoint="/jobs/{id}",
@@ -117,6 +153,21 @@ def _tools() -> dict[str, ToolInfo]:
             input_properties={
                 "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
                 "priority": priority_schema,
+            },
+            output_properties={"job_id": {"type": "string"}, "priority": priority_schema},
+            entity="job",
+            response_contract="business_change_v1",
+        ),
+        "put__jobs_{id}": _tool(
+            "put__jobs_{id}",
+            endpoint="/jobs/{id}",
+            tags=["job", "update", "priority"],
+            method="PUT",
+            required=["id"],
+            input_properties={
+                "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+                "priority": priority_schema,
+                "status": status_schema,
             },
             output_properties={"job_id": {"type": "string"}, "priority": priority_schema},
             entity="job",
@@ -156,7 +207,7 @@ class Phase8Selector:
         if request["safety"] == "write_requires_approval":
             names = ["patch__jobs_{id}"]
         else:
-            names = ["get__jobs"]
+            names = ["get__jobs", "get__jobs_{id}"]
         return ToolSelectionResult(names, backend_used="retrieval", llm_calls=0)
 
 
@@ -312,6 +363,14 @@ def _approval_decision(result, *, approved: bool = True, **extra: Any) -> dict[s
     }
 
 
+def _contains_ordered_nodes(node_order: list[str], expected: list[str]) -> bool:
+    cursor = 0
+    for node in node_order:
+        if cursor < len(expected) and node == expected[cursor]:
+            cursor += 1
+    return cursor == len(expected)
+
+
 @pytest.mark.asyncio
 async def test_phase8_write_query_stages_preview_and_pauses_at_approval_node():
     graph, _selector, executor, persister = _graph()
@@ -339,6 +398,21 @@ async def test_phase8_write_query_stages_preview_and_pauses_at_approval_node():
     assert [row["job_id"] for row in payload["excluded_rows"]] == ["JOB-LOW-BLOCKED"]
     assert payload["blocked_rows_excluded"] is True
     assert payload["legacy_shortcut_used"] is False
+    assert payload["graph_tool_action"] == "approval_gate_node"
+    assert result.state.execution_trace.diagnostics["phase8_approval_staging"]["lifecycle_nodes"] == [
+        "write_staging_node",
+        "approval_gate_node",
+    ]
+    assert _contains_ordered_nodes(
+        result.node_order,
+        [
+            "planner_choose_tool_node",
+            "tool_execution_node",
+            "write_staging_node",
+            "approval_gate_node",
+            "approval_node",
+        ],
+    )
     assert result.node_order[-3:] == ["approval_node", "finalize_node", "response_document_node"]
     assert context["approval_blocks"] == 1
     assert context["blocks"][-1]["type"] == "approval_required"
@@ -494,6 +568,494 @@ async def test_phase8_commit_happens_only_after_matching_approval_and_native_che
     assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
     assert resume_diag["native_langgraph_checkpoint_used"] is True
     assert resume_diag["session_replan_context_authoritative"] is False
+    assert _contains_ordered_nodes(
+        resumed.node_order,
+        [
+            "approval_node",
+            "approval_gate_node",
+            "commit_write_node",
+            "evidence_observation_node",
+            "satisfaction_node",
+        ],
+    )
+    assert resumed.state.execution_trace.diagnostics["phase8_write_commit"] == {
+        "status": "committed",
+        "approval_id": staged.state.pending_approval.approval_id,
+        "requirement_id": "req-001",
+        "staged_graph_tool_call_count": 1,
+        "api_evidence_count": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_phase8_langsmith_trace_metadata_links_initial_and_resume_segments():
+    graph, _selector, _executor, _persister = _graph()
+
+    staged = await graph.run(
+        "Set low priority jobs to high priority.",
+        session_context={"session_id": "phase8-langsmith-link"},
+        options={
+            "thread_id": "phase8-langsmith-link",
+            "run_name": "planner_owned_agent_graph.initial",
+            "tags": ["factory_agent", "graph_segment:initial", "logical_trace:trace-phase8"],
+            "metadata": {
+                "logical_trace_id": "trace-phase8",
+                "graph_segment": "initial",
+                "session_id": "phase8-langsmith-link",
+            },
+        },
+    )
+
+    staged_trace = staged.state.execution_trace.diagnostics["langsmith_trace"]
+    assert staged.checkpoint_config["run_name"] == "planner_owned_agent_graph.initial"
+    assert staged_trace["metadata"]["logical_trace_id"] == "trace-phase8"
+    assert staged_trace["metadata"]["graph_segment"] == "initial"
+    assert "graph_segment:initial" in staged_trace["tags"]
+
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-langsmith-link"},
+        _approval_decision(staged, decided_by="qa-user"),
+        options={
+            "thread_id": "phase8-langsmith-link",
+            "run_name": "planner_owned_agent_graph.post_approval_resume",
+            "tags": [
+                "factory_agent",
+                "graph_segment:post_approval_resume",
+                "logical_trace:trace-phase8",
+            ],
+            "metadata": {
+                "logical_trace_id": "trace-phase8",
+                "graph_segment": "post_approval_resume",
+                "session_id": "phase8-langsmith-link",
+                "approval_id": staged.state.pending_approval.approval_id,
+                "approval_checkpoint_id": staged.state.pending_approval.checkpoint_id,
+            },
+        },
+    )
+
+    resume_trace = resumed.state.execution_trace.diagnostics["phase8_resume_checkpoint"]["langsmith_trace"]
+    assert resume_trace["run_name"] == "planner_owned_agent_graph.post_approval_resume"
+    assert resume_trace["metadata"]["logical_trace_id"] == "trace-phase8"
+    assert resume_trace["metadata"]["graph_segment"] == "post_approval_resume"
+    assert resume_trace["metadata"]["approval_id"] == staged.state.pending_approval.approval_id
+    assert resume_trace["metadata"]["approval_checkpoint_id"] == staged.state.pending_approval.checkpoint_id
+    assert "graph_segment:post_approval_resume" in resume_trace["tags"]
+
+
+@pytest.mark.asyncio
+async def test_phase8_bulk_approval_preserves_each_staged_row_id_when_approved_args_include_id():
+    preview = Phase8PreviewProvider()
+    preview.rows = [
+        {"job_id": "JOB-LOW-001", "priority": "low", "status": "queued"},
+        {"job_id": "JOB-LOW-002", "priority": "low", "status": "queued"},
+    ]
+    graph, _selector, executor, _persister = _graph(preview=preview)
+
+    staged = await graph.run(
+        "Set low priority jobs to medium priority.",
+        session_context={"session_id": "phase8-bulk-preserve-row-id"},
+    )
+    staged_args = [
+        call["args"]
+        for call in staged.state.pending_approval.payload["staged_graph_tool_calls"]
+    ]
+    assert staged_args == [
+        {"id": "JOB-LOW-001", "priority": "medium"},
+        {"id": "JOB-LOW-002", "priority": "medium"},
+    ]
+
+    await graph.resume_from_approval(
+        {"session_id": "phase8-bulk-preserve-row-id"},
+        _approval_decision(
+            staged,
+            decided_by="qa-user",
+            approved_args={"id": "JOB-LOW-001", "priority": "medium"},
+        ),
+    )
+
+    assert [call["args"] for call in executor.calls] == [
+        {"id": "JOB-LOW-001", "priority": "medium"},
+        {"id": "JOB-LOW-002", "priority": "medium"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_finalizing():
+    class ReadAfterWriteExecutor:
+        def __init__(self) -> None:
+            self.rows = {
+                "JOB-LOW-001": {"job_id": "JOB-LOW-001", "priority": "low", "status": "planned"},
+                "JOB-LOW-002": {"job_id": "JOB-LOW-002", "priority": "low", "status": "planned"},
+            }
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"method": tool.method, "tool_name": tool.name, "args": dict(args)})
+            job_id = str(args.get("id") or "")
+            if tool.method == "GET":
+                row = dict(self.rows[job_id])
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": row},
+                    "infrastructure_error": False,
+                }
+            priority = str(args.get("priority") or "")
+            self.rows[job_id]["priority"] = priority
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": dict(self.rows[job_id])},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    selector = Phase8Selector()
+    executor = ReadAfterWriteExecutor()
+    persister = Phase8ApprovalPersister()
+    preview = Phase8PreviewProvider()
+    preview.rows = list(executor.rows.values())
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=selector,  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_preview_provider=preview,
+            approval_persister=persister,
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
+    )
+
+    staged = await graph.run(
+        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        session_context={"session_id": "phase8-read-after-write"},
+    )
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-read-after-write"},
+        _approval_decision(staged, decided_by="qa-user"),
+    )
+
+    requirements = {requirement.id: requirement for requirement in resumed.state.requirement_ledger.requirements}
+    req_002_evidence = [
+        evidence
+        for evidence in resumed.state.evidence_ledger.evidence
+        if evidence.requirement_id == "req-002"
+    ]
+
+    assert requirements["req-001"].status == "satisfied"
+    assert requirements["req-002"].status == "satisfied"
+    assert requirements["req-002"].requirement_type == "multi_entity_status"
+    assert requirements["req-002"].constraints["job_id"] == ["JOB-LOW-001", "JOB-LOW-002"]
+    assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert [call["args"] for call in executor.calls if call["method"] == "PATCH"] == [
+        {"id": "JOB-LOW-001", "priority": "medium"},
+        {"id": "JOB-LOW-002", "priority": "medium"},
+    ]
+    assert [call["args"] for call in executor.calls if call["method"] == "GET"] == [
+        {"id": "JOB-LOW-001"},
+        {"id": "JOB-LOW-002"},
+    ]
+    observed_read_ids = []
+    for evidence in req_002_evidence:
+        result = evidence.normalized_result
+        fields = result.get("fields") if isinstance(result.get("fields"), dict) else {}
+        rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+        for candidate in [result.get("entity_id"), fields.get("job_id")]:
+            if candidate:
+                observed_read_ids.append(candidate)
+        observed_read_ids.extend(row.get("job_id") for row in rows if isinstance(row, dict) and row.get("job_id"))
+    assert sorted(set(observed_read_ids)) == ["JOB-LOW-001", "JOB-LOW-002"]
+
+
+@pytest.mark.asyncio
+async def test_phase8_dependent_updated_jobs_read_completes_when_selector_returns_collection_only():
+    class CollectionOnlyReadSelector(Phase8Selector):
+        async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+            self.calls.append(kwargs)
+            request = kwargs["context"]["v2_tool_selector_adapter_request"]
+            if request["safety"] == "write_requires_approval":
+                return ToolSelectionResult(["patch__jobs_{id}"], backend_used="retrieval", llm_calls=0)
+            return ToolSelectionResult(["get__jobs"], backend_used="retrieval", llm_calls=0)
+
+    class ReadAfterWriteExecutor:
+        def __init__(self) -> None:
+            self.rows = {
+                "JOB-LOW-001": {"job_id": "JOB-LOW-001", "priority": "low", "status": "planned"},
+                "JOB-LOW-002": {"job_id": "JOB-LOW-002", "priority": "low", "status": "planned"},
+            }
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"method": tool.method, "tool_name": tool.name, "args": dict(args)})
+            if tool.method == "GET" and tool.name == "get__jobs":
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": [dict(row) for row in self.rows.values()]},
+                    "infrastructure_error": False,
+                }
+            job_id = str(args.get("id") or "")
+            if tool.method == "GET":
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": dict(self.rows[job_id])},
+                    "infrastructure_error": False,
+                }
+            self.rows[job_id]["priority"] = str(args.get("priority") or "")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": dict(self.rows[job_id])},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    selector = CollectionOnlyReadSelector()
+    executor = ReadAfterWriteExecutor()
+    preview = Phase8PreviewProvider()
+    preview.rows = list(executor.rows.values())
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=selector,  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_preview_provider=preview,
+            approval_persister=Phase8ApprovalPersister(),
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
+    )
+
+    staged = await graph.run(
+        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        session_context={"session_id": "phase8-read-after-write-collection-only"},
+    )
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-read-after-write-collection-only"},
+        _approval_decision(staged, decided_by="qa-user"),
+    )
+
+    assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert [call["tool_name"] for call in executor.calls if call["method"] == "GET"] == [
+        "get__jobs_{id}",
+        "get__jobs_{id}",
+    ]
+    assert [call["args"] for call in executor.calls if call["method"] == "GET"] == [
+        {"id": "JOB-LOW-001"},
+        {"id": "JOB-LOW-002"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase8_dependent_updated_jobs_read_rejects_cross_entity_id_tools():
+    class ProcessFirstSelector(Phase8Selector):
+        async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+            self.calls.append(kwargs)
+            request = kwargs["context"]["v2_tool_selector_adapter_request"]
+            if request["safety"] == "write_requires_approval":
+                names = ["patch__jobs_{id}"]
+            else:
+                names = ["get__processes_{id}_steps", "get__jobs_{id}"]
+            return ToolSelectionResult(names, backend_used="retrieval", llm_calls=0)
+
+    class ReadAfterWriteExecutor:
+        def __init__(self) -> None:
+            self.rows = {
+                "JOB-LOW-001": {"job_id": "JOB-LOW-001", "priority": "low", "status": "planned"},
+                "JOB-LOW-002": {"job_id": "JOB-LOW-002", "priority": "low", "status": "planned"},
+            }
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"method": tool.method, "tool_name": tool.name, "args": dict(args)})
+            job_id = str(args.get("id") or "")
+            if tool.name == "get__processes_{id}_steps":
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": []},
+                    "infrastructure_error": False,
+                }
+            if tool.method == "GET":
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": dict(self.rows[job_id])},
+                    "infrastructure_error": False,
+                }
+            self.rows[job_id]["priority"] = str(args.get("priority") or "")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": dict(self.rows[job_id])},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    selector = ProcessFirstSelector()
+    executor = ReadAfterWriteExecutor()
+    preview = Phase8PreviewProvider()
+    preview.rows = list(executor.rows.values())
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=selector,  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_preview_provider=preview,
+            approval_persister=Phase8ApprovalPersister(),
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
+    )
+
+    staged = await graph.run(
+        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        session_context={"session_id": "phase8-cross-entity-read-tool"},
+    )
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-cross-entity-read-tool"},
+        _approval_decision(staged, decided_by="qa-user"),
+    )
+
+    assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert [call["tool_name"] for call in executor.calls if call["method"] == "GET"] == [
+        "get__jobs_{id}",
+        "get__jobs_{id}",
+    ]
+    assert all(call["tool_name"] != "get__processes_{id}_steps" for call in executor.calls)
+
+
+@pytest.mark.asyncio
+async def test_phase8_live_approval_preview_stages_row_ids_when_write_window_is_tiny():
+    class PutOnlySelector(Phase8Selector):
+        async def select_tools(self, **kwargs: Any) -> ToolSelectionResult:
+            self.calls.append(kwargs)
+            request = kwargs["context"]["v2_tool_selector_adapter_request"]
+            if request["safety"] == "write_requires_approval":
+                return ToolSelectionResult(["put__jobs_{id}"], backend_used="retrieval", llm_calls=0)
+            return ToolSelectionResult(["get__jobs_{id}"], backend_used="retrieval", llm_calls=0)
+
+    class LivePreviewExecutor:
+        def __init__(self) -> None:
+            self.rows = {
+                "JOB-LOW-001": {"job_id": "JOB-LOW-001", "priority": "low", "status": "planned"},
+                "JOB-LOW-002": {"job_id": "JOB-LOW-002", "priority": "low", "status": "planned"},
+            }
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"method": tool.method, "tool_name": tool.name, "args": dict(args)})
+            if tool.method == "GET" and tool.name == "get__jobs":
+                priority = args.get("priority")
+                status = args.get("status")
+                rows = [
+                    dict(row)
+                    for row in self.rows.values()
+                    if (priority in (None, "", [], {}) or row.get("priority") == priority)
+                    and (status in (None, "", [], {}) or row.get("status") == status)
+                ]
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": rows},
+                    "infrastructure_error": False,
+                }
+            job_id = str(args.get("id") or "")
+            if tool.method == "GET":
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": dict(self.rows[job_id])},
+                    "infrastructure_error": False,
+                }
+            if not job_id:
+                return {
+                    "ok": False,
+                    "http_status": 400,
+                    "latency_ms": 4,
+                    "body": {"error_type": "invalid_payload", "message": "Missing required id."},
+                    "infrastructure_error": False,
+                }
+            self.rows[job_id]["priority"] = str(args.get("priority") or "")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": dict(self.rows[job_id])},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    selector = PutOnlySelector()
+    executor = LivePreviewExecutor()
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=selector,  # type: ignore[arg-type]
+            tool_retriever=V2CapabilityToolRetriever(selector, max_candidates=1),  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_persister=Phase8ApprovalPersister(),
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
+    )
+
+    staged = await graph.run(
+        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        session_context={"session_id": "phase8-live-preview-tiny-window"},
+    )
+    staged_args = [
+        call["args"]
+        for call in staged.state.pending_approval.payload["staged_graph_tool_calls"]
+    ]
+
+    assert staged_args == [
+        {"id": "JOB-LOW-001", "priority": "medium", "status": "planned"},
+        {"id": "JOB-LOW-002", "priority": "medium", "status": "planned"},
+    ]
+
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-live-preview-tiny-window"},
+        _approval_decision(staged, decided_by="qa-user"),
+    )
+
+    assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert [call for call in executor.calls if call["method"] == "PUT"] == [
+        {
+            "method": "PUT",
+            "tool_name": "put__jobs_{id}",
+            "args": {"id": "JOB-LOW-001", "priority": "medium", "status": "planned"},
+        },
+        {
+            "method": "PUT",
+            "tool_name": "put__jobs_{id}",
+            "args": {"id": "JOB-LOW-002", "priority": "medium", "status": "planned"},
+        },
+    ]
 
 
 @pytest.mark.asyncio

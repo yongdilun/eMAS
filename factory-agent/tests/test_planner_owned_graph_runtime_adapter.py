@@ -650,16 +650,148 @@ async def test_live_activity_preserves_graph_progress_order_when_nodes_share_tim
     assert [step["detail"] for step in row.replan_context["live_activity_steps"]] == [
         "Structuring the request",
         "Choosing the next backend action",
-        "Checking relevant records",
+        "Checking whether the action can run safely",
         "Checking tool evidence",
     ]
     assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
         "Structuring request",
         "Choosing next action",
-        "Running selected tool",
+        "Preparing backend action",
         "Checking result",
     ]
     assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_live_activity_continues_archived_graph_history_after_approval_resume(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-approval-resume",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Change planned jobs to medium, then show the updated jobs",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={
+                "activity_graph_steps": [
+                    {
+                        "id": "graph:000001:semantic_intake_node",
+                        "timestamp": 1770000001,
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Understood request",
+                        "detail": "Reviewing your request and recent context",
+                        "state": "success",
+                    },
+                    {
+                        "id": "graph:000002:approval_gate_node",
+                        "timestamp": 1770000002,
+                        "order": 2,
+                        "group": "approval",
+                        "label": "Waiting for your approval",
+                        "detail": "Approval is required before committing staged changes",
+                        "state": "waiting",
+                    },
+                ],
+            },
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-approval-resume",
+    )
+    for node in ["commit_write_node", "response_document_node"]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 2,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-approval-resume")
+            )
+        ).scalar_one()
+
+    assert [step["id"] for step in row.replan_context["activity_graph_steps"]] == [
+        "graph:000001:semantic_intake_node",
+        "graph:000002:approval_gate_node",
+    ]
+    assert [step["id"] for step in row.replan_context["live_activity_steps"]] == [
+        "graph:000003:commit_write_node",
+        "graph:000004:response_document_node",
+    ]
+    assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [3, 4]
+    assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
+        "Committing approved change",
+        "Rendering response",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_activity_uses_write_specific_approval_labels(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-write-labels",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Change planned jobs to medium",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-write-labels",
+    )
+    for node in ["write_staging_node", "approval_gate_node", "commit_write_node"]:
+        recorder.record_graph_event(
+            {
+                "event": "planner_owned_agent_graph_node",
+                "node": node,
+                "ledger_revision": 1,
+            }
+        )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-write-labels")
+            )
+        ).scalar_one()
+
+    assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
+        "Preparing write approval",
+        "Waiting for your approval",
+        "Committing approved change",
+    ]
+    assert [step["detail"] for step in row.replan_context["live_activity_steps"]] == [
+        "Building the exact write set before approval",
+        "Approval is required before committing staged changes",
+        "Applying the approved backend write",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1125,6 +1257,191 @@ def test_graph_runtime_preserves_live_activity_history_before_clearing_transient
     assert context["intent_contract"]["activity_graph_steps"] == context["activity_graph_steps"]
     assert context["planner_owned_agent_graph"]["activity_graph_steps"] == context["activity_graph_steps"]
     assert context["intent_contract"]["activity_caption_context"]["activity_graph_steps"] == context["activity_graph_steps"]
+
+
+def test_graph_runtime_builds_langsmith_trace_options_across_approval_resume():
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    sess = SimpleNamespace(
+        session_id="phase10-langsmith-trace",
+        replan_context={
+            "planner_owned_langsmith_trace": {"logical_trace_id": "logical-phase10"},
+            "langgraph_pending_approval": {
+                "approval_id": "approval-001",
+                "checkpoint_id": "checkpoint-001",
+                "ledger_revision": 1,
+            },
+        },
+    )
+
+    initial = adapter._graph_run_options(sess=sess, segment="initial")
+    resumed = adapter._graph_run_options(
+        sess=sess,
+        segment="post_approval_resume",
+        approval_id="approval-001",
+        checkpoint_id="checkpoint-001",
+        ledger_revision=1,
+    )
+
+    assert initial["run_name"] == "planner_owned_agent_graph.initial"
+    assert initial["metadata"]["logical_trace_id"] == "logical-phase10"
+    assert initial["metadata"]["approval_id"] == "approval-001"
+    assert initial["metadata"]["approval_checkpoint_id"] == "checkpoint-001"
+    assert resumed["run_name"] == "planner_owned_agent_graph.post_approval_resume"
+    assert resumed["metadata"]["logical_trace_id"] == "logical-phase10"
+    assert resumed["metadata"]["graph_segment"] == "post_approval_resume"
+    assert resumed["metadata"]["approval_id"] == "approval-001"
+    assert resumed["metadata"]["approval_checkpoint_id"] == "checkpoint-001"
+    assert resumed["metadata"]["human_approval_boundary"] is True
+    assert "graph_segment:post_approval_resume" in resumed["tags"]
+    assert "logical_trace:logical-phase10" in resumed["tags"]
+
+
+def test_graph_runtime_persists_langsmith_trace_context_for_exported_runs():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change jobs, then show the updated jobs.",
+        tools_by_name={"get__machines_{id}": _tool()},
+    )
+    state.execution_trace.diagnostics["graph_checkpoint_identity"] = {
+        "thread_id": "phase10-langsmith-export",
+        "checkpoint_id": "checkpoint-export-001",
+        "ledger_revision": 1,
+    }
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["semantic_intake_node"],
+        checkpoint_config={
+            "configurable": {"thread_id": "phase10-langsmith-export"},
+            "run_name": "planner_owned_agent_graph.initial",
+            "tags": ["factory_agent", "graph_segment:initial", "logical_trace:logical-export"],
+            "metadata": {
+                "logical_trace_id": "logical-export",
+                "graph_segment": "initial",
+                "session_id": "phase10-langsmith-export",
+            },
+        },
+    )
+
+    context = adapter._graph_context(
+        result=result,
+        intent="Change jobs, then show the updated jobs.",
+        base_context={},
+    )
+
+    trace = context["planner_owned_langsmith_trace"]
+    assert trace["logical_trace_id"] == "logical-export"
+    assert trace["thread_id"] == "phase10-langsmith-export"
+    assert trace["segments"] == [
+        {
+            "graph_segment": "initial",
+            "run_name": "planner_owned_agent_graph.initial",
+            "thread_id": "phase10-langsmith-export",
+            "approval_checkpoint_id": "checkpoint-export-001",
+            "ledger_revision": 1,
+            "tags": ["factory_agent", "graph_segment:initial", "logical_trace:logical-export"],
+        }
+    ]
+    assert context["intent_contract"]["langsmith_trace"] == trace
+    assert context["planner_owned_agent_graph"]["langsmith_trace"] == trace
+
+
+def test_graph_runtime_merges_archived_and_live_activity_history_across_approval_resume():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change jobs, then show the updated jobs.",
+        tools_by_name={"get__machines_{id}": _tool()},
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "uuid",
+        persist_plan=SimpleNamespace(),
+        session_lookup=SimpleNamespace(),
+    )
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["commit_write_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": "phase10-approval-resume"}},
+    )
+    base_context = {
+        "activity_graph_steps": [
+            {
+                "id": "graph:000001:semantic_intake_node",
+                "timestamp": 1770000001,
+                "order": 1,
+                "group": "planning",
+                "label": "Understood request",
+                "detail": "Reviewing your request and recent context",
+                "state": "success",
+            },
+            {
+                "id": "graph:000002:approval_gate_node",
+                "timestamp": 1770000002,
+                "order": 2,
+                "group": "approval",
+                "label": "Waiting for your approval",
+                "detail": "Approval is required before committing staged changes",
+                "state": "waiting",
+            },
+        ],
+        "live_activity_steps": [
+            {
+                "id": "graph:000003:commit_write_node",
+                "timestamp": 1770000003,
+                "order": 3,
+                "group": "approval",
+                "label": "Committing approved change",
+                "detail": "Applying the approved backend write",
+                "state": "running",
+            },
+            {
+                "id": "graph:000004:response_document_node",
+                "timestamp": 1770000004,
+                "order": 4,
+                "group": "response",
+                "label": "Rendering response",
+                "detail": "Rendering the response",
+                "state": "running",
+            },
+        ],
+        "live_activity_revision": 14,
+    }
+
+    context = adapter._graph_context(
+        result=result,
+        intent="Change jobs, then show the updated jobs.",
+        base_context=base_context,
+    )
+
+    assert "live_activity_steps" not in context
+    assert [step["id"] for step in context["activity_graph_steps"]] == [
+        "graph:000001:semantic_intake_node",
+        "graph:000002:approval_gate_node",
+        "graph:000003:commit_write_node",
+        "graph:000004:response_document_node",
+    ]
+    assert [step["label"] for step in context["activity_graph_steps"]] == [
+        "Understood request",
+        "Waiting for your approval",
+        "Committing approved change",
+        "Rendering response",
+    ]
+    assert context["intent_contract"]["activity_graph_steps"] == context["activity_graph_steps"]
+    assert context["planner_owned_agent_graph"]["activity_graph_steps"] == context["activity_graph_steps"]
 
 
 def test_graph_runtime_keeps_failed_tool_evidence_out_of_plan_steps_but_in_tool_outputs():

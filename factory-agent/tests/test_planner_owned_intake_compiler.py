@@ -13,6 +13,7 @@ from factory_agent.planning.v2_capability_map import (
 from factory_agent.planning.v2_contracts import EvidenceLedgerEntry
 
 from tests.test_planner_owned_semantic_intake import (
+    _job_collection_tool,
     _job_status_tool,
     _machine_status_tool,
     _product_status_tool,
@@ -89,6 +90,78 @@ def test_compiler_rejects_singular_dependent_read_without_referent():
     assert len(ledger.clarification_needs) == 1
     assert ledger.clarification_needs[0].reason == "dependent_singular_read_missing_bound_entity"
     assert ledger.clarification_needs[0].blocked_entity == "job"
+
+
+def test_compiler_binds_updated_jobs_read_to_previous_mutation():
+    user_goal = "Change planned low-priority jobs to medium priority, then show the updated jobs."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=build_v2_capability_map(
+            {
+                "get__jobs": _job_collection_tool(),
+                "get__jobs_{id}": _job_status_tool(),
+            }
+        ),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [(requirement.id, requirement.requirement_type, requirement.entity) for requirement in ledger.requirements] == [
+        ("req-001", "mutation_request", "job"),
+        ("req-002", "filtered_collection", "job"),
+    ]
+    assert ledger.requirements[1].depends_on == ["req-001"]
+    assert ledger.requirements[1].constraints == {
+        "depends_on_result_binding": "updated_jobs",
+        "result_binding_source_requirement": "req-001",
+        "result_binding_field": "affected_entity_ids",
+    }
+    assert ledger.clarification_needs == []
+    assert [clause.role for clause in ledger.intake_clauses] == [
+        "mutation_or_approval_request",
+        "required_requirement",
+    ]
+
+
+def test_compiler_binds_affected_jobs_read_to_previous_mutation():
+    user_goal = "Change planned low-priority jobs to medium priority, then show the affected jobs."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=build_v2_capability_map(
+            {
+                "get__jobs": _job_collection_tool(),
+                "get__jobs_{id}": _job_status_tool(),
+            }
+        ),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [(requirement.id, requirement.requirement_type, requirement.entity) for requirement in ledger.requirements] == [
+        ("req-001", "mutation_request", "job"),
+        ("req-002", "filtered_collection", "job"),
+    ]
+    assert ledger.requirements[1].depends_on == ["req-001"]
+    assert ledger.requirements[1].constraints["depends_on_result_binding"] == "updated_jobs"
+    assert ledger.requirements[1].constraints["result_binding_source_requirement"] == "req-001"
+    assert ledger.clarification_needs == []
+
+
+def test_compiler_keeps_updated_jobs_clarification_without_previous_mutation():
+    user_goal = "Show the updated jobs."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=build_v2_capability_map(
+            {
+                "get__jobs": _job_collection_tool(),
+                "get__jobs_{id}": _job_status_tool(),
+            }
+        ),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert ledger.requirements == []
+    assert len(ledger.clarification_needs) == 1
+    assert ledger.clarification_needs[0].reason == "dependent_singular_read_missing_bound_entity"
+    assert ledger.clarification_needs[0].blocked_entity == "updated"
 
 
 def test_unbound_when_you_see_product_on_that_job_is_not_executable():

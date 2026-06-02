@@ -961,6 +961,8 @@ def _validate_tool_call_locked_identity_args(
             continue
         candidate_arg_names = _call_arg_names_for_locked_identity(locked)
         selected_arg_names = [name for name in candidate_arg_names if name in call.args]
+        card_identity_args = set(card.required_args) | set(card.path_params) | set(card.query_params)
+        supported_identity_args = card_identity_args.intersection(candidate_arg_names)
         for arg_name in selected_arg_names:
             actual = call.args.get(arg_name)
             if not _locked_identity_value_matches(actual, expected):
@@ -969,11 +971,15 @@ def _validate_tool_call_locked_identity_args(
                     f"{requirement.id}:{locked} expected={expected!r} actual={actual!r}"
                 )
                 return
-        card_identity_args = set(card.required_args) | set(card.path_params)
-        if card_identity_args.intersection(candidate_arg_names) and not selected_arg_names:
+        if supported_identity_args and not selected_arg_names:
             errors.append(
                 "selected tool call args omit locked identity constraint "
                 f"{requirement.id}:{locked}"
+            )
+        elif not supported_identity_args and _requirement_requires_locked_identity_tool_scope(requirement):
+            errors.append(
+                "selected tool cannot satisfy locked identity constraint "
+                f"{requirement.id}:{locked} with unbounded tool {call.tool_name}"
             )
 
 
@@ -982,10 +988,26 @@ def _locked_constraint_is_identity(locked: str) -> bool:
     return normalized in {"id", "entity_id", "record_id"} or normalized.endswith("_id") or normalized.endswith("_ref")
 
 
+def _requirement_requires_locked_identity_tool_scope(requirement: RequirementLedgerEntry) -> bool:
+    constraints = dict(requirement.constraints or {})
+    return any(
+        constraints.get(key) not in (None, "", [], {})
+        for key in (
+            "depends_on_result_binding",
+            "result_binding_source_requirement",
+            "result_binding_field",
+        )
+    )
+
+
 def _locked_identity_value_matches(actual: Any, expected: Any) -> bool:
     if isinstance(expected, list):
         if isinstance(actual, list):
-            return all(any(_json_equal(item, expected_item) for expected_item in expected) for item in actual)
+            actual_values = [item for item in actual if item not in (None, "", [], {})]
+            expected_values = [item for item in expected if item not in (None, "", [], {})]
+            if len(actual_values) != len(expected_values):
+                return False
+            return all(any(_json_equal(item, expected_item) for expected_item in expected_values) for item in actual_values)
         return any(_json_equal(actual, expected_item) for expected_item in expected)
     if isinstance(actual, list):
         return any(_json_equal(item, expected) for item in actual)

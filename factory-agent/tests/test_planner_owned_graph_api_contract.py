@@ -173,7 +173,7 @@ async def test_live_activity_records_repeated_graph_nodes_as_ordered_occurrences
     live_steps = row.replan_context["live_activity_steps"]
     assert [step["label"] for step in live_steps] == [
         "Selecting safe action",
-        "Running selected tool",
+        "Preparing backend action",
         "Selecting safe action",
     ]
     assert [step["order"] for step in live_steps] == [1, 2, 3]

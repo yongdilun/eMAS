@@ -198,30 +198,17 @@ def build_events_router(
             heartbeat_s = 12
             poll_s = 1.0
             activity_emit_min_s = 1.0
-            seen_steps: dict[str, str] = {}
+            last_seen_revision = -1
+            try:
+                client_revision = int(str(last_event_id or "").removeprefix("activity:"))
+            except (TypeError, ValueError):
+                client_revision = -1
             idle_heartbeats = 0
 
             async def _fresh_snapshot() -> SessionSnapshotResponse | None:
                 metrics.inc("stream_snapshot_poll_total", labels={"stream": "activity"})
                 async with session_factory() as poll_db:
                     return await load_session_snapshot(db=poll_db, session_id=session_id)
-
-            if last_event_id:
-                initial_snapshot = await _fresh_snapshot()
-                if initial_snapshot is not None:
-                    resume_seen_steps: dict[str, str] = {}
-                    found_resume_step = False
-                    for step in activity_steps_for_snapshot(initial_snapshot):
-                        resume_seen_steps[step.id] = json.dumps(
-                            step.model_dump(exclude_none=True),
-                            sort_keys=True,
-                            default=str,
-                        )
-                        if step.id == last_event_id:
-                            found_resume_step = True
-                            break
-                    if found_resume_step:
-                        seen_steps.update(resume_seen_steps)
 
             ready = {"type": "STREAM_READY", "session_id": session_id}
             yield f"event: control\ndata: {json.dumps(ready, ensure_ascii=False)}\n\n"
@@ -235,24 +222,31 @@ def build_events_router(
                     yield f"event: control\ndata: {json.dumps(gone, ensure_ascii=False)}\n\n"
                     return
 
-                emitted = False
+                activity_steps = [step.model_dump(exclude_none=True) for step in activity_steps_for_snapshot(snapshot)]
+                activity_revision = int(getattr(snapshot, "activity_revision", None) or snapshot.cursor or 0)
+                emitted = activity_revision > max(last_seen_revision, client_revision)
                 pending_frames: list[tuple[str, dict[str, Any]]] = []
-                for step in activity_steps_for_snapshot(snapshot):
-                    payload = step.model_dump(exclude_none=True)
-                    payload_signature = json.dumps(payload, sort_keys=True, default=str)
-                    if seen_steps.get(step.id) == payload_signature:
-                        continue
-                    seen_steps[step.id] = payload_signature
-                    emitted = True
-                    pending_frames.append((step.id, payload))
+                if emitted:
+                    last_seen_revision = activity_revision
+                    pending_frames.append(
+                        (
+                            str(activity_revision),
+                            {
+                                "type": "ACTIVITY_SNAPSHOT",
+                                "session_id": session_id,
+                                "activity_revision": activity_revision,
+                                "activity_steps": activity_steps,
+                            },
+                        )
+                    )
                 frames_to_emit = fault_injection.activity_frames(
                     request,
                     session_id=session_id,
                     snapshot=snapshot,
                     pending_frames=pending_frames,
                 )
-                for step_id, payload in frames_to_emit:
-                    yield f"id: {step_id}\nevent: activity\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                for frame_id, payload in frames_to_emit:
+                    yield f"id: {frame_id}\nevent: activity_snapshot\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if emitted:
                     idle_heartbeats = 0
                     await asyncio.sleep(activity_emit_min_s)

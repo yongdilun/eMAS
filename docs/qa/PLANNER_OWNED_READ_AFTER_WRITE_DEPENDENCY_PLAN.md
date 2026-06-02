@@ -85,7 +85,7 @@ req-002:
     - req-001
   constraints:
     depends_on_result_binding: updated_jobs
-    result_binding_source_requirement_id: req-001
+    result_binding_source_requirement: req-001
     result_binding_field: affected_entity_ids
 ```
 

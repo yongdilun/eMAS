@@ -174,6 +174,23 @@ class PlannerOwnedGraphRetrieval:
     trace: ToolRetrievalTrace
 
 
+def _langsmith_trace_config_summary(config: Mapping[str, Any]) -> dict[str, Any]:
+    configurable = config.get("configurable") if isinstance(config, Mapping) else {}
+    if not isinstance(configurable, Mapping):
+        configurable = {}
+    metadata = config.get("metadata") if isinstance(config, Mapping) else {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    tags = config.get("tags") if isinstance(config, Mapping) else []
+    return {
+        "run_name": config.get("run_name") if isinstance(config, Mapping) else None,
+        "tags": [str(tag) for tag in tags] if isinstance(tags, list) else [],
+        "metadata": dict(metadata),
+        "thread_id": configurable.get("thread_id"),
+        "checkpoint_ns": configurable.get("checkpoint_ns"),
+    }
+
+
 def _trace_tool_names(state: PlannerOwnedAgentGraphState) -> list[str]:
     names: list[str] = []
     for decision in state.planner_decisions[-5:]:
@@ -538,6 +555,7 @@ class PlannerOwnedAgentGraph:
         normalized_options = _normalize_options(options)
         checkpoint_config = _checkpoint_config(normalized_options, session_context=session_context)
         checkpoint_config.setdefault("recursion_limit", _graph_recursion_limit(self._settings))
+        state.execution_trace.diagnostics["langsmith_trace"] = _langsmith_trace_config_summary(checkpoint_config)
         state.execution_trace.diagnostics["graph_checkpoint_identity"] = _graph_checkpoint_identity(
             checkpoint_config,
             ledger_revision=state.requirement_ledger.revision,
@@ -566,11 +584,14 @@ class PlannerOwnedAgentGraph:
         checkpoint_config = _checkpoint_config(normalized_options, session_context=session_context)
         event_start = len(self._tracer.events)
         state, checkpoint_tuple = await self._load_checkpoint_state(checkpoint_config)
+        langsmith_trace = _langsmith_trace_config_summary(checkpoint_config)
+        state.execution_trace.diagnostics["langsmith_trace"] = langsmith_trace
         state.execution_trace.diagnostics["phase8_resume_checkpoint"] = {
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
             "checkpoint_config": checkpoint_config,
             "loaded_checkpoint_id": _checkpoint_tuple_id(checkpoint_tuple),
+            "langsmith_trace": langsmith_trace,
         }
 
         _record_node_visit(state, "approval_node", self._tracer)
@@ -600,6 +621,7 @@ class PlannerOwnedAgentGraph:
             await self._stage_next_write_approval_if_needed(state)
 
         await self._satisfaction_node(state)
+        await self._run_ready_followup_requirements_after_resume(state)
         await self._approval_node(state)
         await self._finalize_node(state)
         await self._response_document_node(state)
@@ -1419,6 +1441,7 @@ class PlannerOwnedAgentGraph:
                 }
             )
         _evaluate_conditional_branches_from_evidence(state, evidence_items)
+        _apply_result_binding_requirements_from_evidence(state, evidence_items)
         _expand_child_requirements_from_evidence(state, evidence_items)
         attach_dependency_plan_diagnostics(state)
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
@@ -1685,6 +1708,7 @@ class PlannerOwnedAgentGraph:
         state: PlannerOwnedAgentGraphState,
         choose_decision: PlannerDecisionRecord,
     ) -> None:
+        _record_node_visit(state, "write_staging_node", self._tracer)
         call = choose_decision.selected_tool_call
         if call is None:
             raise ValueError("approval staging requires a selected graph tool call")
@@ -1733,6 +1757,7 @@ class PlannerOwnedAgentGraph:
                 "accepted_decision_kind": (
                     request_decision.decision_kind if request_decision is not None else None
                 ),
+                "lifecycle_nodes": ["write_staging_node"],
             }
             return
 
@@ -1768,6 +1793,7 @@ class PlannerOwnedAgentGraph:
                 "requirement_id": requirement.id,
                 "evidence_ref": evidence.id,
                 "future_approval_details_suppressed": True,
+                "lifecycle_nodes": ["write_staging_node"],
             }
             return
 
@@ -1810,6 +1836,7 @@ class PlannerOwnedAgentGraph:
         request_decision.diagnostics["approval_index"] = approval_index
         request_decision.diagnostics["approval_label"] = approval_label
         request_decision.diagnostics["approval_node"] = "approval_node"
+        request_decision.diagnostics["approval_gate_node"] = "approval_gate_node"
         request_decision.diagnostics["staged_tool_call_count"] = len(staged_tool_calls)
         staged = [
             {
@@ -1850,7 +1877,8 @@ class PlannerOwnedAgentGraph:
                     str(row.get("status") or "").lower() == "blocked"
                     for row in preview.excluded_rows
                 ),
-                "graph_tool_action": "approval_node",
+                "graph_tool_action": "approval_gate_node",
+                "write_lifecycle_stage": "approval_required",
                 "legacy_shortcut_used": False,
             }
         )
@@ -1872,6 +1900,7 @@ class PlannerOwnedAgentGraph:
             tool_call=staged_tool_calls[0],
             payload=payload,
         )
+        _record_node_visit(state, "approval_gate_node", self._tracer)
         state.execution_trace.diagnostics["phase8_approval_staging"] = {
             "status": "paused_at_approval_node",
             "approval_id": approval_id,
@@ -1883,6 +1912,7 @@ class PlannerOwnedAgentGraph:
             "staged_graph_tool_call_count": len(staged_tool_calls),
             "preview_row_count": len(preview.rows),
             "excluded_row_count": len(preview.excluded_rows),
+            "lifecycle_nodes": ["write_staging_node", "approval_gate_node"],
             "legacy_shortcut_used": False,
         }
 
@@ -1908,12 +1938,31 @@ class PlannerOwnedAgentGraph:
                     continue
                 return
 
+    async def _run_ready_followup_requirements_after_resume(self, state: PlannerOwnedAgentGraphState) -> None:
+        max_iterations = max(1, len(state.requirement_ledger.requirements) + 2)
+        for _index in range(max_iterations):
+            if state.pending_approval.status == "pending":
+                return
+            if not _open_requirements_need_fresh_retrieval(state):
+                return
+            before_decisions = len(state.planner_decisions)
+            before_evidence = len(state.evidence_ledger.evidence)
+            await self._planner_decision_node(state)
+            await self._tool_retrieval_node(state)
+            await self._planner_choose_tool_node(state)
+            await self._tool_execution_node(state)
+            await self._evidence_observation_node(state)
+            await self._satisfaction_node(state)
+            if len(state.planner_decisions) == before_decisions and len(state.evidence_ledger.evidence) == before_evidence:
+                return
+
     async def _resume_approved_graph_approval(
         self,
         state: PlannerOwnedAgentGraphState,
         pending: PendingApprovalState,
         approval_decision: Mapping[str, Any],
     ) -> None:
+        _record_node_visit(state, "approval_gate_node", self._tracer)
         approval_evidence = _record_graph_approval_decision_evidence(
             state,
             pending=pending,
@@ -1926,6 +1975,7 @@ class PlannerOwnedAgentGraph:
             return
         requirement = _requirement_by_id(state, call.requirement_id)
         need = _capability_need_for_requirement(state, call.requirement_id)
+        _record_node_visit(state, "commit_write_node", self._tracer)
         _record_node_visit(state, "tool_execution_node", self._tracer)
         approved_args = approval_decision.get("approved_args")
         staged_calls = [
@@ -2011,6 +2061,13 @@ class PlannerOwnedAgentGraph:
                 ],
                 reason="approval_evidence_and_write_result" if execution_ok else "approved_write_failed",
             )
+        state.execution_trace.diagnostics["phase8_write_commit"] = {
+            "status": "committed" if execution_ok else "failed",
+            "approval_id": pending.approval_id,
+            "requirement_id": call.requirement_id,
+            "staged_graph_tool_call_count": len(staged_calls),
+            "api_evidence_count": len(api_evidence),
+        }
         state.pending_approval = PendingApprovalState(status="none")
 
     async def _load_checkpoint_state(
@@ -2717,7 +2774,7 @@ def _preserve_preinvoke_graph_diagnostics(
     state: PlannerOwnedAgentGraphState,
     prior_diagnostics: Mapping[str, Any],
 ) -> None:
-    for key in ("graph_checkpoint_identity",):
+    for key in ("graph_checkpoint_identity", "langsmith_trace"):
         if key in prior_diagnostics:
             state.execution_trace.diagnostics[key] = prior_diagnostics[key]
 
@@ -2840,9 +2897,27 @@ def _tool_call_with_approved_args(
         for key, value in approved_args.items()
         if key in allowed and key not in _APPROVAL_PAYLOAD_RESERVED_KEYS and value not in (None, "", [], {})
     }
+    protected_identity_args = _staged_identity_arg_names(card)
+    filtered = {
+        key: value
+        for key, value in filtered.items()
+        if not (key in protected_identity_args and key in call.args)
+    }
     if not filtered:
         return call
     return call.model_copy(update={"args": {**dict(call.args), **filtered}})
+
+
+def _staged_identity_arg_names(card: HydratedToolCard) -> set[str]:
+    protected = {str(name) for name in card.path_params if str(name)}
+    properties = card.input_schema.get("properties", {}) if isinstance(card.input_schema, Mapping) else {}
+    for name, schema in properties.items():
+        if not isinstance(schema, Mapping):
+            continue
+        if schema.get("x-ai-id-field") or schema.get("x-ai-entity"):
+            protected.add(str(name))
+    protected.add("id")
+    return protected
 
 
 def _tool_input_arg_names(card: HydratedToolCard) -> set[str]:
@@ -3035,6 +3110,109 @@ def _unique_graph_evidence_id(state: PlannerOwnedAgentGraphState, base: str) -> 
         candidate = f"{base}-{suffix}"
         suffix += 1
     return candidate
+
+
+def _apply_result_binding_requirements_from_evidence(
+    state: PlannerOwnedAgentGraphState,
+    evidence_items: list[EvidenceLedgerEntry],
+) -> None:
+    if not evidence_items:
+        return
+    updates: list[dict[str, Any]] = []
+    for requirement in state.requirement_ledger.requirements:
+        if requirement.status != "open":
+            continue
+        constraints = dict(requirement.constraints or {})
+        source_requirement_id = str(constraints.get("result_binding_source_requirement") or "").strip()
+        if not source_requirement_id:
+            continue
+        if not any(evidence.requirement_id == source_requirement_id for evidence in evidence_items):
+            continue
+        binding_field = str(constraints.get("result_binding_field") or "affected_entity_ids").strip()
+        entity_ids = _result_binding_entity_ids(
+            state,
+            source_requirement_id=source_requirement_id,
+            binding_field=binding_field,
+            entity=requirement.entity,
+        )
+        if not entity_ids:
+            continue
+        identity_key = f"{requirement.entity}_id" if requirement.entity else "id"
+        requirement.constraints[identity_key] = entity_ids
+        if identity_key not in requirement.locked_constraints:
+            requirement.locked_constraints.append(identity_key)
+        requirement.requirement_type = "multi_entity_status"
+        requirement.intent_operation = "report_multi_status"
+        updates.append(
+            {
+                "requirement_id": requirement.id,
+                "source_requirement_id": source_requirement_id,
+                "binding_field": binding_field,
+                "identity_key": identity_key,
+                "entity_ids": entity_ids,
+            }
+        )
+    if updates:
+        existing = state.execution_trace.diagnostics.get("result_binding_requirements")
+        rows = list(existing) if isinstance(existing, list) else []
+        state.execution_trace.diagnostics["result_binding_requirements"] = [*rows, *updates]
+
+
+def _result_binding_entity_ids(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    source_requirement_id: str,
+    binding_field: str,
+    entity: str | None,
+) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for evidence in state.evidence_ledger.evidence:
+        if evidence.requirement_id != source_requirement_id:
+            continue
+        if not _evidence_can_satisfy_active_revision(state, evidence):
+            continue
+        if evidence.source_type != "api_tool":
+            continue
+        for candidate in _result_binding_id_candidates(evidence, binding_field=binding_field, entity=entity):
+            marker = str(candidate).strip()
+            if not marker or marker in seen:
+                continue
+            seen.add(marker)
+            ids.append(marker)
+    return ids
+
+
+def _result_binding_id_candidates(
+    evidence: EvidenceLedgerEntry,
+    *,
+    binding_field: str,
+    entity: str | None,
+) -> list[Any]:
+    result = evidence.normalized_result if isinstance(evidence.normalized_result, Mapping) else {}
+    fields = result.get("fields") if isinstance(result.get("fields"), Mapping) else {}
+    candidates: list[Any] = []
+    for container in (fields, result):
+        raw = container.get(binding_field) if isinstance(container, Mapping) else None
+        if isinstance(raw, list):
+            candidates.extend(raw)
+        elif raw not in (None, "", [], {}):
+            candidates.append(raw)
+    for key in dict.fromkeys(
+        [
+            "entity_id",
+            f"{entity}_id" if entity else "",
+            "id",
+            "job_id",
+        ]
+    ):
+        if not key:
+            continue
+        for container in (result, fields):
+            value = container.get(key) if isinstance(container, Mapping) else None
+            if value not in (None, "", [], {}):
+                candidates.append(value)
+    return candidates
 
 
 def _has_open_graph_write_requirement(state: PlannerOwnedAgentGraphState) -> bool:

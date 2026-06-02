@@ -90,6 +90,8 @@ def _deterministic_choose_tool_if_state_proves_bounded_read_batch(
         card = _hydrated_card_for_tool_call(state, call)
         if card is None or not bool(card.is_read_only) or bool(card.requires_approval):
             continue
+        if not _card_entity_matches_requirement(card, requirement):
+            continue
         identity_value = _call_identity_value(call, requirement)
         if _stable_value_key(identity_value) not in expected_values:
             continue
@@ -208,6 +210,8 @@ def _select_graph_tool_card(requirement: Any, cards: list[HydratedToolCard]) -> 
 
 
 def _card_supports_collection_identity_read(card: HydratedToolCard, requirement: Any) -> bool:
+    if not _card_entity_matches_requirement(card, requirement):
+        return False
     if not _card_supports_collection_read(card):
         return False
     return bool(set(card.query_params).intersection(_identity_arg_names(requirement)))
@@ -217,6 +221,8 @@ def _card_supports_batched_item_read(card: HydratedToolCard, requirement: Any) -
     if not bool(card.is_read_only) or bool(card.requires_approval):
         return False
     if getattr(requirement, "requirement_type", None) != "multi_entity_status":
+        return False
+    if not _card_entity_matches_requirement(card, requirement):
         return False
     return _batch_identity_arg(card, requirement) is not None
 
@@ -318,18 +324,35 @@ def _planner_decision_selected_tool_calls(decision: PlannerDecisionRecord) -> li
 
 
 def _capability_need_for_requirement(state: PlannerOwnedAgentGraphState, requirement_id: str) -> CapabilityNeed:
+    requirement = _requirement_by_id(state, requirement_id)
+    if requirement is not None and _should_build_capability_need_from_live_requirement(requirement):
+        return _live_capability_need_for_requirement(requirement)
     needs = build_capability_needs_for_text(state.original_query, capability_map=state.capability_map)
     for need in needs:
         if need.requirement_id == requirement_id:
             return need
-    requirement = _requirement_by_id(state, requirement_id)
     if requirement is None:
         raise ValueError(f"missing requirement for capability need: {requirement_id}")
+    return _live_capability_need_for_requirement(requirement)
+
+
+def _should_build_capability_need_from_live_requirement(requirement: Any) -> bool:
+    if getattr(requirement, "source_of_truth", None) == "document_knowledge":
+        return True
+    return getattr(requirement, "requirement_type", None) in {
+        "single_entity_status",
+        "multi_entity_status",
+        "filtered_collection",
+        "document_answer",
+    }
+
+
+def _live_capability_need_for_requirement(requirement: Any) -> CapabilityNeed:
     return CapabilityNeed(
         requirement_id=requirement.id,
         source_of_truth=requirement.source_of_truth,
         entity=requirement.entity,
-        action="search_documents" if requirement.source_of_truth == "document_knowledge" else "read",
+        action=_live_capability_action_for_requirement(requirement),
         known_args={
             key: value
             for key, value in requirement.constraints.items()
@@ -337,8 +360,25 @@ def _capability_need_for_requirement(state: PlannerOwnedAgentGraphState, require
         },
         constraints=dict(requirement.constraints),
         requested_fields=list(requirement.requested_fields),
-        reason="phase4_graph_requirement_fallback",
+        reason="phase4_graph_live_requirement",
     )
+
+
+def _live_capability_action_for_requirement(requirement: Any) -> str:
+    requirement_type = getattr(requirement, "requirement_type", None)
+    if getattr(requirement, "source_of_truth", None) == "document_knowledge" or requirement_type == "document_answer":
+        return "search_documents"
+    if requirement_type == "single_entity_status":
+        return "read_one"
+    if requirement_type == "multi_entity_status":
+        return "read_many"
+    if requirement_type == "filtered_collection":
+        return "list"
+    if requirement_type == "approval_request":
+        return "approve"
+    if requirement_type == "mutation_request":
+        return "update"
+    return "read"
 
 
 def _requirement_by_id(state: PlannerOwnedAgentGraphState, requirement_id: str | None):

@@ -5,6 +5,8 @@ import {
   activityActiveRetryStoryPrompt,
   activityRetryCollapseHandoffPrompt,
   activitySseAnswer,
+  activitySseApprovalNoPendingPrompt,
+  activitySseApprovalResumePrompt,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
   activitySsePrompt,
@@ -3016,13 +3018,860 @@ export const scenarioCatalog = {
             state: 'running',
           },
         },
+        {
+          id: 5,
+          event: 'activity',
+          delayMs: 550,
+          data: {
+            id: 'graph:session_completed',
+            timestamp: Date.parse(fixtureTime(4)) / 1000,
+            group: 'response',
+            label: 'Run complete',
+            detail: 'All steps finished. See the thread below.',
+            state: 'complete',
+          },
+        },
       ]
       const lastActivityId = [...frames].reverse().find((frame) => frame.event === 'activity')?.id
       return frames.map((frame) => (
         frame.id === lastActivityId
-          ? { ...frame, afterSent: (session) => setTimeout(() => completePendingStream(session), 800) }
+          ? { ...frame, afterSent: (session) => completePendingStream(session) }
           : frame
       ))
+    },
+  },
+
+  activitySseApprovalResume: {
+    name: 'activitySseApprovalResume',
+    description: 'Approval resume activity SSE renders one semantic timeline without raw graph-node rows.',
+    prompts: [activitySseApprovalResumePrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySseApprovalResumePrompt, 'pw-turn-activity-sse-approval-resume')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-approval-resume'
+      session.status = 'WAITING_APPROVAL'
+      session.operation_id = 'pw-plan-activity-sse-approval-resume'
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse-approval-resume',
+        objective: 'Validate approval resume activity SSE display timeline',
+        stepId: 'pw-step-activity-sse-approval-resume',
+        toolName: 'patch__jobs_{id}',
+        status: 'PENDING_APPROVAL',
+      })
+      session.steps = session.plan.steps.map((step) => ({ ...step, status: 'WAITING_APPROVAL' }))
+      session.pending_approval = {
+        approval_id: 'pw-approval-activity-sse-resume',
+        session_id: session.session_id,
+        subject_type: 'graph',
+        subject_id: 'pw-plan-activity-sse-approval-resume',
+        tool_name: '__langgraph_commit__',
+        side_effect_level: 'HIGH',
+        risk_summary: '5 jobs will be updated from low to medium priority.',
+        args: {
+          kind: 'graph_write_approval_required',
+          approval_label: 'Approval 1',
+          write_set: [
+            'JOB-SEED-005',
+            'JOB-SEED-009',
+            'JOB-SEED-012',
+            'JOB-SEED-017',
+            'JOB-SEED-024',
+          ],
+        },
+        status: 'PENDING',
+        created_at: fixtureTime(3),
+        expires_at: fixtureTime(300),
+      }
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-approval-resume-plan-created',
+          planId: 'pw-plan-activity-sse-approval-resume',
+          content: 'Preparing approval resume activity fixture.',
+          status: 'PENDING_APPROVAL',
+        }),
+      )
+      appendTimeline(session, {
+        event_id: 'pw-activity-sse-approval-resume-required',
+        turn_id: turnId,
+        event_type: 'approval_required',
+        approval_id: session.pending_approval.approval_id,
+        tool_name: session.pending_approval.tool_name,
+        content: 'Waiting for your approval: 5 jobs will be updated from low to medium priority.',
+        status: 'PENDING',
+        operation_id: 'pw-plan-activity-sse-approval-resume',
+        details: {
+          args: session.pending_approval.args,
+          side_effect_level: session.pending_approval.side_effect_level,
+        },
+        created_at: fixtureTime(3),
+      })
+      return { status: 200, body: { status: 'WAITING_APPROVAL', plan_id: 'pw-plan-activity-sse-approval-resume' } }
+    },
+    async onExecute() {
+      return { status: 200, body: { status: 'WAITING_APPROVAL', session_id: null } }
+    },
+    onApprove(session, approvalId) {
+      if (approvalId !== 'pw-approval-activity-sse-resume') {
+        return { status: 404, body: { detail: 'Unknown approval id for activity SSE resume fixture.' } }
+      }
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-approval-resume'
+      session.pending_approval = null
+      session.status = 'EXECUTING'
+      appendTimeline(session, {
+        event_id: 'pw-activity-sse-approval-resume-approved',
+        turn_id: turnId,
+        event_type: 'approval_decided',
+        approval_id: approvalId,
+        content: 'Approval received. Continuing with approved changes.',
+        status: 'APPROVED',
+        operation_id: 'pw-plan-activity-sse-approval-resume',
+        created_at: fixtureTime(5),
+      })
+      completeAfterStream(session, {
+        turnId,
+        planId: 'pw-plan-activity-sse-approval-resume',
+        stepId: 'pw-step-activity-sse-approval-resume',
+        toolName: 'patch__jobs_{id}',
+        answer: 'Approval activity SSE rendered one clean timeline after approval.',
+        eventPrefix: 'pw-activity-sse-approval-resume',
+      })
+      return { status: 200, body: { status: 'EXECUTING', approval_id: approvalId } }
+    },
+    snapshot(session) {
+      const rawApprovalRows = [
+        {
+          id: 'graph:000001:semantic_intake_node',
+          timestamp: Date.parse(fixtureTime(1)) / 1000,
+          order: 1,
+          group: 'planning',
+          label: 'Understood request',
+          detail: 'Reviewing your request and recent context',
+          state: 'success',
+        },
+        {
+          id: 'graph:000002:requirement_ledger_node',
+          timestamp: Date.parse(fixtureTime(1.5)) / 1000,
+          order: 2,
+          group: 'planning',
+          label: 'Structuring request',
+          detail: 'Structuring the request',
+          state: 'success',
+        },
+        {
+          id: 'graph:000003:dependency_wait_node',
+          timestamp: Date.parse(fixtureTime(1.75)) / 1000,
+          order: 3,
+          group: 'planning',
+          label: 'Waiting for parent evidence',
+          detail: 'Dependent read needs parent evidence first',
+          state: 'success',
+        },
+        {
+          id: 'graph:000004:tool_retrieval_node',
+          timestamp: Date.parse(fixtureTime(2)) / 1000,
+          order: 4,
+          group: 'research',
+          label: 'Finding information path',
+          detail: 'Finding the right information path',
+          state: 'success',
+        },
+        {
+          id: 'graph:000005:planner_choose_tool_node',
+          timestamp: Date.parse(fixtureTime(2.25)) / 1000,
+          order: 5,
+          group: 'action',
+          label: 'Selecting safe action',
+          detail: 'Selecting a safe action',
+          state: 'success',
+        },
+        {
+          id: 'graph:000006:tool_execution_node',
+          timestamp: Date.parse(fixtureTime(2.5)) / 1000,
+          order: 6,
+          group: 'action',
+          label: 'Preparing backend action',
+          detail: 'Checking whether the action can run safely',
+          state: 'success',
+        },
+        {
+          id: 'graph:000007:approval_gate_node',
+          timestamp: Date.parse(fixtureTime(2.75)) / 1000,
+          order: 7,
+          group: 'approval',
+          label: 'Preparing write approval',
+          detail: 'Building the exact write set before approval',
+          state: 'success',
+        },
+        {
+          id: 'graph:000008:approval_node',
+          timestamp: Date.parse(fixtureTime(3)) / 1000,
+          order: 8,
+          group: 'approval',
+          label: 'Waiting for your approval',
+          detail: 'Approval is required before committing staged changes',
+          state: 'success',
+        },
+        {
+          id: 'graph:000009:evidence_observation_node',
+          timestamp: Date.parse(fixtureTime(3.25)) / 1000,
+          order: 9,
+          group: 'response',
+          label: 'Checking result',
+          detail: 'Checking tool evidence',
+          state: 'success',
+        },
+        {
+          id: 'graph:000010:satisfaction_node',
+          timestamp: Date.parse(fixtureTime(3.5)) / 1000,
+          order: 10,
+          group: 'response',
+          label: 'Verifying result',
+          detail: 'Verifying the result',
+          state: 'running',
+        },
+      ]
+      if (session.status === 'COMPLETED') {
+        return snapshotFromSession(session, [
+          {
+            id: 'act:display:understood_request',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            order: 1,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'success',
+          },
+          {
+            id: 'act:display:matched_records',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            order: 2,
+            group: 'research',
+            label: 'Found 5 low-priority jobs',
+            detail: 'Ready to update them to medium priority',
+            state: 'success',
+          },
+          {
+            id: 'act:display:approval_preview',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            order: 3,
+            group: 'approval',
+            label: 'Prepared change preview',
+            detail: '5 jobs will be updated from low to medium priority.',
+            state: 'success',
+          },
+          {
+            id: 'act:display:approval_waiting',
+            timestamp: Date.parse(fixtureTime(4)) / 1000,
+            order: 4,
+            group: 'approval',
+            label: 'Waiting for your approval',
+            detail: 'Approval is required before committing staged changes',
+            state: 'success',
+          },
+          {
+            id: 'act:display:approval_received',
+            timestamp: Date.parse(fixtureTime(5)) / 1000,
+            order: 5,
+            group: 'approval',
+            label: 'Approval received',
+            detail: 'Continuing with your approved changes',
+            state: 'success',
+          },
+          {
+            id: 'act:display:write_committed',
+            timestamp: Date.parse(fixtureTime(6)) / 1000,
+            order: 6,
+            group: 'approval',
+            label: 'Applied approved change',
+            detail: 'Applied the approved backend write',
+            state: 'success',
+          },
+          {
+            id: 'act:display:post_write_read',
+            timestamp: Date.parse(fixtureTime(7)) / 1000,
+            order: 7,
+            group: 'research',
+            label: 'Read updated jobs',
+            detail: 'Checked the records after the approved change',
+            state: 'success',
+          },
+          {
+            id: 'act:display:verified_result',
+            timestamp: Date.parse(fixtureTime(8)) / 1000,
+            order: 8,
+            group: 'response',
+            label: 'Verified updated result',
+            detail: 'Verified the result after the approved change',
+            state: 'success',
+          },
+          {
+            id: 'act:display:run_complete',
+            timestamp: Date.parse(fixtureTime(9)) / 1000,
+            order: 9,
+            group: 'response',
+            label: 'Run complete',
+            detail: 'All steps finished. See the thread below.',
+            state: 'complete',
+          },
+        ])
+      }
+      if (session.status === 'WAITING_APPROVAL') {
+        return snapshotFromSession(session, [
+          {
+            id: 'act:display:understood_request',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            order: 1,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'success',
+          },
+          {
+            id: 'act:display:matched_records',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            order: 2,
+            group: 'research',
+            label: 'Found 5 low-priority jobs',
+            detail: 'Ready to update them to medium priority',
+            state: 'success',
+          },
+          {
+            id: 'act:display:approval_preview',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            order: 3,
+            group: 'approval',
+            label: 'Prepared change preview',
+            detail: '5 jobs will be updated from low to medium priority.',
+            state: 'success',
+          },
+          {
+            id: 'act:display:approval_waiting',
+            timestamp: Date.parse(fixtureTime(4)) / 1000,
+            order: 4,
+            group: 'approval',
+            label: 'Waiting for your approval',
+            detail: 'Approval is required before committing staged changes',
+            state: 'waiting',
+          },
+        ])
+      }
+      return snapshotFromSession(session)
+    },
+    notificationStream() {
+      return activeSnapshotRaceNotificationStream().map((frame) => {
+        const terminal = frame?.data?.session_status === 'COMPLETED' || frame?.data?.status === 'COMPLETED'
+        return terminal ? { ...frame, waitForSessionStatus: 'COMPLETED' } : frame
+      })
+    },
+    activityStream() {
+      const frames = [
+        { id: 1, event: 'control', data: { type: 'STREAM_READY' } },
+        {
+          id: 2,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000001:semantic_intake_node',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            order: 1,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'success',
+          },
+        },
+        {
+          id: 3,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000002:requirement_ledger_node',
+            timestamp: Date.parse(fixtureTime(1.5)) / 1000,
+            order: 2,
+            group: 'planning',
+            label: 'Structuring request',
+            detail: 'Structuring the request',
+            state: 'success',
+          },
+        },
+        {
+          id: 4,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000003:dependency_wait_node',
+            timestamp: Date.parse(fixtureTime(1.75)) / 1000,
+            order: 3,
+            group: 'planning',
+            label: 'Waiting for parent evidence',
+            detail: 'Dependent read needs parent evidence first',
+            state: 'success',
+          },
+        },
+        {
+          id: 5,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000004:tool_retrieval_node',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            order: 4,
+            group: 'research',
+            label: 'Finding information path',
+            detail: 'Finding the right information path',
+            state: 'success',
+          },
+        },
+        {
+          id: 6,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000005:planner_choose_tool_node',
+            timestamp: Date.parse(fixtureTime(2.25)) / 1000,
+            order: 5,
+            group: 'action',
+            label: 'Selecting safe action',
+            detail: 'Selecting a safe action',
+            state: 'running',
+          },
+        },
+        {
+          id: 7,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000006:tool_execution_node',
+            timestamp: Date.parse(fixtureTime(2.5)) / 1000,
+            order: 6,
+            group: 'action',
+            label: 'Preparing backend action',
+            detail: 'Checking whether the action can run safely',
+            state: 'success',
+          },
+        },
+        {
+          id: 8,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000007:approval_gate_node',
+            timestamp: Date.parse(fixtureTime(2.75)) / 1000,
+            order: 7,
+            group: 'approval',
+            label: 'Preparing write approval',
+            detail: 'Building the exact write set before approval',
+            state: 'success',
+          },
+        },
+        {
+          id: 9,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000008:approval_node',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            order: 8,
+            group: 'approval',
+            label: 'Waiting for your approval',
+            detail: 'Approval is required before committing staged changes',
+            state: 'success',
+          },
+        },
+        {
+          id: 10,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000009:evidence_observation_node',
+            timestamp: Date.parse(fixtureTime(3.25)) / 1000,
+            order: 9,
+            group: 'response',
+            label: 'Checking result',
+            detail: 'Checking tool evidence',
+            state: 'success',
+          },
+        },
+        {
+          id: 11,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000010:satisfaction_node',
+            timestamp: Date.parse(fixtureTime(3.5)) / 1000,
+            order: 10,
+            group: 'response',
+            label: 'Verifying result',
+            detail: 'Verifying the result',
+            state: 'running',
+          },
+        },
+        {
+          id: 12,
+          event: 'activity',
+          delayMs: 900,
+          data: {
+            id: 'act:display:understood_request',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            order: 1,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'success',
+          },
+        },
+        {
+          id: 13,
+          event: 'activity',
+          delayMs: 140,
+          data: {
+            id: 'act:display:approval_preview',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            order: 3,
+            group: 'approval',
+            label: 'Prepared change preview',
+            detail: '5 jobs will be updated from low to medium priority.',
+            state: 'success',
+          },
+        },
+        {
+          id: 14,
+          event: 'activity',
+          delayMs: 140,
+          data: {
+            id: 'act:display:approval_waiting',
+            timestamp: Date.parse(fixtureTime(4)) / 1000,
+            order: 4,
+            group: 'approval',
+            label: 'Waiting for your approval',
+            detail: 'Approval is required before committing staged changes',
+            state: 'waiting',
+          },
+        },
+        {
+          id: 15,
+          event: 'activity',
+          delayMs: 1800,
+          data: {
+            id: 'act:display:matched_records',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            order: 2,
+            group: 'research',
+            label: 'Found 5 low-priority jobs',
+            detail: 'Ready to update them to medium priority',
+            state: 'success',
+          },
+        },
+        {
+          id: 16,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'act:caption:dependency_wait:req-002',
+            timestamp: Date.parse(fixtureTime(4.2)) / 1000,
+            order: 5,
+            group: 'planning',
+            label: 'Waiting for parent evidence',
+            detail: 'Dependent read needs parent evidence first',
+            state: 'success',
+          },
+        },
+        {
+          id: 17,
+          event: 'activity',
+          delayMs: 1250,
+          data: {
+            id: 'act:approval-decided:pw-approval-activity-sse-resume',
+            timestamp: Date.parse(fixtureTime(5)) / 1000,
+            order: 6,
+            group: 'approval',
+            label: 'Approval received',
+            detail: 'Continuing with your approved changes',
+            state: 'success',
+          },
+        },
+        {
+          id: 18,
+          event: 'activity',
+          delayMs: 1250,
+          data: {
+            id: 'act:display:approval_received',
+            timestamp: Date.parse(fixtureTime(5)) / 1000,
+            order: 5,
+            group: 'approval',
+            label: 'Approval received',
+            detail: 'Continuing with your approved changes',
+            state: 'success',
+          },
+        },
+        {
+          id: 19,
+          event: 'activity',
+          delayMs: 360,
+          data: {
+            id: 'act:display:write_committed',
+            timestamp: Date.parse(fixtureTime(6)) / 1000,
+            order: 6,
+            group: 'approval',
+            label: 'Applied approved change',
+            detail: 'Applied the approved backend write',
+            state: 'success',
+          },
+        },
+        {
+          id: 20,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'act:caption:parallel_read_batch:dependency-group-001',
+            timestamp: Date.parse(fixtureTime(6.5)) / 1000,
+            order: 7,
+            group: 'research',
+            label: 'Reading 3 job records',
+            detail: 'Parallel read batch scheduled',
+            state: 'success',
+          },
+        },
+        {
+          id: 21,
+          event: 'activity',
+          delayMs: 360,
+          data: {
+            id: 'act:display:post_write_read',
+            timestamp: Date.parse(fixtureTime(7)) / 1000,
+            order: 7,
+            group: 'research',
+            label: 'Read updated jobs',
+            detail: 'Checked the records after the approved change',
+            state: 'success',
+          },
+        },
+        {
+          id: 22,
+          event: 'activity',
+          delayMs: 360,
+          data: {
+            id: 'act:display:verified_result',
+            timestamp: Date.parse(fixtureTime(8)) / 1000,
+            order: 8,
+            group: 'response',
+            label: 'Verified updated result',
+            detail: 'Verified the result after the approved change',
+            state: 'running',
+          },
+        },
+      ]
+      return frames.map((frame) => (
+        frame.id === 22
+          ? { ...frame, afterSent: (session) => setTimeout(() => completePendingStream(session), 4200) }
+          : frame
+      ))
+    },
+  },
+
+  activitySseApprovalNoPending: {
+    name: 'activitySseApprovalNoPending',
+    description: 'Approval activity SSE projects raw graph rows even when no pending approval object exists yet.',
+    prompts: [activitySseApprovalNoPendingPrompt],
+    onMessage(session, content) {
+      addUserTurn(session, content || activitySseApprovalNoPendingPrompt, 'pw-turn-activity-sse-approval-no-pending')
+    },
+    onPlan(session) {
+      const turnId = session.current_turn_id || 'pw-turn-activity-sse-approval-no-pending'
+      session.status = 'EXECUTING'
+      session.operation_id = 'pw-plan-activity-sse-approval-no-pending'
+      session.replan_context = {
+        planner_owned_agent_graph: {
+          dependency_plan: {
+            requirements: [
+              { requirement_id: 'req-001', label: 'approval_required', ready: true },
+            ],
+          },
+          response_document_context: {
+            state: 'rendering',
+            diagnostics: {
+              summary: '',
+              final_validation_status: 'deferred',
+            },
+          },
+        },
+      }
+      session.plan = buildFactoryAgentPlan(session, {
+        planId: 'pw-plan-activity-sse-approval-no-pending',
+        objective: 'Validate clean approval activity without pending approval object',
+        stepId: 'pw-step-activity-sse-approval-no-pending',
+        toolName: 'patch__jobs_{id}',
+      })
+      session.steps = session.plan.steps.map((step) => ({ ...step, status: 'IN_PROGRESS' }))
+      appendTimeline(
+        session,
+        planCreatedEvent({
+          turnId,
+          eventId: 'pw-activity-sse-approval-no-pending-plan-created',
+          planId: 'pw-plan-activity-sse-approval-no-pending',
+          content: 'Preparing approval activity fixture without a pending approval object.',
+          status: 'EXECUTING',
+        }),
+      )
+      return { status: 200, body: { status: 'EXECUTING', plan_id: 'pw-plan-activity-sse-approval-no-pending' } }
+    },
+    async onExecute(session) {
+      session.status = 'EXECUTING'
+      return { status: 200, body: { status: 'EXECUTING', session_id: session.session_id } }
+    },
+    snapshot(session) {
+      return snapshotFromSession(session)
+    },
+    notificationStream() {
+      return longRunningNotificationStream()
+    },
+    activityStream() {
+      return [
+        { id: 1, event: 'control', data: { type: 'STREAM_READY' } },
+        {
+          id: 2,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000001:semantic_intake_node',
+            timestamp: Date.parse(fixtureTime(1)) / 1000,
+            order: 1,
+            group: 'planning',
+            label: 'Understood request',
+            detail: 'Reviewing your request and recent context',
+            state: 'success',
+          },
+        },
+        {
+          id: 3,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000002:requirement_ledger_node',
+            timestamp: Date.parse(fixtureTime(1.5)) / 1000,
+            order: 2,
+            group: 'planning',
+            label: 'Structuring request',
+            detail: 'Structuring the request',
+            state: 'success',
+          },
+        },
+        {
+          id: 4,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000003:dependency_wait_node',
+            timestamp: Date.parse(fixtureTime(1.75)) / 1000,
+            order: 3,
+            group: 'planning',
+            label: 'Waiting for parent evidence',
+            detail: 'Dependent read needs parent evidence first',
+            state: 'success',
+          },
+        },
+        {
+          id: 5,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000004:tool_retrieval_node',
+            timestamp: Date.parse(fixtureTime(2)) / 1000,
+            order: 4,
+            group: 'planning',
+            label: 'Finding information path',
+            detail: 'Finding the right information path',
+            state: 'success',
+          },
+        },
+        {
+          id: 6,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000005:planner_choose_tool_node',
+            timestamp: Date.parse(fixtureTime(2.25)) / 1000,
+            order: 5,
+            group: 'planning',
+            label: 'Selecting safe action',
+            detail: 'Selecting a safe action',
+            state: 'success',
+          },
+        },
+        {
+          id: 7,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000006:tool_execution_node',
+            timestamp: Date.parse(fixtureTime(2.5)) / 1000,
+            order: 6,
+            group: 'research',
+            label: 'Preparing backend action',
+            detail: 'Checking whether the action can run safely',
+            state: 'success',
+          },
+        },
+        {
+          id: 8,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000007:write_staging_node',
+            timestamp: Date.parse(fixtureTime(2.75)) / 1000,
+            order: 7,
+            group: 'approval',
+            label: 'Preparing write approval',
+            detail: 'Building the exact write set before approval',
+            state: 'success',
+          },
+        },
+        {
+          id: 9,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000008:approval_gate_node',
+            timestamp: Date.parse(fixtureTime(3)) / 1000,
+            order: 8,
+            group: 'approval',
+            label: 'Waiting for your approval',
+            detail: 'Approval is required before committing staged changes',
+            state: 'success',
+          },
+        },
+        {
+          id: 10,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000009:evidence_observation_node',
+            timestamp: Date.parse(fixtureTime(3.25)) / 1000,
+            order: 9,
+            group: 'response',
+            label: 'Checking result',
+            detail: 'Checking tool evidence',
+            state: 'success',
+          },
+        },
+        {
+          id: 11,
+          event: 'activity',
+          delayMs: 80,
+          data: {
+            id: 'graph:000010:satisfaction_node',
+            timestamp: Date.parse(fixtureTime(3.5)) / 1000,
+            order: 10,
+            group: 'response',
+            label: 'Verifying result',
+            detail: 'Verifying the result',
+            state: 'running',
+          },
+        },
+      ]
     },
   },
 

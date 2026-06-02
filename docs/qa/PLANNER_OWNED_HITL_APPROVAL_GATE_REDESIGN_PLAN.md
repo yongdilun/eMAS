@@ -12,6 +12,30 @@ codex/hitl-approval-gate-redesign
 
 Do not mix the implementation with unrelated RAG, response document, or frontend cleanup work.
 
+## Implementation Progress
+
+### 2026-06-02 - First Safe Slice
+
+Branch:
+
+```text
+codex/planner-owned-hitl-approval-gate-redesign
+```
+
+Completed:
+
+- Added regression coverage proving bulk approval resume preserves each staged row/path id even when `approved_args` includes a global `id`.
+- Updated approval resume arg merging so approval form args can change mutable fields, but cannot overwrite staged identity/path args already bound to each row.
+- Added write lifecycle trace coverage for `write_staging_node`, `approval_gate_node`, and `commit_write_node` on write paths without changing the simple read graph contract.
+- Added `phase8_write_commit` diagnostics after approved writes commit and API evidence is observed.
+
+Still pending:
+
+- Split the internal LangGraph topology into first-class `write_staging_node`, `approval_gate_node`, and `commit_write_node` edges.
+- Add approval-time revision handling that supersedes old staged calls and replans from the revised requirement.
+- Add dependent read-after-write runtime binding from committed write evidence into the follow-up read.
+- Run the full backend, oracle, Chromium, real LangGraph, and release E2E gates after the complete redesign lands.
+
 ## Problem
 
 The current graph does not blindly commit writes before approval, which is good. However, the approval lifecycle is still shaped too much like an end-of-graph concern:

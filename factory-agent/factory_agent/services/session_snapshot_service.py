@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
@@ -366,15 +367,31 @@ _LIVE_ACTIVITY_ALLOWED_LABELS = {
     "Searching knowledge sources",
     "Building cited answer",
     "Checking citations",
+    "Preparing backend action",
     "Running selected tool",
     "Checking result",
     "Verifying result",
     "Checking approvals",
     "Waiting for approval",
+    "Waiting for your approval",
+    "Preparing write approval",
+    "Committing approved change",
+    "Applied approved change",
+    "Found matching records",
+    "Prepared change preview",
+    "Read updated jobs",
+    "Verified updated result",
     "Applying approved changes",
     "Preparing response",
     "Rendering response",
 }
+
+_PRIORITY_UPDATE_SUMMARY_RE = re.compile(
+    r"(?P<count>\d+)\s+jobs?\s+will be updated from\s+"
+    r"(?P<from_priority>[a-z][a-z -]*?)\s+to\s+"
+    r"(?P<to_priority>[a-z][a-z -]*?)\s+priority",
+    re.IGNORECASE,
+)
 _LIVE_ACTIVITY_UNSAFE_TEXT_FRAGMENTS = {
     "__",
     "{id}",
@@ -1255,6 +1272,554 @@ def _filter_noop_approval_activity_steps(
     return [row for row in rows if not _is_noop_approval_activity_step(row)]
 
 
+def _snapshot_value(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _snapshot_session_replan_context(snapshot: SessionSnapshotResponse) -> Mapping[str, Any]:
+    session = snapshot.session
+    context = (
+        session.get("replan_context")
+        if isinstance(session, Mapping)
+        else getattr(session, "replan_context", None)
+    )
+    return context if isinstance(context, Mapping) else {}
+
+
+def _activity_context_candidates_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Mapping[str, Any]]:
+    root = _snapshot_session_replan_context(snapshot)
+    if not root:
+        return []
+    out: list[Mapping[str, Any]] = []
+    queue: list[Mapping[str, Any]] = [root]
+    seen: set[int] = set()
+    nested_keys = (
+        "intent_contract",
+        "planner_owned_agent_graph",
+        "activity_caption_context",
+        "planner_owned_agent_graph_state",
+    )
+    while queue:
+        current = queue.pop(0)
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(current)
+        for key in nested_keys:
+            nested = current.get(key)
+            if isinstance(nested, Mapping):
+                queue.append(nested)
+    return out
+
+
+def _activity_response_contexts_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Mapping[str, Any]]:
+    contexts: list[Mapping[str, Any]] = []
+    for candidate in _activity_context_candidates_for_snapshot(snapshot):
+        response_context = candidate.get("response_document_context")
+        if isinstance(response_context, Mapping):
+            contexts.append(response_context)
+    return contexts
+
+
+def _activity_context_texts_for_snapshot(snapshot: SessionSnapshotResponse) -> list[str]:
+    texts: list[str] = []
+
+    def add(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                texts.append(text)
+            return
+        if isinstance(value, (int, float, bool)):
+            texts.append(str(value))
+
+    for candidate in _activity_context_candidates_for_snapshot(snapshot):
+        for key in (
+            "langgraph_approval_resume",
+            "langgraph_pending_approval",
+            "response_document_state",
+        ):
+            value = candidate.get(key)
+            if isinstance(value, Mapping):
+                for nested_value in value.values():
+                    add(nested_value)
+            else:
+                add(value)
+        execution_trace = candidate.get("execution_trace")
+        diagnostics = execution_trace.get("diagnostics") if isinstance(execution_trace, Mapping) else None
+        if isinstance(diagnostics, Mapping):
+            for key in ("approval_node", "phase8_approval_staging", "phase8_write_commit", "final_validation"):
+                value = diagnostics.get(key)
+                if isinstance(value, Mapping):
+                    for nested_value in value.values():
+                        add(nested_value)
+                else:
+                    add(value)
+    for response_context in _activity_response_contexts_for_snapshot(snapshot):
+        for key in ("state", "summary", "render_contract", "pending_approval_id"):
+            add(response_context.get(key))
+        evidence_refs = response_context.get("evidence_refs")
+        if isinstance(evidence_refs, list):
+            for ref in evidence_refs:
+                add(ref)
+        diagnostics = response_context.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            for key in (
+                "phase",
+                "summary",
+                "pending_approval",
+                "final_validation_status",
+                "active_evidence_refs",
+                "response_evidence_refs",
+                "active_final_evidence_refs",
+            ):
+                value = diagnostics.get(key)
+                if isinstance(value, list):
+                    for item in value:
+                        add(item)
+                else:
+                    add(value)
+    return texts
+
+
+def _activity_context_indicates_approval_approved(snapshot: SessionSnapshotResponse) -> bool:
+    text = " ".join(_activity_context_texts_for_snapshot(snapshot)).lower()
+    return any(
+        marker in text
+        for marker in (
+            "approval was recorded",
+            "approval-approved",
+            "ev-approval-approved",
+            "status approved",
+            "approved",
+        )
+    )
+
+
+def _activity_context_indicates_approval_required(snapshot: SessionSnapshotResponse) -> bool:
+    for candidate in _activity_context_candidates_for_snapshot(snapshot):
+        dependency_plan = candidate.get("dependency_plan")
+        if not isinstance(dependency_plan, Mapping):
+            continue
+        requirements = dependency_plan.get("requirements")
+        if isinstance(requirements, list) and any(
+            isinstance(item, Mapping) and str(item.get("label") or "").strip() == "approval_required"
+            for item in requirements
+        ):
+            return True
+        diagnostics = dependency_plan.get("diagnostics")
+        label_counts = diagnostics.get("label_counts") if isinstance(diagnostics, Mapping) else None
+        if isinstance(label_counts, Mapping) and int(label_counts.get("approval_required") or 0) > 0:
+            return True
+    text = " ".join(_activity_context_texts_for_snapshot(snapshot)).lower()
+    return any(
+        marker in text
+        for marker in (
+            "approval_required",
+            "phase8_graph_write_approval",
+            "paused_at_approval_node",
+        )
+    )
+
+
+def _activity_context_indicates_write_applied(snapshot: SessionSnapshotResponse) -> bool:
+    text = " ".join(_activity_context_texts_for_snapshot(snapshot)).lower()
+    return any(
+        marker in text
+        for marker in (
+            "committed the staged write",
+            "applied the approved",
+            "phase8_write_commit",
+            "write_commit",
+            "updated (priority=",
+            "final_validation_status passed",
+        )
+    )
+
+
+def _activity_context_indicates_post_write_read(snapshot: SessionSnapshotResponse) -> bool:
+    text = " ".join(_activity_context_texts_for_snapshot(snapshot)).lower()
+    return any(
+        marker in text
+        for marker in (
+            "found 5 jobs",
+            "show the updated jobs",
+            "updated jobs",
+            "ev-api-req-002",
+        )
+    )
+
+
+def _approval_summary_text(snapshot: SessionSnapshotResponse) -> str:
+    pending = snapshot.pending_approval
+    candidates: list[Any] = []
+    if pending is not None:
+        candidates.extend(
+            [
+                _snapshot_value(pending, "risk_summary"),
+                _snapshot_value(pending, "summary"),
+                _snapshot_value(pending, "content"),
+            ]
+        )
+        args = _snapshot_value(pending, "args")
+        if isinstance(args, Mapping):
+            candidates.extend(
+                [
+                    args.get("risk_summary"),
+                    args.get("summary"),
+                    args.get("change_summary"),
+                    args.get("approval_summary"),
+                ]
+            )
+            bundle_ui = args.get("bundle_ui")
+            if isinstance(bundle_ui, Mapping):
+                previous = str(bundle_ui.get("previous_priority") or "").strip()
+                new = str(bundle_ui.get("new_priority") or "").strip()
+                count = bundle_ui.get("changed_count") or bundle_ui.get("matched_count")
+                if previous and new and count is not None:
+                    candidates.append(f"{count} jobs will be updated from {previous} to {new} priority.")
+    for ev in snapshot.timeline:
+        if ev.event_type == "approval_required":
+            candidates.append(ev.content)
+            details = ev.details if isinstance(ev.details, Mapping) else {}
+            candidates.extend([details.get("risk_summary"), details.get("summary")])
+    for response_context in _activity_response_contexts_for_snapshot(snapshot):
+        candidates.append(response_context.get("summary"))
+        diagnostics = response_context.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            candidates.extend(
+                [
+                    diagnostics.get("summary"),
+                    diagnostics.get("approval_summary"),
+                    diagnostics.get("phase8_approval_staging"),
+                ]
+            )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        text = re.sub(r"^waiting for your approval:\s*", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"^approval required:\s*", "", text, flags=re.IGNORECASE).strip()
+        if text:
+            return text
+    return ""
+
+
+def _approval_match_summary(summary: str) -> tuple[str, str] | None:
+    match = _PRIORITY_UPDATE_SUMMARY_RE.search(summary or "")
+    if match:
+        count = int(match.group("count"))
+        from_priority = " ".join(match.group("from_priority").strip().lower().split())
+        to_priority = " ".join(match.group("to_priority").strip().lower().split())
+        noun = "job" if count == 1 else "jobs"
+        pronoun = "it" if count == 1 else "them"
+        return (
+            f"Found {count} {from_priority}-priority {noun}",
+            f"Ready to update {pronoun} to {to_priority} priority",
+        )
+    write_match = re.search(
+        r"Approve\s+(?P<count>\d+)\s+backend writes?.*?priority set to\s+(?P<to_priority>[a-z][a-z -]*)",
+        summary or "",
+        re.IGNORECASE,
+    )
+    if not write_match:
+        return None
+    count = int(write_match.group("count"))
+    to_priority = " ".join(write_match.group("to_priority").strip().lower().split())
+    noun = "job" if count == 1 else "jobs"
+    pronoun = "it" if count == 1 else "them"
+    return (
+        f"Found {count} matching {noun}",
+        f"Ready to update {pronoun} to {to_priority} priority",
+    )
+
+
+def _activity_has_approval_flow(snapshot: SessionSnapshotResponse, rows: list[dict[str, Any]]) -> bool:
+    session_status = str(getattr(snapshot.session, "status", "") or "").upper()
+    terminal = session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES
+    approval_labels = {
+        "Waiting for approval",
+        "Waiting for your approval",
+        "Preparing write approval",
+        "Committing approved change",
+        "Applied approved change",
+    }
+    if snapshot.pending_approval is not None:
+        return True
+    if _activity_context_indicates_approval_required(snapshot):
+        return True
+    if any(
+        ev.event_type == "approval_required" and str(ev.status or "").upper() in {"", "PENDING"}
+        for ev in snapshot.timeline
+    ):
+        return True
+    if _activity_context_indicates_approval_approved(snapshot) or _activity_context_indicates_write_applied(snapshot):
+        return True
+    if any(
+        ev.event_type == "approval_decided" and str(ev.status or "").upper() == "APPROVED"
+        for ev in snapshot.timeline
+    ):
+        return terminal or any(str(row.get("label") or "") in approval_labels for row in rows)
+    return any(str(row.get("label") or "") in approval_labels for row in rows)
+
+
+def _activity_first_timestamp(rows: list[dict[str, Any]], labels: set[str], fallback: int) -> int:
+    candidates: list[int] = []
+    for row in rows:
+        if str(row.get("label") or "") not in labels:
+            continue
+        timestamp = _activity_int(row.get("timestamp"))
+        if timestamp is not None:
+            candidates.append(timestamp)
+    return min(candidates) if candidates else fallback
+
+
+def _activity_label_indexes(rows: list[dict[str, Any]]) -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for idx, row in enumerate(rows):
+        label = str(row.get("label") or "")
+        if not label:
+            continue
+        out.setdefault(label, []).append(idx)
+    return out
+
+
+def _activity_project_approval_display_steps(
+    rows: list[dict[str, Any]],
+    snapshot: SessionSnapshotResponse,
+    *,
+    session_status: str,
+    fallback_timestamp: int,
+) -> list[dict[str, Any]]:
+    """Collapse graph-node approval noise into one user-facing approval timeline."""
+
+    if not rows or not _activity_has_approval_flow(snapshot, rows):
+        return rows
+
+    labels = _activity_label_indexes(rows)
+    context_approved = _activity_context_indicates_approval_approved(snapshot)
+    context_write_applied = _activity_context_indicates_write_applied(snapshot)
+    approved = context_approved or any(
+        ev.event_type == "approval_decided" and str(ev.status or "").upper() == "APPROVED"
+        for ev in snapshot.timeline
+    ) or "Approval received" in labels
+    pending = snapshot.pending_approval is not None
+    has_approval_required = pending or _activity_context_indicates_approval_required(snapshot) or any(
+        ev.event_type == "approval_required" for ev in snapshot.timeline
+    ) or any(
+        label in labels
+        for label in {"Waiting for approval", "Waiting for your approval", "Preparing write approval"}
+    )
+    has_commit = any(label in labels for label in {"Committing approved change", "Applied approved change"})
+    commit_index = min(
+        [
+            idx
+            for label in ("Committing approved change", "Applied approved change")
+            for idx in labels.get(label, [])
+        ],
+        default=-1,
+    )
+    approval_received_index = min(labels.get("Approval received", []), default=-1)
+    complete_row = next((row for row in rows if row.get("state") == "complete"), None)
+    error_row = next((row for row in rows if row.get("state") == "error"), None)
+    terminal = session_status not in _ACTIVITY_ACTIVE_SESSION_STATUSES
+    successful_terminal = complete_row is not None and error_row is None
+    write_applied = context_write_applied or has_commit or (approved and not pending and (not terminal or successful_terminal))
+    post_commit_read = False
+    if commit_index >= 0:
+        for idx, row in enumerate(rows):
+            if idx <= commit_index:
+                continue
+            label = str(row.get("label") or "")
+            if label == "Preparing backend action" or label.startswith("Reading "):
+                post_commit_read = True
+                break
+    if not post_commit_read and write_applied and approval_received_index >= 0:
+        for idx, row in enumerate(rows):
+            if idx <= approval_received_index:
+                continue
+            label = str(row.get("label") or "")
+            if label.startswith("Reading ") or label in {"Read updated jobs", "Preparing backend action"}:
+                post_commit_read = True
+                break
+    if not post_commit_read and write_applied and _activity_context_indicates_post_write_read(snapshot):
+        post_commit_read = True
+    verified_raw = any(label in labels for label in {"Verifying result", "Verified updated result"})
+    verified = verified_raw and write_applied
+    summary = _approval_summary_text(snapshot)
+    matched = _approval_match_summary(summary)
+
+    display: list[dict[str, Any]] = []
+    sequence_ts = max(1, fallback_timestamp)
+
+    def append(
+        key: str,
+        *,
+        group: str,
+        label: str,
+        detail: str | None,
+        state: str,
+        timestamp: int | None = None,
+    ) -> None:
+        nonlocal sequence_ts
+        sequence_ts = max(sequence_ts + 1, int(timestamp or 0), fallback_timestamp)
+        display.append(
+            {
+                "id": f"act:display:{key}",
+                "timestamp": sequence_ts,
+                "group": group,
+                "label": label,
+                "detail": detail,
+                "state": state,
+                "order": len(display) + 1,
+                "_order": len(display) + 1,
+            }
+        )
+
+    append(
+        "understood_request",
+        group="planning",
+        label="Understood request",
+        detail="Reviewing your request and recent context",
+        state="success",
+        timestamp=_activity_first_timestamp(rows, {"Understood request"}, fallback_timestamp),
+    )
+    for key, label, detail in (
+        ("structured_request", "Structuring request", "Structuring the request"),
+        ("information_path", "Finding information path", "Finding the right information path"),
+        ("safe_action", "Selecting safe action", "Selecting a safe action"),
+    ):
+        if label not in labels:
+            continue
+        append(
+            key,
+            group="planning",
+            label=label,
+            detail=detail,
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {label}, sequence_ts + 1),
+        )
+    if approved and pending:
+        append(
+            "approval_received",
+            group="approval",
+            label="Approval received",
+            detail="Continuing with your approved changes",
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {"Approval received"}, sequence_ts + 1),
+        )
+
+    if matched is not None:
+        found_label, found_detail = matched
+        append(
+            "matched_records",
+            group="research",
+            label=found_label,
+            detail=found_detail,
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {"Preparing backend action", "Checking result"}, sequence_ts + 1),
+        )
+    elif summary:
+        append(
+            "matched_records",
+            group="research",
+            label="Found matching records",
+            detail="Records are ready for review",
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {"Preparing backend action", "Checking result"}, sequence_ts + 1),
+        )
+
+    if has_approval_required:
+        append(
+            "approval_preview",
+            group="approval",
+            label="Prepared change preview",
+            detail=summary or "Prepared the exact write set before approval",
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {"Preparing write approval"}, sequence_ts + 1),
+        )
+        append(
+            "approval_waiting",
+            group="approval",
+            label="Waiting for your approval",
+            detail="Approval is required before committing staged changes",
+            state="waiting" if pending else "success",
+            timestamp=_activity_first_timestamp(
+                rows,
+                {"Waiting for approval", "Waiting for your approval"},
+                sequence_ts + 1,
+            ),
+        )
+    if approved and not pending:
+        append(
+            "approval_received",
+            group="approval",
+            label="Approval received",
+            detail="Continuing with your approved changes",
+            state="success",
+            timestamp=_activity_first_timestamp(rows, {"Approval received"}, sequence_ts + 1),
+        )
+    if write_applied:
+        commit_is_complete = has_commit or successful_terminal
+        append(
+            "write_committed",
+            group="approval",
+            label="Applied approved change" if commit_is_complete else "Applying approved change",
+            detail="Applied the approved backend write" if commit_is_complete else "Applying the approved backend write",
+            state="success" if commit_is_complete else "running",
+            timestamp=_activity_first_timestamp(
+                rows,
+                {"Committing approved change", "Applied approved change"},
+                sequence_ts + 1,
+            ),
+        )
+    if post_commit_read:
+        append(
+            "post_write_read",
+            group="research",
+            label="Read updated jobs",
+            detail="Checked the records after the approved change",
+            state="success" if verified or terminal else "running",
+            timestamp=_activity_first_timestamp(rows, {"Preparing backend action"}, sequence_ts + 1),
+        )
+    if verified:
+        append(
+            "verified_result",
+            group="response",
+            label="Verified updated result",
+            detail="Verified the result after the approved change",
+            state="success" if terminal else "running",
+            timestamp=_activity_first_timestamp(rows, {"Verifying result"}, sequence_ts + 1),
+        )
+    if complete_row is not None:
+        append(
+            "run_complete",
+            group=str(complete_row.get("group") or "response"),
+            label=str(complete_row.get("label") or "Run complete"),
+            detail=str(complete_row.get("detail") or "All steps finished. See the thread below."),
+            state="complete",
+            timestamp=_activity_int(complete_row.get("timestamp")) or sequence_ts + 1,
+        )
+    elif error_row is not None:
+        append(
+            "run_failed",
+            group=str(error_row.get("group") or "system"),
+            label=str(error_row.get("label") or "Something needs attention"),
+            detail=str(error_row.get("detail") or "The request could not be completed"),
+            state="error",
+            timestamp=_activity_int(error_row.get("timestamp")) or sequence_ts + 1,
+        )
+
+    if len(display) <= 1:
+        return rows
+    return display
+
+
 def _snapshot_plan_scoped_steps(
     plan_steps: list[PlanStepResponse], plan: PlanResponse | None
 ) -> list[PlanStepResponse]:
@@ -1535,6 +2100,12 @@ def _activity_steps_for_snapshot(snapshot: SessionSnapshotResponse) -> list[Acti
         session_replan_context if isinstance(session_replan_context, dict) else {},
         fallback_timestamp=fallback_timestamp,
         session_status=session_status,
+    )
+    raw_steps = _activity_project_approval_display_steps(
+        raw_steps,
+        snapshot,
+        session_status=session_status,
+        fallback_timestamp=fallback_timestamp,
     )
     if active_live_sort_key is not None and not use_replan_story:
         raw_steps.sort(key=active_live_sort_key)
@@ -4037,6 +4608,7 @@ class SessionSnapshotService:
         )
         _activity_steps = _activity_steps_for_snapshot(_snapshot_for_activity)
         _cursor = int(getattr(sess, "event_seq", None) or 0)
+        _activity_revision = _cursor
         _response_document = compose_response_document(
             session=_session_response,
             plan=_plan_response,
@@ -4061,6 +4633,7 @@ class SessionSnapshotService:
             phase=_effective_status,
             resume_hint=_resume_hint,
             activity_steps=_activity_steps,
+            activity_revision=_activity_revision,
             presentation=_presentation,
             response_document=_response_document,
         )

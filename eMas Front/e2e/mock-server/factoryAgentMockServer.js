@@ -67,6 +67,165 @@ function sendSseEvent(res, event, data, id = 1) {
   res.write(`data: ${JSON.stringify(data)}\n\n`)
 }
 
+function approvalSummaryFromSession(session) {
+  const pending = session?.pending_approval
+  if (pending?.risk_summary) return String(pending.risk_summary)
+  const approvalEvent = [...(session?.timeline || [])]
+    .reverse()
+    .find((event) => event?.event_type === 'approval_required')
+  return String(approvalEvent?.content || '').replace(/^Waiting for your approval:\s*/i, '').trim()
+}
+
+function priorityUpdateMatch(summary) {
+  const match = String(summary || '').match(
+    /(\d+)\s+jobs?\s+will\s+be\s+updated\s+from\s+(.+?)\s+to\s+(.+?)\s+priority/i,
+  )
+  if (!match) return null
+  const count = Number(match[1])
+  const fromPriority = match[2].trim().toLowerCase().replace(/\s+/g, ' ')
+  const toPriority = match[3].trim().toLowerCase().replace(/\s+/g, ' ')
+  return {
+    label: `Found ${count} ${fromPriority}-priority ${count === 1 ? 'job' : 'jobs'}`,
+    detail: `Ready to update ${count === 1 ? 'it' : 'them'} to ${toPriority} priority`,
+  }
+}
+
+function hasPlannedApprovalRequirement(session) {
+  const contexts = [
+    session?.replan_context,
+    session?.replan_context?.intent_contract,
+    session?.replan_context?.planner_owned_agent_graph,
+  ].filter(Boolean)
+  return contexts.some((context) => {
+    const dependencyPlan = context?.dependency_plan
+    const requirements = Array.isArray(dependencyPlan?.requirements) ? dependencyPlan.requirements : []
+    if (requirements.some((item) => String(item?.label || '') === 'approval_required')) return true
+    const count = Number(dependencyPlan?.diagnostics?.label_counts?.approval_required || 0)
+    return Number.isFinite(count) && count > 0
+  })
+}
+
+function firstActivityTimestamp(rows, labels, fallback) {
+  const found = rows.find((row) => labels.has(String(row?.label || '')))
+  return Number(found?.timestamp || fallback)
+}
+
+function projectApprovalActivitySnapshot(rows, session) {
+  const labels = new Set(rows.map((row) => String(row?.label || '')))
+  const plannedApproval = hasPlannedApprovalRequirement(session)
+  const hasApprovalFlow = Boolean(
+    session?.pending_approval ||
+      plannedApproval ||
+      labels.has('Preparing write approval') ||
+      labels.has('Waiting for your approval') ||
+      labels.has('Approval received') ||
+      labels.has('Applied approved change') ||
+      labels.has('Committing approved change'),
+  )
+  if (!hasApprovalFlow) return rows
+
+  const summary = approvalSummaryFromSession(session)
+  const matched = priorityUpdateMatch(summary)
+  const pending = Boolean(session?.pending_approval)
+  const approved =
+    labels.has('Approval received') ||
+    (session?.timeline || []).some(
+      (event) =>
+        event?.event_type === 'approval_decided' &&
+        String(event?.status || '').toUpperCase() === 'APPROVED',
+    )
+  const writeApplied = labels.has('Applied approved change') || labels.has('Committing approved change')
+  const postRead = labels.has('Read updated jobs') || Array.from(labels).some((label) => label.startsWith('Reading '))
+  const verified = labels.has('Verified updated result') || labels.has('Verifying result')
+  const complete = labels.has('Run complete') || String(session?.status || '').toUpperCase() === 'COMPLETED'
+  const fallback = Number(rows[0]?.timestamp || Date.now() / 1000)
+  const out = []
+  const push = (id, label, detail, state, group = 'approval', timestamp = null) => {
+    out.push({
+      id: `act:display:${id}`,
+      timestamp: Number(timestamp || fallback + out.length),
+      order: out.length + 1,
+      group,
+      label,
+      detail,
+      state,
+    })
+  }
+
+  push(
+    'understood_request',
+    'Understood request',
+    'Reviewing your request and recent context',
+    'success',
+    'planning',
+    firstActivityTimestamp(rows, new Set(['Understood request']), fallback),
+  )
+  for (const [id, label, detail] of [
+    ['structured_request', 'Structuring request', 'Structuring the request'],
+    ['information_path', 'Finding information path', 'Finding the right information path'],
+    ['safe_action', 'Selecting safe action', 'Selecting a safe action'],
+  ]) {
+    if (!labels.has(label)) continue
+    push(id, label, detail, 'success', 'planning', firstActivityTimestamp(rows, new Set([label]), fallback + out.length))
+  }
+  if (matched) {
+    push(
+      'matched_records',
+      matched.label,
+      matched.detail,
+      'success',
+      'research',
+      firstActivityTimestamp(rows, new Set(['Preparing backend action', 'Checking result']), fallback + 1),
+    )
+  }
+  if (summary || pending || plannedApproval || labels.has('Preparing write approval')) {
+    push(
+      'approval_preview',
+      'Prepared change preview',
+      summary || 'Prepared the exact write set before approval',
+      'success',
+      'approval',
+      firstActivityTimestamp(rows, new Set(['Preparing write approval']), fallback + 2),
+    )
+    push(
+      'approval_waiting',
+      'Waiting for your approval',
+      'Approval is required before committing staged changes',
+      pending ? 'waiting' : 'success',
+      'approval',
+      firstActivityTimestamp(rows, new Set(['Waiting for your approval']), fallback + 3),
+    )
+  }
+  if (approved && !pending) {
+    push('approval_received', 'Approval received', 'Continuing with your approved changes', 'success')
+  }
+  if (writeApplied) {
+    push('write_committed', 'Applied approved change', 'Applied the approved backend write', 'success')
+  }
+  if (postRead && writeApplied) {
+    push(
+      'post_write_read',
+      'Read updated jobs',
+      'Checked the records after the approved change',
+      verified || complete ? 'success' : 'running',
+      'research',
+    )
+  }
+  if (verified && writeApplied) {
+    push(
+      'verified_result',
+      'Verified updated result',
+      'Verified the result after the approved change',
+      complete ? 'success' : 'running',
+      'response',
+    )
+  }
+  if (complete && verified && writeApplied) {
+    push('run_complete', 'Run complete', 'All steps finished. See the thread below.', 'complete', 'response')
+  }
+  return out
+}
+
 function sendRawSseFrame(res, raw) {
   res.write(`${raw}\n\n`)
 }
@@ -511,7 +670,39 @@ function filteredSseFrameLog(url) {
 
 function snapshot(session) {
   const scenario = getScenario(session.scenario_name)
-  return scenario.snapshot(session)
+  const body = scenario.snapshot(session)
+  const projectedRows = Array.isArray(session?.projected_activity_steps)
+    ? session.projected_activity_steps
+    : []
+  if (projectedRows.some((row) => String(row?.id || '').startsWith('act:display:'))) {
+    const activityRows = [...projectedRows]
+    if (
+      String(session?.status || '').toUpperCase() === 'COMPLETED' &&
+      !activityRows.some((row) => row?.label === 'Run complete')
+    ) {
+      const last = activityRows.at(-1) || {}
+      activityRows.push({
+        id: 'act:display:run_complete',
+        timestamp: Number(last.timestamp || Date.now() / 1000) + 1,
+        order: activityRows.length + 1,
+        group: 'response',
+        label: 'Run complete',
+        detail: 'All steps finished. See the thread below.',
+        state: 'complete',
+      })
+    }
+    const revision = Math.max(
+      Number(body?.activity_revision || 0),
+      Number(session?.activity_revision || 0),
+      activityRows.length,
+    )
+    return {
+      ...body,
+      activity_revision: revision,
+      activity_steps: activityRows,
+    }
+  }
+  return body
 }
 
 async function runSseScript({ req, res, url, sessionId, stream, frames }) {
@@ -550,10 +741,30 @@ async function runSseScript({ req, res, url, sessionId, stream, frames }) {
   res.on('close', markClosed)
   req.on('aborted', markClosed)
 
+  let activityRevision = Number(session?.activity_revision || 0)
+  const activityStepsById = new Map()
+  if (Array.isArray(session?.live_activity_steps)) {
+    for (const row of session.live_activity_steps) {
+      if (row?.id) activityStepsById.set(row.id, { ...row })
+    }
+  }
+
   for (const frame of frames) {
     if (closed || res.writableEnded) return
     if (frame.delayMs) await sleep(frame.delayMs)
     if (closed || res.writableEnded) return
+    if (frame.waitForSessionStatus && session) {
+      const deadline = Date.now() + Number(frame.waitTimeoutMs || 15000)
+      while (
+        !closed &&
+        !res.writableEnded &&
+        String(session.status || '').toUpperCase() !== String(frame.waitForSessionStatus).toUpperCase() &&
+        Date.now() < deadline
+      ) {
+        await sleep(50)
+      }
+      if (closed || res.writableEnded) return
+    }
     if (frame.close) {
       res.end()
       return
@@ -561,6 +772,32 @@ async function runSseScript({ req, res, url, sessionId, stream, frames }) {
     if (frame.raw) {
       logSseFrame({ req, url, connectionId, sessionId, scenarioName, stream, frame: null, raw: frame.raw })
       sendRawSseFrame(res, frame.raw)
+      continue
+    }
+    if (stream === 'activity' && frame.event === 'activity' && frame.data?.id) {
+      activityRevision += 1
+      activityStepsById.set(frame.data.id, { ...frame.data })
+      if (session) {
+        session.activity_revision = Math.max(Number(session.activity_revision || 0), activityRevision)
+      }
+      const activitySteps = projectApprovalActivitySnapshot(Array.from(activityStepsById.values()), session)
+      if (session) {
+        session.live_activity_steps = Array.from(activityStepsById.values())
+        session.projected_activity_steps = activitySteps
+      }
+      const snapshotFrame = {
+        id: String(activityRevision),
+        event: 'activity_snapshot',
+        data: {
+          type: 'ACTIVITY_SNAPSHOT',
+          session_id: sessionId,
+          activity_revision: activityRevision,
+          activity_steps: activitySteps,
+        },
+      }
+      logSseFrame({ req, url, connectionId, sessionId, scenarioName, stream, frame: snapshotFrame })
+      sendSseEvent(res, snapshotFrame.event, snapshotFrame.data, snapshotFrame.id)
+      frame.afterSent?.(session)
       continue
     }
     logSseFrame({ req, url, connectionId, sessionId, scenarioName, stream, frame })

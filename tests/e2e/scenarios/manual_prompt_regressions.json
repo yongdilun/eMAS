@@ -17,7 +17,7 @@
       "regression"
     ],
     "severity_values": ["critical", "high", "medium", "low"],
-    "coverage_categories": ["parser", "route", "pytest_snapshot", "pytest_api", "seeded-workflow", "mocked-browser", "seeded-browser", "real-langgraph-browser", "accepted-gap"],
+    "coverage_categories": ["parser", "route", "api", "pytest_snapshot", "pytest_graph", "pytest_api", "frontend_unit", "seeded-workflow", "mocked-browser", "seeded-browser", "real-langgraph-browser", "accepted-gap"],
     "manual_screenshot_required_fields": [
       "id",
       "status",

@@ -2683,6 +2683,563 @@ def test_phase7_activity_waiting_approval_trims_later_replan_noise():
     assert "Improving the response" not in [step.label for step in steps]
 
 
+def test_phase7_activity_projects_approval_resume_graph_rows_into_single_user_timeline():
+    created_at = datetime(2026, 5, 13, 10, 30, 0)
+    graph_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("requirement_ledger_node", "planning", "Structuring request", "Structuring the request"),
+                ("dependency_wait", "planning", "Waiting for parent evidence", "Dependent read needs parent evidence first"),
+                ("approval_node", "approval", "Waiting for your approval", "Reviewing approval requirements"),
+                ("approval_decided", "approval", "Approval received", "Continuing with your approved changes"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+                ("tool_retrieval_node", "planning", "Finding information path", "Finding the right information path"),
+                ("commit_write_node", "approval", "Committing approved change", "Applying the approved backend write"),
+                ("planner_choose_tool_node", "planning", "Selecting safe action", "Selecting a safe action"),
+                ("tool_execution_node", "research", "Preparing backend action", "Checking whether the action can run safely"),
+                ("tool_execution_node:2", "research", "Preparing backend action", "Checking whether the action can run safely"),
+                ("evidence_observation_node", "response", "Checking result", "Checking tool evidence"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("satisfaction_node", "response", "Verifying result", "Verifying the result"),
+                ("approval_gate_node:2", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+                ("dependency_wait:2", "planning", "Waiting for parent evidence", "Dependent read needs parent evidence first"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-approval-resume-display",
+            "user_id": "u1",
+            "status": "EXECUTING",
+            "plan_version": 0,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=20),
+            "replan_context": {"live_activity_steps": graph_rows},
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="ar:approval-1",
+                event_type="approval_required",
+                content="Waiting for your approval: 5 jobs will be updated from low to medium priority.",
+                created_at=created_at + timedelta(seconds=4),
+                approval_id="approval-1",
+                status="PENDING",
+            ),
+            TimelineEventResponse(
+                event_id="ad:approval-1",
+                event_type="approval_decided",
+                content="Approved request to update 5 jobs.",
+                created_at=created_at + timedelta(seconds=5),
+                approval_id="approval-1",
+                status="APPROVED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Finding information path",
+        "Selecting safe action",
+        "Found 5 low-priority jobs",
+        "Prepared change preview",
+        "Waiting for your approval",
+        "Approval received",
+        "Applied approved change",
+        "Read updated jobs",
+        "Verified updated result",
+    ]
+    assert labels.count("Waiting for your approval") == 1
+    assert not {
+        "Waiting for parent evidence",
+        "Preparing backend action",
+        "Preparing write approval",
+        "Checking result",
+        "Verifying result",
+    }.intersection(labels)
+    assert steps[-1].state == "running"
+
+
+def test_phase7_activity_projects_completed_approval_caption_rows_into_display_timeline():
+    created_at = datetime(2026, 6, 2, 15, 33, 25)
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-completed-approval-caption-display",
+            "user_id": "frontend-operator",
+            "status": "COMPLETED",
+            "plan_version": 2,
+            "current_step_index": 0,
+            "step_count": 0,
+            "replan_count": 0,
+            "llm_call_count": 0,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=80),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:876",
+                event_type="plan_created",
+                content="Change planned low-priority jobs to medium priority, then show the updated jobs.",
+                created_at=created_at + timedelta(seconds=9),
+                details={"plan_id": "plan-876"},
+            ),
+            TimelineEventResponse(
+                event_id="caption:dependency",
+                event_type="tool_started",
+                content="Waiting for parent evidence",
+                created_at=created_at + timedelta(seconds=11),
+                details={
+                    "activity": {
+                        "id": "act:caption:dependency_wait:req-002",
+                        "group": "planning",
+                        "label": "Waiting for parent evidence",
+                        "detail": "Dependent read needs parent evidence first",
+                    }
+                },
+            ),
+            TimelineEventResponse(
+                event_id="caption:prereq-read",
+                event_type="tool_result",
+                content="Prerequisite read complete",
+                created_at=created_at + timedelta(seconds=12),
+                status="DONE",
+                details={
+                    "activity": {
+                        "id": "act:caption:approval_prerequisite_read",
+                        "group": "research",
+                        "label": "Prerequisite read complete",
+                        "detail": "Approval waited for read evidence",
+                    }
+                },
+            ),
+            TimelineEventResponse(
+                event_id="approval-required:876",
+                event_type="approval_required",
+                content="Waiting for your approval: 5 jobs will be updated from low to medium priority.",
+                created_at=created_at + timedelta(seconds=29),
+                approval_id="approval-876",
+                status="APPROVED",
+            ),
+            TimelineEventResponse(
+                event_id="approval-decided:876",
+                event_type="approval_decided",
+                content="Approved request to update job JOB-SEED-005.",
+                created_at=created_at + timedelta(seconds=33),
+                approval_id="approval-876",
+                status="APPROVED",
+            ),
+            TimelineEventResponse(
+                event_id="caption:post-write-read",
+                event_type="tool_started",
+                content="Reading 3 job records",
+                created_at=created_at + timedelta(seconds=79),
+                details={
+                    "activity": {
+                        "id": "act:caption:parallel_read_batch:dependency-group-001",
+                        "group": "research",
+                        "label": "Reading 3 job records",
+                        "detail": "Parallel read batch scheduled",
+                    }
+                },
+            ),
+            TimelineEventResponse(
+                event_id="completed:876",
+                event_type="session_completed",
+                content="Done. I updated 5 jobs across 1 approved business change.",
+                created_at=created_at + timedelta(seconds=80),
+                status="COMPLETED",
+            ),
+        ],
+    )
+
+    steps = _activity_steps_for_snapshot(snapshot)
+    labels = [step.label for step in steps]
+
+    assert labels == [
+        "Understood request",
+        "Found 5 low-priority jobs",
+        "Prepared change preview",
+        "Waiting for your approval",
+        "Approval received",
+        "Applied approved change",
+        "Read updated jobs",
+        "Run complete",
+    ]
+    assert not {
+        "Waiting for parent evidence",
+        "Prerequisite read complete",
+        "Reading 3 job records",
+    }.intersection(labels)
+
+
+def test_phase7_activity_does_not_verify_approval_flow_before_write_commit():
+    created_at = datetime(2026, 6, 2, 15, 34, 0)
+    graph_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+                ("satisfaction_node", "response", "Verified updated result", "Verified the result after the approved change"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-no-premature-verified",
+            "user_id": "frontend-operator",
+            "status": "WAITING_APPROVAL",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=5),
+            "replan_context": {"live_activity_steps": graph_rows},
+        },
+        pending_approval={
+            "approval_id": "approval-no-premature-verified",
+            "session_id": "activity-no-premature-verified",
+            "subject_type": "graph",
+            "subject_id": "plan-no-premature-verified",
+            "tool_name": "__langgraph_commit__",
+            "args": {},
+            "risk_summary": "5 jobs will be updated from low to medium priority.",
+            "side_effect_level": "HIGH",
+            "status": "PENDING",
+            "expires_at": created_at + timedelta(hours=1),
+            "created_at": created_at + timedelta(seconds=3),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="approval-required:no-premature",
+                event_type="approval_required",
+                content="Waiting for your approval: 5 jobs will be updated from low to medium priority.",
+                created_at=created_at + timedelta(seconds=3),
+                approval_id="approval-no-premature-verified",
+                status="PENDING",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels == [
+        "Understood request",
+        "Found 5 low-priority jobs",
+        "Prepared change preview",
+        "Waiting for your approval",
+    ]
+
+
+def test_phase7_activity_pending_approval_hides_raw_graph_verification_rows():
+    created_at = datetime(2026, 6, 3, 0, 29, 0)
+    graph_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("requirement_ledger_node", "planning", "Structuring request", "Structuring the request"),
+                ("dependency_wait", "planning", "Waiting for parent evidence", "Dependent read needs parent evidence first"),
+                ("tool_retrieval_node", "planning", "Finding information path", "Finding the right information path"),
+                ("planner_choose_tool_node", "action", "Selecting safe action", "Selecting a safe action"),
+                ("tool_execution_node", "research", "Preparing backend action", "Checking whether the action can run safely"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+                ("evidence_observation_node", "response", "Checking result", "Checking tool evidence"),
+                ("satisfaction_node", "response", "Verifying result", "Verifying the result"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-pending-approval-hide-raw",
+            "user_id": "frontend-operator",
+            "status": "WAITING_APPROVAL",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=11),
+            "replan_context": {"live_activity_steps": graph_rows},
+        },
+        pending_approval={
+            "approval_id": "approval-hide-raw",
+            "session_id": "activity-pending-approval-hide-raw",
+            "subject_type": "graph",
+            "subject_id": "plan-hide-raw",
+            "tool_name": "__langgraph_commit__",
+            "args": {},
+            "risk_summary": "5 jobs will be updated from low to medium priority.",
+            "side_effect_level": "HIGH",
+            "status": "PENDING",
+            "expires_at": created_at + timedelta(hours=1),
+            "created_at": created_at + timedelta(seconds=8),
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="approval-required:hide-raw",
+                event_type="approval_required",
+                content="Waiting for your approval: 5 jobs will be updated from low to medium priority.",
+                created_at=created_at + timedelta(seconds=8),
+                approval_id="approval-hide-raw",
+                status="PENDING",
+            ),
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Finding information path",
+        "Selecting safe action",
+        "Found 5 low-priority jobs",
+        "Prepared change preview",
+        "Waiting for your approval",
+    ]
+    assert not {
+        "Waiting for parent evidence",
+        "Preparing backend action",
+        "Preparing write approval",
+        "Checking result",
+        "Verifying result",
+    }.intersection(labels)
+
+
+def test_phase7_activity_projects_incomplete_approval_flow_without_leaking_graph_rows():
+    created_at = datetime(2026, 6, 2, 15, 50, 0)
+    graph_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("requirement_ledger_node", "planning", "Structuring request", "Structuring the request"),
+                ("dependency_wait", "planning", "Waiting for parent evidence", "Dependent read needs parent evidence first"),
+                ("tool_retrieval_node", "planning", "Finding information path", "Finding the right information path"),
+                ("planner_choose_tool_node", "planning", "Selecting safe action", "Selecting a safe action"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-incomplete-approval-display",
+            "user_id": "frontend-operator",
+            "status": "EXECUTING",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=8),
+            "replan_context": {"live_activity_steps": graph_rows},
+        },
+        timeline=[
+            TimelineEventResponse(
+                event_id="plan:incomplete-display",
+                event_type="plan_created",
+                content="Change planned low-priority jobs to medium priority, then show the updated jobs.",
+                created_at=created_at,
+            )
+        ],
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Finding information path",
+        "Selecting safe action",
+        "Prepared change preview",
+        "Waiting for your approval",
+    ]
+    assert not {
+        "Waiting for parent evidence",
+        "Preparing write approval",
+    }.intersection(labels)
+
+
+def test_phase7_activity_projects_rendering_response_approval_flow_without_pending_row():
+    created_at = datetime(2026, 6, 3, 1, 44, 0)
+    graph_rows = [
+        {
+            "id": f"graph:{idx:06d}:{node}",
+            "timestamp": int((created_at + timedelta(seconds=idx)).timestamp()),
+            "order": idx,
+            "group": group,
+            "label": label,
+            "detail": detail,
+            "state": "running",
+        }
+        for idx, (node, group, label, detail) in enumerate(
+            [
+                ("semantic_intake_node", "planning", "Understood request", "Reviewing your request and recent context"),
+                ("requirement_ledger_node", "planning", "Structuring request", "Structuring the request"),
+                ("dependency_wait", "planning", "Waiting for parent evidence", "Dependent read needs parent evidence first"),
+                ("tool_retrieval_node", "planning", "Finding information path", "Finding the right information path"),
+                ("planner_choose_tool_node", "planning", "Selecting safe action", "Selecting a safe action"),
+                ("tool_execution_node", "research", "Preparing backend action", "Checking whether the action can run safely"),
+                ("write_staging_node", "approval", "Preparing write approval", "Building the exact write set before approval"),
+                ("approval_gate_node", "approval", "Waiting for your approval", "Approval is required before committing staged changes"),
+                ("evidence_observation_node", "response", "Checking result", "Checking tool evidence"),
+                ("satisfaction_node", "response", "Verifying result", "Verifying the result"),
+            ],
+            start=1,
+        )
+    ]
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-rendering-approval-no-pending",
+            "user_id": "frontend-operator",
+            "status": "EXECUTING",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=11),
+            "replan_context": {
+                "live_activity_steps": graph_rows,
+                "planner_owned_agent_graph": {
+                    "response_document_context": {
+                        "state": "rendering",
+                        "diagnostics": {
+                            "summary": "",
+                            "final_validation_status": "deferred",
+                        },
+                    }
+                },
+            },
+        },
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels == [
+        "Understood request",
+        "Structuring request",
+        "Finding information path",
+        "Selecting safe action",
+        "Prepared change preview",
+        "Waiting for your approval",
+    ]
+    assert not {
+        "Waiting for parent evidence",
+        "Preparing backend action",
+        "Preparing write approval",
+        "Checking result",
+        "Verifying result",
+    }.intersection(labels)
+
+
+def test_phase7_activity_projects_planned_approval_from_first_live_row():
+    created_at = datetime(2026, 6, 3, 1, 45, 0)
+    snapshot = SessionSnapshotResponse(
+        session={
+            "session_id": "activity-planned-approval-first-row",
+            "user_id": "frontend-operator",
+            "status": "EXECUTING",
+            "plan_version": 1,
+            "current_step_index": 0,
+            "step_count": 1,
+            "replan_count": 0,
+            "llm_call_count": 1,
+            "session_started_at": created_at,
+            "created_at": created_at,
+            "updated_at": created_at + timedelta(seconds=1),
+            "replan_context": {
+                "live_activity_steps": [
+                    {
+                        "id": "graph:000001:semantic_intake_node",
+                        "timestamp": int(created_at.timestamp()),
+                        "order": 1,
+                        "group": "planning",
+                        "label": "Understood request",
+                        "detail": "Reviewing your request and recent context",
+                        "state": "running",
+                    }
+                ],
+                "planner_owned_agent_graph": {
+                    "dependency_plan": {
+                        "requirements": [
+                            {"requirement_id": "req-001", "label": "approval_required", "ready": True}
+                        ]
+                    }
+                },
+            },
+        },
+    )
+
+    labels = [step.label for step in _activity_steps_for_snapshot(snapshot)]
+
+    assert labels == [
+        "Understood request",
+        "Prepared change preview",
+        "Waiting for your approval",
+    ]
+
+
 def test_phase7_activity_does_not_merge_plan_created_across_different_plan_ids():
     created_at = datetime(2026, 5, 13, 11, 0, 0)
     snapshot = SessionSnapshotResponse(

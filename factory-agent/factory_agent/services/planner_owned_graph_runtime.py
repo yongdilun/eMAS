@@ -50,17 +50,31 @@ _ACTIVITY_GRAPH_HISTORY_FIELDS = {
 
 
 def _activity_graph_history_from_context(context: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    rows = (context or {}).get("live_activity_steps") if isinstance(context, Mapping) else None
-    if not isinstance(rows, list):
+    if not isinstance(context, Mapping):
         return []
+    rows: list[Any] = []
+    for key in ("activity_graph_steps", "live_activity_steps"):
+        value = context.get(key)
+        if isinstance(value, list):
+            rows.extend(value)
     out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, Mapping):
             continue
         kept = {key: row[key] for key in _ACTIVITY_GRAPH_HISTORY_FIELDS if key in row}
-        if kept.get("id") and kept.get("label"):
+        step_id = str(kept.get("id") or "").strip()
+        if step_id and kept.get("label") and step_id not in seen_ids:
+            seen_ids.add(step_id)
             out.append(kept)
-    return out[-_LIVE_GRAPH_MAX_STEPS:]
+    return sorted(
+        out,
+        key=lambda item: (
+            _live_activity_order(item.get("order") or item.get("_order")) or 0,
+            int(item.get("timestamp") or 0),
+            str(item.get("id") or ""),
+        ),
+    )[-_LIVE_GRAPH_MAX_STEPS:]
 
 
 def _intent_contract_replan_spine(state: Any) -> dict[str, Any]:
@@ -126,8 +140,23 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         ),
         "tool_execution_node": (
             "research",
-            "Searching knowledge sources" if rag else "Running selected tool",
-            "Searching retrieved documents" if rag else "Checking relevant records",
+            "Searching knowledge sources" if rag else "Preparing backend action",
+            "Searching retrieved documents" if rag else "Checking whether the action can run safely",
+        ),
+        "write_staging_node": (
+            "approval",
+            "Preparing write approval",
+            "Building the exact write set before approval",
+        ),
+        "approval_gate_node": (
+            "approval",
+            "Waiting for your approval",
+            "Approval is required before committing staged changes",
+        ),
+        "commit_write_node": (
+            "approval",
+            "Committing approved change",
+            "Applying the approved backend write",
         ),
         "evidence_observation_node": (
             "response",
@@ -250,6 +279,13 @@ class LiveGraphActivityRecorder:
             seen_ids: set[str] = set()
             live_steps: list[dict[str, Any]] = []
             max_order = 0
+            for item in _activity_graph_history_from_context({"activity_graph_steps": context.get("activity_graph_steps")}):
+                step_id = str(item.get("id") or "").strip()
+                if step_id:
+                    seen_ids.add(step_id)
+                order = _live_activity_order(item.get("order") or item.get("_order"))
+                if order is not None:
+                    max_order = max(max_order, order)
             for item in existing:
                 step_id = str(item.get("id") or "").strip()
                 if not step_id or step_id in seen_ids:
@@ -325,6 +361,58 @@ class PlannerOwnedGraphRuntimeAdapter:
         self._persist_plan = persist_plan
         self._session_lookup = session_lookup
 
+    def _graph_run_options(
+        self,
+        *,
+        sess: Any,
+        segment: str,
+        approval_id: Any = None,
+        checkpoint_id: Any = None,
+        ledger_revision: Any = None,
+    ) -> dict[str, Any]:
+        session_id = str(getattr(sess, "session_id", "") or "").strip()
+        context = sess.replan_context if isinstance(getattr(sess, "replan_context", None), Mapping) else {}
+        trace_context = context.get("planner_owned_langsmith_trace") if isinstance(context, Mapping) else None
+        trace_context = trace_context if isinstance(trace_context, Mapping) else {}
+        pending = context.get("langgraph_pending_approval") if isinstance(context, Mapping) else None
+        pending = pending if isinstance(pending, Mapping) else {}
+        logical_trace_id = str(trace_context.get("logical_trace_id") or f"planner-owned:{session_id}").strip()
+        effective_approval_id = approval_id if approval_id not in (None, "") else pending.get("approval_id")
+        effective_checkpoint_id = checkpoint_id if checkpoint_id not in (None, "") else pending.get("checkpoint_id")
+        effective_ledger_revision = (
+            ledger_revision
+            if ledger_revision not in (None, "")
+            else pending.get("ledger_revision") or context.get("requirement_ledger_revision")
+        )
+        metadata = {
+            "component": "planner_owned_agent_graph",
+            "graph_runtime": "planner_owned_agent_graph",
+            "session_id": session_id,
+            "thread_id": session_id,
+            "logical_trace_id": logical_trace_id,
+            "graph_segment": segment,
+            "approval_id": effective_approval_id,
+            "approval_checkpoint_id": effective_checkpoint_id,
+            "ledger_revision": effective_ledger_revision,
+            "human_approval_boundary": segment == "post_approval_resume",
+        }
+        metadata = {key: value for key, value in metadata.items() if value not in (None, "")}
+        tags = [
+            "factory_agent",
+            "planner_owned_agent_graph",
+            f"graph_segment:{segment}",
+            f"session:{session_id}",
+            f"logical_trace:{logical_trace_id}",
+        ]
+        if effective_approval_id not in (None, ""):
+            tags.append(f"approval:{effective_approval_id}")
+        return {
+            "thread_id": session_id,
+            "run_name": f"planner_owned_agent_graph.{segment}",
+            "tags": tags,
+            "metadata": metadata,
+        }
+
     async def run_plan(
         self,
         *,
@@ -347,7 +435,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             result = await graph.run(
                 intent,
                 session_context=sess,
-                options={"thread_id": sess.session_id},
+                options=self._graph_run_options(sess=sess, segment="initial"),
             )
         finally:
             if live_activity is not None:
@@ -398,7 +486,13 @@ class PlannerOwnedGraphRuntimeAdapter:
                     "decided_by": decided_by,
                     "approved_args": dict(approval_args or {}),
                 },
-                options={"thread_id": sess.session_id},
+                options=self._graph_run_options(
+                    sess=sess,
+                    segment="post_approval_resume",
+                    approval_id=approval_id,
+                    checkpoint_id=checkpoint_id,
+                    ledger_revision=ledger_revision,
+                ),
             )
         finally:
             if live_activity is not None:
@@ -434,6 +528,63 @@ class PlannerOwnedGraphRuntimeAdapter:
             sess.event_seq = row.event_seq
         if getattr(row, "updated_at", None) is not None:
             sess.updated_at = row.updated_at
+
+    def _merge_planner_owned_langsmith_trace_context(
+        self,
+        *,
+        context: dict[str, Any],
+        result: PlannerOwnedGraphResult,
+    ) -> dict[str, Any]:
+        existing = context.get("planner_owned_langsmith_trace")
+        existing = existing if isinstance(existing, Mapping) else {}
+        checkpoint_config = result.checkpoint_config if isinstance(result.checkpoint_config, Mapping) else {}
+        configurable = checkpoint_config.get("configurable") if isinstance(checkpoint_config, Mapping) else {}
+        configurable = configurable if isinstance(configurable, Mapping) else {}
+        metadata = checkpoint_config.get("metadata") if isinstance(checkpoint_config, Mapping) else {}
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        tags = checkpoint_config.get("tags") if isinstance(checkpoint_config, Mapping) else []
+        graph_identity = result.state.execution_trace.diagnostics.get("graph_checkpoint_identity")
+        graph_identity = graph_identity if isinstance(graph_identity, Mapping) else {}
+        logical_trace_id = str(
+            metadata.get("logical_trace_id")
+            or existing.get("logical_trace_id")
+            or f"planner-owned:{configurable.get('thread_id') or ''}"
+        ).strip()
+        segment = {
+            "graph_segment": metadata.get("graph_segment"),
+            "run_name": checkpoint_config.get("run_name"),
+            "thread_id": configurable.get("thread_id"),
+            "approval_id": metadata.get("approval_id"),
+            "approval_checkpoint_id": metadata.get("approval_checkpoint_id") or graph_identity.get("checkpoint_id"),
+            "ledger_revision": metadata.get("ledger_revision") or graph_identity.get("ledger_revision"),
+            "tags": [str(tag) for tag in tags] if isinstance(tags, list) else [],
+        }
+        segment = {key: value for key, value in segment.items() if value not in (None, "", [], {})}
+        segments = [dict(item) for item in existing.get("segments", []) if isinstance(item, Mapping)]
+        segment_key = (
+            segment.get("graph_segment"),
+            segment.get("approval_id"),
+            segment.get("approval_checkpoint_id"),
+            segment.get("ledger_revision"),
+        )
+        existing_keys = {
+            (
+                item.get("graph_segment"),
+                item.get("approval_id"),
+                item.get("approval_checkpoint_id"),
+                item.get("ledger_revision"),
+            )
+            for item in segments
+        }
+        if segment and segment_key not in existing_keys:
+            segments.append(segment)
+        return {
+            **dict(existing),
+            "logical_trace_id": logical_trace_id,
+            "thread_id": configurable.get("thread_id") or existing.get("thread_id"),
+            "source": "planner_owned_agent_graph",
+            "segments": segments[-8:],
+        }
 
     async def persist_result(
         self,
@@ -729,6 +880,12 @@ class PlannerOwnedGraphRuntimeAdapter:
             "checkpoint_id": pending.checkpoint_id,
             "ledger_revision": pending.ledger_revision,
         }
+        existing_trace_context = context.get("planner_owned_langsmith_trace")
+        trace_context = dict(existing_trace_context) if isinstance(existing_trace_context, Mapping) else {}
+        trace_context["approval_id"] = pending.approval_id
+        trace_context["approval_checkpoint_id"] = pending.checkpoint_id
+        trace_context["waiting_for_human_approval"] = True
+        context["planner_owned_langsmith_trace"] = trace_context
         draft = PlanDraft(
             plan_explanation=summary,
             risk_summary="Waiting for graph-native approval before committing staged changes.",
@@ -784,6 +941,10 @@ class PlannerOwnedGraphRuntimeAdapter:
             for instruction in state.requirement_ledger.answer_instructions
         ]
         context = dict(base_context or {})
+        context["planner_owned_langsmith_trace"] = self._merge_planner_owned_langsmith_trace_context(
+            context=context,
+            result=result,
+        )
         context.pop("live_activity_steps", None)
         context.pop("live_activity_revision", None)
         context.pop("live_replan_spine", None)
@@ -804,6 +965,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
             "activity_caption_context": activity_caption_context,
+            "langsmith_trace": context["planner_owned_langsmith_trace"],
         }
         if activity_graph_steps:
             context["intent_contract"]["activity_graph_steps"] = activity_graph_steps
@@ -829,6 +991,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             "answer_instructions": answer_instructions,
             "replan_spine": replan_spine,
             "activity_caption_context": activity_caption_context,
+            "langsmith_trace": context["planner_owned_langsmith_trace"],
             "native_langgraph_checkpoint_used": True,
             "session_replan_context_authoritative": False,
         }

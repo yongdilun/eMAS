@@ -4,6 +4,8 @@ import {
   activityActiveRetryStoryPrompt,
   activityRetryCollapseHandoffPrompt,
   activitySseAnswer,
+  activitySseApprovalNoPendingPrompt,
+  activitySseApprovalResumePrompt,
   activitySseDelayedFallbackPrompt,
   activitySseGraphDuplicatePrompt,
   activitySsePrompt,
@@ -37,6 +39,15 @@ async function sseEventsFor(query) {
   return body.events || []
 }
 
+async function activityRowLabels(page) {
+  return page.locator('.activity-timeline-row').evaluateAll((rows) =>
+    rows.map((row) => {
+      const firstLine = String(row.innerText || '').split('\n')[0] || ''
+      return firstLine.replace(/\s+Current\s*$/, '').trim()
+    }),
+  )
+}
+
 async function activeSessionId(page) {
   return page.evaluate(() => window.localStorage.getItem('factory_agent_active_session_id'))
 }
@@ -58,8 +69,43 @@ function assertMonotonicUniqueFrameIds(events) {
   expect(new Set(ids).size).toBe(ids.length)
 }
 
-function assertFrameLabels(events, expectedLabels) {
-  expect(events.map((entry) => entry.data?.label)).toEqual(expectedLabels)
+function activitySnapshotSteps(entry) {
+  return entry?.data?.activity_steps || entry?.data?.activitySteps || []
+}
+
+function latestSnapshotSteps(events) {
+  return activitySnapshotSteps(events.at(-1))
+}
+
+function latestSnapshotLabels(events) {
+  return latestSnapshotSteps(events).map((step) => step.label)
+}
+
+function allSnapshotLabels(events) {
+  return events.flatMap((entry) => activitySnapshotSteps(entry).map((step) => step.label))
+}
+
+function allSnapshotStepIds(events) {
+  return events.flatMap((entry) => activitySnapshotSteps(entry).map((step) => step.id))
+}
+
+function assertLatestFrameLabels(events, expectedLabels) {
+  expect(latestSnapshotLabels(events)).toEqual(expectedLabels)
+}
+
+function assertSnapshotLengthsNeverShrink(events) {
+  const lengths = events.map((entry) => activitySnapshotSteps(entry).length)
+  for (let index = 1; index < lengths.length; index += 1) {
+    expect(lengths[index]).toBeGreaterThanOrEqual(lengths[index - 1])
+  }
+}
+
+async function activitySnapshotEventsFor(scenario) {
+  return sseEventsFor({
+    scenario,
+    stream: 'activity',
+    event: 'activity_snapshot',
+  })
 }
 
 function assertTimelineOrder(snapshot, expectedTypes) {
@@ -87,6 +133,8 @@ async function sendChatPrompt(page, prompt) {
 }
 
 test.describe('Factory Agent chat SSE activity stream @sse', () => {
+  test.describe.configure({ mode: 'serial' })
+
   test('activity stream shows ordered steps and gates the final answer until completed snapshot state', async ({ page }) => {
     await openChat(page)
     await sendChatPrompt(page, activitySsePrompt)
@@ -122,13 +170,9 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(page.getByText('Run complete')).toBeVisible()
     await expect(page.locator('[role="status"][aria-busy="true"]')).toHaveCount(0)
 
-    const activityFrames = await sseEventsFor({
-      scenario: 'activitySseOrdered',
-      stream: 'activity',
-      event: 'activity',
-    })
+    const activityFrames = await activitySnapshotEventsFor('activitySseOrdered')
     assertMonotonicUniqueFrameIds(activityFrames)
-    assertFrameLabels(activityFrames, [
+    assertLatestFrameLabels(activityFrames, [
       'SSE understanding request',
       'SSE checking machine telemetry',
       'SSE validating result',
@@ -156,7 +200,7 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     expect(requests.some((entry) => entry.path.endsWith('/snapshot'))).toBe(true)
 
     expect(() => assertMonotonicUniqueFrameIds([{ id: 2 }, { id: 2 }])).toThrow()
-    expect(() => assertFrameLabels(activityFrames.slice(1), [
+    expect(() => assertLatestFrameLabels(activityFrames.slice(0, 1), [
       'SSE understanding request',
       'SSE checking machine telemetry',
       'SSE validating result',
@@ -169,12 +213,8 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activitySseResponseDocument',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activitySseResponseDocument')
+        return allSnapshotLabels(activityFrames)
       })
       .toContain('SSE checking machine telemetry')
 
@@ -199,23 +239,15 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activitySseResponseDocument',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activitySseResponseDocument')
+        return allSnapshotLabels(activityFrames)
       })
       .toContain('SSE validating result')
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activitySseResponseDocument',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activitySseResponseDocument')
+        return allSnapshotLabels(activityFrames)
       })
       .toContain('Run complete')
 
@@ -243,12 +275,8 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activitySseDelayedFallback',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activitySseDelayedFallback')
+        return allSnapshotLabels(activityFrames)
       })
       .toContain('SSE understanding request')
 
@@ -280,12 +308,8 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activitySseGraphDuplicate',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activitySseGraphDuplicate')
+        return allSnapshotLabels(activityFrames)
       })
       .toContain('Searching knowledge sources')
 
@@ -301,6 +325,200 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
     await expect(page.getByText('Run complete')).toBeVisible()
     await expect(page.getByText("I'm working on the request and waiting for the next backend update.")).toHaveCount(0)
     await expect(page.getByText('Working on response-document activity stream.')).toHaveCount(0)
+  })
+
+  test('approval resume SSE renders one clean timeline without raw graph rows', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySseApprovalResumePrompt)
+
+    await expect(page.getByText('Approval required')).toBeVisible()
+    await expect(page.getByText('5 jobs will be updated from low to medium priority.').first()).toBeVisible()
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await activitySnapshotEventsFor('activitySseApprovalResume')
+        return latestSnapshotLabels(activityFrames)
+      })
+      .toEqual([
+        'Understood request',
+        'Structuring request',
+        'Finding information path',
+        'Selecting safe action',
+        'Found 5 low-priority jobs',
+        'Prepared change preview',
+        'Waiting for your approval',
+      ])
+
+    await expect
+      .poll(async () => {
+        const requests = await requestsFor({ scenario: 'activitySseApprovalResume' })
+        return requests.filter((entry) => String(entry.path || '').endsWith('/snapshot')).length
+      })
+      .toBeGreaterThanOrEqual(2)
+
+    await page.waitForTimeout(750)
+    const preApprovalFrames = await activitySnapshotEventsFor('activitySseApprovalResume')
+    assertMonotonicUniqueFrameIds(preApprovalFrames)
+    assertSnapshotLengthsNeverShrink(preApprovalFrames)
+    expect(latestSnapshotLabels(preApprovalFrames)).toEqual([
+      'Understood request',
+      'Structuring request',
+      'Finding information path',
+      'Selecting safe action',
+      'Found 5 low-priority jobs',
+      'Prepared change preview',
+      'Waiting for your approval',
+    ])
+    expect(allSnapshotStepIds(preApprovalFrames).every((id) => String(id || '').startsWith('act:display:'))).toBe(true)
+    for (const leakedRawApprovalLabel of [
+      'Waiting for parent evidence',
+      'Preparing backend action',
+      'Preparing write approval',
+      'Checking result',
+      'Verifying result',
+      'Reading 3 job records',
+    ]) {
+      expect(allSnapshotLabels(preApprovalFrames)).not.toContain(leakedRawApprovalLabel)
+    }
+
+    const midLabels = await activityRowLabels(page)
+    expect(midLabels).toEqual([
+      'Understood request',
+      'Structuring request',
+      'Finding information path',
+      'Selecting safe action',
+      'Found 5 low-priority jobs',
+      'Prepared change preview',
+      'Waiting for your approval',
+    ])
+    expect(midLabels).not.toContain('Waiting for parent evidence')
+
+    const preApprovalActivityList = page.locator('ol').filter({ hasText: 'Found 5 low-priority jobs' }).first()
+    await expect(preApprovalActivityList.getByText('Found 5 low-priority jobs', { exact: true })).toBeVisible()
+    for (const leakedPreApprovalLabel of [
+      'Waiting for parent evidence',
+      'Preparing backend action',
+      'Preparing write approval',
+      'Checking result',
+      'Verifying result',
+    ]) {
+      await expect(preApprovalActivityList.getByText(leakedPreApprovalLabel, { exact: true })).toHaveCount(0)
+    }
+
+    await page.getByRole('button', { name: 'Approve' }).click()
+
+    await expect
+      .poll(async () => {
+        const activityFrames = await activitySnapshotEventsFor('activitySseApprovalResume')
+        return latestSnapshotLabels(activityFrames)
+      })
+      .toEqual([
+        'Understood request',
+        'Structuring request',
+        'Finding information path',
+        'Selecting safe action',
+        'Found 5 low-priority jobs',
+        'Prepared change preview',
+        'Waiting for your approval',
+        'Approval received',
+        'Applied approved change',
+        'Read updated jobs',
+        'Verified updated result',
+      ])
+
+    const emittedFrames = await activitySnapshotEventsFor('activitySseApprovalResume')
+    assertMonotonicUniqueFrameIds(emittedFrames)
+    assertSnapshotLengthsNeverShrink(emittedFrames)
+    expect(allSnapshotStepIds(emittedFrames).every((id) => String(id || '').startsWith('act:display:'))).toBe(true)
+
+    const activityList = page.locator('ol').filter({ hasText: 'Found 5 low-priority jobs' }).first()
+    await expect
+      .poll(async () => {
+        try {
+          return await activityList.innerText()
+        } catch {
+          return ''
+        }
+      }, { timeout: 3000 })
+      .toContain('Verified updated result')
+    const activityText = await activityList.innerText()
+    const expectedOrder = [
+      'Understood request',
+      'Structuring request',
+      'Finding information path',
+      'Selecting safe action',
+      'Found 5 low-priority jobs',
+      'Prepared change preview',
+      'Waiting for your approval',
+      'Approval received',
+      'Applied approved change',
+      'Read updated jobs',
+      'Verified updated result',
+    ]
+    for (const expectedLabel of expectedOrder) {
+      expect(activityText).toContain(expectedLabel)
+    }
+    expect((activityText.match(/Waiting for your approval/g) || []).length).toBe(1)
+    for (let idx = 1; idx < expectedOrder.length; idx += 1) {
+      expect(activityText.indexOf(expectedOrder[idx - 1])).toBeLessThan(activityText.indexOf(expectedOrder[idx]))
+    }
+    for (const leakedLabel of [
+      'Waiting for parent evidence',
+      'Reading 3 job records',
+      'Preparing backend action',
+      'Preparing write approval',
+      'Checking result',
+      'Verifying result',
+    ]) {
+      expect(activityText).not.toContain(leakedLabel)
+      expect(allSnapshotLabels(emittedFrames)).not.toContain(leakedLabel)
+    }
+
+    await expect(page.getByText('Approval activity SSE rendered one clean timeline after approval.').first()).toBeVisible()
+  })
+
+  test('planned approval SSE stays clean before pending approval object exists', async ({ page }) => {
+    await openChat(page)
+    await sendChatPrompt(page, activitySseApprovalNoPendingPrompt)
+
+    const expectedLabels = [
+      'Understood request',
+      'Structuring request',
+      'Finding information path',
+      'Selecting safe action',
+      'Prepared change preview',
+      'Waiting for your approval',
+    ]
+
+    await expect
+      .poll(async () => latestSnapshotLabels(await activitySnapshotEventsFor('activitySseApprovalNoPending')))
+      .toEqual(expectedLabels)
+
+    await page.waitForTimeout(900)
+    const emittedFrames = await activitySnapshotEventsFor('activitySseApprovalNoPending')
+    assertMonotonicUniqueFrameIds(emittedFrames)
+    assertSnapshotLengthsNeverShrink(emittedFrames)
+    expect(latestSnapshotLabels(emittedFrames)).toEqual(expectedLabels)
+    expect(allSnapshotStepIds(emittedFrames).every((id) => String(id || '').startsWith('act:display:'))).toBe(true)
+
+    const leakedRawLabels = [
+      'Waiting for parent evidence',
+      'Preparing backend action',
+      'Preparing write approval',
+      'Checking result',
+      'Verifying result',
+    ]
+    for (const leakedLabel of leakedRawLabels) {
+      expect(allSnapshotLabels(emittedFrames)).not.toContain(leakedLabel)
+    }
+
+    await expect
+      .poll(async () => activityRowLabels(page))
+      .toEqual(expectedLabels)
+    const activityList = page.locator('ol').filter({ hasText: 'Prepared change preview' }).first()
+    for (const leakedLabel of leakedRawLabels) {
+      await expect(activityList.getByText(leakedLabel, { exact: true })).toHaveCount(0)
+    }
   })
 
   test('active activity rows keep graph order when backend timestamps collide', async ({ page }) => {
@@ -372,12 +590,8 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
 
     await expect
       .poll(async () => {
-        const activityFrames = await sseEventsFor({
-          scenario: 'activityActiveRetryStory',
-          stream: 'activity',
-          event: 'activity',
-        })
-        return activityFrames.map((entry) => entry.data?.label)
+        const activityFrames = await activitySnapshotEventsFor('activityActiveRetryStory')
+        return latestSnapshotLabels(activityFrames)
       })
       .toEqual(['Selecting safe action', 'Finding information path', 'Choosing next action'])
 

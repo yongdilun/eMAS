@@ -383,6 +383,7 @@ ALL_STATEFUL_ORACLE_IDS = [
     "SO-031",
     "SO-035",
     "SO-041",
+    "SO-045",
 ]
 
 

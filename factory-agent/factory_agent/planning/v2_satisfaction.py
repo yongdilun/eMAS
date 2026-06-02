@@ -41,6 +41,9 @@ _NON_FILTER_CONSTRAINTS = {
     "observation_fields",
     "preview_before_apply",
     "requires_approval",
+    "depends_on_result_binding",
+    "result_binding_source_requirement",
+    "result_binding_field",
     "safety_constraints",
 }
 _RESULT_META_FIELDS = {

@@ -1,0 +1,319 @@
+{
+  "id": "SO-045",
+  "title": "Read updated jobs after approved write",
+  "risk": "A read-after-write prompt can compile only the write requirement and treat 'show the updated jobs' as clarification, causing the final answer to omit the updated rows.",
+  "prompt": "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+  "initial_state": {
+    "jobs": [
+      {
+        "id": "JOB-SO045-LOW-PLANNED-01",
+        "priority": "low",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SO045-LOW-PLANNED-02",
+        "priority": "low",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SO045-LOW-RUNNING-01",
+        "priority": "low",
+        "status": "running"
+      },
+      {
+        "id": "JOB-SO045-MED-PLANNED-01",
+        "priority": "medium",
+        "status": "planned"
+      }
+    ],
+    "approvals": [],
+    "audit_rows": [],
+    "planner_mode": "real_langgraph"
+  },
+  "expected_intents": [
+    {
+      "intent_id": "SO-045-I1",
+      "route": "tool.write.jobs.bulk_update_priority",
+      "filter": {
+        "priority": "low",
+        "status": "planned"
+      },
+      "new_values": {
+        "priority": "medium"
+      },
+      "source_row_ids": [
+        "JOB-SO045-LOW-PLANNED-01",
+        "JOB-SO045-LOW-PLANNED-02"
+      ],
+      "produces": {
+        "alias": "updated_jobs",
+        "binding": "affected_entity_ids"
+      }
+    },
+    {
+      "intent_id": "SO-045-I2",
+      "route": "tool.read.jobs.updated_result_set",
+      "depends_on": [
+        "SO-045-I1"
+      ],
+      "consumes": {
+        "alias": "updated_jobs",
+        "from_intent_id": "SO-045-I1",
+        "binding": "affected_entity_ids"
+      },
+      "expected_row_ids": [
+        "JOB-SO045-LOW-PLANNED-01",
+        "JOB-SO045-LOW-PLANNED-02"
+      ]
+    }
+  ],
+  "expected_approvals": [
+    {
+      "approval_id": "approval-so-045-1",
+      "intent_id": "SO-045-I1",
+      "decision": "accepted",
+      "row_ids": [
+        "JOB-SO045-LOW-PLANNED-01",
+        "JOB-SO045-LOW-PLANNED-02"
+      ],
+      "row_count": 2
+    }
+  ],
+  "expected_intermediate_states": [
+    {
+      "after": "requirement ledger compiled",
+      "session_phase": "EXECUTING",
+      "requirements": [
+        {
+          "id": "req-001",
+          "requirement_type": "mutation_request",
+          "entity": "job"
+        },
+        {
+          "id": "req-002",
+          "requirement_type": "filtered_collection",
+          "entity": "job",
+          "depends_on": [
+            "req-001"
+          ]
+        }
+      ],
+      "forbidden": [
+        "clarification: show the updated jobs"
+      ]
+    },
+    {
+      "after": "approval requested",
+      "session_phase": "WAITING_APPROVAL",
+      "pending_approval_id": "approval-so-045-1",
+      "forbidden": [
+        "final_response_created",
+        "updated jobs read before commit"
+      ]
+    },
+    {
+      "after": "approved write committed",
+      "session_phase": "EXECUTING",
+      "pending_approval_id": null,
+      "dependency_unblocked": {
+        "requirement_id": "req-002",
+        "after_evidence_requirement_id": "req-001"
+      }
+    }
+  ],
+  "expected_final_state": {
+    "session_phase": "COMPLETED",
+    "jobs": [
+      {
+        "id": "JOB-SO045-LOW-PLANNED-01",
+        "priority": "medium",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SO045-LOW-PLANNED-02",
+        "priority": "medium",
+        "status": "planned"
+      },
+      {
+        "id": "JOB-SO045-LOW-RUNNING-01",
+        "priority": "low",
+        "status": "running"
+      },
+      {
+        "id": "JOB-SO045-MED-PLANNED-01",
+        "priority": "medium",
+        "status": "planned"
+      }
+    ],
+    "pending_approval_id": null
+  },
+  "expected_audit_rows": [
+    {
+      "approval_id": "approval-so-045-1",
+      "intent_id": "SO-045-I1",
+      "action": "bulk_update_priority",
+      "row_ids": [
+        "JOB-SO045-LOW-PLANNED-01",
+        "JOB-SO045-LOW-PLANNED-02"
+      ],
+      "before": {
+        "priority": "low"
+      },
+      "after": {
+        "priority": "medium"
+      }
+    }
+  ],
+  "expected_timeline": [
+    {
+      "event": "operation_started",
+      "operation_id": "operation-so-045"
+    },
+    {
+      "event": "requirements_compiled",
+      "requirement_ids": [
+        "req-001",
+        "req-002"
+      ]
+    },
+    {
+      "event": "approval_requested",
+      "approval_id": "approval-so-045-1",
+      "intent_id": "SO-045-I1",
+      "row_count": 2
+    },
+    {
+      "event": "approval_decided",
+      "approval_id": "approval-so-045-1",
+      "intent_id": "SO-045-I1",
+      "decision": "accepted"
+    },
+    {
+      "event": "commit_completed",
+      "approval_id": "approval-so-045-1",
+      "intent_id": "SO-045-I1",
+      "row_count": 2
+    },
+    {
+      "event": "dependency_unblocked",
+      "requirement_id": "req-002",
+      "depends_on": "req-001"
+    },
+    {
+      "event": "tool_read_started",
+      "intent_id": "SO-045-I2"
+    },
+    {
+      "event": "tool_read_completed",
+      "intent_id": "SO-045-I2",
+      "row_count": 2
+    },
+    {
+      "event": "final_response_created",
+      "operation_id": "operation-so-045"
+    },
+    {
+      "event": "operation_completed",
+      "operation_id": "operation-so-045"
+    }
+  ],
+  "expected_sse_or_snapshot": {
+    "approval_required": true,
+    "terminal": {
+      "status": "COMPLETED",
+      "pending_approval_id": null,
+      "must_include_tool_result_evidence": {
+        "updated_job_ids": [
+          "JOB-SO045-LOW-PLANNED-01",
+          "JOB-SO045-LOW-PLANNED-02"
+        ]
+      }
+    }
+  },
+  "expected_final_response": {
+    "allowed_after": "tool_read_completed SO-045-I2",
+    "must_include": [
+      "updated jobs",
+      "JOB-SO045-LOW-PLANNED-01",
+      "JOB-SO045-LOW-PLANNED-02",
+      "medium"
+    ],
+    "must_not_include": [
+      "clarification",
+      "which updated jobs",
+      "missing bound entity",
+      "Run complete before read"
+    ]
+  },
+  "expected_ui": {
+    "must_show": [
+      "Approval required",
+      "JOB-SO045-LOW-PLANNED-01",
+      "JOB-SO045-LOW-PLANNED-02",
+      "medium"
+    ],
+    "must_not_show": [
+      "Which updated jobs?",
+      "Unable to determine updated"
+    ]
+  },
+  "expected_unchanged_rows": [
+    {
+      "id": "JOB-SO045-LOW-RUNNING-01",
+      "priority": "low",
+      "status": "running"
+    },
+    {
+      "id": "JOB-SO045-MED-PLANNED-01",
+      "priority": "medium",
+      "status": "planned"
+    }
+  ],
+  "invariants": [
+    "read_after_write_requirement_created",
+    "dependent_read_waits_for_write_evidence",
+    "approval_required_before_mutation",
+    "final_response_after_dependent_read",
+    "no_clarification_for_updated_jobs_with_previous_mutation"
+  ],
+  "required_layers": [
+    "backend_unit",
+    "stateful_oracle"
+  ],
+  "weakness_from_phase0": "Compiler tests can prove the ledger shape, but the E2E risk is that the graph finalizes after the write and never reads the updated jobs.",
+  "phase13_quality_gate": {
+    "real_product_bug_caught": "The system treated 'show the updated jobs' as a clarification instead of a dependent read after a write.",
+    "existing_test_that_would_miss_it": "Approval-only write tests can pass when the dependent read requirement is missing.",
+    "lowest_useful_layer": "backend_unit",
+    "browser_coverage_required": false,
+    "real_langgraph_coverage_required": false,
+    "real_langgraph_decision": "Deferred for the later approval-resume/runtime binding pass; this safer slice proves ledger compilation, dependency blocking, and the stateful oracle contract without claiming browser execution.",
+    "required_positive_evidence": [
+      "two compiled requirements",
+      "req-002 depends on req-001",
+      "write approval and commit evidence",
+      "read result rows after commit",
+      "final answer includes updated job rows"
+    ],
+    "required_forbidden_stale_evidence": [
+      "dependent_singular_read_missing_bound_entity",
+      "final response before dependent read",
+      "clarification for updated jobs"
+    ],
+    "coverage_category": "critical"
+  },
+  "executable_enforcement": {
+    "pytest": [
+      "factory-agent/tests/test_planner_owned_intake_compiler.py::test_compiler_binds_updated_jobs_read_to_previous_mutation",
+      "factory-agent/tests/test_planner_owned_intake_compiler.py::test_compiler_binds_affected_jobs_read_to_previous_mutation",
+      "factory-agent/tests/test_planner_owned_dependency_scheduler.py::test_dependency_scheduler_blocks_updated_jobs_read_until_write_evidence_exists",
+      "factory-agent/tests/test_snapshot_timeline_final_response_contract.py::test_all_stateful_oracle_files_have_executable_snapshot_final_response_contract[SO-045]"
+    ],
+    "playwright": [],
+    "visible_dom_assertions_required": true,
+    "manual_prompt_regression": [
+      "Change planned low-priority jobs to medium priority, then show the updated jobs."
+    ],
+    "tracker": "docs/qa/PLANNER_OWNED_READ_AFTER_WRITE_DEPENDENCY_PLAN.md"
+  }
+}

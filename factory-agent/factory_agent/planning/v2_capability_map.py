@@ -97,6 +97,14 @@ _EVIDENCE_DRIVEN_FOLLOWUP_RE = re.compile(
     r"\b(?:why|cause|causes|reason|reasons|root\s+cause|explain|diagnos(?:e|is|tic))\b",
     re.IGNORECASE,
 )
+_PREVIOUS_MUTATION_RESULT_READ_RE = re.compile(
+    r"\b(?:read|show|list|get|view|display|return)\b"
+    r"(?:(?!\b(?:and\s+then|then|next|after\s+that|afterwards|finally)\b).){0,80}"
+    r"\b(?:updated|changed|affected|modified|same|those|these)\s+"
+    r"(?P<entity>jobs?|work\s*orders?|records?|rows?|items?)\b|"
+    r"\b(?:read|show|list|get|view|display|return)\s+(?:them|those|these)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _ROW_STATUS_CONDITION_FALLBACK_VALUES = {
     "active",
     "blocked",
@@ -473,29 +481,41 @@ def build_requirement_sketch_for_text(
             continue
 
         if intake_item.role == "clarification_need":
-            need_id = f"clarification-{len(clarification_needs) + 1:03d}"
-            blocked_entity = (
-                str(intake_item.diagnostics.get("blocked_entity") or "").strip()
-                or entity
-                or _dependent_singular_read_entity(clause)
-            )
-            clarification_needs.append(
-                ClarificationNeed(
-                    id=need_id,
-                    text=clause,
-                    reason=intake_item.reason or "clarification_needed",
-                    blocked_entity=blocked_entity or None,
+            if _can_bind_dependent_read_to_previous_mutation_result(
+                clause,
+                entity=entity,
+                previous_requirements=requirements,
+            ):
+                intake_item = intake_item.model_copy(
+                    update={
+                        "role": "required_requirement",
+                        "reason": "dependent_read_bound_to_previous_mutation_result",
+                    }
                 )
-            )
-            intake_clauses.append(
-                RequirementIntakeClause(
-                    id=clause_id,
-                    text=clause,
-                    role="clarification_need",
-                    reason=intake_item.reason or "clarification_needed",
+            else:
+                need_id = f"clarification-{len(clarification_needs) + 1:03d}"
+                blocked_entity = (
+                    str(intake_item.diagnostics.get("blocked_entity") or "").strip()
+                    or entity
+                    or _dependent_singular_read_entity(clause)
                 )
-            )
-            continue
+                clarification_needs.append(
+                    ClarificationNeed(
+                        id=need_id,
+                        text=clause,
+                        reason=intake_item.reason or "clarification_needed",
+                        blocked_entity=blocked_entity or None,
+                    )
+                )
+                intake_clauses.append(
+                    RequirementIntakeClause(
+                        id=clause_id,
+                        text=clause,
+                        role="clarification_need",
+                        reason=intake_item.reason or "clarification_needed",
+                    )
+                )
+                continue
 
         if intake_item.role not in {"required_requirement", "mutation_or_approval_request"}:
             continue
@@ -533,7 +553,11 @@ def build_requirement_sketch_for_text(
             continue
 
         clarification_need = _clarification_need_for_clause(clause, frame=frame)
-        if clarification_need is not None:
+        if clarification_need is not None and not _can_bind_dependent_read_to_previous_mutation_result(
+            clause,
+            entity=entity,
+            previous_requirements=requirements,
+        ):
             need_id = f"clarification-{len(clarification_needs) + 1:03d}"
             clarification_needs.append(
                 ClarificationNeed(
@@ -661,6 +685,13 @@ def build_requirement_sketch_for_text(
             )
             if previous_dependency_id:
                 depends_on_requirement_ids.append(previous_dependency_id)
+        elif _bind_dependent_read_to_previous_mutation_result(
+            constraints,
+            clause=clause,
+            entity=entity,
+            previous_requirements=requirements,
+        ):
+            depends_on_requirement_ids.append(str(constraints["result_binding_source_requirement"]))
         requested_fields = _requested_fields_for_clause(
             clause,
             aliases,
@@ -674,6 +705,7 @@ def build_requirement_sketch_for_text(
                 constraints,
                 entity=entity,
             )
+            and "depends_on_result_binding" not in constraints
         ):
             blocked_entity = _dependent_singular_read_entity(clause) or entity
             need_id = f"clarification-{len(clarification_needs) + 1:03d}"
@@ -1647,6 +1679,77 @@ def _bind_dependent_mutation_to_previous_result_set(
     return previous.id
 
 
+def _bind_dependent_read_to_previous_mutation_result(
+    constraints: dict[str, Any],
+    *,
+    clause: str,
+    entity: str | None,
+    previous_requirements: list[RequirementSketchItem],
+) -> bool:
+    previous = _previous_mutation_requirement(previous_requirements, entity=entity)
+    if previous is None:
+        return False
+    if not _clause_refers_to_previous_mutation_result(clause, entity=entity or previous.entity):
+        return False
+    binding_name = f"updated_{_plural_entity_name(previous.entity or entity or 'record')}"
+    constraints["depends_on_result_binding"] = binding_name
+    constraints["result_binding_source_requirement"] = previous.id
+    constraints["result_binding_field"] = "affected_entity_ids"
+    return True
+
+
+def _can_bind_dependent_read_to_previous_mutation_result(
+    clause: str,
+    *,
+    entity: str | None,
+    previous_requirements: list[RequirementSketchItem],
+) -> bool:
+    previous = _previous_mutation_requirement(previous_requirements, entity=entity)
+    return bool(
+        previous is not None
+        and _clause_refers_to_previous_mutation_result(clause, entity=entity or previous.entity)
+    )
+
+
+def _previous_mutation_requirement(
+    previous_requirements: list[RequirementSketchItem],
+    *,
+    entity: str | None,
+) -> RequirementSketchItem | None:
+    for requirement in reversed(previous_requirements):
+        if requirement.requirement_type != "mutation_request":
+            continue
+        if entity and requirement.entity and requirement.entity != entity:
+            continue
+        if requirement.source_of_truth != "operational_state":
+            continue
+        return requirement
+    return None
+
+
+def _clause_refers_to_previous_mutation_result(clause: str, *, entity: str | None) -> bool:
+    raw_clause = str(clause or "").lower()
+    if not _PREVIOUS_MUTATION_RESULT_READ_RE.search(raw_clause):
+        return False
+    if not entity:
+        return True
+    singular = _singular_entity_name(entity)
+    plural = _plural_entity_name(singular)
+    return bool(
+        re.search(
+            rf"\b(?:{re.escape(singular)}|{re.escape(plural)}|records?|rows?|items?|them|those|these)\b",
+            raw_clause,
+        )
+    )
+
+
+def _plural_entity_name(entity: str) -> str:
+    normalized = _normalize_phrase(entity).replace(" ", "_")
+    if normalized.endswith("s"):
+        return normalized
+    return f"{normalized}s"
+
+
 def _previous_result_set_requirement(
     previous_requirements: list[RequirementSketchItem],
     *,
@@ -2277,6 +2380,8 @@ def _requirement_shape_for(
         return "multi_entity_status", "report_multi_status"
     if entity and any(key.endswith("_id") or key in {"id", "machine_ref"} for key in constraints):
         return "single_entity_status", "report_status"
+    if entity and constraints.get("depends_on_result_binding"):
+        return "filtered_collection", "report_filtered_collection"
     if entity and ({"limit", "sort_by"} & constraints.keys() or any(key in constraints for key in ("priority", "status"))):
         return "filtered_collection", "report_filtered_collection"
     if entity:

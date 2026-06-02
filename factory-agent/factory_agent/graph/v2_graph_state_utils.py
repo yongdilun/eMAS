@@ -13,6 +13,9 @@ from ..planning.v2_contracts import V2ContractModel
 class PlannerOwnedAgentGraphRunOptions(V2ContractModel):
     thread_id: str | None = None
     configurable: dict[str, Any] = Field(default_factory=dict)
+    run_name: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def _normalize_options(
@@ -36,7 +39,14 @@ def _checkpoint_config(
     configurable = dict(options.configurable)
     configurable["thread_id"] = str(thread_id)
     configurable.setdefault("checkpoint_ns", "")
-    return {"configurable": configurable}
+    config: dict[str, Any] = {"configurable": configurable}
+    if options.run_name:
+        config["run_name"] = str(options.run_name)
+    if options.tags:
+        config["tags"] = list(dict.fromkeys(str(tag) for tag in options.tags if str(tag).strip()))
+    if options.metadata:
+        config["metadata"] = dict(options.metadata)
+    return config
 
 
 def _checkpoint_tuple_id(checkpoint_tuple: Any) -> str | None:

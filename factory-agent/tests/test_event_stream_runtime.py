@@ -178,14 +178,20 @@ def _assert_activity_oracle(
     expected_ids: list[str],
     expected_labels: list[str],
 ) -> None:
-    activity_frames = [frame for frame in frames if frame.get("event") == "activity"]
-    ids = [str(frame.get("id") or "") for frame in activity_frames]
-    labels = [str(frame.get("data", {}).get("label") or "") for frame in activity_frames]
+    activity_frames = [frame for frame in frames if frame.get("event") == "activity_snapshot"]
+    frame_ids = [str(frame.get("id") or "") for frame in activity_frames]
+    assert frame_ids
+    assert len(set(frame_ids)) == len(frame_ids)
+    assert frame_ids == sorted(frame_ids, key=_stream_id_sort_key)
+
+    latest = activity_frames[-1]
+    steps = latest.get("data", {}).get("activity_steps") or []
+    ids = [str(step.get("id") or "") for step in steps]
+    labels = [str(step.get("label") or "") for step in steps]
 
     assert ids == expected_ids
     assert labels == expected_labels
     assert len(set(ids)) == len(ids)
-    assert ids == sorted(ids, key=_stream_id_sort_key)
 
 
 def _assert_notification_invalidates_snapshot(frames: list[dict[str, Any]], *, expected_cursor: int) -> None:
@@ -270,33 +276,49 @@ async def test_activity_stream_reconnect_resumes_after_last_event_id_without_dup
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        async with client.stream("GET", "/sessions/s1/events/activity", headers={"Last-Event-ID": "act:001"}) as response:
+        async with client.stream("GET", "/sessions/s1/events/activity", headers={"Last-Event-ID": "1"}) as response:
             body = await response.aread()
 
     assert response.status_code == 200
     frames = _sse_frames(body)
     _assert_activity_oracle(
         frames,
-        expected_ids=["act:002", "act:003"],
-        expected_labels=["Reading machine telemetry", "Verifying timeline agreement"],
+        expected_ids=["act:001", "act:002", "act:003"],
+        expected_labels=["Understanding request", "Reading machine telemetry", "Verifying timeline agreement"],
     )
     assert len(calls) == 4
 
     with pytest.raises(AssertionError):
         _assert_activity_oracle(
             [
-                {"event": "activity", "id": "act:002", "data": {"label": "Reading machine telemetry"}},
-                {"event": "activity", "id": "act:002", "data": {"label": "Reading machine telemetry"}},
+                {
+                    "event": "activity_snapshot",
+                    "id": "2",
+                    "data": {
+                        "activity_steps": [
+                            {"id": "act:001", "label": "Understanding request"},
+                            {"id": "act:001", "label": "Understanding request"},
+                        ]
+                    },
+                },
             ],
-            expected_ids=["act:002", "act:003"],
-            expected_labels=["Reading machine telemetry", "Verifying timeline agreement"],
+            expected_ids=["act:001"],
+            expected_labels=["Understanding request"],
         )
 
     with pytest.raises(AssertionError):
         _assert_activity_oracle(
             [
-                {"event": "activity", "id": "act:003", "data": {"label": "Verifying timeline agreement"}},
-                {"event": "activity", "id": "act:002", "data": {"label": "Reading machine telemetry"}},
+                {
+                    "event": "activity_snapshot",
+                    "id": "3",
+                    "data": {
+                        "activity_steps": [
+                            {"id": "act:003", "label": "Verifying timeline agreement"},
+                            {"id": "act:002", "label": "Reading machine telemetry"},
+                        ]
+                    },
+                },
             ],
             expected_ids=["act:002", "act:003"],
             expected_labels=["Reading machine telemetry", "Verifying timeline agreement"],
@@ -380,7 +402,7 @@ async def test_noop_fault_adapter_does_not_inject_activity_faults_for_seeded_pro
 
 
 @pytest.mark.asyncio
-async def test_seeded_fault_adapter_injects_duplicate_out_of_order_activity_frames(
+async def test_seeded_fault_adapter_keeps_activity_snapshot_atomic(
     sessionmaker_override,
     monkeypatch,
 ):
@@ -412,8 +434,9 @@ async def test_seeded_fault_adapter_injects_duplicate_out_of_order_activity_fram
 
     assert response.status_code == 200
     assert diagnostics.status_code == 200
-    frames = [frame for frame in _sse_frames(body) if frame.get("event") == "activity"]
-    assert [frame["id"] for frame in frames] == ["act:002", "act:001", "act:002"]
+    frames = [frame for frame in _sse_frames(body) if frame.get("event") == "activity_snapshot"]
+    assert [frame["id"] for frame in frames] == ["2"]
+    assert [step["id"] for step in frames[0]["data"]["activity_steps"]] == ["act:001", "act:002"]
     assert diagnostics.json()["connections"][0]["stream"] == "activity"
 
 

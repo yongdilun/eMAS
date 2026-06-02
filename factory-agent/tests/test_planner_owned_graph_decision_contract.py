@@ -836,6 +836,183 @@ def test_requirement_expansion_rejects_selected_tool_call_args_that_contradict_l
         validate_planner_decision(state, decision)
 
 
+def test_requirement_expansion_rejects_unbounded_collection_tool_for_locked_identity_read():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show updated jobs.",
+        tools_by_name=_tools(),
+    )
+    requirement = RequirementLedgerEntry(
+        id="req-002",
+        goal="Show the updated jobs.",
+        requirement_type="multi_entity_status",
+        entity="job",
+        intent_operation="report_multi_status",
+        source_of_truth="operational_state",
+        constraints={
+            "job_id": ["JOB-SEED-005", "JOB-SEED-009"],
+            "depends_on_result_binding": "updated_jobs",
+            "result_binding_source_requirement": "req-001",
+            "result_binding_field": "affected_entity_ids",
+        },
+        requested_fields=["job_id", "priority", "status"],
+        locked_constraints=["job_id", "requested_fields"],
+    )
+    state.requirement_ledger.requirements = [requirement]
+    need = CapabilityNeed(
+        requirement_id=requirement.id,
+        source_of_truth="operational_state",
+        entity="job",
+        action="read_many",
+        constraints=dict(requirement.constraints),
+        requested_fields=list(requirement.requested_fields),
+        reason="phase4_locked_updated_jobs_read",
+    )
+    state.candidate_tool_windows.append(
+        CandidateToolWindow(
+            requirement_id=requirement.id,
+            capability_need=need,
+            candidates=[
+                CandidateTool(
+                    tool_name="get__jobs",
+                    rank=1,
+                    source_of_truth="operational_state",
+                    actions=["list", "read_many", "read"],
+                )
+            ],
+        )
+    )
+    state.hydrated_tool_cards.append(
+        HydratedToolCards(
+            requirement_id=requirement.id,
+            cards=[
+                HydratedToolCard(
+                    tool_name="get__jobs",
+                    source_of_truth="operational_state",
+                    actions=["list", "read_many", "read"],
+                    query_params=["priority", "fields"],
+                    supports_filters=True,
+                    supports_fields=True,
+                    output_contract="result_collection_v1",
+                    is_read_only=True,
+                    requires_approval=False,
+                )
+            ],
+        )
+    )
+    broad_collection_call = GraphToolCall(
+        call_id="call-broad-updated-jobs",
+        kind="api_tool",
+        tool_name="get__jobs",
+        args={},
+        requirement_id=requirement.id,
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-broad-updated-jobs",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=broad_collection_call,
+        reason="Planner selected an unbounded collection read for a locked updated-jobs requirement.",
+        diagnostics=_planner_diagnostics("dec-choose-broad-updated-jobs"),
+    )
+
+    with pytest.raises(PlannerDecisionValidationError, match="cannot satisfy locked identity constraint"):
+        validate_planner_decision(
+            state,
+            PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[broad_collection_call]),
+        )
+
+
+def test_requirement_expansion_accepts_collection_tool_with_locked_identity_query_filter():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Show updated jobs.",
+        tools_by_name=_tools(),
+    )
+    requirement = RequirementLedgerEntry(
+        id="req-002",
+        goal="Show the updated jobs.",
+        requirement_type="multi_entity_status",
+        entity="job",
+        intent_operation="report_multi_status",
+        source_of_truth="operational_state",
+        constraints={
+            "job_id": ["JOB-SEED-005", "JOB-SEED-009"],
+            "depends_on_result_binding": "updated_jobs",
+            "result_binding_source_requirement": "req-001",
+            "result_binding_field": "affected_entity_ids",
+        },
+        requested_fields=["job_id", "priority", "status"],
+        locked_constraints=["job_id", "requested_fields"],
+    )
+    state.requirement_ledger.requirements = [requirement]
+    need = CapabilityNeed(
+        requirement_id=requirement.id,
+        source_of_truth="operational_state",
+        entity="job",
+        action="read_many",
+        constraints=dict(requirement.constraints),
+        requested_fields=list(requirement.requested_fields),
+        reason="phase4_locked_updated_jobs_read",
+    )
+    state.candidate_tool_windows.append(
+        CandidateToolWindow(
+            requirement_id=requirement.id,
+            capability_need=need,
+            candidates=[
+                CandidateTool(
+                    tool_name="get__jobs",
+                    rank=1,
+                    source_of_truth="operational_state",
+                    actions=["list", "read_many", "read"],
+                )
+            ],
+        )
+    )
+    state.hydrated_tool_cards.append(
+        HydratedToolCards(
+            requirement_id=requirement.id,
+            cards=[
+                HydratedToolCard(
+                    tool_name="get__jobs",
+                    source_of_truth="operational_state",
+                    actions=["list", "read_many", "read"],
+                    query_params=["job_id", "fields"],
+                    supports_filters=True,
+                    supports_fields=True,
+                    output_contract="result_collection_v1",
+                    is_read_only=True,
+                    requires_approval=False,
+                )
+            ],
+        )
+    )
+    bounded_collection_call = GraphToolCall(
+        call_id="call-bounded-updated-jobs",
+        kind="api_tool",
+        tool_name="get__jobs",
+        args={"job_id": ["JOB-SEED-005", "JOB-SEED-009"]},
+        requirement_id=requirement.id,
+    )
+    decision = PlannerDecisionRecord(
+        decision_id="dec-choose-bounded-updated-jobs",
+        decision_kind="choose_tool",
+        requirement_id=requirement.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=need,
+        selected_tool_call=bounded_collection_call,
+        reason="Planner selected a bounded collection read for a locked updated-jobs requirement.",
+        diagnostics=_planner_diagnostics("dec-choose-bounded-updated-jobs"),
+    )
+
+    result = validate_planner_decision(
+        state,
+        PlannerDecisionSubmission(decision=decision, candidate_tool_calls=[bounded_collection_call]),
+    )
+
+    assert result.accepted is True
+
+
 def test_requirement_expansion_stale_planner_decisions_are_inactive_in_shared_graph_filter():
     state, requirement, need = _state_with_hydrated_machine_window()
     call = _machine_call()

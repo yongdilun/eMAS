@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from factory_agent.planning.v2_agent_state import PlannerOwnedAgentGraphState
+from factory_agent.planning.v2_agent_state import (
+    PlannerOwnedAgentGraphState,
+    build_initial_planner_owned_agent_graph_state,
+)
 from factory_agent.planning.v2_contracts import (
     CandidateTool,
     CandidateToolWindow,
@@ -18,6 +21,7 @@ from factory_agent.services.planner_activity_captions import (
     build_activity_caption_context_from_graph_state,
     enrich_activity_step_rows,
 )
+from tests.test_planner_owned_semantic_intake import _job_collection_tool, _job_status_tool
 
 
 def _requirement(
@@ -312,6 +316,47 @@ def test_dependency_scheduler_serializes_mutation_until_prerequisite_read_is_sat
     assert item.ready is False
     assert item.depends_on_requirement_ids == ["req-read"]
     assert item.blocked_reasons == ["missing_active_parent_evidence:req-read"]
+
+
+def test_dependency_scheduler_blocks_updated_jobs_read_until_write_evidence_exists():
+    state = build_initial_planner_owned_agent_graph_state(
+        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        tools_by_name={
+            "get__jobs": _job_collection_tool(),
+            "get__jobs_{id}": _job_status_tool(),
+        },
+    )
+
+    plan_before = build_dependency_plan(state)
+    child_before = _items(plan_before)["req-002"]
+
+    assert child_before.label == "depends_on_evidence"
+    assert child_before.ready is False
+    assert child_before.depends_on_requirement_ids == ["req-001"]
+    assert child_before.blocked_reasons == ["missing_active_parent_evidence:req-001"]
+
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-api-req-001",
+            requirement_id="req-001",
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            tool_name="patch__jobs_{id}",
+            normalized_result={
+                "fields": {
+                    "affected_entity_ids": ["JOB-SEED-005", "JOB-SEED-009"],
+                    "priority": "medium",
+                }
+            },
+            diagnostic_metadata={"active_revision_satisfaction": True},
+        )
+    )
+
+    child_after = _items(build_dependency_plan(state))["req-002"]
+
+    assert child_after.label == "sequential_read"
+    assert child_after.ready is True
+    assert child_after.depends_on_requirement_ids == ["req-001"]
 
 
 def test_independent_machine_and_job_reads_are_ready_together():

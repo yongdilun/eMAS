@@ -88,12 +88,16 @@ class V2CapabilityToolRetriever:
             capability_need,
             requirement_id=requirement_id,
         )
+        effective_max_candidates = _effective_max_candidates_for_request(
+            adapter_request,
+            self._max_candidates,
+        )
         tools = dict(tools_by_name)
         selection = await self._tool_selector.select_tools(
             intent=adapter_request.retrieval_phrase or "",
             tools_by_name=tools,
             mode=mode,
-            max_tools=self._max_candidates,
+            max_tools=effective_max_candidates,
             context={
                 "v2_tool_selector_adapter_request": adapter_request.model_dump(mode="json"),
                 "requirement_refs": dict(requirement_refs or {}),
@@ -103,12 +107,12 @@ class V2CapabilityToolRetriever:
 
         backend_used = getattr(selection, "backend_used", "retrieval")
         llm_calls = int(getattr(selection, "llm_calls", 0) or 0)
-        selected_names = _unique_existing(selection.tool_names, tools, limit=self._max_candidates)
+        selected_names = _unique_existing(selection.tool_names, tools, limit=effective_max_candidates)
         selected_names, metadata_completion = _ensure_capability_candidates(
             adapter_request,
             selected_names,
             tools,
-            limit=self._max_candidates,
+            limit=effective_max_candidates,
         )
         scores = _candidate_scores(adapter_request, selected_names, tools)
         candidates = [
@@ -127,7 +131,7 @@ class V2CapabilityToolRetriever:
             requirement_id=adapter_request.requirement_id,
             capability_need=capability_need,
             candidates=candidates,
-            max_candidates=self._max_candidates,
+            max_candidates=effective_max_candidates,
             backend_used=backend_used,
             adapter_request=adapter_request,
         )
@@ -136,7 +140,7 @@ class V2CapabilityToolRetriever:
         hydrated_cards = HydratedToolCards(
             requirement_id=adapter_request.requirement_id,
             cards=cards,
-            max_cards=self._max_candidates,
+            max_cards=effective_max_candidates,
         )
 
         missing_schema = [
@@ -153,7 +157,8 @@ class V2CapabilityToolRetriever:
             "retrieval_phrase": adapter_request.retrieval_phrase,
             "adapter_request": adapter_request.model_dump(mode="json"),
             "candidate_count": len(selected_names),
-            "max_candidates_per_need": self._max_candidates,
+            "max_candidates_per_need": effective_max_candidates,
+            "configured_max_candidates_per_need": self._max_candidates,
             "metadata_read_completion_used": bool(metadata_completion.get("read_preflight")),
             "metadata_candidate_completion": metadata_completion,
             "requirement_refs": dict(requirement_refs or {}),
@@ -214,6 +219,21 @@ class V2CapabilityToolRetriever:
         return adapter_request
 
 
+def _effective_max_candidates_for_request(
+    adapter_request: ToolSelectorAdapterRequest,
+    configured_limit: int,
+) -> int:
+    if adapter_request.source_of_truth == "operational_state" and adapter_request.safety == "write_requires_approval":
+        return max(2, min(_MAX_TOOLS_PER_NEED, int(configured_limit)))
+    if (
+        adapter_request.source_of_truth == "operational_state"
+        and adapter_request.safety == "read_only"
+        and _adapter_request_has_multiple_entity_ids(adapter_request)
+    ):
+        return max(2, min(_MAX_TOOLS_PER_NEED, int(configured_limit)))
+    return max(1, min(_MAX_TOOLS_PER_NEED, int(configured_limit)))
+
+
 def _unique_existing(names: list[str], tools_by_name: Mapping[str, ToolInfo], *, limit: int) -> list[str]:
     selected: list[str] = []
     seen: set[str] = set()
@@ -250,7 +270,15 @@ def _ensure_capability_candidates(
         )
         if used:
             completion["read_preflight"] = [name for name in completed if name not in selected_names]
-        return completed, completion
+        bounded_completed, bounded_used = _ensure_bounded_identity_read_candidate(
+            adapter_request,
+            completed,
+            tools_by_name,
+            limit=limit,
+        )
+        if bounded_used:
+            completion["bounded_identity_read"] = [name for name in bounded_completed if name not in completed]
+        return bounded_completed, completion
 
     if adapter_request.safety != "write_requires_approval":
         return selected_names, completion
@@ -301,6 +329,31 @@ def _ensure_capability_read_candidate(
     return completed, True
 
 
+def _ensure_bounded_identity_read_candidate(
+    adapter_request: ToolSelectorAdapterRequest,
+    selected_names: list[str],
+    tools_by_name: Mapping[str, ToolInfo],
+    *,
+    limit: int,
+) -> tuple[list[str], bool]:
+    if not _adapter_request_has_multiple_entity_ids(adapter_request):
+        return selected_names, False
+    if any(
+        _tool_supports_bounded_identity_read(tools_by_name[name], adapter_request)
+        for name in selected_names
+        if name in tools_by_name
+    ):
+        return selected_names, False
+
+    for name in _bounded_identity_read_candidate_names(adapter_request, tools_by_name):
+        if name in selected_names:
+            continue
+        completed = list(selected_names)
+        _append_completed_candidate(completed, name, limit=limit)
+        return completed, True
+    return selected_names, False
+
+
 def _append_completed_candidate(completed: list[str], name: str, *, limit: int) -> None:
     if name in completed:
         return
@@ -333,6 +386,19 @@ def _write_candidate_names(
         if _tool_matches_write_candidate(tool, adapter_request)
     ]
     names.sort(key=lambda name: _write_candidate_rank(tools_by_name[name], adapter_request))
+    return names
+
+
+def _bounded_identity_read_candidate_names(
+    adapter_request: ToolSelectorAdapterRequest,
+    tools_by_name: Mapping[str, ToolInfo],
+) -> list[str]:
+    names = [
+        name
+        for name, tool in tools_by_name.items()
+        if _tool_supports_bounded_identity_read(tool, adapter_request)
+    ]
+    names.sort(key=lambda name: _bounded_identity_read_candidate_rank(tools_by_name[name], adapter_request))
     return names
 
 
@@ -396,6 +462,37 @@ def _write_candidate_rank(tool: ToolInfo, adapter_request: ToolSelectorAdapterRe
     return (-action_match, -approval_match, tool.name)
 
 
+def _tool_supports_bounded_identity_read(tool: ToolInfo, adapter_request: ToolSelectorAdapterRequest) -> bool:
+    if _source_of_truth_for_tool(tool) != adapter_request.source_of_truth:
+        return False
+    if not bool(tool.is_read_only) or bool(tool.requires_approval):
+        return False
+    profile = build_tool_intent_profile(tool)
+    if adapter_request.entity and profile.endpoint_root != adapter_request.entity:
+        return False
+    if not set(_actions_for_tool(tool)).intersection(adapter_request.actions):
+        return False
+    identity_args = _identity_arg_names_for_entity(adapter_request.entity)
+    tool_args = set(_path_params_for_tool(tool)) | set(_required_args_for_tool(tool, path_params=_path_params_for_tool(tool)))
+    tool_args.update(_query_params_for_tool(tool))
+    return bool(tool_args.intersection(identity_args))
+
+
+def _bounded_identity_read_candidate_rank(
+    tool: ToolInfo,
+    adapter_request: ToolSelectorAdapterRequest,
+) -> tuple[int, int, int, str]:
+    path_params = set(_path_params_for_tool(tool))
+    required_args = set(_required_args_for_tool(tool, path_params=list(path_params)))
+    query_params = set(_query_params_for_tool(tool))
+    identity_args = _identity_arg_names_for_entity(adapter_request.entity)
+    profile = build_tool_intent_profile(tool)
+    has_path_or_required_identity = int(bool((path_params | required_args).intersection(identity_args)))
+    has_query_identity = int(bool(query_params.intersection(identity_args)))
+    is_item_shape = int(profile.endpoint_shape == "item")
+    return (-has_path_or_required_identity, -is_item_shape, -has_query_identity, tool.name)
+
+
 def _tool_satisfies_adapter_request(tool: ToolInfo, adapter_request: ToolSelectorAdapterRequest) -> bool:
     if _source_of_truth_for_tool(tool) != adapter_request.source_of_truth:
         return False
@@ -411,13 +508,21 @@ def _tool_satisfies_adapter_request(tool: ToolInfo, adapter_request: ToolSelecto
     return bool(actions.intersection(adapter_request.actions))
 
 
-def _need_has_multiple_entity_ids(capability_need: CapabilityNeed) -> bool:
-    entity = str(capability_need.entity or "").strip()
-    keys = ["id"]
-    if entity:
-        keys.extend([f"{entity}_id", f"{entity}_ref"])
-    merged = {**dict(capability_need.constraints or {}), **dict(capability_need.known_args or {})}
-    return any(isinstance(merged.get(key), list) and len(merged.get(key) or []) > 1 for key in keys)
+def _adapter_request_has_multiple_entity_ids(adapter_request: ToolSelectorAdapterRequest) -> bool:
+    constraints = dict(adapter_request.constraints or {})
+    for key in _identity_arg_names_for_entity(adapter_request.entity):
+        value = constraints.get(key)
+        if isinstance(value, list) and len([item for item in value if item not in (None, "", [], {})]) > 1:
+            return True
+    return False
+
+
+def _identity_arg_names_for_entity(entity: str | None) -> set[str]:
+    normalized = str(entity or "").strip()
+    names = {"id", "entity_id", "record_id"}
+    if normalized:
+        names.update({f"{normalized}_id", f"{normalized}_ref"})
+    return names
 
 
 def _candidate_scores(

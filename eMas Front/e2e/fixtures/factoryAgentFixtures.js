@@ -39,6 +39,12 @@ export const activitySseDelayedFallbackPrompt =
 export const activitySseGraphDuplicatePrompt =
   'Validate graph activity does not duplicate understood request rows for M-CNC-01'
 
+export const activitySseApprovalResumePrompt =
+  'Validate approval resume activity SSE renders one clean timeline for low jobs'
+
+export const activitySseApprovalNoPendingPrompt =
+  'Validate approval activity SSE hides graph rows without pending approval'
+
 export const activitySharedTimestampOrderPrompt =
   'Validate shared timestamp activity order for Factory Agent run'
 
@@ -93,6 +99,7 @@ export function createFactoryAgentSession({ sessionId, userId, name, scenarioNam
     plan: null,
     steps: [],
     activity_steps: [],
+    activity_revision: 0,
     pending_approval: null,
     execute_count: 0,
   }
@@ -251,14 +258,32 @@ export function sessionFailedEvent({
   }
 }
 
+function sortedActivitySteps(activitySteps = []) {
+  return [...activitySteps].sort((a, b) => {
+    const rawOrderA = Number(a?.order ?? a?._order ?? Number.POSITIVE_INFINITY)
+    const rawOrderB = Number(b?.order ?? b?._order ?? Number.POSITIVE_INFINITY)
+    const orderA = Number.isFinite(rawOrderA) ? rawOrderA : Number.POSITIVE_INFINITY
+    const orderB = Number.isFinite(rawOrderB) ? rawOrderB : Number.POSITIVE_INFINITY
+    if (orderA !== Number.POSITIVE_INFINITY || orderB !== Number.POSITIVE_INFINITY) {
+      if (orderA !== orderB) return orderA - orderB
+    }
+    const tsA = Number(a?.timestamp || 0)
+    const tsB = Number(b?.timestamp || 0)
+    if (tsA !== tsB) return tsA - tsB
+    return String(a?.id || '').localeCompare(String(b?.id || ''))
+  })
+}
+
 export function snapshotFromSession(session, activitySteps = []) {
+  const sortedSteps = sortedActivitySteps(activitySteps)
   return {
     session: sessionSummary(session),
     messages: session.messages,
     timeline: [...session.timeline],
     plan: session.plan,
     steps: session.steps,
-    activity_steps: activitySteps,
+    activity_steps: sortedSteps,
+    activity_revision: Number(session.activity_revision || 0),
     pending_approval: session.pending_approval || null,
     resume_hint: null,
     ...(session.response_document?.revision != null ? { snapshot_revision: session.response_document.revision } : {}),

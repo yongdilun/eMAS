@@ -764,6 +764,7 @@ def test_phase19_scenarios_122_123_regression_bank_schema_and_triage_rule():
             "parser",
             "route",
             "pytest_snapshot",
+            "pytest_graph",
             "seeded-workflow",
             "mocked-browser",
             "seeded-browser",
@@ -771,5 +772,5 @@ def test_phase19_scenarios_122_123_regression_bank_schema_and_triage_rule():
         assert isinstance(entry["browser_coverage"], bool)
         assert set(entry["coverage"]) <= allowed_coverage
         if entry["browser_coverage"]:
-            assert {"mocked-browser", "seeded-browser"} & set(entry["coverage"])
+            assert {"mocked-browser", "seeded-browser", "real-langgraph-browser"} & set(entry["coverage"])
         assert "accepted-gap" not in entry["coverage"]

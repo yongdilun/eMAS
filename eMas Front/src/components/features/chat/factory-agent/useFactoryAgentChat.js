@@ -4,11 +4,7 @@ import { FACTORY_AGENT_STATUS, factoryAgentApi } from '../../../../services/fact
 import { assembleFactoryAgentTurns, computeFactoryAgentTurnSummary } from '../turns/turnAssembler'
 import {
   buildActivityStepsFromSnapshot,
-  coalesceActivitySteps,
-  compareActivitySteps,
   finalizeHistoricalActivityStates,
-  stripNoopApprovalActivitySteps,
-  stripPrematureTerminalActivitySteps,
 } from './activityTimelineUtils'
 import { resolveApprovalTablePresentation } from './approvalInterruptDisplay.js'
 import { formatFactoryAgentTime } from './factoryAgentDisplayTime.js'
@@ -31,26 +27,18 @@ const DEFAULT_MESSAGE_MODE = 'normal'
 
 const hasStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
-const isSnapshotFallbackActivityStep = (step) => String(step?.id || '').startsWith('snapshot_activity_')
-const hasAuthoritativeActivityRows = (steps) => (
-  Array.isArray(steps) && steps.some((step) => step?.id && !isSnapshotFallbackActivityStep(step))
-)
-const stripSnapshotFallbackActivitySteps = (steps) => (
-  Array.isArray(steps) ? steps.filter((step) => !isSnapshotFallbackActivityStep(step)) : []
-)
 const hasTerminalActivityStep = (steps) => (
   Array.isArray(steps) && steps.some((step) => step?.state === 'complete' || step?.state === 'error')
 )
-const ACTIVITY_SETTLED_STATES = new Set(['success', 'complete', 'error'])
-const ACTIVITY_IN_FLIGHT_STATES = new Set(['running', 'retry', 'waiting'])
-const mergeLiveActivityStep = (existing, incoming) => {
-  if (!existing) return { ...incoming }
-  const existingState = String(existing?.state || '')
-  const incomingState = String(incoming?.state || '')
-  if (ACTIVITY_SETTLED_STATES.has(existingState) && ACTIVITY_IN_FLIGHT_STATES.has(incomingState)) {
-    return { ...incoming, ...existing }
-  }
-  return { ...existing, ...incoming }
+const activityRevisionFrom = (value, fallback = 0) => {
+  const raw = value?.activity_revision ?? value?.activityRevision ?? value?.cursor ?? value?.snapshot_revision ?? fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+const activityStepsFromServer = (steps, sessionStatus, pendingApproval) => {
+  void sessionStatus
+  void pendingApproval
+  return (Array.isArray(steps) ? steps : []).map((s) => ({ ...s }))
 }
 
 function nowTime() {
@@ -167,6 +155,7 @@ export function useFactoryAgentChat() {
   const sessionPollTimerRef = useRef(null)
   const sendingGuardRef = useRef(false)
   const cancelRequestedSessionIdsRef = useRef(new Set())
+  const activityRevisionRef = useRef(-1)
   /** Persisted table presentation keyed by approval_id (kept for timeline rendering after decide). */
   const bundleTableByApprovalIdRef = useRef(new Map())
   const lastSnapshotSessionIdRef = useRef(null)
@@ -242,6 +231,7 @@ export function useFactoryAgentChat() {
         : Boolean(sid && prevSnapSid && normSid(sid) !== normSid(prevSnapSid))
     if (switchedSession) {
       bundleTableByApprovalIdRef.current.clear()
+      activityRevisionRef.current = -1
     }
 
     const responseDocumentUpdate = applyResponseDocumentSnapshotUpdate(responseDocumentStateRef.current, snapshot, {
@@ -265,19 +255,26 @@ export function useFactoryAgentChat() {
       setActivitySteps((prev) => {
         const prevRows = Array.isArray(prev) ? prev : []
         const clientOnly = prevRows.filter((s) => String(s?.id || '').startsWith('client_activity_'))
-        const withoutClient = stripClientActivitySteps(prevRows)
         const serverSteps = Array.isArray(snapshot?.activity_steps)
           ? snapshot.activity_steps
           : Array.isArray(snapshot?.activitySteps)
             ? snapshot.activitySteps
             : []
         const snapshotPendingApproval = snapshot?.pending_approval || snapshot?.pendingApproval || null
-        const visibleServerSteps = stripNoopApprovalActivitySteps(
-          stripPrematureTerminalActivitySteps(serverSteps, nextSession?.status),
-          snapshotPendingApproval,
+        const hasServerActivityContract = (
+          snapshot?.activity_revision != null ||
+          snapshot?.activityRevision != null ||
+          serverSteps.length > 0
         )
-        const visibleWithoutClient = stripPrematureTerminalActivitySteps(withoutClient, nextSession?.status)
+        if (hasServerActivityContract) {
+          const revision = activityRevisionFrom(snapshot, activityRevisionRef.current)
+          if (!switchedSession && revision < activityRevisionRef.current) return prevRows
+          activityRevisionRef.current = revision
+          const next = activityStepsFromServer(serverSteps, nextSession?.status, snapshotPendingApproval)
+          return next.length ? next : clientOnly
+        }
 
+        const withoutClient = stripClientActivitySteps(prevRows)
         const isStreamActive = [
           'PLANNING',
           'EXECUTING',
@@ -287,30 +284,7 @@ export function useFactoryAgentChat() {
         ].includes(nextSession?.status)
 
         let result
-        if (visibleServerSteps.length) {
-          const priorAuthoritativeRows = stripSnapshotFallbackActivitySteps(visibleWithoutClient)
-          if (isStreamActive) {
-            // Union by id: polls can arrive before SSE has caught up, or SSE can be
-            // ahead on some ids - only updating `withoutClient` in place drops rows
-            // that exist only on the server (looks like "first and last" only).
-            const byId = new Map()
-            for (const s of priorAuthoritativeRows) {
-              if (s?.id) byId.set(s.id, { ...s })
-            }
-            for (const s of visibleServerSteps) {
-              if (!s?.id) continue
-              const existing = byId.get(s.id)
-              byId.set(s.id, existing ? { ...existing, ...s } : { ...s })
-            }
-            const merged = Array.from(byId.values()).sort(compareActivitySteps)
-            result = stripPrematureTerminalActivitySteps(coalesceActivitySteps(merged), nextSession?.status)
-          } else {
-            // Session no longer in an active stream: drop client placeholder rows so a
-            // stale `client_activity_pending` "Reviewing results..." cannot sit after
-            // server "Run complete" and block the assistant body gate.
-            result = finalizeHistoricalActivityStates(visibleServerSteps.map((s) => ({ ...s })))
-          }
-        } else {
+        {
           const built = buildActivityStepsFromSnapshot({
             session: nextSession,
             plan: snapshot?.plan || null,
@@ -320,37 +294,15 @@ export function useFactoryAgentChat() {
             presentation: snapshot?.presentation || null,
           })
           if (built.length) {
-            if (isStreamActive) {
-              // Snapshot-derived rows are a fallback when the backend omits
-              // activity_steps. During an active run they must not replace
-              // rows already delivered by /events/activity; otherwise the
-              // visible timeline flickers between SSE and stale snapshot views.
-              const hasAuthoritativePrior = hasAuthoritativeActivityRows(visibleWithoutClient)
-              const priorRows = hasAuthoritativePrior
-                ? stripSnapshotFallbackActivitySteps(visibleWithoutClient)
-                : visibleWithoutClient
-              const byId = new Map()
-              for (const s of priorRows) {
-                if (s?.id) byId.set(s.id, { ...s })
-              }
-              for (const s of built) {
-                if (hasAuthoritativePrior && isSnapshotFallbackActivityStep(s)) continue
-                if (!s?.id || byId.has(s.id)) continue
-                byId.set(s.id, { ...s })
-              }
-              const merged = Array.from(byId.values()).sort(compareActivitySteps)
-              result = stripPrematureTerminalActivitySteps(coalesceActivitySteps(merged), nextSession?.status)
-            } else {
-              result = finalizeHistoricalActivityStates(built)
-            }
+            result = isStreamActive ? built : finalizeHistoricalActivityStates(built)
           } else if (switchedSession) {
             // New session snapshot: do not carry over activity rows from the previous session.
             result = clientOnly
           } else if (isStreamActive) {
             // IDLE and similar snapshots often omit activity_steps; built can still be empty
             // while the UI already showed rows during the run - keep them.
-            result = visibleWithoutClient.length
-              ? visibleWithoutClient
+            result = withoutClient.length
+              ? withoutClient
               : clientOnly
           } else {
             result = finalizeHistoricalActivityStates(withoutClient)
@@ -393,6 +345,7 @@ export function useFactoryAgentChat() {
     setResponseDocument(null)
     responseDocumentStateRef.current = createResponseDocumentReducerState()
     setActivitySteps([])
+    activityRevisionRef.current = -1
     setPendingApproval(null)
     setPendingInteraction(null)
     setResumeHint(null)
@@ -442,23 +395,32 @@ export function useFactoryAgentChat() {
   }, [clearSnapshotState, refreshSnapshot])
 
   const applyStreamActivityStep = useCallback((incoming) => {
-    if (!ACTIVITY_TIMELINE_ENABLED || !incoming?.id) return
-    const terminalActivity = incoming?.state === 'complete' || incoming?.state === 'error'
+    if (!ACTIVITY_TIMELINE_ENABLED || !incoming) return
     const currentSessionId = session?.session_id || null
     const currentSessionStatus = session?.status || null
+    if (incoming.type === 'activity_legacy_step') {
+      if (currentSessionId) {
+        window.setTimeout(() => {
+          safelyRefreshSnapshot(currentSessionId, { transport: 'activity-legacy-step' }).catch((err) => {
+            setError(normalizeFactoryAgentError(err, 'Failed to refresh activity snapshot'))
+          })
+        }, 0)
+      }
+      return
+    }
+
+    const activitySteps = Array.isArray(incoming.activitySteps)
+      ? incoming.activitySteps
+      : Array.isArray(incoming.activity_steps)
+        ? incoming.activity_steps
+        : []
+    const revision = activityRevisionFrom(incoming, activityRevisionRef.current)
     setActivitySteps((prev) => {
-      const withoutClient = stripClientActivitySteps(prev)
-      if (hasTerminalActivityStep(withoutClient)) return withoutClient
-      const idx = withoutClient.findIndex((s) => s.id === incoming.id)
-      const next = [...withoutClient]
-      if (idx >= 0) next[idx] = mergeLiveActivityStep(next[idx], incoming)
-      else next.push(incoming)
-      next.sort(compareActivitySteps)
-      return stripPrematureTerminalActivitySteps(
-        coalesceActivitySteps(stripPrematureTerminalActivitySteps(next, currentSessionStatus)),
-        currentSessionStatus,
-      )
+      if (revision < activityRevisionRef.current) return Array.isArray(prev) ? prev : []
+      activityRevisionRef.current = revision
+      return activityStepsFromServer(activitySteps, currentSessionStatus, pendingApproval)
     })
+    const terminalActivity = hasTerminalActivityStep(activitySteps)
     if (terminalActivity && currentSessionId) {
       window.setTimeout(() => {
         safelyRefreshSnapshot(currentSessionId, { transport: 'activity-terminal' }).catch((err) => {
@@ -466,7 +428,7 @@ export function useFactoryAgentChat() {
         })
       }, 0)
     }
-  }, [safelyRefreshSnapshot, session?.session_id, session?.status])
+  }, [pendingApproval, safelyRefreshSnapshot, session?.session_id, session?.status])
 
   const updateStreamDiagnostic = useCallback((diagnostic) => {
     if (!diagnostic?.source) return

@@ -379,6 +379,79 @@ async def test_phase4_write_need_completes_with_read_preflight_and_write_candida
 
 
 @pytest.mark.asyncio
+async def test_phase4_write_need_keeps_read_preflight_when_candidate_limit_is_one():
+    selector = RecordingSelector(ToolSelectionResult(["put__jobs_{id}"], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector, max_candidates=1)  # type: ignore[arg-type]
+    tools = {
+        "get__jobs": _job_list_tool(),
+        "put__jobs_{id}": _tool(
+            "put__jobs_{id}",
+            endpoint="/jobs/{id}",
+            method="PUT",
+            tags=["job", "update", "priority"],
+            required=["id"],
+            body_fields=["priority"],
+            required_body_fields=["priority"],
+            input_properties={"id": {"type": "string"}, "priority": {"type": "string"}},
+            output_properties={"job_id": {"type": "string"}, "priority": {"type": "string"}},
+            entity="job",
+            response_contract="business_change_v1",
+        ),
+    }
+    need = CapabilityNeed(
+        requirement_id="req-update",
+        source_of_truth="operational_state",
+        entity="job",
+        action="update",
+        constraints={"priority": "low", "new_priority": "medium", "status": "planned", "requires_approval": True},
+        requested_fields=["job_id", "priority", "status"],
+    )
+
+    result = await retriever.retrieve_tools_for_need(need, tools_by_name=tools)
+
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "put__jobs_{id}",
+        "get__jobs",
+    ]
+    assert result.candidate_window.max_candidates == 2
+    assert [card.tool_name for card in result.hydrated_tool_cards.cards] == [
+        "put__jobs_{id}",
+        "get__jobs",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase4_bounded_multi_entity_read_adds_item_reader_when_selector_returns_collection_only():
+    selector = RecordingSelector(ToolSelectionResult(["get__jobs"], backend_used="retrieval"))
+    retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]
+    tools = {
+        "get__jobs": _job_list_tool(),
+        "get__jobs_{id}": _job_lookup_tool(),
+    }
+    need = CapabilityNeed(
+        requirement_id="req-updated-jobs",
+        source_of_truth="operational_state",
+        entity="job",
+        action="read_many",
+        constraints={
+            "job_id": ["JOB-SEED-005", "JOB-SEED-009"],
+            "depends_on_result_binding": "updated_jobs",
+        },
+        known_args={"job_id": ["JOB-SEED-005", "JOB-SEED-009"]},
+    )
+
+    result = await retriever.retrieve_tools_for_need(need, tools_by_name=tools)
+
+    assert [candidate.tool_name for candidate in result.candidate_window.candidates] == [
+        "get__jobs",
+        "get__jobs_{id}",
+    ]
+    assert result.trace.diagnostics["metadata_candidate_completion"]["bounded_identity_read"] == [
+        "get__jobs_{id}",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_phase4_create_job_need_retrieves_post_jobs_candidate_from_metadata_completion():
     selector = RecordingSelector(ToolSelectionResult([], backend_used="retrieval"))
     retriever = V2CapabilityToolRetriever(selector)  # type: ignore[arg-type]

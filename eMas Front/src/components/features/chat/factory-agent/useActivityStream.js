@@ -86,12 +86,39 @@ export function useActivityStream(sessionId, onActivityStep, options = {}) {
     const es = new EventSource(url, { withCredentials: false })
     esRef.current = es
 
+    es.addEventListener('activity_snapshot', (evt) => {
+      if (!mountedRef.current) return
+      try {
+        const frame = JSON.parse(evt.data)
+        const steps = Array.isArray(frame?.activity_steps)
+          ? frame.activity_steps
+          : Array.isArray(frame?.activitySteps)
+            ? frame.activitySteps
+            : []
+        const revision = Number(frame?.activity_revision ?? frame?.activityRevision ?? evt.lastEventId ?? 0)
+        if (frame && typeof frame === 'object') {
+          queueRef.current.push({
+            type: 'activity_snapshot',
+            id: String(evt.lastEventId || revision || ''),
+            activityRevision: Number.isFinite(revision) ? revision : 0,
+            activitySteps: steps,
+          })
+          if (!isProcessingQueueRef.current) {
+            isProcessingQueueRef.current = true
+            processQueue()
+          }
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    })
+
     es.addEventListener('activity', (evt) => {
       if (!mountedRef.current) return
       try {
         const step = JSON.parse(evt.data)
         if (step && typeof step === 'object' && step.id) {
-          queueRef.current.push(step)
+          queueRef.current.push({ type: 'activity_legacy_step', step })
           if (!isProcessingQueueRef.current) {
             isProcessingQueueRef.current = true
             processQueue()
