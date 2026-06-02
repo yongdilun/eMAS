@@ -153,7 +153,7 @@ def caption_for_graph_event(event: Mapping[str, Any], fallback: ActivityCaption)
         if replan_caption is not None:
             return replan_caption
 
-    if node == "planner_decision_node" and _dependency_wait_rows(context):
+    if node == "planner_decision_node" and _dependency_wait_is_user_visible(context):
         return ActivityCaption(
             group="planning",
             label="Waiting for parent evidence",
@@ -317,6 +317,8 @@ def _add_dependency_wait_captions(
     fallback_timestamp: int,
     terminal: bool,
 ) -> None:
+    if not _dependency_wait_is_user_visible(context):
+        return
     for idx, item in enumerate(_dependency_wait_rows(context)):
         req_id = str(item.get("requirement_id") or idx)
         _append_unique(
@@ -521,6 +523,25 @@ def _dependency_wait_rows(context: Mapping[str, Any]) -> list[dict[str, Any]]:
         seen.add(req_id)
         deduped.append(item)
     return deduped
+
+
+def _dependency_wait_is_user_visible(context: Mapping[str, Any]) -> bool:
+    if not _dependency_wait_rows(context):
+        return False
+    plan = _mapping(context.get("dependency_plan"))
+    ready_groups = [_mapping(group) for group in _list(plan.get("ready_groups"))]
+    if ready_groups:
+        return False
+    for item in _list(plan.get("requirements")):
+        item = _mapping(item)
+        if item.get("ready") is True:
+            return False
+    for entry in _dependency_history_entries(context):
+        if _string_list(entry.get("ready_requirement_ids")):
+            return False
+        if _list(entry.get("ready_groups")):
+            return False
+    return True
 
 
 def _active_read_evidence(context: Mapping[str, Any]) -> list[dict[str, Any]]:

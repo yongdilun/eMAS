@@ -8,10 +8,16 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from factory_agent.config import get_settings
-from factory_agent.graph.v2_agent_graph import PlannerOwnedAgentGraph, PlannerOwnedAgentGraphAdapters
+from factory_agent.graph.v2_agent_graph import (
+    PlannerOwnedAgentGraph,
+    PlannerOwnedAgentGraphAdapters,
+)
+from factory_agent.graph.v2_graph_tool_choice import _capability_need_for_requirement
+from factory_agent.planning.v2_agent_state import GraphToolCall, PlannerDecisionRecord
 from factory_agent.planning.tool_selector import ToolSelectionResult
 from factory_agent.planning.v2_tool_retriever import V2CapabilityToolRetriever
 from factory_agent.planning.v2_planner_proposer import OfflineStructuredPlannerDecisionProposer
+from factory_agent.graph.v2_graph_state_utils import _state_update
 from factory_agent.schemas import ToolInfo
 
 
@@ -371,6 +377,25 @@ def _contains_ordered_nodes(node_order: list[str], expected: list[str]) -> bool:
     return cursor == len(expected)
 
 
+class CapturingParentConfigPlannerProposer(OfflineStructuredPlannerDecisionProposer):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def propose_decision(self, *, state, context, parent_run_config=None):
+        self.calls.append(
+            {
+                "requested_decision_kind": context.requested_decision_kind,
+                "requirement_id": context.requirement_id,
+                "parent_run_config": parent_run_config,
+            }
+        )
+        return await super().propose_decision(
+            state=state,
+            context=context,
+            parent_run_config=parent_run_config,
+        )
+
+
 @pytest.mark.asyncio
 async def test_phase8_write_query_stages_preview_and_pauses_at_approval_node():
     graph, _selector, executor, persister = _graph()
@@ -717,6 +742,7 @@ async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_fin
     executor = ReadAfterWriteExecutor()
     persister = Phase8ApprovalPersister()
     preview = Phase8PreviewProvider()
+    proposer = CapturingParentConfigPlannerProposer()
     preview.rows = list(executor.rows.values())
     graph = PlannerOwnedAgentGraph(
         settings=settings,
@@ -728,17 +754,43 @@ async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_fin
             approval_preview_provider=preview,
             approval_persister=persister,
         ),
-        proposer=OfflineStructuredPlannerDecisionProposer(),
+        proposer=proposer,
         checkpointer=MemorySaver(),
     )
 
     staged = await graph.run(
         "Change planned low-priority jobs to medium priority, then show the updated jobs.",
         session_context={"session_id": "phase8-read-after-write"},
+        options={
+            "thread_id": "phase8-read-after-write",
+            "run_name": "planner_owned_agent_graph.initial",
+            "tags": ["factory_agent", "graph_segment:initial", "logical_trace:trace-read-after-write"],
+            "metadata": {
+                "logical_trace_id": "trace-read-after-write",
+                "graph_segment": "initial",
+                "session_id": "phase8-read-after-write",
+            },
+        },
     )
     resumed = await graph.resume_from_approval(
         {"session_id": "phase8-read-after-write"},
         _approval_decision(staged, decided_by="qa-user"),
+        options={
+            "thread_id": "phase8-read-after-write",
+            "run_name": "planner_owned_agent_graph.post_approval_resume",
+            "tags": [
+                "factory_agent",
+                "graph_segment:post_approval_resume",
+                "logical_trace:trace-read-after-write",
+            ],
+            "metadata": {
+                "logical_trace_id": "trace-read-after-write",
+                "graph_segment": "post_approval_resume",
+                "session_id": "phase8-read-after-write",
+                "approval_id": staged.state.pending_approval.approval_id,
+                "approval_checkpoint_id": staged.state.pending_approval.checkpoint_id,
+            },
+        },
     )
 
     requirements = {requirement.id: requirement for requirement in resumed.state.requirement_ledger.requirements}
@@ -771,6 +823,142 @@ async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_fin
                 observed_read_ids.append(candidate)
         observed_read_ids.extend(row.get("job_id") for row in rows if isinstance(row, dict) and row.get("job_id"))
     assert sorted(set(observed_read_ids)) == ["JOB-LOW-001", "JOB-LOW-002"]
+
+    followup_retrieve = next(
+        call
+        for call in proposer.calls
+        if call["requested_decision_kind"] == "retrieve_tools"
+        and call["requirement_id"] == "req-002"
+    )
+    parent_config = followup_retrieve["parent_run_config"]
+    assert parent_config["run_name"] == "planner_owned_agent_graph.post_approval_resume"
+    assert parent_config["configurable"]["thread_id"] == "phase8-read-after-write"
+    assert "graph_segment:post_approval_resume" in parent_config["tags"]
+    assert parent_config["metadata"]["logical_trace_id"] == "trace-read-after-write"
+    assert parent_config["metadata"]["approval_id"] == staged.state.pending_approval.approval_id
+
+
+@pytest.mark.asyncio
+async def test_phase8_resume_executes_preselected_unexecuted_followup_read():
+    class ReadAfterWriteExecutor:
+        def __init__(self) -> None:
+            self.rows = {
+                "JOB-LOW-001": {"job_id": "JOB-LOW-001", "priority": "low", "status": "planned"},
+                "JOB-LOW-002": {"job_id": "JOB-LOW-002", "priority": "low", "status": "planned"},
+            }
+            self.calls: list[dict[str, Any]] = []
+
+        async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+            _ = settings, idempotency_key, extra_headers
+            self.calls.append({"method": tool.method, "tool_name": tool.name, "args": dict(args)})
+            if tool.method == "GET":
+                job_id = str(args.get("id") or "")
+                if job_id:
+                    return {
+                        "ok": True,
+                        "http_status": 200,
+                        "latency_ms": 4,
+                        "body": {"data": dict(self.rows[job_id])},
+                        "infrastructure_error": False,
+                    }
+                return {
+                    "ok": True,
+                    "http_status": 200,
+                    "latency_ms": 4,
+                    "body": {"data": [dict(row) for row in self.rows.values()]},
+                    "infrastructure_error": False,
+                }
+            job_id = str(args.get("id") or "")
+            self.rows[job_id]["priority"] = str(args.get("priority") or "")
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {"data": dict(self.rows[job_id])},
+                "infrastructure_error": False,
+            }
+
+    settings = _settings()
+    executor = ReadAfterWriteExecutor()
+    preview = Phase8PreviewProvider()
+    preview.rows = list(executor.rows.values())
+    graph = PlannerOwnedAgentGraph(
+        settings=settings,
+        adapters=PlannerOwnedAgentGraphAdapters(
+            settings=settings,
+            tools_by_name=_tools(),
+            tool_selector=Phase8Selector(),  # type: ignore[arg-type]
+            http_executor=executor,
+            approval_preview_provider=preview,
+            approval_persister=Phase8ApprovalPersister(),
+        ),
+        proposer=OfflineStructuredPlannerDecisionProposer(),
+        checkpointer=MemorySaver(),
+    )
+
+    staged = await graph.run(
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
+        session_context={"session_id": "phase8-preselected-followup-read"},
+    )
+    requirement_ids = {requirement.id for requirement in staged.state.requirement_ledger.requirements}
+    assert {"req-001", "req-002"}.issubset(requirement_ids)
+    assert staged.state.pending_approval.status == "pending"
+
+    read_need = _capability_need_for_requirement(staged.state, "req-002")
+    staged.state.planner_decisions.append(
+        PlannerDecisionRecord(
+            decision_id="dec-preselected-retrieve-req-002",
+            decision_kind="retrieve_tools",
+            author="planner",
+            requirement_id="req-002",
+            ledger_revision=staged.state.requirement_ledger.revision,
+            capability_need=read_need,
+            reason="Pre-approval planner retrieval for the follow-up read.",
+        )
+    )
+    staged.state.planner_decisions.append(
+        PlannerDecisionRecord(
+            decision_id="dec-preselected-choose-req-002",
+            decision_kind="choose_tool",
+            author="planner",
+            requirement_id="req-002",
+            ledger_revision=staged.state.requirement_ledger.revision,
+            capability_need=read_need,
+            selected_tool_call=GraphToolCall(
+                call_id="call-preselected-read-req-002",
+                kind="api_tool",
+                tool_name="get__jobs",
+                args={"fields": "job_id,status"},
+                requirement_id="req-002",
+                decision_id="dec-preselected-choose-req-002",
+            ),
+            reason="Pre-approval planner choice for the follow-up read.",
+        )
+    )
+
+    await graph._compiled_graph.aupdate_state(  # type: ignore[union-attr]
+        staged.checkpoint_config,
+        _state_update(staged.state),
+        as_node="response_document_node",
+    )
+
+    resumed = await graph.resume_from_approval(
+        {"session_id": "phase8-preselected-followup-read"},
+        _approval_decision(staged, decided_by="qa-user"),
+    )
+
+    requirements = {requirement.id: requirement for requirement in resumed.state.requirement_ledger.requirements}
+    assert requirements["req-001"].status == "satisfied"
+    assert requirements["req-002"].status == "satisfied"
+    assert resumed.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+    assert [call["tool_name"] for call in executor.calls if call["method"] == "GET"] == [
+        "get__jobs_{id}",
+        "get__jobs_{id}",
+    ]
+    assert [call["args"] for call in executor.calls if call["method"] == "GET"] == [
+        {"fields": "job_id,status", "id": "JOB-LOW-001"},
+        {"fields": "job_id,status", "id": "JOB-LOW-002"},
+    ]
 
 
 @pytest.mark.asyncio

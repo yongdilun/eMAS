@@ -2335,6 +2335,7 @@ export default function ResponseDocumentRenderer({
       if (
         block.type === 'result_table' &&
         duplicateTableOwners.mutationOwners.has(ownerKey) &&
+        !block.read_scope &&
         Array.isArray(block.rows) &&
         block.rows.length > PREVIEW_LIMIT
       ) {

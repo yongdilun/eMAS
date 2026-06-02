@@ -192,6 +192,8 @@ def _live_activity_step_for_graph_event(event: Mapping[str, Any]) -> dict[str, A
         event,
         ActivityCaption(group=group, label=label, detail=detail, state="running"),
     )
+    if node == "planner_decision_node" and caption.label == label and caption.detail == detail:
+        return None
     return {
         "id": f"graph:{node}",
         "_graph_node": node,

@@ -276,6 +276,7 @@ def _has_decision_for_requirement(
 ) -> bool:
     return any(
         decision.decision_kind == decision_kind and decision.requirement_id == requirement_id
+        and decision.ledger_revision == state.requirement_ledger.revision
         and _planner_decision_is_active_for_graph_revision(state, decision)
         for decision in state.planner_decisions
     )
@@ -291,6 +292,7 @@ def _has_choice_for_requirement(state: PlannerOwnedAgentGraphState, requirement_
     return any(
         decision.decision_kind == "choose_tool"
         and decision.requirement_id == requirement_id
+        and decision.ledger_revision == state.requirement_ledger.revision
         and _planner_decision_is_active_for_graph_revision(state, decision)
         for decision in state.planner_decisions
     )

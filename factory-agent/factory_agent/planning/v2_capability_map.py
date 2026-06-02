@@ -676,6 +676,7 @@ def build_requirement_sketch_for_text(
             capability_map=capability_map,
         )
         depends_on_requirement_ids: list[str] = []
+        previous_dependency_id: str | None = None
         if intake_item.role == "mutation_or_approval_request":
             previous_dependency_id = _bind_dependent_mutation_to_previous_result_set(
                 constraints,
@@ -685,11 +686,16 @@ def build_requirement_sketch_for_text(
             )
             if previous_dependency_id:
                 depends_on_requirement_ids.append(previous_dependency_id)
-        elif _bind_dependent_read_to_previous_mutation_result(
-            constraints,
-            clause=clause,
-            entity=entity,
-            previous_requirements=requirements,
+        if (
+            previous_dependency_id is None
+            and not frame.requires_approval
+            and frame.action not in {"create", "update", "delete"}
+            and _bind_dependent_read_to_previous_mutation_result(
+                constraints,
+                clause=clause,
+                entity=entity,
+                previous_requirements=requirements,
+            )
         ):
             depends_on_requirement_ids.append(str(constraints["result_binding_source_requirement"]))
         requested_fields = _requested_fields_for_clause(

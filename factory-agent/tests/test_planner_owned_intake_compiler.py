@@ -122,6 +122,53 @@ def test_compiler_binds_updated_jobs_read_to_previous_mutation():
     ]
 
 
+def test_compiler_binds_misclassified_updated_jobs_read_to_previous_mutation():
+    user_goal = (
+        "Change planned low-priority jobs to medium priority, "
+        "then show the id and status of the updated jobs."
+    )
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=build_v2_capability_map(
+            {
+                "get__jobs": _job_collection_tool(),
+                "get__jobs_{id}": _job_status_tool(),
+            }
+        ),
+        semantic_intake=_intake(
+            user_goal,
+            [
+                {
+                    "id": "intake-001",
+                    "role": "mutation_or_approval_request",
+                    "text": "Change planned low-priority jobs to medium priority",
+                    "reason": "write_request",
+                },
+                {
+                    "id": "intake-002",
+                    "role": "mutation_or_approval_request",
+                    "text": "then show the id and status of the updated jobs.",
+                    "reason": "small_model_role_misclassification",
+                },
+            ],
+        ),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [(requirement.id, requirement.requirement_type, requirement.entity) for requirement in ledger.requirements] == [
+        ("req-001", "mutation_request", "job"),
+        ("req-002", "filtered_collection", "job"),
+    ]
+    assert ledger.requirements[1].depends_on == ["req-001"]
+    assert ledger.requirements[1].requested_fields == ["job_id", "status"]
+    assert ledger.requirements[1].constraints == {
+        "depends_on_result_binding": "updated_jobs",
+        "result_binding_source_requirement": "req-001",
+        "result_binding_field": "affected_entity_ids",
+    }
+    assert ledger.clarification_needs == []
+
+
 def test_compiler_binds_affected_jobs_read_to_previous_mutation():
     user_goal = "Change planned low-priority jobs to medium priority, then show the affected jobs."
     sketch = build_requirement_sketch_for_text(

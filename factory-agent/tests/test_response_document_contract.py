@@ -1494,6 +1494,105 @@ async def test_final_completed_mutation_document_aggregates_all_approved_changes
 
 
 @pytest.mark.asyncio
+async def test_completed_mutation_with_post_write_status_read_renders_updated_jobs_table(db_session):
+    created_at = datetime(2026, 6, 3, 5, 20, 0)
+    session_id = "rd-post-write-status-read"
+    plan_id = "rd-post-write-status-read-plan"
+    approval_id = "approval-rd-post-write-status"
+    prompt = "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs."
+    job_ids = [
+        "JOB-SEED-005",
+        "JOB-SEED-009",
+        "JOB-SEED-012",
+        "JOB-SEED-017",
+        "JOB-SEED-024",
+    ]
+    write_rows = [
+        {
+            "job_id": job_id,
+            "original_priority": "low",
+            "priority": "medium",
+            "status": "planned",
+        }
+        for job_id in job_ids
+    ]
+    read_rows = [{"job_id": job_id, "status": "planned"} for job_id in job_ids]
+
+    db_session.add_all(
+        [
+            _session(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                event_seq=9,
+                status="COMPLETED",
+                step_count=2,
+                current_intent=prompt,
+            ),
+            _user_message(session_id=session_id, created_at=created_at, content=prompt),
+            _plan(session_id=session_id, plan_id=plan_id, created_at=created_at + timedelta(seconds=1)),
+            _approval(
+                session_id=session_id,
+                plan_id=plan_id,
+                created_at=created_at,
+                approval_id=approval_id,
+                status="APPROVED",
+                args=_cascade_args(approval_number=1, source="low", target="medium", job_ids=job_ids),
+                decided_at=created_at + timedelta(seconds=3),
+                created_offset_s=2,
+            ),
+            _write_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-post-write-status-write",
+                step_index=0,
+                completed_at=created_at + timedelta(seconds=4),
+                approval_id=approval_id,
+                outcomes=write_rows,
+            ),
+            _read_step(
+                session_id=session_id,
+                plan_id=plan_id,
+                step_id="rd-post-write-status-read",
+                step_index=1,
+                completed_at=created_at + timedelta(seconds=5),
+                rows=read_rows,
+                summary="Found 5 jobs.",
+                tool_name="get__jobs",
+                args={"fields": "job_id,status", "job_id": job_ids},
+            ),
+            _assistant_message(
+                session_id=session_id,
+                content="Done. I updated 5 jobs across 1 approved business change.",
+                step_id=plan_id,
+                created_at=created_at + timedelta(seconds=6),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    document = (await _snapshot(db_session, session_id))["response_document"]
+
+    assert document["state"] == "completed"
+    assert document["message"] == "Done. I updated 5 jobs across 1 approved business change."
+    block_types = [block["type"] for block in document["blocks"]]
+    assert block_types.count("result_summary") == 1
+    assert block_types.count("mutation_result") == 1
+
+    updated_tables = [
+        block
+        for block in document["blocks"]
+        if block["type"] == "result_table" and block["title"] == "Updated jobs"
+    ]
+    assert len(updated_tables) == 1
+    table = updated_tables[0]
+    assert table["contract"] == ENTITY_STATUS_CONTRACT
+    assert table["read_scope"] == "status_only"
+    assert table["requested_fields"] == ["job_id", "status"]
+    assert table["rows"] == read_rows
+
+
+@pytest.mark.asyncio
 async def test_business_change_v1_uses_typed_mutation_fields_without_summary_prose(db_session, monkeypatch):
     created_at = datetime(2026, 5, 18, 13, 10, 0)
     session_id = "rd-business-change-v1"

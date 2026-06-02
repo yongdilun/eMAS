@@ -1783,6 +1783,110 @@ test('FactoryAgentChatPanel renders completed mutation response_document as one 
   await view.unmount()
 })
 
+test('FactoryAgentChatPanel keeps post-write updated jobs table separate from business result', async () => {
+  const jobIds = ['JOB-SEED-005', 'JOB-SEED-009', 'JOB-SEED-012', 'JOB-SEED-017', 'JOB-SEED-024', 'JOB-SEED-031']
+  const mutationRows = jobIds.map((jobId) => ({
+    record_id: jobId,
+    display_id: jobId,
+    business_change: 'Low -> Medium',
+    business_change_id: 'job-priority-original-low-to-medium',
+    entity_type: 'job',
+    field_changes: [{ field: 'priority', label: 'Priority', from: 'low', to: 'medium' }],
+    change: 'Priority: low -> medium',
+    status: 'planned',
+  }))
+  const updatedRows = jobIds.map((jobId) => ({
+    job_id: jobId,
+    status: 'planned',
+  }))
+  const document = baseResponseDocument({
+    blocks: [
+      { id: 'message:post-write-read', type: 'short_message', message: 'Done. I updated 6 jobs across 1 approved business change.', status: 'completed' },
+      {
+        id: 'summary:post-write-read',
+        type: 'result_summary',
+        operation_id: 'op-post-write-read',
+        title: 'Changes completed',
+        summary: 'Done. I updated 6 jobs across 1 approved business change.',
+        steps: [
+          { step_number: 1, business_change: 'Low -> Medium', summary: 'Low -> Medium: 6 jobs', record_count: 6, status: 'completed' },
+        ],
+        total_count: 6,
+        status: 'completed',
+      },
+      {
+        id: 'mutation:post-write-read',
+        type: 'mutation_result',
+        contract: 'business_change_v1',
+        operation_id: 'op-post-write-read',
+        title: 'Affected records',
+        summary: 'Done. I updated 6 jobs across 1 approved business change.',
+        rows: mutationRows,
+        groups: [
+          {
+            contract: 'business_change_v1',
+            business_change: 'Low -> Medium',
+            business_change_id: 'job-priority-original-low-to-medium',
+            entity_type: 'job',
+            change_type: 'update',
+            selector_summary: 'priority = low',
+            source_state_basis: 'original',
+            field_changes: [{ field: 'priority', label: 'Priority', from: 'low', to: 'medium' }],
+            summary: 'Low -> Medium: 6 jobs',
+            record_count: 6,
+            rows: mutationRows,
+          },
+        ],
+        preview_limit: 5,
+        details_collapsed: true,
+        status: 'completed',
+      },
+      {
+        id: 'table:post-write-read',
+        type: 'result_table',
+        contract: 'entity_status_v1',
+        operation_id: 'op-post-write-read',
+        title: 'Updated jobs',
+        rows: updatedRows,
+        read_scope: 'status_only',
+        requested_fields: ['job_id', 'status'],
+        display_mode: 'collection_table',
+        entity_type: 'job',
+        entity_count: 6,
+        preview_limit: 5,
+        details_collapsed: false,
+      },
+    ],
+  })
+  const chatState = createChatState({
+    session: { session_id: 'session-rd-post-write-read', name: 'RD post-write read', status: 'COMPLETED' },
+    sessionList: [{ session_id: 'session-rd-post-write-read', name: 'RD post-write read', status: 'COMPLETED' }],
+    activeSessionName: 'RD post-write read',
+    turns: [responseDocumentTurn(document)],
+  })
+
+  const view = await renderPanelWithState(chatState)
+
+  await waitFor(() => assert.match(view.text(), /Done\. I updated 6 jobs across 1 approved business change/))
+  assert.equal(view.container.querySelectorAll('[data-final-result-card]').length, 1)
+  assert.equal(view.container.querySelectorAll('[data-response-block-type="mutation_result"]').length, 1)
+  const resultTables = view.container.querySelectorAll('[data-response-block-type="result_table"]')
+  assert.equal(resultTables.length, 1)
+  assert.equal(resultTables[0]?.getAttribute('data-response-contract'), 'entity_status_v1')
+  assert.equal(resultTables[0]?.getAttribute('data-read-scope'), 'status_only')
+  assert.equal(resultTables[0]?.getAttribute('data-requested-fields'), 'job_id,status')
+  assert.match(view.text(), /Updated jobs/)
+  assert.match(view.text(), /JOB-SEED-031/)
+  assert.deepEqual(
+    Array.from(resultTables[0].querySelectorAll('[data-table-column-key]'))
+      .map((node) => node.getAttribute('data-table-column-key')),
+    ['job_id', 'status'],
+  )
+  assert.equal(resultTables[0].querySelectorAll('[data-table-row]').length, 6)
+
+  await view.unmount()
+})
+
 test('FactoryAgentChatPanel renders RAG source block from response_document typed sources', async () => {
   const answer = 'Use the cited LOTO procedure before lockout.'
   const citation = {

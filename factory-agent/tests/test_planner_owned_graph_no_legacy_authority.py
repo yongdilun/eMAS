@@ -995,7 +995,9 @@ def test_planner_authored_graph_decisions_still_require_proposer_diagnostics():
         author = author_keywords[0].value
         assert not (isinstance(author, ast.Constant) and author.value == "planner")
 
-    assert "propose_decision(state=state, context=context)" in source
+    assert 'proposer_kwargs: dict[str, Any] = {"state": state, "context": context}' in source
+    assert '"parent_run_config"' in source
+    assert "self._proposer.propose_decision(**proposer_kwargs)" in source
     assert "proposal.submission.model_copy" in source
     assert "record_planner_decision(state, submission)" in source
     assert "planner_proposer" in source

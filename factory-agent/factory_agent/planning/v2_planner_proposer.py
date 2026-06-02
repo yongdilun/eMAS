@@ -5,6 +5,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from langchain_core.runnables.config import merge_configs
 from pydantic import Field, ValidationError
 
 from factory_agent.config import Settings
@@ -64,6 +65,7 @@ class PlannerDecisionProposer(Protocol):
         *,
         state: PlannerOwnedAgentGraphState,
         context: PlannerDecisionProposalContext,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> PlannerDecisionProposalResult:
         ...
 
@@ -82,7 +84,9 @@ class OfflineStructuredPlannerDecisionProposer:
         *,
         state: PlannerOwnedAgentGraphState,
         context: PlannerDecisionProposalContext,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> PlannerDecisionProposalResult:
+        _ = parent_run_config
         kind = context.requested_decision_kind or (
             context.allowed_decision_kinds[0] if context.allowed_decision_kinds else "fail"
         )
@@ -149,8 +153,9 @@ class PlannerLLMConfigurationRequiredProposer:
         *,
         state: PlannerOwnedAgentGraphState,
         context: PlannerDecisionProposalContext,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> PlannerDecisionProposalResult:
-        _ = state
+        _ = state, parent_run_config
         raise PlannerDecisionProposerError(
             "No planner LLM endpoint/API key is configured and "
             "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER is not enabled.",
@@ -245,6 +250,7 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
         *,
         state: PlannerOwnedAgentGraphState,
         context: PlannerDecisionProposalContext,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> PlannerDecisionProposalResult:
         prompt = _build_planner_decision_prompt(state=state, context=context)
         model = self._model or build_planner_chat_model(self._settings, json_mode=True)
@@ -257,8 +263,16 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
             prompt=prompt,
         )
         log_event("planner_decision_proposer_llm_start", **event_fields)
+        run_config = _planner_decision_run_config(
+            settings=self._settings,
+            state=state,
+            context=context,
+            prompt=prompt,
+        )
+        if parent_run_config is not None:
+            run_config = merge_configs(parent_run_config, run_config)
         try:
-            raw_response = await model.ainvoke(prompt)
+            raw_response = await _ainvoke_planner_model(model, prompt, config=run_config)
         except Exception as exc:
             duration_ms = _duration_ms(started)
             error_diagnostics = {
@@ -272,6 +286,7 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
                 "base_url_configured": bool(self._settings.planner_openai_base_url),
                 "duration_ms": duration_ms,
                 "prompt_chars": len(prompt),
+                "langsmith_parent_config_present": parent_run_config is not None,
                 "error": str(exc),
                 "error_type": type(exc).__name__,
             }
@@ -304,6 +319,7 @@ class OpenAICompatibleQwenPlannerDecisionProposer:
             "duration_ms": duration_ms,
             "prompt_chars": len(prompt),
             "content_chars": len(content),
+            "langsmith_parent_config_present": parent_run_config is not None,
             "finish_reason": response_metadata.get("finish_reason"),
             "usage_metadata": usage_metadata,
             "raw_content_preview": content[:500],
@@ -1219,6 +1235,45 @@ def _proposer_event_fields(
         "timeout_s": settings.planner_timeout_s,
         "max_tokens": settings.planner_max_tokens,
     }
+
+
+def _planner_decision_run_config(
+    *,
+    settings: Settings,
+    state: PlannerOwnedAgentGraphState,
+    context: PlannerDecisionProposalContext,
+    prompt: str,
+) -> dict[str, Any]:
+    return {
+        "run_name": "planner_decision_proposer",
+        "tags": [
+            "factory_agent",
+            "planner_decision",
+            "planner_owned_agent_graph",
+            "llm_proposer",
+        ],
+        "metadata": {
+            "component": "planner_decision",
+            "adapter": OpenAICompatibleQwenPlannerDecisionProposer.adapter_name,
+            "model_name": settings.planner_model,
+            "base_url_configured": bool(settings.planner_openai_base_url),
+            "decision_id": context.decision_id,
+            "requested_decision_kind": context.requested_decision_kind,
+            "requirement_id": context.requirement_id,
+            "ledger_revision": state.requirement_ledger.revision,
+            "planner_authority": "llm_proposal_validated_by_graph",
+            "raw_llm_output_executes_tools": False,
+            "candidate_tool_call_count": len(context.candidate_tool_calls),
+            "prompt_chars": len(prompt),
+        },
+    }
+
+
+async def _ainvoke_planner_model(model: Any, prompt: str, *, config: dict[str, Any]) -> Any:
+    try:
+        return await model.ainvoke(prompt, config=config)
+    except TypeError:
+        return await model.ainvoke(prompt)
 
 
 def _message_usage_metadata(raw_response: Any) -> dict[str, Any]:

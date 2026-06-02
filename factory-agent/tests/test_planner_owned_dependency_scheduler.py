@@ -18,7 +18,9 @@ from factory_agent.planning.v2_contracts import (
 )
 from factory_agent.planning.v2_dependency_scheduler import build_dependency_plan
 from factory_agent.services.planner_activity_captions import (
+    ActivityCaption,
     build_activity_caption_context_from_graph_state,
+    caption_for_graph_event,
     enrich_activity_step_rows,
 )
 from tests.test_planner_owned_semantic_intake import _job_collection_tool, _job_status_tool
@@ -357,6 +359,102 @@ def test_dependency_scheduler_blocks_updated_jobs_read_until_write_evidence_exis
     assert child_after.label == "sequential_read"
     assert child_after.ready is True
     assert child_after.depends_on_requirement_ids == ["req-001"]
+
+
+def test_dependency_wait_caption_is_hidden_when_parent_work_is_still_ready():
+    caption_context = {
+        "dependency_plan": {
+            "requirements": [
+                {"requirement_id": "req-001", "label": "approval_required", "ready": True},
+                {"requirement_id": "req-002", "label": "depends_on_evidence", "ready": False},
+            ],
+            "ready_groups": [
+                {
+                    "group_id": "dependency-group-001",
+                    "mode": "serial",
+                    "requirement_ids": ["req-001"],
+                }
+            ],
+        },
+        "dependency_plan_history": [
+            {
+                "labels": {
+                    "req-001": "approval_required",
+                    "req-002": "depends_on_evidence",
+                },
+                "ready_requirement_ids": ["req-001"],
+                "ready_groups": [
+                    {
+                        "group_id": "dependency-group-001",
+                        "mode": "serial",
+                        "requirement_ids": ["req-001"],
+                    }
+                ],
+            }
+        ],
+    }
+
+    rows = enrich_activity_step_rows(
+        [],
+        {"intent_contract": {"activity_caption_context": caption_context}},
+        fallback_timestamp=1_770_000_000,
+        session_status="EXECUTING",
+    )
+    live_caption = caption_for_graph_event(
+        {
+            "node": "planner_decision_node",
+            "activity_caption_context": caption_context,
+        },
+        ActivityCaption(
+            group="planning",
+            label="Selecting safe action",
+            detail="Selecting a safe action",
+            state="running",
+        ),
+    )
+
+    assert "Waiting for parent evidence" not in [row["label"] for row in rows]
+    assert live_caption.label == "Selecting safe action"
+
+
+def test_dependency_wait_caption_still_shows_when_no_work_can_run():
+    caption_context = {
+        "dependency_plan": {
+            "requirements": [
+                {"requirement_id": "req-002", "label": "depends_on_evidence", "ready": False},
+            ],
+            "ready_groups": [],
+        },
+        "dependency_plan_history": [
+            {
+                "labels": {"req-002": "depends_on_evidence"},
+                "ready_requirement_ids": [],
+                "ready_groups": [],
+            }
+        ],
+    }
+
+    rows = enrich_activity_step_rows(
+        [],
+        {"intent_contract": {"activity_caption_context": caption_context}},
+        fallback_timestamp=1_770_000_000,
+        session_status="EXECUTING",
+    )
+    live_caption = caption_for_graph_event(
+        {
+            "node": "planner_decision_node",
+            "activity_caption_context": caption_context,
+        },
+        ActivityCaption(
+            group="planning",
+            label="Selecting safe action",
+            detail="Selecting a safe action",
+            state="running",
+        ),
+    )
+
+    assert "Waiting for parent evidence" in [row["label"] for row in rows]
+    assert live_caption.label == "Waiting for parent evidence"
 
 
 def test_independent_machine_and_job_reads_are_ready_together():

@@ -649,17 +649,88 @@ async def test_live_activity_preserves_graph_progress_order_when_nodes_share_tim
 
     assert [step["detail"] for step in row.replan_context["live_activity_steps"]] == [
         "Structuring the request",
-        "Choosing the next backend action",
         "Checking whether the action can run safely",
         "Checking tool evidence",
     ]
     assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
         "Structuring request",
-        "Choosing next action",
         "Preparing backend action",
         "Checking result",
     ]
-    assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3, 4]
+    assert [str(step["id"]).rsplit(":", 1)[-1] for step in row.replan_context["live_activity_steps"]] == [
+        "requirement_ledger_node",
+        "tool_execution_node",
+        "evidence_observation_node",
+    ]
+    assert [step["order"] for step in row.replan_context["live_activity_steps"]] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_live_activity_keeps_visible_parent_evidence_wait_when_no_work_can_run(
+    sessionmaker_override,
+    db_session,
+):
+    created_at = datetime(2026, 5, 13, 9, 0, 0)
+    db_session.add(
+        Session(
+            session_id="phase10-live-activity-parent-wait",
+            user_id="u1",
+            status="EXECUTING",
+            current_intent="Read a job and its product",
+            session_started_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+            replan_context={},
+            event_seq=3,
+        )
+    )
+    await db_session.commit()
+
+    recorder = LiveGraphActivityRecorder(
+        session_factory=sessionmaker_override,
+        session_id="phase10-live-activity-parent-wait",
+    )
+    recorder.record_graph_event(
+        {
+            "event": "planner_owned_agent_graph_node",
+            "node": "planner_decision_node",
+            "ledger_revision": 1,
+            "activity_caption_context": {
+                "dependency_plan": {
+                    "requirements": [
+                        {
+                            "requirement_id": "req-002",
+                            "label": "depends_on_evidence",
+                            "ready": False,
+                        }
+                    ],
+                    "ready_groups": [],
+                },
+                "dependency_plan_history": [
+                    {
+                        "labels": {"req-002": "depends_on_evidence"},
+                        "ready_requirement_ids": [],
+                        "ready_groups": [],
+                    }
+                ],
+            },
+        }
+    )
+    await recorder.flush()
+
+    async with sessionmaker_override() as verify:
+        row = (
+            await verify.execute(
+                select(Session).where(Session.session_id == "phase10-live-activity-parent-wait")
+            )
+        ).scalar_one()
+
+    assert [step["label"] for step in row.replan_context["live_activity_steps"]] == [
+        "Waiting for parent evidence"
+    ]
+    assert row.replan_context["live_activity_steps"][0]["detail"] == (
+        "Dependent read needs parent evidence first"
+    )
 
 
 @pytest.mark.asyncio

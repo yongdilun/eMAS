@@ -127,7 +127,6 @@ from .v2_graph_tool_choice import (
     _deterministic_choose_tool_if_state_proves_bounded_read_batch,
     _deterministic_choose_tool_if_state_proves_single_document_tool,
     _has_candidate_window_for_requirement,
-    _has_choice_for_requirement,
     _has_decision_for_requirement,
     _has_execution_decision_for_call,
     _hydrated_card_for_tool_call,
@@ -618,11 +617,11 @@ class PlannerOwnedAgentGraph:
             )
 
         if state.pending_approval.status == "none":
-            await self._stage_next_write_approval_if_needed(state)
+            await self._stage_next_write_approval_if_needed(state, parent_run_config=checkpoint_config)
 
-        await self._satisfaction_node(state)
-        await self._run_ready_followup_requirements_after_resume(state)
-        await self._approval_node(state)
+        await self._satisfaction_node(state, config=checkpoint_config)
+        await self._run_ready_followup_requirements_after_resume(state, parent_run_config=checkpoint_config)
+        await self._approval_node(state, config=checkpoint_config)
         await self._finalize_node(state)
         await self._response_document_node(state)
         node_order = list(state.execution_trace.diagnostics.get("phase3_node_order") or [])
@@ -780,7 +779,7 @@ class PlannerOwnedAgentGraph:
         replan = state.execution_trace.diagnostics.get(_REPLAN_SPINE_DIAGNOSTIC_KEY)
         if isinstance(replan, Mapping) and replan.get("route") == "planner_decision_node":
             return "replan"
-        if _open_requirements_need_fresh_retrieval(state):
+        if _open_requirements_need_followup_work(state):
             return "replan"
         return "continue"
 
@@ -840,11 +839,18 @@ class PlannerOwnedAgentGraph:
         context: PlannerDecisionProposalContext,
         *,
         node_name: str,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> PlannerDecisionRecord | None:
         state.execution_trace.planner.call_count += 1
         try:
+            proposer_kwargs: dict[str, Any] = {"state": state, "context": context}
+            if parent_run_config is not None and _callable_accepts_keyword(
+                self._proposer.propose_decision,
+                "parent_run_config",
+            ):
+                proposer_kwargs["parent_run_config"] = parent_run_config
             proposal = await _maybe_await(
-                self._proposer.propose_decision(state=state, context=context)
+                self._proposer.propose_decision(**proposer_kwargs)
             )
             submission = proposal.submission.model_copy(
                 update={"candidate_tool_calls": list(context.candidate_tool_calls)},
@@ -878,7 +884,11 @@ class PlannerOwnedAgentGraph:
             _apply_planner_proposed_requirement_ledger(state, submission.proposed_requirement_ledger)
         return decision
 
-    async def _planner_decision_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _planner_decision_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
         _record_node_visit(state, "planner_decision_node", self._tracer)
         dependency_plan = attach_dependency_plan_diagnostics(state)
         blocked_by_dependency_plan = [
@@ -922,6 +932,7 @@ class PlannerOwnedAgentGraph:
                     reason="Declare the next bounded retrieval need.",
                 ),
                 node_name="planner_decision_node",
+                parent_run_config=config,
             )
             if decision is None:
                 continue
@@ -954,6 +965,7 @@ class PlannerOwnedAgentGraph:
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
             and _planner_decision_is_active_for_graph_revision(state, decision)
+            and decision.ledger_revision == state.requirement_ledger.revision
             and decision.requirement_id is not None
             and dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
             and not _has_candidate_window_for_requirement(state, decision.requirement_id)
@@ -970,6 +982,7 @@ class PlannerOwnedAgentGraph:
                     }
                     for decision in state.planner_decisions
                     if decision.decision_kind == "retrieve_tools"
+                    and decision.ledger_revision == state.requirement_ledger.revision
                     and decision.requirement_id is not None
                     and not dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
                 ],
@@ -1032,7 +1045,11 @@ class PlannerOwnedAgentGraph:
             }
         return _state_update(state)
 
-    async def _planner_choose_tool_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _planner_choose_tool_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
         _record_node_visit(state, "planner_choose_tool_node", self._tracer)
         dependency_plan = attach_dependency_plan_diagnostics(state)
         retrieve_decisions = [
@@ -1040,10 +1057,11 @@ class PlannerOwnedAgentGraph:
             for decision in state.planner_decisions
             if decision.decision_kind == "retrieve_tools"
             and _planner_decision_is_active_for_graph_revision(state, decision)
+            and decision.ledger_revision == state.requirement_ledger.revision
             and decision.requirement_id is not None
             and dependency_allows_requirement_action(dependency_plan, decision.requirement_id)
             and _has_candidate_window_for_requirement(state, decision.requirement_id)
-            and not _has_choice_for_requirement(state, decision.requirement_id)
+            and not _has_current_revision_choice_for_requirement(state, decision.requirement_id)
             and not _has_evidence_for_requirement(state, decision.requirement_id)
         ]
         if not retrieve_decisions:
@@ -1065,6 +1083,11 @@ class PlannerOwnedAgentGraph:
 
         decisions: list[PlannerDecisionRecord] = []
         for retrieve_decision in retrieve_decisions:
+            if retrieve_decision.requirement_id is None or _has_current_revision_choice_for_requirement(
+                state,
+                retrieve_decision.requirement_id,
+            ):
+                continue
             candidate_tool_calls = _candidate_tool_calls_for_requirement(
                 state,
                 requirement_id=retrieve_decision.requirement_id,
@@ -1114,6 +1137,7 @@ class PlannerOwnedAgentGraph:
                         reason="Select an executable action from the hydrated candidate window.",
                     ),
                     node_name="planner_choose_tool_node",
+                    parent_run_config=config,
                 )
             if decision is None:
                 continue
@@ -1155,7 +1179,11 @@ class PlannerOwnedAgentGraph:
             )
         return _state_update(state)
 
-    async def _tool_execution_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _tool_execution_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
         _record_node_visit(state, "tool_execution_node", self._tracer)
         dependency_plan = attach_dependency_plan_diagnostics(state)
         if state.pending_approval.status == "pending":
@@ -1177,6 +1205,7 @@ class PlannerOwnedAgentGraph:
             for decision in state.planner_decisions
             if decision.decision_kind == "choose_tool"
             and _planner_decision_is_active_for_graph_revision(state, decision)
+            and decision.ledger_revision == state.requirement_ledger.revision
             and _planner_decision_selected_tool_calls(decision)
             and not _has_evidence_for_requirement(
                 state,
@@ -1196,6 +1225,7 @@ class PlannerOwnedAgentGraph:
         rejected_by_dependency_plan: list[dict[str, Any]] = []
         deferred_approval_decisions: list[dict[str, Any]] = []
         pending_calls_by_requirement: dict[str, list[GraphToolCall]] = {}
+        pending_call_keys: set[tuple[str, str, str, str]] = set()
         for choose_decision in choose_decisions:
             selected_calls = [
                 tool_call
@@ -1203,7 +1233,11 @@ class PlannerOwnedAgentGraph:
                 if not _has_execution_decision_for_call(state, tool_call)
             ]
             for selected_call in selected_calls:
+                call_key = _tool_call_execution_key(selected_call)
+                if call_key in pending_call_keys:
+                    continue
                 if dependency_allows_tool_call(dependency_plan, selected_call):
+                    pending_call_keys.add(call_key)
                     pending_calls_by_requirement.setdefault(selected_call.requirement_id, []).append(selected_call)
                 else:
                     rejected_by_dependency_plan.append(
@@ -1217,6 +1251,7 @@ class PlannerOwnedAgentGraph:
                     )
 
         executed_call_ids: set[str] = set()
+        executed_call_keys: set[tuple[str, str, str, str]] = set()
         batch_events: list[dict[str, Any]] = []
         for group in dependency_plan.ready_groups:
             selected_calls: list[GraphToolCall] = []
@@ -1226,6 +1261,7 @@ class PlannerOwnedAgentGraph:
                 call
                 for call in selected_calls
                 if call.call_id not in executed_call_ids
+                and _tool_call_execution_key(call) not in executed_call_keys
             ][: group.max_batch_size]
             if len(selected_calls) <= 1:
                 continue
@@ -1258,6 +1294,7 @@ class PlannerOwnedAgentGraph:
                 _attach_graph_work_identity(state, execution)
                 executions.append(execution)
                 executed_call_ids.add(execution.tool_call.call_id)
+                executed_call_keys.add(_tool_call_execution_key(execution.tool_call))
                 event = _graph_tool_action_event(guard_decision, execution)
                 event["dependency_group_id"] = group.group_id
                 event["dependency_batch_key"] = group.batch_key
@@ -1270,6 +1307,7 @@ class PlannerOwnedAgentGraph:
                 for tool_call in _planner_decision_selected_tool_calls(choose_decision)
                 if not _has_execution_decision_for_call(state, tool_call)
                 and tool_call.call_id not in executed_call_ids
+                and _tool_call_execution_key(tool_call) not in executed_call_keys
                 and dependency_allows_tool_call(dependency_plan, tool_call)
             ]
             if not selected_calls:
@@ -1284,7 +1322,11 @@ class PlannerOwnedAgentGraph:
                         }
                     )
                     continue
-                await self._stage_write_approval(state, choose_decision)
+                await self._stage_write_approval(
+                    state,
+                    choose_decision,
+                    parent_run_config=config,
+                )
                 if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
                     state,
                     choose_decision,
@@ -1308,6 +1350,7 @@ class PlannerOwnedAgentGraph:
                 _attach_graph_work_identity(state, execution)
                 executions.append(execution)
                 executed_call_ids.add(execution.tool_call.call_id)
+                executed_call_keys.add(_tool_call_execution_key(execution.tool_call))
                 action_events.append(_graph_tool_action_event(guard_decision, execution))
 
         if not executions:
@@ -1447,7 +1490,11 @@ class PlannerOwnedAgentGraph:
         state.execution_trace.diagnostics.pop(_PENDING_EXECUTION_DIAGNOSTIC_KEY, None)
         return _state_update(state)
 
-    async def _satisfaction_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _satisfaction_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
         _record_node_visit(state, "satisfaction_node", self._tracer)
         if state.pending_approval.status == "pending":
             state.execution_trace.diagnostics["satisfaction"] = {
@@ -1505,7 +1552,10 @@ class PlannerOwnedAgentGraph:
         attach_dependency_plan_diagnostics(state)
         if _has_open_graph_write_requirement(state):
             if state.pending_approval.status == "none":
-                await self._stage_next_write_approval_if_needed(state)
+                await self._stage_next_write_approval_if_needed(
+                    state,
+                    parent_run_config=config,
+                )
                 attach_dependency_plan_diagnostics(state)
             status = (
                 "paused_for_approval"
@@ -1519,8 +1569,12 @@ class PlannerOwnedAgentGraph:
                 "final_validation_deferred": True,
             }
             return _state_update(state)
-        validate_graph_state_final_state(state)
-        current_missing_reasons = _current_missing_evidence_reasons(state)
+        final_validation = validate_graph_state_final_state(state)
+        current_missing_reasons = (
+            []
+            if final_validation.status == "passed"
+            else _current_missing_evidence_reasons(state)
+        )
         _prepare_replan_spine_after_satisfaction(
             state,
             current_missing_reasons=current_missing_reasons,
@@ -1531,7 +1585,12 @@ class PlannerOwnedAgentGraph:
         attach_dependency_plan_diagnostics(state)
         return _state_update(state)
 
-    async def _approval_node(self, state: PlannerOwnedAgentGraphState) -> dict[str, Any]:
+    async def _approval_node(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
+        _ = config
         _record_node_visit(state, "approval_node", self._tracer)
         state.execution_trace.diagnostics["approval_node"] = {
             "status": state.pending_approval.status,
@@ -1559,7 +1618,8 @@ class PlannerOwnedAgentGraph:
                 "open_write_requirement_ids": _open_graph_write_requirement_ids(state),
             }
             return _state_update(state)
-        if state.final_validation_result is not None and state.final_validation_result.status == "passed":
+        final_validation = validate_graph_state_final_state(state)
+        if final_validation.status == "passed":
             active_evidence_refs = [
                 evidence.id
                 for evidence in state.evidence_ledger.evidence
@@ -1707,6 +1767,8 @@ class PlannerOwnedAgentGraph:
         self,
         state: PlannerOwnedAgentGraphState,
         choose_decision: PlannerDecisionRecord,
+        *,
+        parent_run_config: Mapping[str, Any] | None = None,
     ) -> None:
         _record_node_visit(state, "write_staging_node", self._tracer)
         call = choose_decision.selected_tool_call
@@ -1748,6 +1810,7 @@ class PlannerOwnedAgentGraph:
                 reason="Request approval before committing a graph-selected write action.",
             ),
             node_name="approval_node",
+            parent_run_config=parent_run_config,
         )
         if request_decision is None or request_decision.decision_kind != "request_approval":
             state.execution_trace.diagnostics["phase8_approval_staging"] = {
@@ -1916,7 +1979,12 @@ class PlannerOwnedAgentGraph:
             "legacy_shortcut_used": False,
         }
 
-    async def _stage_next_write_approval_if_needed(self, state: PlannerOwnedAgentGraphState) -> None:
+    async def _stage_next_write_approval_if_needed(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        *,
+        parent_run_config: Mapping[str, Any] | None = None,
+    ) -> None:
         dependency_plan = attach_dependency_plan_diagnostics(state)
         for choose_decision in state.planner_decisions:
             call = choose_decision.selected_tool_call
@@ -1930,7 +1998,11 @@ class PlannerOwnedAgentGraph:
                 and _tool_choice_requires_graph_approval(state, choose_decision)
             ):
                 _record_node_visit(state, "tool_execution_node", self._tracer)
-                await self._stage_write_approval(state, choose_decision)
+                await self._stage_write_approval(
+                    state,
+                    choose_decision,
+                    parent_run_config=parent_run_config,
+                )
                 if state.pending_approval.status != "pending" and _write_choice_finished_without_pending_approval(
                     state,
                     choose_decision,
@@ -1938,21 +2010,26 @@ class PlannerOwnedAgentGraph:
                     continue
                 return
 
-    async def _run_ready_followup_requirements_after_resume(self, state: PlannerOwnedAgentGraphState) -> None:
+    async def _run_ready_followup_requirements_after_resume(
+        self,
+        state: PlannerOwnedAgentGraphState,
+        *,
+        parent_run_config: Mapping[str, Any] | None = None,
+    ) -> None:
         max_iterations = max(1, len(state.requirement_ledger.requirements) + 2)
         for _index in range(max_iterations):
             if state.pending_approval.status == "pending":
                 return
-            if not _open_requirements_need_fresh_retrieval(state):
+            if not _open_requirements_need_followup_work(state):
                 return
             before_decisions = len(state.planner_decisions)
             before_evidence = len(state.evidence_ledger.evidence)
-            await self._planner_decision_node(state)
+            await self._planner_decision_node(state, config=parent_run_config)
             await self._tool_retrieval_node(state)
-            await self._planner_choose_tool_node(state)
-            await self._tool_execution_node(state)
+            await self._planner_choose_tool_node(state, config=parent_run_config)
+            await self._tool_execution_node(state, config=parent_run_config)
             await self._evidence_observation_node(state)
-            await self._satisfaction_node(state)
+            await self._satisfaction_node(state, config=parent_run_config)
             if len(state.planner_decisions) == before_decisions and len(state.evidence_ledger.evidence) == before_evidence:
                 return
 
@@ -2733,6 +2810,15 @@ def _stable_json_key(value: Any) -> str:
         return str(value)
 
 
+def _tool_call_execution_key(tool_call: GraphToolCall) -> tuple[str, str, str, str]:
+    return (
+        tool_call.kind,
+        tool_call.tool_name,
+        tool_call.requirement_id,
+        _stable_json_key(tool_call.args),
+    )
+
+
 def _explicit_carried_forward_evidence_refs(
     *,
     session_context: Mapping[str, Any] | Any | None,
@@ -2795,6 +2881,17 @@ async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _callable_accepts_keyword(func: Callable[..., Any], keyword: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return True
+    return keyword in signature.parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 def _next_approval_index(state: PlannerOwnedAgentGraphState) -> int:
@@ -3153,6 +3250,17 @@ def _apply_result_binding_requirements_from_evidence(
             }
         )
     if updates:
+        updated_requirement_ids = {str(update["requirement_id"]) for update in updates}
+        state.candidate_tool_windows = [
+            window
+            for window in state.candidate_tool_windows
+            if window.requirement_id not in updated_requirement_ids
+        ]
+        state.hydrated_tool_cards = [
+            cards
+            for cards in state.hydrated_tool_cards
+            if cards.requirement_id not in updated_requirement_ids
+        ]
         existing = state.execution_trace.diagnostics.get("result_binding_requirements")
         rows = list(existing) if isinstance(existing, list) else []
         state.execution_trace.diagnostics["result_binding_requirements"] = [*rows, *updates]
@@ -3709,6 +3817,84 @@ def _open_requirements_need_fresh_retrieval(state: PlannerOwnedAgentGraphState) 
             requested_decision_kind="retrieve_tools",
         )
         for requirement in state.requirement_ledger.requirements
+    )
+
+
+def _open_requirements_need_followup_work(state: PlannerOwnedAgentGraphState) -> bool:
+    if state.pending_approval.status == "pending":
+        return False
+    dependency_plan = build_dependency_plan(state)
+    return any(
+        _open_requirement_needs_followup_work(
+            state,
+            dependency_plan=dependency_plan,
+            requirement=requirement,
+        )
+        for requirement in state.requirement_ledger.requirements
+    )
+
+
+def _open_requirement_needs_followup_work(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    dependency_plan: Any,
+    requirement: RequirementLedgerEntry,
+) -> bool:
+    if (
+        requirement.status != "open"
+        or not dependency_allows_requirement_action(dependency_plan, requirement.id)
+        or _has_evidence_for_requirement(state, requirement.id)
+    ):
+        return False
+
+    if not _has_decision_for_requirement(state, "retrieve_tools", requirement.id):
+        return not _has_planner_proposer_rejection_for_requirement(
+            state,
+            requirement.id,
+            requested_decision_kind="retrieve_tools",
+        )
+
+    if not _has_candidate_window_for_requirement(state, requirement.id):
+        return True
+
+    if not _has_current_revision_choice_for_requirement(state, requirement.id):
+        return not _has_planner_proposer_rejection_for_requirement(
+            state,
+            requirement.id,
+            requested_decision_kind="choose_tool",
+        )
+
+    return _has_unexecuted_tool_choice_for_requirement(state, requirement.id)
+
+
+def _has_unexecuted_tool_choice_for_requirement(
+    state: PlannerOwnedAgentGraphState,
+    requirement_id: str,
+) -> bool:
+    for decision in state.planner_decisions:
+        if (
+            decision.decision_kind != "choose_tool"
+            or decision.requirement_id != requirement_id
+            or decision.ledger_revision != state.requirement_ledger.revision
+            or not _planner_decision_is_active_for_graph_revision(state, decision)
+        ):
+            continue
+        calls = _planner_decision_selected_tool_calls(decision)
+        if calls and any(not _has_execution_decision_for_call(state, call) for call in calls):
+            return True
+    return False
+
+
+def _has_current_revision_choice_for_requirement(
+    state: PlannerOwnedAgentGraphState,
+    requirement_id: str,
+) -> bool:
+    return any(
+        decision.decision_kind == "choose_tool"
+        and decision.requirement_id == requirement_id
+        and decision.ledger_revision == state.requirement_ledger.revision
+        and _planner_decision_is_active_for_graph_revision(state, decision)
+        for decision in state.planner_decisions
     )
 
 

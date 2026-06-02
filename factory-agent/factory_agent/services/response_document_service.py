@@ -2752,6 +2752,9 @@ def _mutation_groups(
 
     if presentation.kind in {"mutation_result", "partial_failure"} and presentation.rows:
         for row in presentation.rows:
+            row_tool_name = _trimmed(row.get("tool_name"))
+            if row_tool_name and not _is_write_tool_name(row_tool_name):
+                continue
             approval_id = _trimmed(row.get("approval_id") or presentation.approval_id) or None
             _add_group_rows(
                 groups,
@@ -4866,6 +4869,58 @@ def _record_blocks_for_rows(
     ]
 
 
+def _record_identifier_set(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        identifier
+        for row in rows
+        if isinstance(row, dict)
+        for identifier in [_business_record_identifier(row)]
+        if identifier
+    }
+
+
+def _read_rows_match_changed_records(
+    *,
+    mutation_groups: list[MutationGroup],
+    read_rows: list[dict[str, Any]],
+) -> bool:
+    changed_rows = [
+        row
+        for group in mutation_groups
+        if not _is_no_op_group(group)
+        for row in group.rows
+        if isinstance(row, dict)
+    ]
+    changed_ids = _record_identifier_set(changed_rows)
+    read_ids = _record_identifier_set(read_rows)
+    return bool(changed_ids and read_ids) and read_ids.issubset(changed_ids)
+
+
+def _should_show_post_write_read_table(
+    *,
+    state: str,
+    mutation_groups: list[MutationGroup],
+    read_evidence: list[ReadEvidence],
+    read_rows: list[dict[str, Any]],
+    read_policy: ReadDisplayPolicy | None,
+) -> bool:
+    if state != "completed" or not mutation_groups or not read_evidence or not read_rows or read_policy is None:
+        return False
+    if read_policy.display_mode == DISPLAY_MODE_NO_MATCH_DIAGNOSTIC:
+        return False
+    if not _read_rows_match_changed_records(mutation_groups=mutation_groups, read_rows=read_rows):
+        return False
+    requested_fields = {_canonical_requested_field_key(field) for field in read_policy.requested_fields}
+    if read_policy.contract == ENTITY_STATUS_CONTRACT:
+        return "status" in requested_fields or any(_status_primary_value(row) for row in read_rows if isinstance(row, dict))
+    return bool(requested_fields)
+
+
+def _post_write_read_table_title(read_rows: list[dict[str, Any]], read_policy: ReadDisplayPolicy | None) -> str:
+    entity_type = read_policy.entity_type if read_policy else None
+    return f"Updated {_entity_noun(entity_type, len(read_rows))}"
+
+
 def _read_evidence_is_status_only(
     *,
     rows: list[dict[str, Any]],
@@ -5140,6 +5195,23 @@ def _compose_blocks(
                 status=status,  # type: ignore[arg-type]
             )
         )
+        if _should_show_post_write_read_table(
+            state=state,
+            mutation_groups=mutation_groups,
+            read_evidence=read_evidence,
+            read_rows=read_rows,
+            read_policy=read_policy,
+        ):
+            blocks.extend(
+                _record_blocks_for_rows(
+                    id_prefix=f"{operation_id or document_id}:post-write-read",
+                    operation_id=operation_id,
+                    approval_id=None,
+                    rows=read_rows,
+                    title=_post_write_read_table_title(read_rows, read_policy),
+                    policy=read_policy,
+                )
+            )
         if all_rows and status != "completed":
             blocks.append(
                 ResultTableBlock(

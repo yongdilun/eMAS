@@ -252,9 +252,12 @@ class StaticPlannerModel:
     def __init__(self, content: str) -> None:
         self.content = content
         self.prompts: list[str] = []
+        self.configs: list[dict[str, Any]] = []
 
-    async def ainvoke(self, prompt: str):
+    async def ainvoke(self, prompt: str, config: dict[str, Any] | None = None):
         self.prompts.append(prompt)
+        if config is not None:
+            self.configs.append(config)
         return self.content
 
 
@@ -320,6 +323,63 @@ def _child_expansion_state() -> PlannerOwnedAgentGraphState:
         ]
     }
     return state
+
+
+@pytest.mark.asyncio
+async def test_qwen_adapter_merges_parent_langsmith_config_into_model_call():
+    state = _child_expansion_state()
+    context = PlannerDecisionProposalContext(
+        decision_id="dec-retrieve-parent-trace",
+        requested_decision_kind="retrieve_tools",
+        allowed_decision_kinds=["retrieve_tools", "fail"],
+        requirement_id="req-001",
+        capability_need=CapabilityNeed(
+            source_of_truth="operational_state",
+            entity="machine",
+            action="read_one",
+            constraints={"machine_id": "M-LTH-77"},
+            requirement_id="req-001",
+        ),
+    )
+    model = StaticPlannerModel(
+        json.dumps(
+            {
+                "decision": {
+                    "decision_kind": "retrieve_tools",
+                    "reason": "Retrieve the machine status.",
+                },
+                "proposed_requirement_ledger": None,
+            }
+        )
+    )
+    proposer = OpenAICompatibleQwenPlannerDecisionProposer(_settings(), model=model)
+
+    result = await proposer.propose_decision(
+        state=state,
+        context=context,
+        parent_run_config={
+            "configurable": {"thread_id": "trace-thread"},
+            "tags": ["graph_segment:post_approval_resume", "logical_trace:trace-parent"],
+            "metadata": {
+                "logical_trace_id": "trace-parent",
+                "graph_segment": "post_approval_resume",
+                "approval_id": "approval-123",
+            },
+        },
+    )
+
+    assert model.configs
+    config = model.configs[0]
+    assert config["run_name"] == "planner_decision_proposer"
+    assert config["configurable"]["thread_id"] == "trace-thread"
+    assert "graph_segment:post_approval_resume" in config["tags"]
+    assert "planner_decision" in config["tags"]
+    assert config["metadata"]["logical_trace_id"] == "trace-parent"
+    assert config["metadata"]["graph_segment"] == "post_approval_resume"
+    assert config["metadata"]["approval_id"] == "approval-123"
+    assert config["metadata"]["component"] == "planner_decision"
+    assert config["metadata"]["raw_llm_output_executes_tools"] is False
+    assert result.diagnostics["langsmith_parent_config_present"] is True
 
 
 def _graph(proposer, executor: RecordingExecutor | None = None) -> tuple[PlannerOwnedAgentGraph, RecordingExecutor]:
@@ -1288,7 +1348,9 @@ def test_phase10_5_static_planner_authored_graph_decisions_use_proposer_seam():
         author = author_keywords[0].value
         assert not (isinstance(author, ast.Constant) and author.value == "planner")
 
-    assert "propose_decision(state=state, context=context)" in source
+    assert 'proposer_kwargs: dict[str, Any] = {"state": state, "context": context}' in source
+    assert '"parent_run_config"' in source
+    assert "self._proposer.propose_decision(**proposer_kwargs)" in source
     assert "proposal.submission.model_copy" in source
     assert '"candidate_tool_calls": list(context.candidate_tool_calls)' in source
     assert "record_planner_decision(state, submission)" in source
