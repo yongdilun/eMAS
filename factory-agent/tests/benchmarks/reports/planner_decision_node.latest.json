@@ -1,0 +1,2501 @@
+{
+  "node": "planner_decision_node",
+  "results": [
+    {
+      "behavior": "retrieve decision",
+      "duration_ms": 7552,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-001-retrieve-decision",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [],
+            "diagnostics": {
+              "label_counts": {
+                "independent_read": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": "read_one",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "reason": "bounded_identity_without_hydrated_tool_metadata",
+                  "selected_batch_tool_name": null
+                },
+                "estimated_tool_call_count": 1,
+                "label": "independent_read",
+                "ready": true,
+                "requirement_id": "req-001",
+                "source_of_truth": "operational_state",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "independent_read"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": [
+                "req-001"
+              ]
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [
+          {
+            "author": "planner",
+            "capability_need": {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "phase4_graph_live_requirement",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            "decision_id": "dec-retrieve-001",
+            "decision_kind": "retrieve_tools",
+            "diagnostics": {
+              "planner_proposer": {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "allowed_decision_kinds": [
+                  "retrieve_tools",
+                  "revise_requirements",
+                  "request_clarification",
+                  "finalize",
+                  "fail"
+                ],
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "candidate_tool_call_count": 0,
+                "content_chars": 618,
+                "decision_id": "dec-retrieve-001",
+                "duration_ms": 2223,
+                "finish_reason": "stop",
+                "full_openapi_catalog_visible": false,
+                "langsmith_parent_config_present": false,
+                "ledger_revision": 1,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "prior_decision_id": null,
+                "prompt_chars": 3580,
+                "proposer_seam": true,
+                "raw_content_preview": "{\n    \"decision\": {\n        \"decision_kind\": \"retrieve_tools\",\n        \"reason\": \"phase4_graph_live_requirement\"\n    },\n    \"proposed_requirement_ledger\": {\n        \"ledger_revision\": 1,\n        \"requirement_id\": \"req-001\",\n        \"parent_requirement_id\": \"req-001\",\n        \"expansion_reason\": \"phase4_graph_live_requirement\",\n        \"constraints\": {\n            \"machine_id\": \"M-CNC-01\"\n        },\n        \"requested_fields\": [\n            \"status\"\n        ],\n        \"source_of_truth\": \"operatio",
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "usage_metadata": {
+                  "input_token_details": {
+                    "cache_read": 882
+                  },
+                  "input_tokens": 883,
+                  "output_token_details": {},
+                  "output_tokens": 153,
+                  "total_tokens": 1036
+                }
+              }
+            },
+            "evidence_refs": [],
+            "ledger_revision": 1,
+            "reason": "phase4_graph_live_requirement",
+            "requirement_id": "req-001",
+            "selected_tool_call": null,
+            "selected_tool_calls": []
+          }
+        ],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "dependency_plan": {
+            "label_counts": {
+              "independent_read": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [],
+            "decision_count": 1,
+            "decision_id": "dec-retrieve-001",
+            "decision_ids": [
+              "dec-retrieve-001"
+            ],
+            "decision_kind": "retrieve_tools",
+            "decision_kinds": [
+              "retrieve_tools"
+            ],
+            "requirement_ids": [
+              "req-001"
+            ]
+          },
+          "planner_decision_proposer": {
+            "accepted": [
+              {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "decision_id": "dec-retrieve-001",
+                "decision_kind": "retrieve_tools",
+                "full_openapi_catalog_visible": false,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "node": "planner_decision_node",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "validation": {
+                  "author": "planner",
+                  "decision_kind": "retrieve_tools",
+                  "validated_by": "planner_owned_agent_graph_decision_gate"
+                }
+              }
+            ],
+            "rejected": []
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": {
+          "accepted": [
+            {
+              "adapter": "openai_compatible_qwen_planner_decision_proposer",
+              "base_url_configured": true,
+              "base_url_type": "local",
+              "bounded_state_view": true,
+              "decision_id": "dec-retrieve-001",
+              "decision_kind": "retrieve_tools",
+              "full_openapi_catalog_visible": false,
+              "llm_invoked": true,
+              "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+              "node": "planner_decision_node",
+              "offline_contract_mode": false,
+              "openai_compatible_planner_adapter": true,
+              "real_llm_mode": true,
+              "requested_decision_kind": "retrieve_tools",
+              "requirement_id": "req-001",
+              "validation": {
+                "author": "planner",
+                "decision_kind": "retrieve_tools",
+                "validated_by": "planner_owned_agent_graph_decision_gate"
+              }
+            }
+          ],
+          "rejected": []
+        },
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status.",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "planner-decision-001-retrieve-decision",
+      "node": "planner_decision_node",
+      "prompt": "Show machine M-CNC-01 status.",
+      "started_at": "2026-06-08T04:38:45.394104+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "revise requirements",
+      "duration_ms": 3589,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-002-revise-requirements",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "list",
+              "constraints": {},
+              "entity": "machine",
+              "known_args": {},
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "machine_id",
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [],
+              "requirement_id": "req-002",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [],
+            "diagnostics": {
+              "label_counts": {
+                "independent_read": 1,
+                "sequential_read": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": "read_many",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "reason": "collection_shape_without_hydrated_tool_metadata"
+                },
+                "estimated_tool_call_count": 1,
+                "label": "sequential_read",
+                "ready": true,
+                "requirement_id": "req-001",
+                "source_of_truth": "operational_state",
+                "tool_names": []
+              },
+              {
+                "action": "read_one",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "reason": "bounded_identity_without_hydrated_tool_metadata",
+                  "selected_batch_tool_name": null
+                },
+                "estimated_tool_call_count": 1,
+                "label": "independent_read",
+                "ready": true,
+                "requirement_id": "req-002",
+                "source_of_truth": "operational_state",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "sequential_read",
+                "req-002": "independent_read"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": [
+                "req-001",
+                "req-002"
+              ]
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 2,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [
+          {
+            "author": "planner",
+            "capability_need": {
+              "action": "read_many",
+              "constraints": {},
+              "entity": "machine",
+              "known_args": {},
+              "reason": "phase4_graph_live_requirement",
+              "requested_fields": [
+                "machine_id",
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            "decision_id": "dec-retrieve-001",
+            "decision_kind": "retrieve_tools",
+            "diagnostics": {
+              "planner_proposer": {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "allowed_decision_kinds": [
+                  "retrieve_tools",
+                  "revise_requirements",
+                  "request_clarification",
+                  "finalize",
+                  "fail"
+                ],
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "candidate_tool_call_count": 0,
+                "content_chars": 544,
+                "decision_id": "dec-retrieve-001",
+                "duration_ms": 1558,
+                "finish_reason": "stop",
+                "full_openapi_catalog_visible": false,
+                "langsmith_parent_config_present": false,
+                "ledger_revision": 1,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "prior_decision_id": null,
+                "prompt_chars": 3919,
+                "proposer_seam": true,
+                "raw_content_preview": "{\n    \"decision\": {\n        \"decision_kind\": \"retrieve_tools\",\n        \"reason\": \"Retrieve machine status for multiple entities as requested.\"\n    },\n    \"proposed_requirement_ledger\": [\n        {\n            \"id\": \"req-001\",\n            \"parent_requirement_id\": null,\n            \"expansion_reason\": null,\n            \"locked_constraints\": [\"requested_fields\"],\n            \"requested_fields\": [\"machine_id\", \"status\"],\n            \"requirement_type\": \"multi_entity_status\",\n            \"source_of_t",
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "usage_metadata": {
+                  "input_token_details": {
+                    "cache_read": 948
+                  },
+                  "input_tokens": 949,
+                  "output_token_details": {},
+                  "output_tokens": 120,
+                  "total_tokens": 1069
+                }
+              }
+            },
+            "evidence_refs": [],
+            "ledger_revision": 1,
+            "reason": "Retrieve machine status for multiple entities as requested.",
+            "requirement_id": "req-001",
+            "selected_tool_call": null,
+            "selected_tool_calls": []
+          },
+          {
+            "author": "planner",
+            "capability_need": {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "phase4_graph_live_requirement",
+              "requested_fields": [],
+              "requirement_id": "req-002",
+              "source_of_truth": "operational_state"
+            },
+            "decision_id": "dec-retrieve-002",
+            "decision_kind": "retrieve_tools",
+            "diagnostics": {
+              "planner_proposer": {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "allowed_decision_kinds": [
+                  "retrieve_tools",
+                  "revise_requirements",
+                  "request_clarification",
+                  "finalize",
+                  "fail"
+                ],
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "candidate_tool_call_count": 0,
+                "content_chars": 417,
+                "decision_id": "dec-retrieve-002",
+                "duration_ms": 1405,
+                "finish_reason": "stop",
+                "full_openapi_catalog_visible": false,
+                "langsmith_parent_config_present": false,
+                "ledger_revision": 1,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "prior_decision_id": null,
+                "prompt_chars": 3965,
+                "proposer_seam": true,
+                "raw_content_preview": "{\n    \"decision\": {\n        \"decision_kind\": \"retrieve_tools\",\n        \"reason\": \"phase4_graph_live_requirement\"\n    },\n    \"proposed_requirement_ledger\": [\n        {\n            \"id\": \"req-002\",\n            \"parent_requirement_id\": \"req-002\",\n            \"expansion_reason\": \"phase4_graph_live_requirement\",\n            \"locked_constraints\": {\n                \"machine_id\": \"M-CNC-01\"\n            }\n        }\n    ]\n}",
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-002",
+                "usage_metadata": {
+                  "input_token_details": {
+                    "cache_read": 978
+                  },
+                  "input_tokens": 979,
+                  "output_token_details": {},
+                  "output_tokens": 107,
+                  "total_tokens": 1086
+                }
+              }
+            },
+            "evidence_refs": [],
+            "ledger_revision": 1,
+            "reason": "phase4_graph_live_requirement",
+            "requirement_id": "req-002",
+            "selected_tool_call": null,
+            "selected_tool_calls": []
+          }
+        ],
+        "planner_diagnostics": {
+          "capability_need_count": 2,
+          "dependency_plan": {
+            "label_counts": {
+              "independent_read": 1,
+              "sequential_read": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [],
+            "decision_count": 2,
+            "decision_ids": [
+              "dec-retrieve-001",
+              "dec-retrieve-002"
+            ],
+            "decision_kinds": [
+              "retrieve_tools",
+              "retrieve_tools"
+            ],
+            "requirement_ids": [
+              "req-001",
+              "req-002"
+            ]
+          },
+          "planner_decision_proposer": {
+            "accepted": [
+              {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "decision_id": "dec-retrieve-001",
+                "decision_kind": "retrieve_tools",
+                "full_openapi_catalog_visible": false,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "node": "planner_decision_node",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "validation": {
+                  "author": "planner",
+                  "decision_kind": "retrieve_tools",
+                  "validated_by": "planner_owned_agent_graph_decision_gate"
+                }
+              },
+              {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "decision_id": "dec-retrieve-002",
+                "decision_kind": "retrieve_tools",
+                "full_openapi_catalog_visible": false,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "node": "planner_decision_node",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-002",
+                "validation": {
+                  "author": "planner",
+                  "decision_kind": "retrieve_tools",
+                  "validated_by": "planner_owned_agent_graph_decision_gate"
+                }
+              }
+            ],
+            "rejected": []
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": {
+          "accepted": [
+            {
+              "adapter": "openai_compatible_qwen_planner_decision_proposer",
+              "base_url_configured": true,
+              "base_url_type": "local",
+              "bounded_state_view": true,
+              "decision_id": "dec-retrieve-001",
+              "decision_kind": "retrieve_tools",
+              "full_openapi_catalog_visible": false,
+              "llm_invoked": true,
+              "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+              "node": "planner_decision_node",
+              "offline_contract_mode": false,
+              "openai_compatible_planner_adapter": true,
+              "real_llm_mode": true,
+              "requested_decision_kind": "retrieve_tools",
+              "requirement_id": "req-001",
+              "validation": {
+                "author": "planner",
+                "decision_kind": "retrieve_tools",
+                "validated_by": "planner_owned_agent_graph_decision_gate"
+              }
+            },
+            {
+              "adapter": "openai_compatible_qwen_planner_decision_proposer",
+              "base_url_configured": true,
+              "base_url_type": "local",
+              "bounded_state_view": true,
+              "decision_id": "dec-retrieve-002",
+              "decision_kind": "retrieve_tools",
+              "full_openapi_catalog_visible": false,
+              "llm_invoked": true,
+              "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+              "node": "planner_decision_node",
+              "offline_contract_mode": false,
+              "openai_compatible_planner_adapter": true,
+              "real_llm_mode": true,
+              "requested_decision_kind": "retrieve_tools",
+              "requirement_id": "req-002",
+              "validation": {
+                "author": "planner",
+                "decision_kind": "retrieve_tools",
+                "validated_by": "planner_owned_agent_graph_decision_gate"
+              }
+            }
+          ],
+          "rejected": []
+        },
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine status"
+            },
+            {
+              "branch_id": null,
+              "id": "clause-002",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-002",
+              "role": "required_requirement",
+              "text": "correct the request to use machine M-CNC-01 only."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 2,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {},
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine status",
+              "id": "req-001",
+              "intent_operation": "report_multi_status",
+              "locked_constraints": [
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "machine_id",
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "multi_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            },
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "correct the request to use machine M-CNC-01 only.",
+              "id": "req-002",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine status, then correct the request to use machine M-CNC-01 only."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001",
+            "req-002"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "planner-decision-002-revise-requirements",
+      "node": "planner_decision_node",
+      "prompt": "Show machine status, then correct the request to use machine M-CNC-01 only.",
+      "started_at": "2026-06-08T04:38:52.954343+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "request clarification",
+      "duration_ms": 36,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-003-request-clarification",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [],
+          "dependency_plan": {
+            "blocked": [],
+            "diagnostics": {
+              "label_counts": {},
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": []
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {},
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": []
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 0,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "clarification_need": 1
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 0,
+          "dependency_plan": {
+            "label_counts": {},
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [],
+            "decision": "none"
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [
+            {
+              "blocked_entity": "machine",
+              "id": "clarification-001",
+              "reason": "dependent_singular_read_missing_bound_entity",
+              "text": "Show the machine status but do not provide the machine id."
+            }
+          ],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "dependent_singular_read_missing_bound_entity",
+              "requirement_id": null,
+              "role": "clarification_need",
+              "text": "Show the machine status but do not provide the machine id."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 0,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "clarification_need": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show the machine status but do not provide the machine id."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [
+        "expected evidence path is empty: planner_decisions"
+      ],
+      "id": "planner-decision-003-request-clarification",
+      "node": "planner_decision_node",
+      "prompt": "Show the machine status but do not provide the machine id.",
+      "started_at": "2026-06-08T04:38:56.563044+00:00",
+      "status": "failed"
+    },
+    {
+      "behavior": "fail closed",
+      "duration_ms": 30,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-004-fail-closed",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read",
+              "constraints": {},
+              "entity": null,
+              "known_args": {},
+              "reason": "deterministic_source_hint:unknown",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "unknown"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [
+              {
+                "blocked_reasons": [
+                  "dependency_label_not_proven"
+                ],
+                "label": "blocked",
+                "requirement_id": "req-001"
+              }
+            ],
+            "diagnostics": {
+              "label_counts": {
+                "blocked": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": null,
+                "batch_key": null,
+                "blocked_reasons": [
+                  "dependency_label_not_proven"
+                ],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "fail_closed": true,
+                  "reason": "dependency_label_not_proven"
+                },
+                "estimated_tool_call_count": 1,
+                "label": "blocked",
+                "ready": false,
+                "requirement_id": "req-001",
+                "source_of_truth": "unknown",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "blocked"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": []
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "dependency_plan": {
+            "label_counts": {
+              "blocked": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [
+              {
+                "reason": "requirement req-001 is not dependency-ready (blocked: dependency_label_not_proven)",
+                "requirement_id": "req-001"
+              }
+            ],
+            "decision": "none"
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Perform an unsafe unsupported destructive factory action."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {},
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": null,
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Perform an unsafe unsupported destructive factory action.",
+              "id": "req-001",
+              "intent_operation": "request_clarification",
+              "locked_constraints": [],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "clarification_request",
+              "satisfaction_checks": [],
+              "source_of_truth": "unknown",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Perform an unsafe unsupported destructive factory action."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [
+        "expected evidence path is empty: planner_decisions"
+      ],
+      "id": "planner-decision-004-fail-closed",
+      "node": "planner_decision_node",
+      "prompt": "Perform an unsafe unsupported destructive factory action.",
+      "started_at": "2026-06-08T04:38:56.636652+00:00",
+      "status": "failed"
+    },
+    {
+      "behavior": "malformed planner output",
+      "duration_ms": 34,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-005-malformed-planner-output",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read",
+              "constraints": {},
+              "entity": null,
+              "known_args": {},
+              "reason": "deterministic_source_hint:unknown",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "unknown"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [
+              {
+                "blocked_reasons": [
+                  "dependency_label_not_proven"
+                ],
+                "label": "blocked",
+                "requirement_id": "req-001"
+              }
+            ],
+            "diagnostics": {
+              "label_counts": {
+                "blocked": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": null,
+                "batch_key": null,
+                "blocked_reasons": [
+                  "dependency_label_not_proven"
+                ],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "fail_closed": true,
+                  "reason": "dependency_label_not_proven"
+                },
+                "estimated_tool_call_count": 1,
+                "label": "blocked",
+                "ready": false,
+                "requirement_id": "req-001",
+                "source_of_truth": "unknown",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "blocked"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": []
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "dependency_plan": {
+            "label_counts": {
+              "blocked": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [
+              {
+                "reason": "requirement req-001 is not dependency-ready (blocked: dependency_label_not_proven)",
+                "requirement_id": "req-001"
+              }
+            ],
+            "decision": "none"
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": null,
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Return malformed planner JSON for this decision benchmark."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {},
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": null,
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Return malformed planner JSON for this decision benchmark.",
+              "id": "req-001",
+              "intent_operation": "request_clarification",
+              "locked_constraints": [],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "clarification_request",
+              "satisfaction_checks": [],
+              "source_of_truth": "unknown",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Return malformed planner JSON for this decision benchmark."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [
+        "expected evidence path is empty: planner_proposer_diagnostics"
+      ],
+      "id": "planner-decision-005-malformed-planner-output",
+      "node": "planner_decision_node",
+      "prompt": "Return malformed planner JSON for this decision benchmark.",
+      "started_at": "2026-06-08T04:38:56.701990+00:00",
+      "status": "failed"
+    },
+    {
+      "behavior": "no LLM config",
+      "duration_ms": 30,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-006-no-llm-config",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [],
+            "diagnostics": {
+              "label_counts": {
+                "independent_read": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": "read_one",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "reason": "bounded_identity_without_hydrated_tool_metadata",
+                  "selected_batch_tool_name": null
+                },
+                "estimated_tool_call_count": 1,
+                "label": "independent_read",
+                "ready": true,
+                "requirement_id": "req-001",
+                "source_of_truth": "operational_state",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "independent_read"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": [
+                "req-001"
+              ]
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "dependency_plan": {
+            "label_counts": {
+              "independent_read": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [],
+            "decision_count": 0,
+            "decision_ids": [],
+            "decision_kinds": [],
+            "requirement_ids": []
+          },
+          "planner_decision_proposer": {
+            "accepted": [],
+            "rejected": [
+              {
+                "adapter": "planner_llm_configuration_required",
+                "allowed_decision_kinds": [
+                  "retrieve_tools",
+                  "revise_requirements",
+                  "request_clarification",
+                  "finalize",
+                  "fail"
+                ],
+                "base_url_type": null,
+                "decision_id": "dec-retrieve-001",
+                "diagnostics": {
+                  "adapter": "planner_llm_configuration_required",
+                  "configuration_missing": true,
+                  "decision_id": "dec-retrieve-001",
+                  "explicit_offline_flag": "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER",
+                  "llm_invoked": false,
+                  "offline_contract_mode": false,
+                  "real_llm_mode": false,
+                  "requested_decision_kind": "retrieve_tools",
+                  "required_any_of": [
+                    "PLANNER_OPENAI_BASE_URL",
+                    "OPENAI_BASE_URL",
+                    "LLM_BASE_URL",
+                    "OPENAI_API_KEY",
+                    "LLM_API_KEY"
+                  ],
+                  "tool_execution_allowed": false
+                },
+                "fail_closed": true,
+                "llm_invoked": false,
+                "model_name": null,
+                "node": "planner_decision_node",
+                "offline_contract_mode": false,
+                "real_llm_mode": false,
+                "reason": "No planner LLM endpoint/API key is configured and FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER is not enabled.",
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "tool_execution_allowed": false
+              }
+            ]
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": {
+          "accepted": [],
+          "rejected": [
+            {
+              "adapter": "planner_llm_configuration_required",
+              "allowed_decision_kinds": [
+                "retrieve_tools",
+                "revise_requirements",
+                "request_clarification",
+                "finalize",
+                "fail"
+              ],
+              "base_url_type": null,
+              "decision_id": "dec-retrieve-001",
+              "diagnostics": {
+                "adapter": "planner_llm_configuration_required",
+                "configuration_missing": true,
+                "decision_id": "dec-retrieve-001",
+                "explicit_offline_flag": "FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER",
+                "llm_invoked": false,
+                "offline_contract_mode": false,
+                "real_llm_mode": false,
+                "requested_decision_kind": "retrieve_tools",
+                "required_any_of": [
+                  "PLANNER_OPENAI_BASE_URL",
+                  "OPENAI_BASE_URL",
+                  "LLM_BASE_URL",
+                  "OPENAI_API_KEY",
+                  "LLM_API_KEY"
+                ],
+                "tool_execution_allowed": false
+              },
+              "fail_closed": true,
+              "llm_invoked": false,
+              "model_name": null,
+              "node": "planner_decision_node",
+              "offline_contract_mode": false,
+              "real_llm_mode": false,
+              "reason": "No planner LLM endpoint/API key is configured and FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER is not enabled.",
+              "requested_decision_kind": "retrieve_tools",
+              "requirement_id": "req-001",
+              "tool_execution_allowed": false
+            }
+          ]
+        },
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status with planner provider config removed."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 1,
+            "prepared_clause_count": 1,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 1
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01"
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status with planner provider config removed.",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status with planner provider config removed."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [],
+      "id": "planner-decision-006-no-llm-config",
+      "node": "planner_decision_node",
+      "prompt": "Show machine M-CNC-01 status with planner provider config removed.",
+      "started_at": "2026-06-08T04:38:56.766393+00:00",
+      "status": "passed"
+    },
+    {
+      "behavior": "dependency-blocked requirement",
+      "duration_ms": 2101,
+      "error": null,
+      "evidence": {
+        "candidate_tool_windows": [],
+        "case_id": "planner-decision-007-dependency-blocked-requirement",
+        "evidence_ledger": {
+          "evidence": []
+        },
+        "final_validation_result": null,
+        "graph_diagnostics": {
+          "capability_needs": [
+            {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "active_id",
+                  "active_active_id"
+                ]
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            }
+          ],
+          "dependency_plan": {
+            "blocked": [],
+            "diagnostics": {
+              "label_counts": {
+                "independent_read": 1
+              },
+              "max_parallel_read_batch_size": 3,
+              "scheduler": "planner_owned_dependency_scheduler"
+            },
+            "ledger_revision": 1,
+            "ready_groups": [],
+            "requirements": [
+              {
+                "action": "read_one",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [],
+                "depends_on_requirement_ids": [],
+                "diagnostic_metadata": {
+                  "reason": "bounded_identity_without_hydrated_tool_metadata",
+                  "selected_batch_tool_name": null
+                },
+                "estimated_tool_call_count": 1,
+                "label": "independent_read",
+                "ready": true,
+                "requirement_id": "req-001",
+                "source_of_truth": "operational_state",
+                "tool_names": []
+              }
+            ]
+          },
+          "dependency_plan_history": [
+            {
+              "labels": {
+                "req-001": "independent_read"
+              },
+              "ledger_revision": 1,
+              "ready_groups": [],
+              "ready_requirement_ids": [
+                "req-001"
+              ]
+            }
+          ],
+          "graph_state_phase": "phase1_contracts_only",
+          "phase3_last_node": "planner_decision_node",
+          "phase3_node_order": [
+            "planner_decision_node"
+          ],
+          "semantic_intake": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          }
+        },
+        "hydrated_tool_cards": [],
+        "node": "planner_decision_node",
+        "node_order": [
+          "planner_decision_node"
+        ],
+        "pending_approval": {
+          "approval_id": null,
+          "checkpoint_id": null,
+          "decision_id": null,
+          "ledger_revision": null,
+          "payload": {},
+          "requirement_id": null,
+          "status": "none",
+          "tool_call": null
+        },
+        "planner_decisions": [
+          {
+            "author": "planner",
+            "capability_need": {
+              "action": "read_one",
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "active_id",
+                  "active_active_id"
+                ]
+              },
+              "entity": "machine",
+              "known_args": {
+                "machine_id": "M-CNC-01"
+              },
+              "reason": "phase4_graph_live_requirement",
+              "requested_fields": [
+                "status"
+              ],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            "decision_id": "dec-retrieve-001",
+            "decision_kind": "retrieve_tools",
+            "diagnostics": {
+              "planner_proposer": {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "allowed_decision_kinds": [
+                  "retrieve_tools",
+                  "revise_requirements",
+                  "request_clarification",
+                  "finalize",
+                  "fail"
+                ],
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "candidate_tool_call_count": 0,
+                "content_chars": 584,
+                "decision_id": "dec-retrieve-001",
+                "duration_ms": 1780,
+                "finish_reason": "stop",
+                "full_openapi_catalog_visible": false,
+                "langsmith_parent_config_present": false,
+                "ledger_revision": 1,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "prior_decision_id": null,
+                "prompt_chars": 3825,
+                "proposer_seam": true,
+                "raw_content_preview": "{\n    \"decision\": {\n        \"decision_kind\": \"retrieve_tools\",\n        \"reason\": \"phase4_graph_live_requirement\"\n    },\n    \"proposed_requirement_ledger\": {\n        \"id\": \"req-001\",\n        \"status\": \"open\",\n        \"locked_constraints\": [\"machine_id\", \"requested_fields\"],\n        \"constraints\": {\n            \"machine_id\": \"M-CNC-01\",\n            \"observation_fields\": [\"active_id\", \"active_active_id\"]\n        },\n        \"requested_fields\": [\"status\"],\n        \"entity\": \"machine\",\n        \"source",
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "usage_metadata": {
+                  "input_token_details": {
+                    "cache_read": 940
+                  },
+                  "input_tokens": 941,
+                  "output_token_details": {},
+                  "output_tokens": 143,
+                  "total_tokens": 1084
+                }
+              }
+            },
+            "evidence_refs": [],
+            "ledger_revision": 1,
+            "reason": "phase4_graph_live_requirement",
+            "requirement_id": "req-001",
+            "selected_tool_call": null,
+            "selected_tool_calls": []
+          }
+        ],
+        "planner_diagnostics": {
+          "capability_need_count": 1,
+          "dependency_plan": {
+            "label_counts": {
+              "independent_read": 1
+            },
+            "ledger_revision": 1,
+            "ready_group_count": 0
+          },
+          "execution_started": false,
+          "planner_decision_node": {
+            "blocked_by_dependency_plan": [],
+            "decision_count": 1,
+            "decision_id": "dec-retrieve-001",
+            "decision_ids": [
+              "dec-retrieve-001"
+            ],
+            "decision_kind": "retrieve_tools",
+            "decision_kinds": [
+              "retrieve_tools"
+            ],
+            "requirement_ids": [
+              "req-001"
+            ]
+          },
+          "planner_decision_proposer": {
+            "accepted": [
+              {
+                "adapter": "openai_compatible_qwen_planner_decision_proposer",
+                "base_url_configured": true,
+                "base_url_type": "local",
+                "bounded_state_view": true,
+                "decision_id": "dec-retrieve-001",
+                "decision_kind": "retrieve_tools",
+                "full_openapi_catalog_visible": false,
+                "llm_invoked": true,
+                "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "node": "planner_decision_node",
+                "offline_contract_mode": false,
+                "openai_compatible_planner_adapter": true,
+                "real_llm_mode": true,
+                "requested_decision_kind": "retrieve_tools",
+                "requirement_id": "req-001",
+                "validation": {
+                  "author": "planner",
+                  "decision_kind": "retrieve_tools",
+                  "validated_by": "planner_owned_agent_graph_decision_gate"
+                }
+              }
+            ],
+            "rejected": []
+          },
+          "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
+          "received_full_tool_catalog_before_need": false,
+          "saw_high_level_capability_map": true,
+          "saw_original_query": true,
+          "saw_requirement_ledger": true
+        },
+        "planner_proposer_diagnostics": {
+          "accepted": [
+            {
+              "adapter": "openai_compatible_qwen_planner_decision_proposer",
+              "base_url_configured": true,
+              "base_url_type": "local",
+              "bounded_state_view": true,
+              "decision_id": "dec-retrieve-001",
+              "decision_kind": "retrieve_tools",
+              "full_openapi_catalog_visible": false,
+              "llm_invoked": true,
+              "model_name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+              "node": "planner_decision_node",
+              "offline_contract_mode": false,
+              "openai_compatible_planner_adapter": true,
+              "real_llm_mode": true,
+              "requested_decision_kind": "retrieve_tools",
+              "requirement_id": "req-001",
+              "validation": {
+                "author": "planner",
+                "decision_kind": "retrieve_tools",
+                "validated_by": "planner_owned_agent_graph_decision_gate"
+              }
+            }
+          ],
+          "rejected": []
+        },
+        "provider": {
+          "llm_base_url_present": false,
+          "openai_api_key_present": true,
+          "openai_base_url_present": true,
+          "planner_model": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+          "planner_openai_api_key_present": false,
+          "planner_openai_base_url_present": true
+        },
+        "rag_calls": [],
+        "requirement_ledger": {
+          "answer_instructions": [],
+          "clarification_needs": [],
+          "conditional_branches": [
+            {
+              "activated_child_requirement_ids": [],
+              "condition": {
+                "field_any": [
+                  "active_id",
+                  "active_active_id"
+                ],
+                "source": "active_parent_evidence",
+                "type": "active_parent_evidence_has_any_field"
+              },
+              "derived_from_evidence_refs": [],
+              "diagnostics": {
+                "dependent_referent_guard": true,
+                "non_executable_until_condition_true": true,
+                "role": "conditional_branch"
+              },
+              "id": "branch-001",
+              "on_true": {
+                "action": "read_one",
+                "constraint_field": "active_id",
+                "entity": "active",
+                "fan_out": "first_value",
+                "intent_operation": "report_status",
+                "requirement_type": "single_entity_status",
+                "value_from_field_any": [
+                  "active_id",
+                  "active_active_id"
+                ]
+              },
+              "parent_requirement_id": "req-001",
+              "skipped_reason": null,
+              "status": "pending",
+              "text": "show the active job status if the machine result has an active job id."
+            }
+          ],
+          "formatting_instructions": [],
+          "intake_clauses": [
+            {
+              "branch_id": null,
+              "id": "clause-001",
+              "parent_requirement_id": null,
+              "reason": "executable_required_requirement",
+              "requirement_id": "req-001",
+              "role": "required_requirement",
+              "text": "Show machine M-CNC-01 status"
+            },
+            {
+              "branch_id": "branch-001",
+              "id": "clause-002",
+              "parent_requirement_id": "req-001",
+              "reason": "conditional_branch_waits_for_parent_evidence",
+              "requirement_id": null,
+              "role": "conditional_branch",
+              "text": "show the active job status if the machine result has an active job id."
+            }
+          ],
+          "intake_diagnostics": {
+            "active_executable_roles": [
+              "required_requirement"
+            ],
+            "compiled_requirement_count": 1,
+            "compiler_authority": "deterministic",
+            "item_count": 2,
+            "prepared_clause_count": 2,
+            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "raw_llm_output_executes_tools": false,
+            "role_counts": {
+              "required_requirement": 2
+            },
+            "source": "deterministic_fallback"
+          },
+          "requirements": [
+            {
+              "blockers": [],
+              "constraints": {
+                "machine_id": "M-CNC-01",
+                "observation_fields": [
+                  "active_id",
+                  "active_active_id"
+                ]
+              },
+              "depends_on": [],
+              "derived_from_evidence_refs": [],
+              "derived_from_missing_reasons": [],
+              "entity": "machine",
+              "evidence_refs": [],
+              "expansion_reason": null,
+              "goal": "Show machine M-CNC-01 status",
+              "id": "req-001",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "machine_id",
+                "requested_fields"
+              ],
+              "origin": {
+                "constraints": "deterministic_extraction",
+                "fields": "metadata_field_aliases",
+                "goal": "deterministic_requirement_sketch",
+                "source_of_truth": "capability_map_hint"
+              },
+              "parent_requirement_id": null,
+              "requested_fields": [
+                "status"
+              ],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
+            }
+          ],
+          "revision": 1,
+          "revision_history": [
+            {
+              "actor": "deterministic_guard",
+              "change_type": "initial_requirement_sketch",
+              "details": {},
+              "locked_constraints_preserved": true,
+              "patch_id": null,
+              "reason": "Phase 3 locked hard constraints before planner execution.",
+              "requirement_id": null,
+              "revision": 1
+            }
+          ],
+          "user_goal": "Show machine M-CNC-01 status, then show the active job status if the machine result has an active job id."
+        },
+        "response_document_context": {
+          "diagnostics": {},
+          "document_id": null,
+          "evidence_refs": [],
+          "pending_approval_id": null,
+          "render_contract": null,
+          "requirement_ids": [
+            "req-001"
+          ],
+          "revision": 1,
+          "state": "not_started"
+        },
+        "satisfaction_state": {
+          "requirements": []
+        },
+        "selected_tool_names": [],
+        "selector_calls": [],
+        "tool_retrieval_diagnostics": {},
+        "trace_events": [
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "planner_decision_node",
+            "planner_decision_count": 0,
+            "source_types": [],
+            "tool_names": []
+          }
+        ]
+      },
+      "failures": [
+        "expected evidence path is empty: planner_diagnostics.planner_decision_node.blocked_by_dependency_plan"
+      ],
+      "id": "planner-decision-007-dependency-blocked-requirement",
+      "node": "planner_decision_node",
+      "prompt": "Show machine M-CNC-01 status, then show the active job status if the machine result has an active job id.",
+      "started_at": "2026-06-08T04:38:56.815602+00:00",
+      "status": "failed"
+    }
+  ],
+  "updated_at": "2026-06-08T04:38:58.928859+00:00"
+}

@@ -250,7 +250,7 @@ def assert_benchmark_result(result: Mapping[str, Any]) -> None:
 
 def _settings_for_case(case: Mapping[str, Any]):
     fixture = case.get("fixture") if isinstance(case.get("fixture"), Mapping) else {}
-    return replace(
+    settings = replace(
         get_settings(),
         graph_checkpoint_backend="off",
         allow_offline_planner_proposer=False,
@@ -263,6 +263,14 @@ def _settings_for_case(case: Mapping[str, Any]):
         http_timeout_s=1.0,
         max_replans=int(fixture.get("max_replans", 2)),
     )
+    if fixture.get("clear_planner_provider"):
+        settings = replace(
+            settings,
+            openai_api_key="",
+            planner_openai_base_url=None,
+            semantic_intake_openai_base_url=None,
+        )
+    return settings
 
 
 def _tool(
