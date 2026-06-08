@@ -1,9 +1,9 @@
 # response_document_node first-run benchmark report
 
-- Updated: 2026-06-08T04:49:17.652799+00:00
+- Updated: 2026-06-08T05:18:19.701208+00:00
 - Cases recorded: 10
-- Passed: 8
-- Failed/error: 2
+- Passed: 10
+- Failed/error: 0
 
 | Case | Behavior | Status | First failure |
 | --- | --- | --- | --- |
@@ -15,5 +15,5 @@
 | `response-document-006-approval-required` | approval required | passed |  |
 | `response-document-007-mutation-result` | mutation result | passed |  |
 | `response-document-008-approval-decision` | approval decision | passed |  |
-| `response-document-009-replan-limit-diagnostic` | replan-limit diagnostic | failed | expected evidence path is empty: response_document_context.diagnostics.blocks |
-| `response-document-010-stale-evidence-not-reused` | stale evidence not reused | failed | expected evidence path is empty: response_document_context.diagnostics.historical_evidence_refs |
+| `response-document-009-replan-limit-diagnostic` | replan-limit diagnostic | passed |  |
+| `response-document-010-stale-evidence-not-reused` | stale evidence not reused | passed |  |

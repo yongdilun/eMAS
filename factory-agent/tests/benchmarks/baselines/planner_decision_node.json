@@ -1,27 +1,6 @@
 {
-  "generated_at": "2026-06-08T04:38:34.946578+00:00",
+  "generated_at": "2026-06-08T05:15:05.425921+00:00",
   "mode": "strict_xfail_first_run",
   "node": "planner_decision_node",
-  "xfail": {
-    "planner-decision-003-request-clarification": {
-      "behavior": "request clarification",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: planner_decisions"
-    },
-    "planner-decision-004-fail-closed": {
-      "behavior": "fail closed",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: planner_decisions"
-    },
-    "planner-decision-005-malformed-planner-output": {
-      "behavior": "malformed planner output",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: planner_proposer_diagnostics"
-    },
-    "planner-decision-007-dependency-blocked-requirement": {
-      "behavior": "dependency-blocked requirement",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: planner_diagnostics.planner_decision_node.blocked_by_dependency_plan"
-    }
-  }
+  "xfail": {}
 }

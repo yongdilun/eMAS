@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "single read",
-      "duration_ms": 8208,
+      "duration_ms": 836,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -42,18 +42,18 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 296,
+            "duration_ms": 452,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=235, total_tokens=875, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 912,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -119,17 +119,17 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 296,
+            "duration_ms": 452,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=235, total_tokens=875, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 912,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -217,12 +217,12 @@
       "id": "semantic-intake-001-single-read",
       "node": "semantic_intake_node",
       "prompt": "Show machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:35:44.167345+00:00",
+      "started_at": "2026-06-08T05:18:23.646653+00:00",
       "status": "passed"
     },
     {
       "behavior": "filtered list",
-      "duration_ms": 2807,
+      "duration_ms": 692,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -263,18 +263,18 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 328,
+            "duration_ms": 343,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=238, total_tokens=878, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=237))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 944,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"list\",\n      \"text\": \"List low priority jobs sorted by deadline ascending, limit 3.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -340,17 +340,17 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 328,
+            "duration_ms": 343,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=238, total_tokens=878, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=237))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 944,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"list\",\n      \"text\": \"List low priority jobs sorted by deadline ascending, limit 3.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -445,12 +445,12 @@
       "id": "semantic-intake-002-filtered-list",
       "node": "semantic_intake_node",
       "prompt": "List low priority jobs sorted by deadline ascending, limit 3.",
-      "started_at": "2026-06-08T04:35:52.391468+00:00",
+      "started_at": "2026-06-08T05:18:24.493705+00:00",
       "status": "passed"
     },
     {
       "behavior": "document/RAG",
-      "duration_ms": 3610,
+      "duration_ms": 1707,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -489,20 +489,27 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 618,
+            "duration_ms": 709,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=244, total_tokens=884, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=243))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 2,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 958,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Use LOTO procedure documents\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": \"To explain lockout steps for machine M-CNC-01\",\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"show\",\n      \"text\": \"to explain lockout steps for machine M-CNC-01\",\n      \"parent_item_id\": \"1\",\n      \"condition\": null,\n      \"c",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -566,19 +573,26 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 618,
+            "duration_ms": 709,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=244, total_tokens=884, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=243))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 2,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 958,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Use LOTO procedure documents\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": \"To explain lockout steps for machine M-CNC-01\",\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"show\",\n      \"text\": \"to explain lockout steps for machine M-CNC-01\",\n      \"parent_item_id\": \"1\",\n      \"condition\": null,\n      \"c",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -668,12 +682,12 @@
       "id": "semantic-intake-003-document-rag",
       "node": "semantic_intake_node",
       "prompt": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01.",
-      "started_at": "2026-06-08T04:35:55.211796+00:00",
+      "started_at": "2026-06-08T05:18:25.207949+00:00",
       "status": "passed"
     },
     {
       "behavior": "mutation",
-      "duration_ms": 3233,
+      "duration_ms": 774,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -713,18 +727,18 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 333,
+            "duration_ms": 407,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=238, total_tokens=878, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=237))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 925,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"mutation_or_approval_request\",\n      \"text\": \"Change job JOB-BENCH-001 priority to high.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "mutation_or_approval_request": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -790,17 +804,17 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 333,
+            "duration_ms": 407,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=238, total_tokens=878, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=237))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 925,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"mutation_or_approval_request\",\n      \"text\": \"Change job JOB-BENCH-001 priority to high.\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "mutation_or_approval_request": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -891,12 +905,12 @@
       "id": "semantic-intake-004-mutation",
       "node": "semantic_intake_node",
       "prompt": "Change job JOB-BENCH-001 priority to high.",
-      "started_at": "2026-06-08T04:35:58.862798+00:00",
+      "started_at": "2026-06-08T05:18:26.941431+00:00",
       "status": "passed"
     },
     {
       "behavior": "multi-intent cascade",
-      "duration_ms": 3394,
+      "duration_ms": 1301,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -912,8 +926,7 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "job_id",
-                  "active_job_id"
+                  "M-CNC-01_active_job_id"
                 ]
               },
               "entity": "machine",
@@ -939,18 +952,18 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 667,
+            "duration_ms": 817,
             "item_count": 2,
-            "prepared_clause_count": 2,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=247, total_tokens=887, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 960,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": [],\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"if it has an active job show that job status.\",\n      \"parent_item_id\": \"1\",\n      \"condition\": {\n        \"field_any\": [\"M-CNC-01_active_job_",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 2
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -1002,15 +1015,14 @@
               "activated_child_requirement_ids": [],
               "condition": {
                 "field_any": [
-                  "job_id",
-                  "active_job_id"
+                  "M-CNC-01_active_job_id"
                 ],
                 "source": "active_parent_evidence",
                 "type": "active_parent_evidence_has_any_field"
               },
               "derived_from_evidence_refs": [],
               "diagnostics": {
-                "dependent_referent_guard": true,
+                "compiled_from_semantic_intake": true,
                 "non_executable_until_condition_true": true,
                 "role": "conditional_branch"
               },
@@ -1023,8 +1035,7 @@
                 "intent_operation": "report_status",
                 "requirement_type": "single_entity_status",
                 "value_from_field_any": [
-                  "job_id",
-                  "active_job_id"
+                  "M-CNC-01_active_job_id"
                 ]
               },
               "parent_requirement_id": "req-001",
@@ -1060,17 +1071,17 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 667,
+            "duration_ms": 817,
             "item_count": 2,
-            "prepared_clause_count": 2,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=247, total_tokens=887, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 960,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": [],\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"if it has an active job show that job status.\",\n      \"parent_item_id\": \"1\",\n      \"condition\": {\n        \"field_any\": [\"M-CNC-01_active_job_",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 2
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -1078,8 +1089,7 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "job_id",
-                  "active_job_id"
+                  "M-CNC-01_active_job_id"
                 ]
               },
               "depends_on": [],
@@ -1162,12 +1172,12 @@
       "id": "semantic-intake-005-multi-intent-cascade",
       "node": "semantic_intake_node",
       "prompt": "Show machine M-CNC-01 status, then if it has an active job show that job status.",
-      "started_at": "2026-06-08T04:36:02.115313+00:00",
+      "started_at": "2026-06-08T05:18:27.729036+00:00",
       "status": "passed"
     },
     {
       "behavior": "conditional follow-up",
-      "duration_ms": 3581,
+      "duration_ms": 1072,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1182,9 +1192,9 @@
               "action": "read_one",
               "constraints": {
                 "machine_id": "M-CNC-01",
-                "status": [
-                  "running",
-                  "active"
+                "observation_fields": [
+                  "m_cnc_01_id",
+                  "active_m_cnc_01_id"
                 ]
               },
               "entity": "machine",
@@ -1208,18 +1218,18 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
-            "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=245, total_tokens=885, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=244))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "content_chars": 690,
+            "duration_ms": 720,
+            "item_count": 2,
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 955,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Check machine M-CNC-01\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"if it is running, show the active job details.\",\n      \"parent_item_id\": \"1\",\n      \"condition\": {\n        \"field_any\": [\"M-CNC-01_status\", \"M-CN",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -1266,7 +1276,42 @@
         "requirement_ledger": {
           "answer_instructions": [],
           "clarification_needs": [],
-          "conditional_branches": [],
+          "conditional_branches": [
+            {
+              "activated_child_requirement_ids": [],
+              "condition": {
+                "field_any": [
+                  "m_cnc_01_id",
+                  "active_m_cnc_01_id"
+                ],
+                "source": "active_parent_evidence",
+                "type": "active_parent_evidence_has_any_field"
+              },
+              "derived_from_evidence_refs": [],
+              "diagnostics": {
+                "compiled_from_semantic_intake": true,
+                "non_executable_until_condition_true": true,
+                "role": "conditional_branch"
+              },
+              "id": "branch-001",
+              "on_true": {
+                "action": "read_one",
+                "constraint_field": "m_cnc_01_id",
+                "entity": "m_cnc_01",
+                "fan_out": "first_value",
+                "intent_operation": "report_status",
+                "requirement_type": "single_entity_status",
+                "value_from_field_any": [
+                  "m_cnc_01_id",
+                  "active_m_cnc_01_id"
+                ]
+              },
+              "parent_requirement_id": "req-001",
+              "skipped_reason": null,
+              "status": "pending",
+              "text": "if it is running, show the active job details."
+            }
+          ],
           "formatting_instructions": [],
           "intake_clauses": [
             {
@@ -1276,7 +1321,16 @@
               "reason": "executable_required_requirement",
               "requirement_id": "req-001",
               "role": "required_requirement",
-              "text": "Check machine M-CNC-01; if it is running, show the active job details."
+              "text": "Check machine M-CNC-01"
+            },
+            {
+              "branch_id": "branch-001",
+              "id": "clause-002",
+              "parent_requirement_id": "req-001",
+              "reason": "conditional_branch_waits_for_parent_evidence",
+              "requirement_id": null,
+              "role": "conditional_branch",
+              "text": "if it is running, show the active job details."
             }
           ],
           "intake_diagnostics": {
@@ -1285,26 +1339,26 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
-            "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=245, total_tokens=885, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=244))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "content_chars": 690,
+            "duration_ms": 720,
+            "item_count": 2,
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 955,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Check machine M-CNC-01\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"if it is running, show the active job details.\",\n      \"parent_item_id\": \"1\",\n      \"condition\": {\n        \"field_any\": [\"M-CNC-01_status\", \"M-CN",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
               "blockers": [],
               "constraints": {
                 "machine_id": "M-CNC-01",
-                "status": [
-                  "running",
-                  "active"
+                "observation_fields": [
+                  "m_cnc_01_id",
+                  "active_m_cnc_01_id"
                 ]
               },
               "depends_on": [],
@@ -1313,12 +1367,11 @@
               "entity": "machine",
               "evidence_refs": [],
               "expansion_reason": null,
-              "goal": "Check machine M-CNC-01; if it is running, show the active job details.",
+              "goal": "Check machine M-CNC-01",
               "id": "req-001",
               "intent_operation": "report_status",
               "locked_constraints": [
-                "machine_id",
-                "status"
+                "machine_id"
               ],
               "origin": {
                 "constraints": "deterministic_extraction",
@@ -1385,12 +1438,12 @@
       "id": "semantic-intake-006-conditional-follow-up",
       "node": "semantic_intake_node",
       "prompt": "Check machine M-CNC-01; if it is running, show the active job details.",
-      "started_at": "2026-06-08T04:36:05.536077+00:00",
+      "started_at": "2026-06-08T05:18:29.049990+00:00",
       "status": "passed"
     },
     {
       "behavior": "formatting instruction",
-      "duration_ms": 3049,
+      "duration_ms": 1260,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1427,20 +1480,27 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 811,
+            "duration_ms": 818,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=241, total_tokens=881, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "Show machine M-CNC-01 status and answer in one compact table."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 3,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 944,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"show\",\n      \"text\": \"machine M-CNC-01 status\",\n      \"parent_item_id\": \"1\",\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"rea",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -1504,19 +1564,26 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 811,
+            "duration_ms": 818,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=241, total_tokens=881, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=228))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "Show machine M-CNC-01 status and answer in one compact table."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 3,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 944,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show machine M-CNC-01 status\",\n      \"parent_item_id\": null,\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"reason\": null,\n      \"diagnostics\": null\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"show\",\n      \"text\": \"machine M-CNC-01 status\",\n      \"parent_item_id\": \"1\",\n      \"condition\": null,\n      \"child_intent\": null,\n      \"applies_to_item_ids\": null,\n      \"rea",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -1604,12 +1671,12 @@
       "id": "semantic-intake-007-formatting-instruction",
       "node": "semantic_intake_node",
       "prompt": "Show machine M-CNC-01 status and answer in one compact table.",
-      "started_at": "2026-06-08T04:36:09.137128+00:00",
+      "started_at": "2026-06-08T05:18:30.143266+00:00",
       "status": "passed"
     },
     {
       "behavior": "missing entity",
-      "duration_ms": 3505,
+      "duration_ms": 687,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1631,18 +1698,18 @@
             ],
             "compiled_requirement_count": 0,
             "compiler_authority": "deterministic",
+            "content_chars": 333,
+            "duration_ms": 350,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=230, total_tokens=870, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=229))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 907,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show the machine status.\",\n      \"parent_item_id\": \"\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"The user requests to view the status of a machine.\",\n      \"diagnostics\": \"\"\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "clarification_need": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -1715,17 +1782,17 @@
             ],
             "compiled_requirement_count": 0,
             "compiler_authority": "deterministic",
+            "content_chars": 333,
+            "duration_ms": 350,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=230, total_tokens=870, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=229))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 907,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show the machine status.\",\n      \"parent_item_id\": \"\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"The user requests to view the status of a machine.\",\n      \"diagnostics\": \"\"\n    }\n  ]\n}\n```",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "clarification_need": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [],
           "revision": 1,
@@ -1771,18 +1838,16 @@
           }
         ]
       },
-      "failures": [
-        "expected evidence path is empty: requirement_ledger.requirements"
-      ],
+      "failures": [],
       "id": "semantic-intake-008-missing-entity",
       "node": "semantic_intake_node",
       "prompt": "Show the machine status.",
-      "started_at": "2026-06-08T04:36:12.211104+00:00",
-      "status": "failed"
+      "started_at": "2026-06-08T05:18:31.418538+00:00",
+      "status": "passed"
     },
     {
       "behavior": "pronoun follow-up",
-      "duration_ms": 3212,
+      "duration_ms": 1166,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1817,20 +1882,27 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 617,
+            "duration_ms": 720,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=243, total_tokens=883, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=242))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "For machine M-CNC-01, show its current job, show its deadline."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 2,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 945,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"show its current job\",\n      \"parent_item_id\": \"1\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"To display the current job of machine M-CNC-01.\",\n      \"diagnostics\": []\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"read\",\n      \"text\": \"show its deadline\",\n      \"parent_item_id\": \"1\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_i",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -1894,19 +1966,26 @@
             "active_executable_roles": [
               "required_requirement"
             ],
+            "clause_repair_proposer": "deterministic_fallback_semantic_intake_proposer",
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 617,
+            "duration_ms": 720,
             "item_count": 1,
-            "prepared_clause_count": 1,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=243, total_tokens=883, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=242))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_count_mismatch": false,
+            "llm_clause_coverage_repaired": true,
+            "llm_fragmented_prepared_clauses": [
+              "For machine M-CNC-01, show its current job, show its deadline."
+            ],
+            "llm_invoked": true,
+            "llm_item_count_before_clause_repair": 2,
+            "llm_missing_prepared_clauses": [],
+            "prompt_chars": 945,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"show its current job\",\n      \"parent_item_id\": \"1\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"To display the current job of machine M-CNC-01.\",\n      \"diagnostics\": []\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"read\",\n      \"text\": \"show its deadline\",\n      \"parent_item_id\": \"1\",\n      \"condition\": \"\",\n      \"child_intent\": \"show\",\n      \"applies_to_i",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 1
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -1991,12 +2070,12 @@
       "id": "semantic-intake-009-pronoun-follow-up",
       "node": "semantic_intake_node",
       "prompt": "For machine M-CNC-01, show its current job and then show its deadline.",
-      "started_at": "2026-06-08T04:36:15.784660+00:00",
+      "started_at": "2026-06-08T05:18:32.126594+00:00",
       "status": "passed"
     },
     {
       "behavior": "LLM repair/fallback",
-      "duration_ms": 3376,
+      "duration_ms": 1266,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -2022,16 +2101,6 @@
               ],
               "requirement_id": "req-001",
               "source_of_truth": "operational_state"
-            },
-            {
-              "action": "read",
-              "constraints": {},
-              "entity": null,
-              "known_args": {},
-              "reason": "deterministic_source_hint:unknown",
-              "requested_fields": [],
-              "requirement_id": "req-002",
-              "source_of_truth": "unknown"
             }
           ],
           "graph_state_phase": "phase1_contracts_only",
@@ -2043,20 +2112,20 @@
             "active_executable_roles": [
               "required_requirement"
             ],
-            "compiled_requirement_count": 2,
+            "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 821,
+            "duration_ms": 861,
             "item_count": 2,
-            "prepared_clause_count": 2,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=251, total_tokens=891, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=250))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 994,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show status for M-CNC-01\",\n      \"parent_item_id\": \"\",\n      \"condition\": \"\",\n      \"child_intent\": \"\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"To display the status of the M-CNC-01 item.\",\n      \"diagnostics\": \"\"\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"make sure every requested clause is represented even if the model returns one item.\",\n      \"parent_item_id\": \"1",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 2
-            },
+            "real_llm_mode": true,
             "runs_inside_langgraph_node": true,
-            "source": "deterministic_fallback",
+            "source": "llm",
             "status": "compiled_in_langgraph_node"
           }
         },
@@ -2077,7 +2146,7 @@
         },
         "planner_decisions": [],
         "planner_diagnostics": {
-          "capability_need_count": 2,
+          "capability_need_count": 1,
           "execution_started": false,
           "planner_kind": "planner_owned_agent_graph_phase1_state_contract",
           "received_full_tool_catalog_before_need": false,
@@ -2102,7 +2171,14 @@
         "rag_calls": [],
         "requirement_ledger": {
           "answer_instructions": [],
-          "clarification_needs": [],
+          "clarification_needs": [
+            {
+              "blocked_entity": null,
+              "id": "clarification-001",
+              "reason": "conditional_branch_missing_active_parent_or_referent",
+              "text": "make sure every requested clause is represented even if the model returns one item."
+            }
+          ],
           "conditional_branches": [],
           "formatting_instructions": [],
           "intake_clauses": [
@@ -2119,9 +2195,9 @@
               "branch_id": null,
               "id": "clause-002",
               "parent_requirement_id": null,
-              "reason": "executable_required_requirement",
-              "requirement_id": "req-002",
-              "role": "required_requirement",
+              "reason": "conditional_branch_missing_active_parent_or_referent",
+              "requirement_id": null,
+              "role": "clarification_need",
               "text": "make sure every requested clause is represented even if the model returns one item."
             }
           ],
@@ -2129,19 +2205,19 @@
             "active_executable_roles": [
               "required_requirement"
             ],
-            "compiled_requirement_count": 2,
+            "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
+            "content_chars": 821,
+            "duration_ms": 861,
             "item_count": 2,
-            "prepared_clause_count": 2,
-            "primary_proposer": "openai_compatible_semantic_intake_proposer",
-            "primary_proposer_error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=640, prompt_tokens=251, total_tokens=891, completion_tokens_details=None, prompt_tokens_details=PromptTokensDetails(audio_tokens=None, cached_tokens=250))",
-            "primary_proposer_error_type": "LengthFinishReasonError",
-            "proposer": "deterministic_fallback_semantic_intake_proposer",
+            "llm_clause_coverage_repaired": false,
+            "llm_invoked": true,
+            "prompt_chars": 994,
+            "proposer": "openai_compatible_semantic_intake_proposer",
+            "raw_content_preview": "```json\n{\n  \"items\": [\n    {\n      \"id\": \"1\",\n      \"role\": \"read\",\n      \"text\": \"Show status for M-CNC-01\",\n      \"parent_item_id\": \"\",\n      \"condition\": \"\",\n      \"child_intent\": \"\",\n      \"applies_to_item_ids\": [],\n      \"reason\": \"To display the status of the M-CNC-01 item.\",\n      \"diagnostics\": \"\"\n    },\n    {\n      \"id\": \"2\",\n      \"role\": \"conditional_branch\",\n      \"text\": \"make sure every requested clause is represented even if the model returns one item.\",\n      \"parent_item_id\": \"1",
             "raw_llm_output_executes_tools": false,
-            "role_counts": {
-              "required_requirement": 2
-            },
-            "source": "deterministic_fallback"
+            "real_llm_mode": true,
+            "source": "llm"
           },
           "requirements": [
             {
@@ -2178,34 +2254,6 @@
               "source_of_truth": "operational_state",
               "status": "open",
               "superseded_by": null
-            },
-            {
-              "blockers": [],
-              "constraints": {},
-              "depends_on": [],
-              "derived_from_evidence_refs": [],
-              "derived_from_missing_reasons": [],
-              "entity": null,
-              "evidence_refs": [],
-              "expansion_reason": null,
-              "goal": "make sure every requested clause is represented even if the model returns one item.",
-              "id": "req-002",
-              "intent_operation": "request_clarification",
-              "locked_constraints": [],
-              "origin": {
-                "constraints": "deterministic_extraction",
-                "fields": "metadata_field_aliases",
-                "goal": "deterministic_requirement_sketch",
-                "source_of_truth": "capability_map_hint"
-              },
-              "parent_requirement_id": null,
-              "requested_fields": [],
-              "required": true,
-              "requirement_type": "clarification_request",
-              "satisfaction_checks": [],
-              "source_of_truth": "unknown",
-              "status": "open",
-              "superseded_by": null
             }
           ],
           "revision": 1,
@@ -2230,8 +2278,7 @@
           "pending_approval_id": null,
           "render_contract": null,
           "requirement_ids": [
-            "req-001",
-            "req-002"
+            "req-001"
           ],
           "revision": 1,
           "state": "not_started"
@@ -2258,9 +2305,9 @@
       "id": "semantic-intake-010-llm-repair-fallback",
       "node": "semantic_intake_node",
       "prompt": "Show status for M-CNC-01; then make sure every requested clause is represented even if the model returns one item.",
-      "started_at": "2026-06-08T04:36:19.024707+00:00",
+      "started_at": "2026-06-08T05:18:33.315030+00:00",
       "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:36:22.415932+00:00"
+  "updated_at": "2026-06-08T05:18:34.597252+00:00"
 }

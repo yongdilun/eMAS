@@ -1,17 +1,6 @@
 {
-  "generated_at": "2026-06-08T04:45:16.981745+00:00",
+  "generated_at": "2026-06-08T05:15:27.858856+00:00",
   "mode": "strict_xfail_first_run",
   "node": "satisfaction_node",
-  "xfail": {
-    "satisfaction-006-stale-evidence-excluded": {
-      "behavior": "stale evidence excluded",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: graph_diagnostics.phase9_active_revision_evidence.historical_evidence_refs"
-    },
-    "satisfaction-008-replan": {
-      "behavior": "replan",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: graph_diagnostics.planner_owned_replan_spine"
-    }
-  }
+  "xfail": {}
 }

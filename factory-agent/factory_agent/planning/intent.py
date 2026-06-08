@@ -40,7 +40,7 @@ _QUESTION_RE = re.compile(
     re.IGNORECASE,
 )
 _CLAUSE_SPLIT_RE = re.compile(
-    r"\s*\b(?:and then|then|next(?!\s+\d)|after that|afterwards|finally)\b\s*|\s+;\s*|\n+|(?<=[.!?])\s+(?=[A-Z])",
+    r"\s*\b(?:and then|then|next(?!\s+\d)|after that|afterwards|finally)\b\s*|\s*;\s*|\n+|(?<=[.!?])\s+(?=[A-Z])",
     re.IGNORECASE,
 )
 _PLAIN_AND_RE = re.compile(r"\s+\band\s+", re.IGNORECASE)
@@ -81,8 +81,10 @@ _MACHINE_NAME_RE = re.compile(r"\bmachine\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECA
 _PRODUCT_RE = re.compile(r"\bproduct\s+([A-Z0-9][A-Z0-9-]*)\b", re.IGNORECASE)
 _UNBOUND_REFERENT_ID_TOKENS = {
     "A",
+    "ACTIVE",
     "AN",
     "APPLICABLE",
+    "CURRENT",
     "IF",
     "IT",
     "ITS",

@@ -137,8 +137,11 @@
     },
     "expected_evidence": [
       "response_document_context.diagnostics.historical_evidence_refs",
-      "response_document_context.diagnostics.response_evidence_refs"
-    ]
+      "response_document_context.diagnostics.stale_evidence_excluded_from_active_revision"
+    ],
+    "expected_equals": {
+      "response_document_context.diagnostics.response_evidence_refs": []
+    }
   }
 ]
 

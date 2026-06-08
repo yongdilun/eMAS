@@ -1,6 +1,6 @@
 # planner_choose_tool_node first-run benchmark report
 
-- Updated: 2026-06-08T04:42:02.136293+00:00
+- Updated: 2026-06-08T05:17:58.453038+00:00
 - Cases recorded: 7
 - Passed: 7
 - Failed/error: 0

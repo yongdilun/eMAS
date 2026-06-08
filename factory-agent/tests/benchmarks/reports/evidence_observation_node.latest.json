@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "API evidence normalization",
-      "duration_ms": 42,
+      "duration_ms": 33,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -554,12 +554,12 @@
       "id": "evidence-observation-001-api-normalization",
       "node": "evidence_observation_node",
       "prompt": "Show machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:44:21.165206+00:00",
+      "started_at": "2026-06-08T05:17:35.518748+00:00",
       "status": "passed"
     },
     {
       "behavior": "RAG citation evidence",
-      "duration_ms": 479,
+      "duration_ms": 454,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1186,12 +1186,12 @@
       "id": "evidence-observation-002-rag-citation",
       "node": "evidence_observation_node",
       "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
-      "started_at": "2026-06-08T04:44:21.213533+00:00",
+      "started_at": "2026-06-08T05:17:35.558098+00:00",
       "status": "passed"
     },
     {
       "behavior": "no-match evidence",
-      "duration_ms": 33,
+      "duration_ms": 34,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1747,12 +1747,12 @@
       "id": "evidence-observation-003-no-match",
       "node": "evidence_observation_node",
       "prompt": "Show status for missing machine M-NOPE-404.",
-      "started_at": "2026-06-08T04:44:21.715035+00:00",
+      "started_at": "2026-06-08T05:17:36.034408+00:00",
       "status": "passed"
     },
     {
       "behavior": "stale background result ignored",
-      "duration_ms": 36,
+      "duration_ms": 35,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1794,56 +1794,7 @@
         ],
         "case_id": "evidence-observation-004-stale-background-ignored",
         "evidence_ledger": {
-          "evidence": [
-            {
-              "approval_id": null,
-              "args": {
-                "id": "M-CNC-01"
-              },
-              "citations": [],
-              "confidence": "deterministic",
-              "diagnostic_metadata": {
-                "active_revision_satisfaction": true,
-                "checkpoint_id": "old-checkpoint",
-                "decision_id": "dec-execute-002",
-                "direct_v2_execution": false,
-                "execution_adapter": "graph_http_tool_adapter",
-                "graph_authorized_execution": true,
-                "graph_checkpoint_identity": null,
-                "graph_observed_as_evidence": true,
-                "http_ok": true,
-                "http_status": 200,
-                "infrastructure_error": false,
-                "latency_ms": 3,
-                "ledger_revision": 1,
-                "ok": true,
-                "result_ref": "graph-api-result-call-bench-001",
-                "tool_call_id": "call-bench-001"
-              },
-              "id": "ev-api-req-001",
-              "legacy_rag_route": null,
-              "normalized_result": {
-                "entity": "machine",
-                "entity_id": "M-CNC-01",
-                "fields": {
-                  "machine_id": "M-CNC-01",
-                  "status": "running"
-                },
-                "request_args": {
-                  "id": "M-CNC-01"
-                },
-                "status_code": 200
-              },
-              "requirement_id": "req-001",
-              "result_ref": "graph-api-result-call-bench-001",
-              "satisfies": [
-                "operational_state_tool_result"
-              ],
-              "source_of_truth": "operational_state",
-              "source_type": "api_tool",
-              "tool_name": "get__machines_{id}"
-            }
-          ]
+          "evidence": []
         },
         "final_validation_result": null,
         "graph_diagnostics": {
@@ -1912,33 +1863,21 @@
             }
           ],
           "evidence_observation": {
-            "evidence_ref": "ev-api-req-001",
-            "evidence_refs": [
-              "ev-api-req-001"
-            ],
-            "graph_evidence": [
+            "ignored_results": [
               {
-                "evidence_ref": "ev-api-req-001",
-                "graph_tool_action": null,
-                "legacy_shortcut_used": false,
+                "active_checkpoint_id": null,
+                "active_ledger_revision": 1,
+                "reason": "result_marked_stale",
                 "requirement_id": "req-001",
-                "source_of_truth": "operational_state",
-                "source_type": "api_tool",
+                "result_checkpoint_id": "old-checkpoint",
+                "result_ledger_revision": 1,
+                "tool_call_id": "call-bench-001",
                 "tool_name": "get__machines_{id}"
               }
             ],
-            "ignored_results": [],
-            "multi_entity_evidence_aggregated": false,
-            "source_of_truth": "operational_state",
-            "source_of_truths": [
-              "operational_state"
-            ],
-            "source_type": "api_tool",
-            "source_types": [
-              "api_tool"
-            ],
+            "stale_background_results_ignored": true,
             "stale_checked_by_graph_revision_and_checkpoint": true,
-            "status": "recorded"
+            "status": "ignored_stale_background_result"
           },
           "graph_state_phase": "phase1_contracts_only",
           "graph_tool_actions": [
@@ -1973,7 +1912,19 @@
               "required_requirement": 1
             },
             "source": "deterministic_fallback"
-          }
+          },
+          "stale_background_results_ignored": [
+            {
+              "active_checkpoint_id": null,
+              "active_ledger_revision": 1,
+              "reason": "result_marked_stale",
+              "requirement_id": "req-001",
+              "result_checkpoint_id": "old-checkpoint",
+              "result_ledger_revision": 1,
+              "tool_call_id": "call-bench-001",
+              "tool_name": "get__machines_{id}"
+            }
+          ]
         },
         "hydrated_tool_cards": [
           {
@@ -2300,18 +2251,16 @@
           }
         ]
       },
-      "failures": [
-        "expected evidence path is empty: graph_diagnostics.stale_background_results_ignored"
-      ],
+      "failures": [],
       "id": "evidence-observation-004-stale-background-ignored",
       "node": "evidence_observation_node",
       "prompt": "Ignore stale machine M-CNC-01 status from an old checkpoint.",
-      "started_at": "2026-06-08T04:44:21.768430+00:00",
-      "status": "failed"
+      "started_at": "2026-06-08T05:17:36.088029+00:00",
+      "status": "passed"
     },
     {
       "behavior": "multi-entity aggregation",
-      "duration_ms": 33,
+      "duration_ms": 35,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -2891,12 +2840,12 @@
       "id": "evidence-observation-005-multi-entity-aggregation",
       "node": "evidence_observation_node",
       "prompt": "List low priority jobs sorted by deadline.",
-      "started_at": "2026-06-08T04:44:22.026084+00:00",
+      "started_at": "2026-06-08T05:17:36.145885+00:00",
       "status": "passed"
     },
     {
       "behavior": "child requirement expansion",
-      "duration_ms": 35,
+      "duration_ms": 37,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -2921,8 +2870,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -2973,6 +2922,7 @@
                 "entity": "machine",
                 "entity_id": "M-CNC-01",
                 "fields": {
+                  "active_job_id": "JOB-BENCH-001",
                   "machine_id": "M-CNC-01",
                   "status": "running"
                 },
@@ -3000,8 +2950,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -3018,11 +2968,13 @@
           ],
           "conditional_branches": [
             {
-              "activated_child_requirement_ids": [],
+              "activated_child_requirement_ids": [
+                "req-001.a"
+              ],
               "condition": {
                 "field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ],
                 "source": "active_parent_evidence",
                 "type": "active_parent_evidence_has_any_field"
@@ -3033,34 +2985,41 @@
               "diagnostics": {
                 "condition": {
                   "field_any": [
-                    "active_id",
-                    "active_active_id"
+                    "job_id",
+                    "active_job_id"
                   ],
                   "source": "active_parent_evidence",
                   "type": "active_parent_evidence_has_any_field"
                 },
                 "dependent_referent_guard": true,
                 "non_executable_until_condition_true": true,
-                "reason": "condition_fields_absent_or_empty",
                 "role": "conditional_branch",
-                "source": "active_parent_evidence"
+                "source": "active_parent_evidence",
+                "trigger_field": "active_job_id",
+                "trigger_fields": [
+                  "active_job_id"
+                ],
+                "trigger_value": "JOB-BENCH-001",
+                "trigger_values": [
+                  "JOB-BENCH-001"
+                ]
               },
               "id": "branch-001",
               "on_true": {
                 "action": "read_one",
-                "constraint_field": "active_id",
-                "entity": "active",
+                "constraint_field": "job_id",
+                "entity": "job",
                 "fan_out": "first_value",
                 "intent_operation": "report_status",
                 "requirement_type": "single_entity_status",
                 "value_from_field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "parent_requirement_id": "req-001",
-              "skipped_reason": "conditional_branch_not_triggered",
-              "status": "skipped",
+              "skipped_reason": null,
+              "status": "activated",
               "text": "show the active job if the result has an active job id."
             }
           ],
@@ -3068,7 +3027,7 @@
             "blocked": [],
             "diagnostics": {
               "label_counts": {
-                "independent_read": 1
+                "independent_read": 2
               },
               "max_parallel_read_batch_size": 3,
               "scheduler": "planner_owned_dependency_scheduler"
@@ -3095,6 +3054,28 @@
                 "tool_names": [
                   "get__machines_{id}"
                 ]
+              },
+              {
+                "action": "read_one",
+                "batch_key": null,
+                "blocked_reasons": [],
+                "can_batch": false,
+                "depends_on_evidence_refs": [
+                  "ev-api-req-001"
+                ],
+                "depends_on_requirement_ids": [
+                  "req-001"
+                ],
+                "diagnostic_metadata": {
+                  "reason": "bounded_identity_without_hydrated_tool_metadata",
+                  "selected_batch_tool_name": null
+                },
+                "estimated_tool_call_count": 1,
+                "label": "independent_read",
+                "ready": true,
+                "requirement_id": "req-001.a",
+                "source_of_truth": "operational_state",
+                "tool_names": []
               }
             ]
           },
@@ -3111,12 +3092,14 @@
             },
             {
               "labels": {
-                "req-001": "independent_read"
+                "req-001": "independent_read",
+                "req-001.a": "independent_read"
               },
               "ledger_revision": 2,
               "ready_groups": [],
               "ready_requirement_ids": [
-                "req-001"
+                "req-001",
+                "req-001.a"
               ]
             }
           ],
@@ -3173,6 +3156,27 @@
             "author": "planner",
             "current_revision": 2,
             "previous_revision": 1
+          },
+          "requirement_expansion": {
+            "added_child_requirement_ids": [
+              "req-001.a"
+            ],
+            "conditional_branch_id": "branch-001",
+            "conditional_branch_status": "activated",
+            "current_revision": 2,
+            "derived_from_evidence_refs": [
+              "ev-api-req-001"
+            ],
+            "parent_requirement_ids": [
+              "req-001"
+            ],
+            "previous_revision": 1,
+            "status": "applied",
+            "tool_state_policy": "child_requires_fresh_retrieval",
+            "trigger_field": "active_job_id",
+            "trigger_fields": [
+              "active_job_id"
+            ]
           },
           "semantic_intake": {
             "active_executable_roles": [
@@ -3284,8 +3288,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -3335,8 +3339,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -3377,16 +3381,19 @@
             "decision_kind": "revise_requirements",
             "diagnostics": {
               "conditional_branch": {
+                "added_child_requirement_ids": [
+                  "req-001.a"
+                ],
                 "branch_id": "branch-001",
-                "reason": "conditional_branch_not_triggered",
-                "status": "skipped"
+                "status": "activated",
+                "trigger_field": "active_job_id"
               }
             },
             "evidence_refs": [
               "ev-api-req-001"
             ],
             "ledger_revision": 1,
-            "reason": "Mark non-triggered conditional branch as skipped.",
+            "reason": "Apply conditional branch child requirement from parent evidence.",
             "requirement_id": "req-001",
             "selected_tool_call": null,
             "selected_tool_calls": []
@@ -3396,7 +3403,7 @@
           "capability_need_count": 1,
           "dependency_plan": {
             "label_counts": {
-              "independent_read": 1
+              "independent_read": 2
             },
             "ledger_revision": 2,
             "ready_group_count": 0
@@ -3423,11 +3430,13 @@
           "clarification_needs": [],
           "conditional_branches": [
             {
-              "activated_child_requirement_ids": [],
+              "activated_child_requirement_ids": [
+                "req-001.a"
+              ],
               "condition": {
                 "field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ],
                 "source": "active_parent_evidence",
                 "type": "active_parent_evidence_has_any_field"
@@ -3438,34 +3447,41 @@
               "diagnostics": {
                 "condition": {
                   "field_any": [
-                    "active_id",
-                    "active_active_id"
+                    "job_id",
+                    "active_job_id"
                   ],
                   "source": "active_parent_evidence",
                   "type": "active_parent_evidence_has_any_field"
                 },
                 "dependent_referent_guard": true,
                 "non_executable_until_condition_true": true,
-                "reason": "condition_fields_absent_or_empty",
                 "role": "conditional_branch",
-                "source": "active_parent_evidence"
+                "source": "active_parent_evidence",
+                "trigger_field": "active_job_id",
+                "trigger_fields": [
+                  "active_job_id"
+                ],
+                "trigger_value": "JOB-BENCH-001",
+                "trigger_values": [
+                  "JOB-BENCH-001"
+                ]
               },
               "id": "branch-001",
               "on_true": {
                 "action": "read_one",
-                "constraint_field": "active_id",
-                "entity": "active",
+                "constraint_field": "job_id",
+                "entity": "job",
                 "fan_out": "first_value",
                 "intent_operation": "report_status",
                 "requirement_type": "single_entity_status",
                 "value_from_field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "parent_requirement_id": "req-001",
-              "skipped_reason": "conditional_branch_not_triggered",
-              "status": "skipped",
+              "skipped_reason": null,
+              "status": "activated",
               "text": "show the active job if the result has an active job id."
             }
           ],
@@ -3511,8 +3527,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "depends_on": [],
@@ -3544,6 +3560,42 @@
               "source_of_truth": "operational_state",
               "status": "open",
               "superseded_by": null
+            },
+            {
+              "blockers": [],
+              "constraints": {
+                "job_id": "JOB-BENCH-001"
+              },
+              "depends_on": [
+                "ev-api-req-001"
+              ],
+              "derived_from_evidence_refs": [
+                "ev-api-req-001"
+              ],
+              "derived_from_missing_reasons": [],
+              "entity": "job",
+              "evidence_refs": [],
+              "expansion_reason": "Conditional branch triggered by parent evidence.",
+              "goal": "Read job JOB-BENCH-001 conditional follow-up evidence",
+              "id": "req-001.a",
+              "intent_operation": "report_status",
+              "locked_constraints": [
+                "job_id"
+              ],
+              "origin": {
+                "constraints": null,
+                "fields": null,
+                "goal": null,
+                "source_of_truth": null
+              },
+              "parent_requirement_id": "req-001",
+              "requested_fields": [],
+              "required": true,
+              "requirement_type": "single_entity_status",
+              "satisfaction_checks": [],
+              "source_of_truth": "operational_state",
+              "status": "open",
+              "superseded_by": null
             }
           ],
           "revision": 2,
@@ -3560,19 +3612,35 @@
             },
             {
               "actor": "system",
-              "change_type": "conditional_branch_skipped",
+              "change_type": "add_child_requirements",
               "details": {
+                "added_child_requirement_ids": [
+                  "req-001.a"
+                ],
                 "conditional_branch_id": "branch-001",
+                "conditional_branch_status": "activated",
                 "derived_from_evidence_refs": [
                   "ev-api-req-001"
                 ],
+                "derived_from_missing_reasons": [],
+                "locked_constraints_preserved": true,
                 "parent_requirement_id": "req-001",
-                "skipped_reason": "conditional_branch_not_triggered",
-                "status": "skipped"
+                "parent_requirement_ids": [
+                  "req-001"
+                ],
+                "tool_state_policy": "child_requires_fresh_retrieval",
+                "trigger_field": "active_job_id",
+                "trigger_fields": [
+                  "active_job_id"
+                ],
+                "trigger_value": "JOB-BENCH-001",
+                "trigger_values": [
+                  "JOB-BENCH-001"
+                ]
               },
               "locked_constraints_preserved": true,
               "patch_id": null,
-              "reason": "conditional_branch_not_triggered",
+              "reason": "Conditional branch activated from parent evidence.",
               "requirement_id": "req-001",
               "revision": 2
             }
@@ -3586,7 +3654,8 @@
           "pending_approval_id": null,
           "render_contract": null,
           "requirement_ids": [
-            "req-001"
+            "req-001",
+            "req-001.a"
           ],
           "revision": 2,
           "state": "not_started"
@@ -3622,15 +3691,13 @@
           }
         ]
       },
-      "failures": [
-        "expected evidence path is empty: graph_diagnostics.requirement_expansion"
-      ],
+      "failures": [],
       "id": "evidence-observation-006-child-requirement-expansion",
       "node": "evidence_observation_node",
       "prompt": "Show machine M-CNC-01 status, then show the active job if the result has an active job id.",
-      "started_at": "2026-06-08T04:44:22.079739+00:00",
-      "status": "failed"
+      "started_at": "2026-06-08T05:17:36.203095+00:00",
+      "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:44:22.131129+00:00"
+  "updated_at": "2026-06-08T05:17:36.259644+00:00"
 }

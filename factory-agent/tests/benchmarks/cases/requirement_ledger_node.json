@@ -25,7 +25,7 @@
     "id": "requirement-ledger-003-answer-instructions",
     "node": "requirement_ledger_node",
     "behavior": "answer instructions",
-    "prompt": "List low priority jobs sorted by deadline and answer as a compact table.",
+    "prompt": "List low priority jobs sorted by deadline, then summarize the result.",
     "expected_evidence": [
       "planner_diagnostics.requirement_ledger_node",
       "requirement_ledger.answer_instructions",

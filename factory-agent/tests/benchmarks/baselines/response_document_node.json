@@ -1,17 +1,6 @@
 {
-  "generated_at": "2026-06-08T04:48:37.860574+00:00",
+  "generated_at": "2026-06-08T05:17:13.956761+00:00",
   "mode": "strict_xfail_first_run",
   "node": "response_document_node",
-  "xfail": {
-    "response-document-009-replan-limit-diagnostic": {
-      "behavior": "replan-limit diagnostic",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: response_document_context.diagnostics.blocks"
-    },
-    "response-document-010-stale-evidence-not-reused": {
-      "behavior": "stale evidence not reused",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: response_document_context.diagnostics.historical_evidence_refs"
-    }
-  }
+  "xfail": {}
 }

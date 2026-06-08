@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "deterministic single tool",
-      "duration_ms": 8233,
+      "duration_ms": 2656,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -367,7 +367,7 @@
                 "candidate_tool_call_count": 1,
                 "content_chars": 838,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 2619,
+                "duration_ms": 2297,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -1223,12 +1223,12 @@
       "id": "planner-choose-001-deterministic-single-tool",
       "node": "planner_choose_tool_node",
       "prompt": "Show machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:41:42.948478+00:00",
+      "started_at": "2026-06-08T05:17:44.545106+00:00",
       "status": "passed"
     },
     {
       "behavior": "collection tool",
-      "duration_ms": 2086,
+      "duration_ms": 2070,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1727,7 +1727,7 @@
                 "candidate_tool_call_count": 2,
                 "content_chars": 474,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 1706,
+                "duration_ms": 1705,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -2600,12 +2600,12 @@
       "id": "planner-choose-002-collection-tool",
       "node": "planner_choose_tool_node",
       "prompt": "List low priority jobs sorted by deadline ascending.",
-      "started_at": "2026-06-08T04:41:51.195684+00:00",
+      "started_at": "2026-06-08T05:17:47.213737+00:00",
       "status": "passed"
     },
     {
       "behavior": "RAG tool",
-      "duration_ms": 1089,
+      "duration_ms": 1284,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -3757,12 +3757,12 @@
       "id": "planner-choose-003-rag-tool",
       "node": "planner_choose_tool_node",
       "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
-      "started_at": "2026-06-08T04:41:53.309973+00:00",
+      "started_at": "2026-06-08T05:17:49.311219+00:00",
       "status": "passed"
     },
     {
       "behavior": "LLM choice among candidates",
-      "duration_ms": 985,
+      "duration_ms": 978,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -4253,7 +4253,7 @@
                 "candidate_tool_call_count": 2,
                 "content_chars": 177,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 650,
+                "duration_ms": 638,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -5109,12 +5109,12 @@
       "id": "planner-choose-004-llm-choice-among-candidates",
       "node": "planner_choose_tool_node",
       "prompt": "Show status for job JOB-BENCH-001, not the list of jobs.",
-      "started_at": "2026-06-08T04:41:54.422194+00:00",
+      "started_at": "2026-06-08T05:17:50.622621+00:00",
       "status": "passed"
     },
     {
       "behavior": "outside-window rejection",
-      "duration_ms": 2550,
+      "duration_ms": 2571,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -5478,7 +5478,7 @@
                 "candidate_tool_call_count": 1,
                 "content_chars": 705,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 2132,
+                "duration_ms": 2244,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -6334,12 +6334,12 @@
       "id": "planner-choose-005-outside-window-rejection",
       "node": "planner_choose_tool_node",
       "prompt": "Choose only from the current candidate window for machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:41:55.434956+00:00",
+      "started_at": "2026-06-08T05:17:51.618722+00:00",
       "status": "passed"
     },
     {
       "behavior": "failed-tool-memory retry",
-      "duration_ms": 2427,
+      "duration_ms": 2519,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -6815,7 +6815,7 @@
                 "candidate_tool_call_count": 2,
                 "content_chars": 722,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 2071,
+                "duration_ms": 2139,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -7671,12 +7671,12 @@
       "id": "planner-choose-006-failed-tool-memory-retry",
       "node": "planner_choose_tool_node",
       "prompt": "Retry machine M-CNC-01 status after the previous tool failed.",
-      "started_at": "2026-06-08T04:41:58.006792+00:00",
+      "started_at": "2026-06-08T05:17:54.217726+00:00",
       "status": "passed"
     },
     {
       "behavior": "write tool selection",
-      "duration_ms": 1660,
+      "duration_ms": 1667,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -8141,7 +8141,7 @@
                 "candidate_tool_call_count": 2,
                 "content_chars": 342,
                 "decision_id": "dec-choose-002",
-                "duration_ms": 1221,
+                "duration_ms": 1167,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -9002,9 +9002,9 @@
       "id": "planner-choose-007-write-tool-selection",
       "node": "planner_choose_tool_node",
       "prompt": "Change job JOB-BENCH-001 priority to high.",
-      "started_at": "2026-06-08T04:42:00.462579+00:00",
+      "started_at": "2026-06-08T05:17:56.768495+00:00",
       "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:42:02.136293+00:00"
+  "updated_at": "2026-06-08T05:17:58.453038+00:00"
 }

@@ -107,7 +107,7 @@
     },
     "expected_evidence": [
       "graph_diagnostics.phase9_active_revision_evidence",
-      "graph_diagnostics.planner_owned_replan_spine"
+      "graph_diagnostics.replan_spine"
     ]
   },
   {
@@ -122,7 +122,7 @@
     },
     "expected_evidence": [
       "graph_diagnostics.phase9_active_revision_evidence",
-      "graph_diagnostics.planner_owned_replan_spine"
+      "graph_diagnostics.replan_spine"
     ]
   }
 ]

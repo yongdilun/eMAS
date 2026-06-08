@@ -507,14 +507,17 @@ def _fake_http_executor_for_case(case: Mapping[str, Any]):
 
 async def _approval_preview_provider(*, state, tool_call, requirement, card):
     _ = state, requirement, card
+    row = {"tool_name": tool_call.tool_name, **dict(tool_call.args)}
     return {
         "summary": f"Benchmark approval required for {tool_call.tool_name}",
         "count": 1,
-        "preview": [{"tool_name": tool_call.tool_name, "args": tool_call.args}],
+        "rows": [row],
+        "preview_rows": [row],
+        "commit_args": dict(tool_call.args),
         "bundle_ui": {
             "kind": "node_benchmark_approval",
             "headline": "Benchmark approval preview",
-            "rows": [{"tool_name": tool_call.tool_name, **dict(tool_call.args)}],
+            "rows": [row],
         },
     }
 
@@ -793,16 +796,74 @@ def _prepare_parallel_read_batch_if_requested(
     if first_call is None:
         return
     second_req = state.requirement_ledger.requirements[1]
+    second_need = graph_module._capability_need_for_requirement(state, second_req.id)
+    second_tool_name = "get__jobs_{id}" if "get__jobs_{id}" in tools else first_call.tool_name
+    second_tool = tools[second_tool_name]
+    if not any(window.requirement_id == second_req.id for window in state.candidate_tool_windows):
+        state.candidate_tool_windows.append(
+            CandidateToolWindow(
+                requirement_id=second_req.id,
+                capability_need=second_need,
+                candidates=[
+                    CandidateTool(
+                        tool_name=second_tool_name,
+                        rank=1,
+                        source_of_truth=second_need.source_of_truth,
+                        actions=[second_need.action],
+                        reason="node benchmark seeded parallel candidate",
+                        requires_approval=second_tool.requires_approval,
+                    )
+                ],
+                backend_used="node_benchmark_seeded_parallel_window",
+            )
+        )
+    if not any(cards.requirement_id == second_req.id for cards in state.hydrated_tool_cards):
+        state.hydrated_tool_cards.append(
+            HydratedToolCards(
+                requirement_id=second_req.id,
+                cards=[
+                    HydratedToolCard(
+                        tool_name=second_tool_name,
+                        description=second_tool.description,
+                        source_of_truth=second_need.source_of_truth,
+                        actions=[second_need.action],
+                        input_schema=second_tool.input_schema,
+                        output_schema=second_tool.output_schema,
+                        required_args=list(second_tool.input_schema.get("required") or []),
+                        path_params=list(second_tool.path_params or []),
+                        query_params=list(second_tool.query_params or []),
+                        supports_filters=bool(second_tool.query_params),
+                        supports_sort="sort_by" in (second_tool.query_params or []),
+                        supports_limit="limit" in (second_tool.query_params or []),
+                        supports_fields="fields" in (second_tool.query_params or []),
+                        output_contract=(second_tool.output_schema.get("x-ai-response-contracts") or [None])[0],
+                        is_read_only=second_tool.is_read_only,
+                        requires_approval=second_tool.requires_approval,
+                    )
+                ],
+            )
+        )
     second_call = GraphToolCall(
         call_id="call-bench-parallel-002",
         kind="api_tool",
-        tool_name="get__jobs_{id}" if "get__jobs_{id}" in tools else first_call.tool_name,
+        tool_name=second_tool_name,
         args={"id": "JOB-BENCH-002", "fields": "job_id,status"},
         requirement_id=second_req.id,
         candidate_window_id=second_req.id,
     )
-    state.planner_decisions[-1].selected_tool_calls = [first_call, second_call]
-    state.planner_decisions[-1].selected_tool_call = None
+    second_decision = PlannerDecisionRecord(
+        decision_id=f"dec-choose-bench-{len(state.planner_decisions) + 1:03d}",
+        decision_kind="choose_tool",
+        author="planner",
+        requirement_id=second_req.id,
+        ledger_revision=state.requirement_ledger.revision,
+        capability_need=second_need,
+        selected_tool_call=second_call,
+        reason="Node benchmark seeded parallel tool choice.",
+        diagnostics={"planner_proposer": _seeded_planner_diagnostics()},
+    )
+    second_call.decision_id = second_decision.decision_id
+    state.planner_decisions.append(second_decision)
 
 
 def _prepare_stale_pending_execution_if_requested(state: PlannerOwnedAgentGraphState, case: Mapping[str, Any]) -> None:
@@ -813,18 +874,20 @@ def _prepare_stale_pending_execution_if_requested(state: PlannerOwnedAgentGraphS
         return
     for raw in pending.get("execution_results") or []:
         metadata = raw.setdefault("diagnostic_metadata", {})
-        metadata["ledger_revision"] = max(1, state.requirement_ledger.revision - 1)
+        metadata["active_revision_satisfaction"] = False
+        metadata["stale_after_graph_revision"] = True
+        metadata["ledger_revision"] = state.requirement_ledger.revision
         metadata["checkpoint_id"] = "old-checkpoint"
 
 
 def _prepare_satisfaction_variant(state: PlannerOwnedAgentGraphState, case: Mapping[str, Any]) -> None:
     behavior = str(case.get("behavior") or "").lower()
     if "stale evidence" in behavior and state.evidence_ledger.evidence:
-        state.evidence_ledger.evidence[0].diagnostic_metadata["ledger_revision"] = max(1, state.requirement_ledger.revision - 1)
+        _mark_evidence_stale_for_active_revision(state)
     if "write deferral" in behavior:
         _seed_candidate_and_choice(state, {"fixture": {"tool_name": "patch__jobs_{id}"}, "behavior": behavior, "prompt": case["prompt"]}, _tools_for_case(case))
     if "replan limit" in behavior:
-        state.execution_trace.diagnostics["planner_owned_replan_spine"] = {
+        state.execution_trace.diagnostics["replan_spine"] = {
             "replan_limit_reached": True,
             "attempts": 2,
             "max_attempts": 2,
@@ -874,14 +937,24 @@ def _prepare_response_document_variant(state: PlannerOwnedAgentGraphState, case:
         state.pending_approval = PendingApprovalState(status="pending", approval_id="approval-response-benchmark")
     if "replan-limit" in behavior:
         state.evidence_ledger.evidence = []
-        state.execution_trace.diagnostics["planner_owned_replan_spine"] = {
+        state.execution_trace.diagnostics["replan_spine"] = {
             "replan_limit_reached": True,
             "attempts": 2,
             "max_attempts": 2,
         }
     if "stale evidence" in behavior and state.evidence_ledger.evidence:
-        state.evidence_ledger.evidence[0].diagnostic_metadata["ledger_revision"] = max(1, state.requirement_ledger.revision - 1)
+        _mark_evidence_stale_for_active_revision(state)
     graph_module.validate_graph_state_final_state(state)
+
+
+def _mark_evidence_stale_for_active_revision(state: PlannerOwnedAgentGraphState) -> None:
+    if not state.evidence_ledger.evidence:
+        return
+    metadata = dict(state.evidence_ledger.evidence[0].diagnostic_metadata or {})
+    metadata["active_revision_satisfaction"] = False
+    metadata["stale_after_graph_revision"] = True
+    metadata["superseded_by_ledger_revision"] = state.requirement_ledger.revision
+    state.evidence_ledger.evidence[0].diagnostic_metadata = metadata
 
 
 def _evidence_for_state(

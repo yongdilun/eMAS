@@ -69,8 +69,10 @@ _NEGATIVE_SAFETY_RE = re.compile(
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _UNBOUND_REFERENT_ID_TOKENS = {
     "a",
+    "active",
     "an",
     "applicable",
+    "current",
     "id",
     "if",
     "it",

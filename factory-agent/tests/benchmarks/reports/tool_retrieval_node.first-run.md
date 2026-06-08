@@ -1,6 +1,6 @@
 # tool_retrieval_node first-run benchmark report
 
-- Updated: 2026-06-08T04:40:19.359718+00:00
+- Updated: 2026-06-08T05:18:41.542712+00:00
 - Cases recorded: 7
 - Passed: 7
 - Failed/error: 0

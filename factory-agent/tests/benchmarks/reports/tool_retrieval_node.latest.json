@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "correct tool candidate",
-      "duration_ms": 42,
+      "duration_ms": 58,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1063,12 +1063,12 @@
       "id": "tool-retrieval-001-correct-tool-candidate",
       "node": "tool_retrieval_node",
       "prompt": "Show machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:40:16.043057+00:00",
+      "started_at": "2026-06-08T05:18:37.853395+00:00",
       "status": "passed"
     },
     {
       "behavior": "max candidate window",
-      "duration_ms": 36,
+      "duration_ms": 45,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -2558,12 +2558,12 @@
       "id": "tool-retrieval-002-max-candidate-window",
       "node": "tool_retrieval_node",
       "prompt": "Show machine M-CNC-01 status using the best matching machine status tool only.",
-      "started_at": "2026-06-08T04:40:16.093886+00:00",
+      "started_at": "2026-06-08T05:18:37.922616+00:00",
       "status": "passed"
     },
     {
       "behavior": "RAG virtual tool",
-      "duration_ms": 960,
+      "duration_ms": 1113,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -3648,12 +3648,12 @@
       "id": "tool-retrieval-003-rag-virtual-tool",
       "node": "tool_retrieval_node",
       "prompt": "Use LOTO documents to explain lockout steps for machine M-CNC-01.",
-      "started_at": "2026-06-08T04:40:16.152477+00:00",
+      "started_at": "2026-06-08T05:18:37.992172+00:00",
       "status": "passed"
     },
     {
       "behavior": "no whole-query leakage",
-      "duration_ms": 1998,
+      "duration_ms": 2192,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -4804,12 +4804,12 @@
       "id": "tool-retrieval-004-no-whole-query-leakage",
       "node": "tool_retrieval_node",
       "prompt": "Show machine M-CNC-01 status, then explain OSHA lockout-tagout policy.",
-      "started_at": "2026-06-08T04:40:17.133483+00:00",
+      "started_at": "2026-06-08T05:18:39.129099+00:00",
       "status": "passed"
     },
     {
       "behavior": "repeated retrieval guard",
-      "duration_ms": 50,
+      "duration_ms": 38,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -5869,12 +5869,12 @@
       "id": "tool-retrieval-005-repeated-retrieval-guard",
       "node": "tool_retrieval_node",
       "prompt": "Show machine M-CNC-01 status after repeated retrieval attempts.",
-      "started_at": "2026-06-08T04:40:19.160176+00:00",
+      "started_at": "2026-06-08T05:18:41.359133+00:00",
       "status": "passed"
     },
     {
       "behavior": "no matching tool",
-      "duration_ms": 44,
+      "duration_ms": 35,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -6768,12 +6768,12 @@
       "id": "tool-retrieval-006-no-matching-tool",
       "node": "tool_retrieval_node",
       "prompt": "Inspect a nonexistent factory entity with no available tool.",
-      "started_at": "2026-06-08T04:40:19.237006+00:00",
+      "started_at": "2026-06-08T05:18:41.430894+00:00",
       "status": "passed"
     },
     {
       "behavior": "reranker on/off",
-      "duration_ms": 39,
+      "duration_ms": 36,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -7981,9 +7981,9 @@
       "id": "tool-retrieval-007-reranker-on-off",
       "node": "tool_retrieval_node",
       "prompt": "Rank candidate tools for low priority jobs sorted by deadline.",
-      "started_at": "2026-06-08T04:40:19.303891+00:00",
+      "started_at": "2026-06-08T05:18:41.491328+00:00",
       "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:40:19.359718+00:00"
+  "updated_at": "2026-06-08T05:18:41.542712+00:00"
 }

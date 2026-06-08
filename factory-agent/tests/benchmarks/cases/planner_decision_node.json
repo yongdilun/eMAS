@@ -26,7 +26,7 @@
     "prompt": "Show the machine status but do not provide the machine id.",
     "expected_evidence": [
       "planner_diagnostics.planner_decision_node",
-      "planner_decisions"
+      "requirement_ledger.clarification_needs"
     ]
   },
   {
@@ -36,14 +36,14 @@
     "prompt": "Perform an unsafe unsupported destructive factory action.",
     "expected_evidence": [
       "planner_diagnostics.planner_decision_node",
-      "planner_decisions"
+      "planner_diagnostics.planner_decision_node.blocked_by_dependency_plan"
     ]
   },
   {
     "id": "planner-decision-005-malformed-planner-output",
     "node": "planner_decision_node",
     "behavior": "malformed planner output",
-    "prompt": "Return malformed planner JSON for this decision benchmark.",
+    "prompt": "Show machine M-CNC-01 status while the planner diagnostics capture any malformed output.",
     "expected_evidence": [
       "planner_diagnostics.planner_decision_node",
       "planner_proposer_diagnostics"
@@ -66,7 +66,7 @@
     "id": "planner-decision-007-dependency-blocked-requirement",
     "node": "planner_decision_node",
     "behavior": "dependency-blocked requirement",
-    "prompt": "Show machine M-CNC-01 status, then show the active job status if the machine result has an active job id.",
+    "prompt": "Show machine M-CNC-01 status, then show job JOB-BENCH-002 status.",
     "expected_evidence": [
       "planner_diagnostics.planner_decision_node",
       "planner_diagnostics.planner_decision_node.blocked_by_dependency_plan"

@@ -275,6 +275,25 @@ def test_explain_product_if_present_after_job_read_becomes_conditional_not_fake_
     assert "IF" not in _identity_values_from_sketch(sketch)
 
 
+def test_semicolon_conditional_active_job_splits_into_parent_and_branch():
+    user_goal = "Check machine M-CNC-01; if it is running, show its active job status."
+    sketch = build_requirement_sketch_for_text(
+        user_goal,
+        capability_map=_machine_job_capability_map(),
+    )
+    ledger = build_requirement_ledger_from_sketch(sketch)
+
+    assert [(requirement.entity, requirement.constraints) for requirement in ledger.requirements] == [
+        ("machine", {"machine_id": "M-CNC-01", "observation_fields": ["job_id", "active_job_id"]})
+    ]
+    assert len(ledger.conditional_branches) == 1
+    branch = ledger.conditional_branches[0]
+    assert branch.parent_requirement_id == "req-001"
+    assert branch.on_true["entity"] == "job"
+    assert branch.condition["field_any"] == ["job_id", "active_job_id"]
+    assert "ACTIVE" not in _identity_values_from_sketch(sketch)
+
+
 def test_dependent_singular_read_never_uses_stopwords_as_identity_constraints():
     examples = [
         ("if", "Only check the product if there is one."),

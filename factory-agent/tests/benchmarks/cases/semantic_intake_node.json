@@ -97,7 +97,7 @@
     "prompt": "Show the machine status.",
     "expected_evidence": [
       "planner_diagnostics.semantic_intake",
-      "requirement_ledger.requirements"
+      "requirement_ledger.clarification_needs"
     ],
     "expected_contains": {
       "node_order": "semantic_intake_node"

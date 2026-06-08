@@ -1,6 +1,6 @@
 # finalize_node first-run benchmark report
 
-- Updated: 2026-06-08T04:47:35.917608+00:00
+- Updated: 2026-06-08T05:17:44.540148+00:00
 - Cases recorded: 3
 - Passed: 3
 - Failed/error: 0

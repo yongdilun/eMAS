@@ -1,17 +1,6 @@
 {
-  "generated_at": "2026-06-08T04:44:11.082792+00:00",
+  "generated_at": "2026-06-08T05:14:30.122381+00:00",
   "mode": "strict_xfail_first_run",
   "node": "evidence_observation_node",
-  "xfail": {
-    "evidence-observation-004-stale-background-ignored": {
-      "behavior": "stale background result ignored",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: graph_diagnostics.stale_background_results_ignored"
-    },
-    "evidence-observation-006-child-requirement-expansion": {
-      "behavior": "child requirement expansion",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: graph_diagnostics.requirement_expansion"
-    }
-  }
+  "xfail": {}
 }

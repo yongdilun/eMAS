@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "locked constraints",
-      "duration_ms": 40,
+      "duration_ms": 58,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -262,12 +262,12 @@
       "id": "requirement-ledger-001-locked-constraints",
       "node": "requirement_ledger_node",
       "prompt": "Show machine M-CNC-01 status only.",
-      "started_at": "2026-06-08T04:37:26.432323+00:00",
+      "started_at": "2026-06-08T05:18:09.018029+00:00",
       "status": "passed"
     },
     {
       "behavior": "dependency labels",
-      "duration_ms": 33,
+      "duration_ms": 63,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -283,8 +283,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -421,8 +421,8 @@
               "activated_child_requirement_ids": [],
               "condition": {
                 "field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ],
                 "source": "active_parent_evidence",
                 "type": "active_parent_evidence_has_any_field"
@@ -436,14 +436,14 @@
               "id": "branch-001",
               "on_true": {
                 "action": "read_one",
-                "constraint_field": "active_id",
-                "entity": "active",
+                "constraint_field": "job_id",
+                "entity": "job",
                 "fan_out": "first_value",
                 "intent_operation": "report_status",
                 "requirement_type": "single_entity_status",
                 "value_from_field_any": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "parent_requirement_id": "req-001",
@@ -494,8 +494,8 @@
               "constraints": {
                 "machine_id": "M-CNC-01",
                 "observation_fields": [
-                  "active_id",
-                  "active_active_id"
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "depends_on": [],
@@ -578,12 +578,12 @@
       "id": "requirement-ledger-002-dependency-labels",
       "node": "requirement_ledger_node",
       "prompt": "Show machine M-CNC-01 status, then show the active job if one exists.",
-      "started_at": "2026-06-08T04:37:26.477491+00:00",
+      "started_at": "2026-06-08T05:18:09.086546+00:00",
       "status": "passed"
     },
     {
       "behavior": "answer instructions",
-      "duration_ms": 36,
+      "duration_ms": 1741,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -667,11 +667,11 @@
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
             "item_count": 2,
-            "prepared_clause_count": 1,
+            "prepared_clause_count": 2,
             "proposer": "deterministic_fallback_semantic_intake_proposer",
             "raw_llm_output_executes_tools": false,
             "role_counts": {
-              "formatting_instruction": 1,
+              "answer_instruction": 1,
               "required_requirement": 1
             },
             "source": "deterministic_fallback"
@@ -727,16 +727,20 @@
         },
         "rag_calls": [],
         "requirement_ledger": {
-          "answer_instructions": [],
-          "clarification_needs": [],
-          "conditional_branches": [],
-          "formatting_instructions": [
+          "answer_instructions": [
             {
-              "id": "format-001",
-              "reason": "formatting_instruction",
-              "text": "as a compact table."
+              "applies_to_branch_ids": [],
+              "applies_to_requirement_ids": [
+                "req-001"
+              ],
+              "id": "answer-001",
+              "reason": "answer_composition_instruction",
+              "text": "summarize the result."
             }
           ],
+          "clarification_needs": [],
+          "conditional_branches": [],
+          "formatting_instructions": [],
           "intake_clauses": [
             {
               "branch_id": null,
@@ -745,16 +749,16 @@
               "reason": "executable_required_requirement",
               "requirement_id": "req-001",
               "role": "required_requirement",
-              "text": "List low priority jobs sorted by deadline and answer"
+              "text": "List low priority jobs sorted by deadline"
             },
             {
               "branch_id": null,
               "id": "clause-002",
               "parent_requirement_id": null,
-              "reason": "formatting_instruction",
+              "reason": "answer_composition_instruction",
               "requirement_id": null,
-              "role": "formatting_instruction",
-              "text": "as a compact table."
+              "role": "answer_instruction",
+              "text": "summarize the result."
             }
           ],
           "intake_diagnostics": {
@@ -764,11 +768,11 @@
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
             "item_count": 2,
-            "prepared_clause_count": 1,
+            "prepared_clause_count": 2,
             "proposer": "deterministic_fallback_semantic_intake_proposer",
             "raw_llm_output_executes_tools": false,
             "role_counts": {
-              "formatting_instruction": 1,
+              "answer_instruction": 1,
               "required_requirement": 1
             },
             "source": "deterministic_fallback"
@@ -787,7 +791,7 @@
               "entity": "job",
               "evidence_refs": [],
               "expansion_reason": null,
-              "goal": "List low priority jobs sorted by deadline and answer",
+              "goal": "List low priority jobs sorted by deadline",
               "id": "req-001",
               "intent_operation": "report_filtered_collection",
               "locked_constraints": [
@@ -828,7 +832,7 @@
               "revision": 1
             }
           ],
-          "user_goal": "List low priority jobs sorted by deadline and answer as a compact table."
+          "user_goal": "List low priority jobs sorted by deadline, then summarize the result."
         },
         "response_document_context": {
           "diagnostics": {},
@@ -860,18 +864,16 @@
           }
         ]
       },
-      "failures": [
-        "expected evidence path is empty: requirement_ledger.answer_instructions"
-      ],
+      "failures": [],
       "id": "requirement-ledger-003-answer-instructions",
       "node": "requirement_ledger_node",
-      "prompt": "List low priority jobs sorted by deadline and answer as a compact table.",
-      "started_at": "2026-06-08T04:37:26.534213+00:00",
-      "status": "failed"
+      "prompt": "List low priority jobs sorted by deadline, then summarize the result.",
+      "started_at": "2026-06-08T05:18:09.172047+00:00",
+      "status": "passed"
     },
     {
       "behavior": "clarification needs",
-      "duration_ms": 32,
+      "duration_ms": 35,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1141,12 +1143,12 @@
       "id": "requirement-ledger-004-clarification-needs",
       "node": "requirement_ledger_node",
       "prompt": "Create a job for the new product but I have not provided the product id or quantity.",
-      "started_at": "2026-06-08T04:37:26.720835+00:00",
+      "started_at": "2026-06-08T05:18:10.935124+00:00",
       "status": "passed"
     },
     {
       "behavior": "conditional branches",
-      "duration_ms": 33,
+      "duration_ms": 36,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [],
@@ -1161,9 +1163,9 @@
               "action": "read_one",
               "constraints": {
                 "machine_id": "M-CNC-01",
-                "status": [
-                  "running",
-                  "active"
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "entity": "machine",
@@ -1171,9 +1173,7 @@
                 "machine_id": "M-CNC-01"
               },
               "reason": "deterministic_source_hint:operational_state",
-              "requested_fields": [
-                "status"
-              ],
+              "requested_fields": [],
               "requirement_id": "req-001",
               "source_of_truth": "operational_state"
             }
@@ -1233,12 +1233,12 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
-            "item_count": 1,
-            "prepared_clause_count": 1,
+            "item_count": 2,
+            "prepared_clause_count": 2,
             "proposer": "deterministic_fallback_semantic_intake_proposer",
             "raw_llm_output_executes_tools": false,
             "role_counts": {
-              "required_requirement": 1
+              "required_requirement": 2
             },
             "source": "deterministic_fallback"
           }
@@ -1295,7 +1295,42 @@
         "requirement_ledger": {
           "answer_instructions": [],
           "clarification_needs": [],
-          "conditional_branches": [],
+          "conditional_branches": [
+            {
+              "activated_child_requirement_ids": [],
+              "condition": {
+                "field_any": [
+                  "job_id",
+                  "active_job_id"
+                ],
+                "source": "active_parent_evidence",
+                "type": "active_parent_evidence_has_any_field"
+              },
+              "derived_from_evidence_refs": [],
+              "diagnostics": {
+                "dependent_referent_guard": true,
+                "non_executable_until_condition_true": true,
+                "role": "conditional_branch"
+              },
+              "id": "branch-001",
+              "on_true": {
+                "action": "read_one",
+                "constraint_field": "job_id",
+                "entity": "job",
+                "fan_out": "first_value",
+                "intent_operation": "report_status",
+                "requirement_type": "single_entity_status",
+                "value_from_field_any": [
+                  "job_id",
+                  "active_job_id"
+                ]
+              },
+              "parent_requirement_id": "req-001",
+              "skipped_reason": null,
+              "status": "pending",
+              "text": "if it is running, show its active job status."
+            }
+          ],
           "formatting_instructions": [],
           "intake_clauses": [
             {
@@ -1305,7 +1340,16 @@
               "reason": "executable_required_requirement",
               "requirement_id": "req-001",
               "role": "required_requirement",
-              "text": "Check machine M-CNC-01; if it is running, show its active job status."
+              "text": "Check machine M-CNC-01"
+            },
+            {
+              "branch_id": "branch-001",
+              "id": "clause-002",
+              "parent_requirement_id": "req-001",
+              "reason": "conditional_branch_waits_for_parent_evidence",
+              "requirement_id": null,
+              "role": "conditional_branch",
+              "text": "if it is running, show its active job status."
             }
           ],
           "intake_diagnostics": {
@@ -1314,12 +1358,12 @@
             ],
             "compiled_requirement_count": 1,
             "compiler_authority": "deterministic",
-            "item_count": 1,
-            "prepared_clause_count": 1,
+            "item_count": 2,
+            "prepared_clause_count": 2,
             "proposer": "deterministic_fallback_semantic_intake_proposer",
             "raw_llm_output_executes_tools": false,
             "role_counts": {
-              "required_requirement": 1
+              "required_requirement": 2
             },
             "source": "deterministic_fallback"
           },
@@ -1328,9 +1372,9 @@
               "blockers": [],
               "constraints": {
                 "machine_id": "M-CNC-01",
-                "status": [
-                  "running",
-                  "active"
+                "observation_fields": [
+                  "job_id",
+                  "active_job_id"
                 ]
               },
               "depends_on": [],
@@ -1339,13 +1383,11 @@
               "entity": "machine",
               "evidence_refs": [],
               "expansion_reason": null,
-              "goal": "Check machine M-CNC-01; if it is running, show its active job status.",
+              "goal": "Check machine M-CNC-01",
               "id": "req-001",
               "intent_operation": "report_status",
               "locked_constraints": [
-                "machine_id",
-                "status",
-                "requested_fields"
+                "machine_id"
               ],
               "origin": {
                 "constraints": "deterministic_extraction",
@@ -1354,9 +1396,7 @@
                 "source_of_truth": "capability_map_hint"
               },
               "parent_requirement_id": null,
-              "requested_fields": [
-                "status"
-              ],
+              "requested_fields": [],
               "required": true,
               "requirement_type": "single_entity_status",
               "satisfaction_checks": [],
@@ -1410,15 +1450,13 @@
           }
         ]
       },
-      "failures": [
-        "expected evidence path is empty: requirement_ledger.conditional_branches"
-      ],
+      "failures": [],
       "id": "requirement-ledger-005-conditional-branches",
       "node": "requirement_ledger_node",
       "prompt": "Check machine M-CNC-01; if it is running, show its active job status.",
-      "started_at": "2026-06-08T04:37:26.783165+00:00",
-      "status": "failed"
+      "started_at": "2026-06-08T05:18:10.990369+00:00",
+      "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:37:26.832647+00:00"
+  "updated_at": "2026-06-08T05:18:11.043594+00:00"
 }

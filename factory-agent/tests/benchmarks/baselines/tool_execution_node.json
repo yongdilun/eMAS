@@ -1,17 +1,6 @@
 {
-  "generated_at": "2026-06-08T04:43:07.478485+00:00",
+  "generated_at": "2026-06-08T05:15:43.918226+00:00",
   "mode": "strict_xfail_first_run",
   "node": "tool_execution_node",
-  "xfail": {
-    "tool-execution-008-parallel-read-batch": {
-      "behavior": "parallel read batch",
-      "first_status": "error",
-      "reason": "PlannerDecisionValidationError: capability need must reference the planner decision requirement; selected tool is not in the hydrated candidate window: get__jobs_{id}; selected tool does not have a hydrated card: get__jobs_{id}"
-    },
-    "tool-execution-009-approval-required-write-staging": {
-      "behavior": "approval-required write staging",
-      "first_status": "failed",
-      "reason": "expected evidence path is empty: pending_approval.approval_id"
-    }
-  }
+  "xfail": {}
 }

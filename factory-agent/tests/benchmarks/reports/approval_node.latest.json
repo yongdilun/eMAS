@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "pending approval",
-      "duration_ms": 47,
+      "duration_ms": 52,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -438,12 +438,12 @@
       "id": "approval-001-pending",
       "node": "approval_node",
       "prompt": "Change job JOB-BENCH-001 priority to high and wait for approval.",
-      "started_at": "2026-06-08T04:46:31.673808+00:00",
+      "started_at": "2026-06-08T05:17:33.252135+00:00",
       "status": "passed"
     },
     {
       "behavior": "approve",
-      "duration_ms": 33,
+      "duration_ms": 38,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -814,12 +814,12 @@
       "id": "approval-002-approve",
       "node": "approval_node",
       "prompt": "Approve the staged priority update for JOB-BENCH-001.",
-      "started_at": "2026-06-08T04:46:31.726839+00:00",
+      "started_at": "2026-06-08T05:17:33.309978+00:00",
       "status": "passed"
     },
     {
       "behavior": "reject",
-      "duration_ms": 35,
+      "duration_ms": 41,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1185,12 +1185,12 @@
       "id": "approval-003-reject",
       "node": "approval_node",
       "prompt": "Reject the staged priority update for JOB-BENCH-001.",
-      "started_at": "2026-06-08T04:46:31.784768+00:00",
+      "started_at": "2026-06-08T05:17:33.367612+00:00",
       "status": "passed"
     },
     {
       "behavior": "expired/stale approval",
-      "duration_ms": 34,
+      "duration_ms": 36,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1561,7 +1561,7 @@
       "id": "approval-004-expired-stale",
       "node": "approval_node",
       "prompt": "Show an expired approval for JOB-BENCH-001.",
-      "started_at": "2026-06-08T04:46:31.842306+00:00",
+      "started_at": "2026-06-08T05:17:33.430826+00:00",
       "status": "passed"
     },
     {
@@ -1937,12 +1937,12 @@
       "id": "approval-005-double-click-replay",
       "node": "approval_node",
       "prompt": "Replay an approval double click for JOB-BENCH-001.",
-      "started_at": "2026-06-08T04:46:31.895191+00:00",
+      "started_at": "2026-06-08T05:17:33.487436+00:00",
       "status": "passed"
     },
     {
       "behavior": "no-record preview",
-      "duration_ms": 1925,
+      "duration_ms": 1853,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -2302,12 +2302,12 @@
       "id": "approval-006-no-record-preview",
       "node": "approval_node",
       "prompt": "Preview a write approval where the target record is no longer present.",
-      "started_at": "2026-06-08T04:46:31.942939+00:00",
+      "started_at": "2026-06-08T05:17:33.538802+00:00",
       "status": "passed"
     },
     {
       "behavior": "multi-row staged write",
-      "duration_ms": 33,
+      "duration_ms": 34,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -2672,12 +2672,12 @@
       "id": "approval-007-multi-row-staged-write",
       "node": "approval_node",
       "prompt": "Stage multiple low priority jobs for priority update approval.",
-      "started_at": "2026-06-08T04:46:33.886404+00:00",
+      "started_at": "2026-06-08T05:17:35.413188+00:00",
       "status": "passed"
     },
     {
       "behavior": "second approval after first write",
-      "duration_ms": 32,
+      "duration_ms": 34,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -3042,9 +3042,9 @@
       "id": "approval-008-second-approval-after-first-write",
       "node": "approval_node",
       "prompt": "Show the second approval after the first priority write has completed.",
-      "started_at": "2026-06-08T04:46:33.945490+00:00",
+      "started_at": "2026-06-08T05:17:35.466652+00:00",
       "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:46:34.007241+00:00"
+  "updated_at": "2026-06-08T05:17:35.514253+00:00"
 }

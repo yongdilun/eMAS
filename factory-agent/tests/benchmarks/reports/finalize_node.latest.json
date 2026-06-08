@@ -3,7 +3,7 @@
   "results": [
     {
       "behavior": "passed finalize",
-      "duration_ms": 55,
+      "duration_ms": 37,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -627,12 +627,12 @@
       "id": "finalize-001-passed",
       "node": "finalize_node",
       "prompt": "Show machine M-CNC-01 status.",
-      "started_at": "2026-06-08T04:47:28.208971+00:00",
+      "started_at": "2026-06-08T05:17:36.264392+00:00",
       "status": "passed"
     },
     {
       "behavior": "deferred for approval/write",
-      "duration_ms": 7567,
+      "duration_ms": 8148,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -675,44 +675,7 @@
         ],
         "case_id": "finalize-002-deferred-approval-write",
         "evidence_ledger": {
-          "evidence": [
-            {
-              "approval_id": null,
-              "args": {
-                "id": "JOB-BENCH-001",
-                "priority": "high"
-              },
-              "citations": [],
-              "confidence": "deterministic",
-              "diagnostic_metadata": {
-                "decision_id": "dec-choose-bench-001",
-                "future_approval_details_suppressed": true,
-                "graph_tool_action": "approval_preview",
-                "legacy_shortcut_used": false,
-                "reason": "approval_preview_no_records"
-              },
-              "id": "ev-approval-preview-no-records-req-001",
-              "legacy_rag_route": null,
-              "normalized_result": {
-                "entity": "job",
-                "excluded_rows": [],
-                "match_status": "no_match",
-                "message": "No matching records were found.",
-                "no_match": true,
-                "preview_details": {},
-                "preview_rows": [],
-                "summary": "No matching records were found."
-              },
-              "requirement_id": "req-001",
-              "result_ref": null,
-              "satisfies": [
-                "typed_no_match"
-              ],
-              "source_of_truth": "operational_state",
-              "source_type": "system_guard",
-              "tool_name": "patch__jobs_{id}"
-            }
-          ]
+          "evidence": []
         },
         "final_validation_result": {
           "checked_requirement_ids": [
@@ -720,12 +683,19 @@
             "req-002"
           ],
           "diagnostics": {
-            "issue_count": 1,
-            "non_success_terminal_requirements": [
-              "req-001"
-            ]
+            "issue_count": 2,
+            "non_success_terminal_requirements": []
           },
           "issues": [
+            {
+              "actual": "open",
+              "check": null,
+              "evidence_ref": null,
+              "expected": "terminal_status",
+              "issue": "required_requirement_open",
+              "message": null,
+              "requirement_id": "req-001"
+            },
             {
               "actual": "open",
               "check": null,
@@ -843,12 +813,19 @@
               "req-002"
             ],
             "diagnostics": {
-              "issue_count": 1,
-              "non_success_terminal_requirements": [
-                "req-001"
-              ]
+              "issue_count": 2,
+              "non_success_terminal_requirements": []
             },
             "issues": [
+              {
+                "actual": "open",
+                "check": null,
+                "evidence_ref": null,
+                "expected": "terminal_status",
+                "issue": "required_requirement_open",
+                "message": null,
+                "requirement_id": "req-001"
+              },
               {
                 "actual": "open",
                 "check": null,
@@ -861,27 +838,49 @@
             ],
             "status": "failed"
           },
+          "graph_checkpoint_identity": {
+            "checkpoint_id": "planner-owned-agent-graph:ledger-1:approval",
+            "checkpoint_ns": "",
+            "ledger_revision": 1,
+            "native_langgraph_checkpoint": true,
+            "thread_id": "planner-owned-agent-graph"
+          },
           "graph_state_phase": "phase1_contracts_only",
           "phase3_last_node": "finalize_node",
           "phase3_node_order": [
             "tool_execution_node",
             "write_staging_node",
+            "approval_gate_node",
             "evidence_observation_node",
             "finalize_node"
           ],
-          "phase5_pending_tool_execution": {
-            "deferred_approval_decisions": [],
-            "rejected_by_dependency_plan": [],
-            "status": "no_tool_choice"
-          },
           "phase8_approval_staging": {
-            "evidence_ref": "ev-approval-preview-no-records-req-001",
-            "future_approval_details_suppressed": true,
+            "approval_id": "approval-node-benchmark",
+            "approval_label": "Approval 1",
+            "checkpoint_id": "planner-owned-agent-graph:ledger-1:approval",
+            "excluded_row_count": 0,
+            "ledger_revision": 1,
+            "legacy_shortcut_used": false,
             "lifecycle_nodes": [
-              "write_staging_node"
+              "write_staging_node",
+              "approval_gate_node"
             ],
+            "preview_row_count": 1,
             "requirement_id": "req-001",
-            "status": "no_records_found"
+            "selected_graph_tool_call": {
+              "args": {
+                "id": "JOB-BENCH-001",
+                "priority": "high"
+              },
+              "call_id": "call-bench-001-stage-001",
+              "candidate_window_id": "req-001",
+              "decision_id": "dec-choose-003",
+              "kind": "api_tool",
+              "requirement_id": "req-001",
+              "tool_name": "patch__jobs_{id}"
+            },
+            "staged_graph_tool_call_count": 1,
+            "status": "paused_at_approval_node"
           },
           "semantic_intake": {
             "active_executable_roles": [
@@ -969,6 +968,7 @@
         "node_order": [
           "tool_execution_node",
           "write_staging_node",
+          "approval_gate_node",
           "evidence_observation_node",
           "finalize_node"
         ],
@@ -1054,6 +1054,10 @@
             "decision_id": "dec-approval-002",
             "decision_kind": "request_approval",
             "diagnostics": {
+              "approval_gate_node": "approval_gate_node",
+              "approval_index": 1,
+              "approval_label": "Approval 1",
+              "approval_node": "approval_node",
               "planner_proposer": {
                 "adapter": "openai_compatible_qwen_planner_decision_proposer",
                 "allowed_decision_kinds": [
@@ -1068,7 +1072,7 @@
                 "candidate_tool_call_count": 1,
                 "content_chars": 817,
                 "decision_id": "dec-approval-002",
-                "duration_ms": 2496,
+                "duration_ms": 2549,
                 "finish_reason": "stop",
                 "full_openapi_catalog_visible": false,
                 "langsmith_parent_config_present": false,
@@ -1093,7 +1097,8 @@
                   "output_tokens": 174,
                   "total_tokens": 1533
                 }
-              }
+              },
+              "staged_tool_call_count": 1
             },
             "evidence_refs": [],
             "ledger_revision": 1,
@@ -1107,6 +1112,49 @@
               "call_id": "call-bench-001",
               "candidate_window_id": "req-001",
               "decision_id": "dec-choose-bench-001",
+              "kind": "api_tool",
+              "requirement_id": "req-001",
+              "tool_name": "patch__jobs_{id}"
+            },
+            "selected_tool_calls": []
+          },
+          {
+            "author": "system",
+            "capability_need": {
+              "action": "update",
+              "constraints": {
+                "job_id": "JOB-BENCH-001",
+                "new_priority": "high",
+                "priority": "high",
+                "requires_approval": true
+              },
+              "entity": "job",
+              "known_args": {
+                "job_id": "JOB-BENCH-001"
+              },
+              "reason": "deterministic_source_hint:operational_state",
+              "requested_fields": [],
+              "requirement_id": "req-001",
+              "source_of_truth": "operational_state"
+            },
+            "decision_id": "dec-choose-003",
+            "decision_kind": "choose_tool",
+            "diagnostics": {
+              "approval_preview_expansion": true,
+              "source_decision_id": "dec-choose-bench-001"
+            },
+            "evidence_refs": [],
+            "ledger_revision": 1,
+            "reason": "Graph expands an approval preview row into an exact staged write call.",
+            "requirement_id": "req-001",
+            "selected_tool_call": {
+              "args": {
+                "id": "JOB-BENCH-001",
+                "priority": "high"
+              },
+              "call_id": "call-bench-001-stage-001",
+              "candidate_window_id": "req-001",
+              "decision_id": "dec-choose-003",
               "kind": "api_tool",
               "requirement_id": "req-001",
               "tool_name": "patch__jobs_{id}"
@@ -1240,9 +1288,7 @@
           },
           "requirements": [
             {
-              "blockers": [
-                "approval_preview_no_records"
-              ],
+              "blockers": [],
               "constraints": {
                 "job_id": "JOB-BENCH-001",
                 "new_priority": "high",
@@ -1253,9 +1299,7 @@
               "derived_from_evidence_refs": [],
               "derived_from_missing_reasons": [],
               "entity": "job",
-              "evidence_refs": [
-                "ev-approval-preview-no-records-req-001"
-              ],
+              "evidence_refs": [],
               "expansion_reason": null,
               "goal": "Change job JOB-BENCH-001 priority to high",
               "id": "req-001",
@@ -1276,19 +1320,9 @@
               "requested_fields": [],
               "required": true,
               "requirement_type": "mutation_request",
-              "satisfaction_checks": [
-                {
-                  "actual": null,
-                  "actual_count": 0,
-                  "check": "approval_preview_records",
-                  "evidence_ref": "ev-approval-preview-no-records-req-001",
-                  "expected": "one_or_more_matching_records",
-                  "message": "No matching records were found.",
-                  "passed": true
-                }
-              ],
+              "satisfaction_checks": [],
               "source_of_truth": "operational_state",
-              "status": "impossible",
+              "status": "open",
               "superseded_by": null
             },
             {
@@ -1324,7 +1358,7 @@
               "superseded_by": null
             }
           ],
-          "revision": 2,
+          "revision": 1,
           "revision_history": [
             {
               "actor": "deterministic_guard",
@@ -1335,33 +1369,6 @@
               "reason": "Phase 3 locked hard constraints before planner execution.",
               "requirement_id": null,
               "revision": 1
-            },
-            {
-              "actor": "deterministic_guard",
-              "change_type": "graph_approval_satisfaction:impossible",
-              "details": {
-                "evidence_refs": [
-                  "ev-approval-preview-no-records-req-001"
-                ],
-                "new_status": "impossible",
-                "previous_status": "open",
-                "satisfaction_checks": [
-                  {
-                    "actual": null,
-                    "actual_count": 0,
-                    "check": "approval_preview_records",
-                    "evidence_ref": "ev-approval-preview-no-records-req-001",
-                    "expected": "one_or_more_matching_records",
-                    "message": "No matching records were found.",
-                    "passed": true
-                  }
-                ]
-              },
-              "locked_constraints_preserved": true,
-              "patch_id": null,
-              "reason": "approval_preview_no_records",
-              "requirement_id": "req-001",
-              "revision": 2
             }
           ],
           "user_goal": "Change job JOB-BENCH-001 priority to high and defer finalize for approval."
@@ -1380,27 +1387,7 @@
           "state": "not_started"
         },
         "satisfaction_state": {
-          "requirements": [
-            {
-              "blocker_reason": "approval_preview_no_records",
-              "evidence_refs": [
-                "ev-approval-preview-no-records-req-001"
-              ],
-              "requirement_id": "req-001",
-              "satisfaction_checks": [
-                {
-                  "actual": null,
-                  "actual_count": 0,
-                  "check": "approval_preview_records",
-                  "evidence_ref": "ev-approval-preview-no-records-req-001",
-                  "expected": "one_or_more_matching_records",
-                  "message": "No matching records were found.",
-                  "passed": true
-                }
-              ],
-              "status": "impossible"
-            }
-          ]
+          "requirements": []
         },
         "selected_tool_names": [],
         "selector_calls": [],
@@ -1430,26 +1417,33 @@
           },
           {
             "event": "planner_owned_agent_graph_node",
-            "evidence_count": 1,
-            "ledger_revision": 2,
-            "node": "evidence_observation_node",
-            "planner_decision_count": 2,
-            "source_types": [
-              "system_guard"
-            ],
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "approval_gate_node",
+            "planner_decision_count": 3,
+            "source_types": [],
             "tool_names": [
               "patch__jobs_{id}"
             ]
           },
           {
             "event": "planner_owned_agent_graph_node",
-            "evidence_count": 1,
-            "ledger_revision": 2,
+            "evidence_count": 0,
+            "ledger_revision": 1,
+            "node": "evidence_observation_node",
+            "planner_decision_count": 3,
+            "source_types": [],
+            "tool_names": [
+              "patch__jobs_{id}"
+            ]
+          },
+          {
+            "event": "planner_owned_agent_graph_node",
+            "evidence_count": 0,
+            "ledger_revision": 1,
             "node": "finalize_node",
-            "planner_decision_count": 2,
-            "source_types": [
-              "system_guard"
-            ],
+            "planner_decision_count": 3,
+            "source_types": [],
             "tool_names": [
               "patch__jobs_{id}"
             ]
@@ -1460,12 +1454,12 @@
       "id": "finalize-002-deferred-approval-write",
       "node": "finalize_node",
       "prompt": "Change job JOB-BENCH-001 priority to high and defer finalize for approval.",
-      "started_at": "2026-06-08T04:47:28.269737+00:00",
+      "started_at": "2026-06-08T05:17:36.306898+00:00",
       "status": "passed"
     },
     {
       "behavior": "failed validation",
-      "duration_ms": 47,
+      "duration_ms": 49,
       "error": null,
       "evidence": {
         "candidate_tool_windows": [
@@ -1976,9 +1970,9 @@
       "id": "finalize-003-failed-validation",
       "node": "finalize_node",
       "prompt": "Finalize without valid evidence.",
-      "started_at": "2026-06-08T04:47:35.857370+00:00",
+      "started_at": "2026-06-08T05:17:44.471825+00:00",
       "status": "passed"
     }
   ],
-  "updated_at": "2026-06-08T04:47:35.917608+00:00"
+  "updated_at": "2026-06-08T05:17:44.540148+00:00"
 }
