@@ -182,6 +182,21 @@ def _job_status_tool() -> ToolInfo:
     )
 
 
+def _job_slots_tool() -> ToolInfo:
+    return _tool(
+        "get__jobs_{id}_slots",
+        endpoint="/jobs/{id}/slots",
+        tags=["job", "lookup", "slots"],
+        required=["id"],
+        input_properties={
+            "id": {"type": "string", "x-ai-id-field": "job_id", "x-ai-entity": "job"},
+        },
+        output_properties={"slot_id": {"type": "string"}, "job_id": {"type": "string"}},
+        entity="job",
+        response_contract="result_collection_v1",
+    )
+
+
 def _job_priority_update_tool() -> ToolInfo:
     return _tool(
         "put__jobs_{id}",
@@ -613,6 +628,42 @@ class JobWithoutProductThenProductExecutor:
                     "status": "active",
                 }
             },
+            "infrastructure_error": False,
+        }
+
+
+class JobNotFoundThenSlotsExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def __call__(self, settings, tool, args, *, idempotency_key, extra_headers=None):
+        _ = settings, idempotency_key, extra_headers
+        self.calls.append({"tool_name": tool.name, "args": dict(args)})
+        if tool.name == "get__jobs_{id}":
+            return {
+                "ok": False,
+                "http_status": 404,
+                "latency_ms": 3,
+                "body": {"detail": "job not found"},
+                "infrastructure_error": False,
+            }
+        if tool.name == "get__jobs_{id}_slots":
+            return {
+                "ok": True,
+                "http_status": 200,
+                "latency_ms": 4,
+                "body": {
+                    "data": [
+                        {"slot_id": "SLOT-001", "job_id": args.get("id")},
+                    ]
+                },
+                "infrastructure_error": False,
+            }
+        return {
+            "ok": True,
+            "http_status": 200,
+            "latency_ms": 4,
+            "body": {"data": {}},
             "infrastructure_error": False,
         }
 
@@ -1499,6 +1550,64 @@ async def test_conditional_product_branch_creates_child_when_job_evidence_has_pr
     assert "Job JOB-SEED-001 included product id P-001" in response_diagnostics["summary"]
     assert "Product P-001 is active." in response_diagnostics["summary"]
     assert "Found 1 job" not in response_diagnostics["summary"]
+    assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_exact_job_id_404_stops_replan_and_returns_not_found_response():
+    executor = JobNotFoundThenSlotsExecutor()
+    selector = SequentialRecordingSelector(
+        [
+            ["get__jobs_{id}"],
+            ["get__jobs_{id}_slots"],
+        ]
+    )
+
+    result = await _graph(
+        tools_by_name={
+            "get__jobs_{id}": _job_status_tool(),
+            "get__jobs_{id}_slots": _job_slots_tool(),
+            "get__products_{id}": _product_status_tool(),
+        },
+        selector=selector,  # type: ignore[arg-type]
+        http_executor=executor,
+        max_replans=3,
+    ).run(
+        "Read job JOB-001. If it has a product, read the product too.",
+        session_context={"session_id": "exact-job-id-404-no-retry"},
+    )
+
+    evidence = result.state.evidence_ledger.evidence[0]
+    requirement = result.state.requirement_ledger.requirements[0]
+    branch = result.state.requirement_ledger.conditional_branches[0]
+    response_diagnostics = result.state.response_document_context.diagnostics
+
+    assert [call["tool_name"] for call in executor.calls] == ["get__jobs_{id}"]
+    assert executor.calls[0]["args"]["id"] == "JOB-001"
+    assert len(selector.calls) == 1
+    assert evidence.normalized_result["status"] == "no_match"
+    assert evidence.normalized_result["not_found"] is True
+    assert evidence.normalized_result["summary"] == "Job JOB-001 was not found."
+    assert evidence.diagnostic_metadata["reason"] == "not_found"
+    assert evidence.diagnostic_metadata["http_status"] == 404
+    assert evidence.diagnostic_metadata["http_ok"] is False
+    assert evidence.diagnostic_metadata["ok"] is True
+    assert requirement.status == "impossible"
+    assert requirement.blockers == ["typed_no_match"]
+    assert branch.status == "skipped"
+    assert branch.skipped_reason == "conditional_branch_not_triggered"
+    assert not any(item.entity == "product" for item in result.state.requirement_ledger.requirements)
+    assert response_diagnostics["summary"] == "Job JOB-001 was not found."
+    assert response_diagnostics["blocks"] == [
+        {
+            "type": "no_record",
+            "requirement_id": "req-001",
+            "evidence_ref": evidence.id,
+            "entity_type": "job",
+            "summary": "Job JOB-001 was not found.",
+            "source_type": "api_tool",
+        }
+    ]
     assert result.state.final_validation_result.status == "passed"  # type: ignore[union-attr]
 
 

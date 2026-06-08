@@ -164,12 +164,15 @@ def _conditional_branch_summary_parts(
             continue
         if getattr(branch, "skipped_reason", None) != "conditional_branch_not_triggered":
             continue
+        parent_block = block_by_requirement_id.get(str(branch.parent_requirement_id))
+        if parent_block and parent_block.get("type") == "no_record":
+            continue
         on_true = getattr(branch, "on_true", {}) or {}
         entity = str(on_true.get("entity") or "follow-up").replace("_", " ").strip()
         missing_field = _branch_missing_identifier_label(branch)
         if missing_field:
             follow_up = f"{entity} follow-up" if entity and entity != "follow-up" else "follow-up"
-            parent_label = _block_record_label(block_by_requirement_id.get(str(branch.parent_requirement_id)))
+            parent_label = _block_record_label(parent_block)
             parent_suffix = f" on {parent_label}" if parent_label else ""
             parts.append(f"No {missing_field} was present{parent_suffix}, so the conditional {follow_up} was skipped.")
         else:
@@ -568,6 +571,11 @@ def _mutation_summary(*, entity: str, entity_id: Any, fields: Mapping[str, Any])
 
 def _no_match_summary(requirement: Any | None, evidence: EvidenceLedgerEntry) -> str:
     base = str(evidence.normalized_result.get("summary") or evidence.normalized_result.get("message") or "").strip()
+    if base and (
+        evidence.normalized_result.get("not_found") is True
+        or str(evidence.normalized_result.get("reason") or "").lower() == "not_found"
+    ):
+        return base
     if "no matching records were found" in base.lower():
         return base
     entity = str(getattr(requirement, "entity", "") or evidence.normalized_result.get("entity") or "").strip()

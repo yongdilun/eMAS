@@ -170,8 +170,11 @@ async def execute_graph_api_tool_call(
         body=body,
         requirement=requirement,
         call=call,
+        tool=tool,
     )
-    ok = bool(env.get("ok"))
+    explicit_no_match = _normalized_result_has_no_match(normalized_result)
+    http_ok = bool(env.get("ok"))
+    ok = http_ok or explicit_no_match
     error_type = ""
     normalized_error = normalized_result.get("error") if isinstance(normalized_result, dict) else None
     if isinstance(normalized_error, Mapping):
@@ -186,6 +189,7 @@ async def execute_graph_api_tool_call(
         "http_status": env.get("http_status"),
         "latency_ms": env.get("latency_ms"),
         "ok": ok,
+        "http_ok": http_ok,
         "infrastructure_error": bool(env.get("infrastructure_error")),
         "direct_v2_execution": False,
     }
@@ -193,7 +197,9 @@ async def execute_graph_api_tool_call(
         diagnostic_metadata["request_headers"] = dict(env["request_headers"])
     if env.get("request_url"):
         diagnostic_metadata["request_url"] = str(env["request_url"])
-    if not ok:
+    if explicit_no_match:
+        diagnostic_metadata["reason"] = "not_found"
+    elif not ok:
         diagnostic_metadata["reason"] = "tool_error"
     if error_type:
         diagnostic_metadata["error_type"] = error_type
@@ -509,6 +515,7 @@ def _normalize_api_result(
     body: dict[str, Any],
     requirement: Any | None,
     call: GraphToolCall,
+    tool: ToolInfo,
 ) -> dict[str, Any]:
     entity = str(getattr(requirement, "entity", "") or "").strip()
     normalized: dict[str, Any] = {
@@ -519,6 +526,25 @@ def _normalize_api_result(
         normalized["entity"] = entity
 
     if not bool(env.get("ok")):
+        if _is_exact_single_entity_read_not_found(env=env, requirement=requirement, tool=tool):
+            identifier = _single_entity_identifier(requirement=requirement, call=call, entity=entity)
+            message = _not_found_message(entity=entity, identifier=identifier)
+            normalized.update(
+                {
+                    "status": "no_match",
+                    "match_status": "no_match",
+                    "no_match": True,
+                    "not_found": True,
+                    "reason": "not_found",
+                    "summary": message,
+                    "message": message,
+                }
+            )
+            if identifier:
+                normalized["entity_id"] = identifier
+                normalized["not_found_id"] = identifier
+            return normalized
+
         error_type = str(body.get("error_type") or "").strip()
         error: dict[str, Any] = {
             "code": "tool_error",
@@ -556,6 +582,69 @@ def _normalize_api_result(
     if entity_id not in (None, "", [], {}):
         normalized["entity_id"] = entity_id
     return normalized
+
+
+def _normalized_result_has_no_match(result: Mapping[str, Any]) -> bool:
+    return (
+        result.get("no_match") is True
+        or str(result.get("match_status") or "").lower() == "no_match"
+        or str(result.get("status") or "").lower() == "no_match"
+    )
+
+
+def _is_exact_single_entity_read_not_found(
+    *,
+    env: Mapping[str, Any],
+    requirement: Any | None,
+    tool: ToolInfo,
+) -> bool:
+    return (
+        env.get("http_status") == 404
+        and requirement is not None
+        and getattr(requirement, "requirement_type", None) == "single_entity_status"
+        and str(getattr(tool, "method", "") or "").upper() == "GET"
+        and _tool_endpoint_is_exact_item_read(tool)
+    )
+
+
+def _tool_endpoint_is_exact_item_read(tool: ToolInfo) -> bool:
+    parts = [
+        part
+        for part in str(getattr(tool, "endpoint", "") or "").strip("/").split("/")
+        if part
+    ]
+    if len(parts) != 2:
+        return False
+    return parts[1].startswith("{") and parts[1].endswith("}") and len(parts[1]) > 2
+
+
+def _single_entity_identifier(
+    *,
+    requirement: Any | None,
+    call: GraphToolCall,
+    entity: str,
+) -> str:
+    constraints = dict(getattr(requirement, "constraints", {}) or {})
+    preferred_keys = [f"{entity}_id"] if entity else []
+    preferred_keys.extend(["entity_id", "id"])
+    for key in preferred_keys:
+        value = constraints.get(key)
+        if value not in (None, "", [], {}):
+            return str(value)
+    for key, value in constraints.items():
+        if str(key).endswith("_id") and value not in (None, "", [], {}):
+            return str(value)
+    value = call.args.get("id")
+    if value not in (None, "", [], {}):
+        return str(value)
+    return ""
+
+
+def _not_found_message(*, entity: str, identifier: str) -> str:
+    label = entity.replace("_", " ").strip().capitalize() if entity else "Record"
+    if identifier:
+        return f"{label} {identifier} was not found."
+    return f"{label} was not found."
 
 
 def _body_mapping(value: Any) -> dict[str, Any]:
