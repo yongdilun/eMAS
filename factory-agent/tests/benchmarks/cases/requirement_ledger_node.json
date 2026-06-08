@@ -1,0 +1,58 @@
+[
+  {
+    "id": "requirement-ledger-001-locked-constraints",
+    "node": "requirement_ledger_node",
+    "behavior": "locked constraints",
+    "prompt": "Show machine M-CNC-01 status only.",
+    "expected_evidence": [
+      "planner_diagnostics.requirement_ledger_node",
+      "requirement_ledger.requirements",
+      "response_document_context.requirement_ids"
+    ]
+  },
+  {
+    "id": "requirement-ledger-002-dependency-labels",
+    "node": "requirement_ledger_node",
+    "behavior": "dependency labels",
+    "prompt": "Show machine M-CNC-01 status, then show the active job if one exists.",
+    "expected_evidence": [
+      "planner_diagnostics.requirement_ledger_node",
+      "requirement_ledger.requirements",
+      "planner_diagnostics.requirement_ledger_node.dependency_label_counts"
+    ]
+  },
+  {
+    "id": "requirement-ledger-003-answer-instructions",
+    "node": "requirement_ledger_node",
+    "behavior": "answer instructions",
+    "prompt": "List low priority jobs sorted by deadline and answer as a compact table.",
+    "expected_evidence": [
+      "planner_diagnostics.requirement_ledger_node",
+      "requirement_ledger.answer_instructions",
+      "response_document_context.requirement_ids"
+    ]
+  },
+  {
+    "id": "requirement-ledger-004-clarification-needs",
+    "node": "requirement_ledger_node",
+    "behavior": "clarification needs",
+    "prompt": "Create a job for the new product but I have not provided the product id or quantity.",
+    "expected_evidence": [
+      "planner_diagnostics.requirement_ledger_node",
+      "requirement_ledger.requirements",
+      "response_document_context.requirement_ids"
+    ]
+  },
+  {
+    "id": "requirement-ledger-005-conditional-branches",
+    "node": "requirement_ledger_node",
+    "behavior": "conditional branches",
+    "prompt": "Check machine M-CNC-01; if it is running, show its active job status.",
+    "expected_evidence": [
+      "planner_diagnostics.requirement_ledger_node",
+      "requirement_ledger.conditional_branches",
+      "planner_diagnostics.requirement_ledger_node.dependency_label_counts"
+    ]
+  }
+]
+

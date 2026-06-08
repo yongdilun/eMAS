@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-06-08T04:37:17.491197+00:00",
+  "mode": "strict_xfail_first_run",
+  "node": "requirement_ledger_node",
+  "xfail": {
+    "requirement-ledger-003-answer-instructions": {
+      "behavior": "answer instructions",
+      "first_status": "failed",
+      "reason": "expected evidence path is empty: requirement_ledger.answer_instructions"
+    },
+    "requirement-ledger-005-conditional-branches": {
+      "behavior": "conditional branches",
+      "first_status": "failed",
+      "reason": "expected evidence path is empty: requirement_ledger.conditional_branches"
+    }
+  }
+}
