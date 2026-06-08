@@ -1,0 +1,101 @@
+[
+  {
+    "id": "tool-retrieval-001-correct-tool-candidate",
+    "node": "tool_retrieval_node",
+    "behavior": "correct tool candidate",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "candidate_tool_windows",
+      "hydrated_tool_cards"
+    ]
+  },
+  {
+    "id": "tool-retrieval-002-max-candidate-window",
+    "node": "tool_retrieval_node",
+    "behavior": "max candidate window",
+    "prompt": "Show machine M-CNC-01 status using the best matching machine status tool only.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}", "get__jobs", "get__jobs_{id}", "patch__jobs_{id}", "post__jobs", "post__ai_scheduling_reschedule-all"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "candidate_tool_windows.0.max_candidates",
+      "hydrated_tool_cards.0.max_cards"
+    ]
+  },
+  {
+    "id": "tool-retrieval-003-rag-virtual-tool",
+    "node": "tool_retrieval_node",
+    "behavior": "RAG virtual tool",
+    "prompt": "Use LOTO documents to explain lockout steps for machine M-CNC-01.",
+    "fixture": {
+      "selector_names": ["rag_search_documents"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "candidate_tool_windows",
+      "hydrated_tool_cards"
+    ],
+    "expected_contains": {
+      "candidate_tool_windows.0.candidates.0.tool_name": "rag_search_documents"
+    }
+  },
+  {
+    "id": "tool-retrieval-004-no-whole-query-leakage",
+    "node": "tool_retrieval_node",
+    "behavior": "no whole-query leakage",
+    "prompt": "Show machine M-CNC-01 status, then explain OSHA lockout-tagout policy.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "selector_calls"
+    ]
+  },
+  {
+    "id": "tool-retrieval-005-repeated-retrieval-guard",
+    "node": "tool_retrieval_node",
+    "behavior": "repeated retrieval guard",
+    "prompt": "Show machine M-CNC-01 status after repeated retrieval attempts.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "graph_diagnostics.repeated_retrieval_guard"
+    ]
+  },
+  {
+    "id": "tool-retrieval-006-no-matching-tool",
+    "node": "tool_retrieval_node",
+    "behavior": "no matching tool",
+    "prompt": "Inspect a nonexistent factory entity with no available tool.",
+    "fixture": {
+      "selector_names": ["missing__tool"]
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval"
+    ]
+  },
+  {
+    "id": "tool-retrieval-007-reranker-on-off",
+    "node": "tool_retrieval_node",
+    "behavior": "reranker on/off",
+    "prompt": "Rank candidate tools for low priority jobs sorted by deadline.",
+    "fixture": {
+      "selector_names": ["get__jobs", "get__jobs_{id}"],
+      "reranker_enabled": true
+    },
+    "expected_evidence": [
+      "tool_retrieval_diagnostics.phase4_retrieval",
+      "candidate_tool_windows",
+      "selector_calls"
+    ]
+  }
+]
+

@@ -976,7 +976,7 @@ def _record_result(case: Mapping[str, Any], result: Mapping[str, Any]) -> None:
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "results": results,
     }
-    _atomic_write_text(latest_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    _atomic_write_text(latest_path, json.dumps(payload, default=_json_default, indent=2, sort_keys=True) + "\n")
     _write_markdown_report(node, payload)
 
 
@@ -1027,7 +1027,10 @@ def _update_baseline_from_report(node: str) -> None:
         "mode": "strict_xfail_first_run",
         "xfail": xfails,
     }
-    _atomic_write_text(BASELINE_DIR / f"{node}.json", json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+    _atomic_write_text(
+        BASELINE_DIR / f"{node}.json",
+        json.dumps(baseline, default=_json_default, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -1035,3 +1038,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temp.write_text(text, encoding="utf-8")
     os.replace(temp, path)
+
+
+def _json_default(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, set):
+        return sorted(value)
+    return repr(value)
