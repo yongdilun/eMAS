@@ -630,8 +630,18 @@ def _seed_candidate_and_choice(
     fixture = case.get("fixture") if isinstance(case.get("fixture"), Mapping) else {}
     tool_name = str(fixture.get("tool_name") or _default_selector_names(case)[0])
     if tool_name not in tools:
-        tool_name = next(iter(tools))
-    tool = tools[tool_name]
+        if fixture.get("allow_missing_tool"):
+            tool = _tool(
+                tool_name,
+                endpoint="/missing-tool",
+                tags=["missing", "benchmark"],
+                output_properties={"missing": {"type": "string"}},
+            )
+        else:
+            tool_name = next(iter(tools))
+            tool = tools[tool_name]
+    else:
+        tool = tools[tool_name]
     source_of_truth = "document_knowledge" if tool_name == V2_RAG_TOOL_NAME else need.source_of_truth
     if not any(window.requirement_id == requirement.id for window in state.candidate_tool_windows):
         state.candidate_tool_windows.append(

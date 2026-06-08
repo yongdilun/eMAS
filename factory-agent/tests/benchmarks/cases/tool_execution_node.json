@@ -1,0 +1,126 @@
+[
+  {
+    "id": "tool-execution-001-api-success",
+    "node": "tool_execution_node",
+    "behavior": "API success",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01", "fields": "machine_id,status"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution",
+      "graph_diagnostics.graph_tool_actions"
+    ]
+  },
+  {
+    "id": "tool-execution-002-api-404-no-match",
+    "node": "tool_execution_node",
+    "behavior": "API 404/no-match",
+    "prompt": "Show status for missing machine M-NOPE-404.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-NOPE-404"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution",
+      "graph_diagnostics.graph_tool_actions"
+    ]
+  },
+  {
+    "id": "tool-execution-003-api-500",
+    "node": "tool_execution_node",
+    "behavior": "API 500",
+    "prompt": "Show machine M-CNC-01 status while the API returns 500.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution",
+      "graph_diagnostics.graph_tool_actions"
+    ]
+  },
+  {
+    "id": "tool-execution-004-missing-tool",
+    "node": "tool_execution_node",
+    "behavior": "missing tool",
+    "prompt": "Execute a selected tool that is missing from the tool registry.",
+    "fixture": {
+      "tool_name": "missing__tool",
+      "allow_missing_tool": true
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution"
+    ]
+  },
+  {
+    "id": "tool-execution-005-rag-success",
+    "node": "tool_execution_node",
+    "behavior": "RAG success",
+    "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "LOTO procedure for M-CNC-01", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution",
+      "graph_diagnostics.graph_tool_actions"
+    ]
+  },
+  {
+    "id": "tool-execution-006-rag-insufficient-context",
+    "node": "tool_execution_node",
+    "behavior": "RAG insufficient context",
+    "prompt": "Use documents to answer a procedure question with insufficient source context.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "unknown procedure with insufficient context", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution"
+    ]
+  },
+  {
+    "id": "tool-execution-007-rag-exception",
+    "node": "tool_execution_node",
+    "behavior": "RAG exception",
+    "prompt": "Use documents while the RAG pipeline raises an exception.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "force RAG exception", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution"
+    ]
+  },
+  {
+    "id": "tool-execution-008-parallel-read-batch",
+    "node": "tool_execution_node",
+    "behavior": "parallel read batch",
+    "prompt": "Show machine M-CNC-01 status and job JOB-BENCH-002 status in parallel.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase5_pending_tool_execution",
+      "graph_diagnostics.phase5_pending_tool_execution.dependency_read_batches"
+    ]
+  },
+  {
+    "id": "tool-execution-009-approval-required-write-staging",
+    "node": "tool_execution_node",
+    "behavior": "approval-required write staging",
+    "prompt": "Change job JOB-BENCH-001 priority to high.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "pending_approval.approval_id",
+      "graph_diagnostics.phase8_approval_staging"
+    ]
+  }
+]
+
