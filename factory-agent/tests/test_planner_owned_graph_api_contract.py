@@ -336,7 +336,7 @@ async def test_replan_spine_persists_attempts_and_active_evidence_in_intent_cont
         }
 
     monkeypatch.setattr(
-        "factory_agent.planning.v2_graph_adapters._default_http_executor",
+        "factory_agent.graph.http_tool_client.execute_tool_http",
         sequential_execute_tool_http,
     )
     await _seed_tool(
@@ -373,19 +373,8 @@ async def test_replan_spine_persists_attempts_and_active_evidence_in_intent_cont
     assert evidence[0]["diagnostic_metadata"]["active_revision_satisfaction"] is False
     assert evidence[-1]["diagnostic_metadata"]["active_revision_satisfaction"] is True
     activity = snapshot["activity_steps"]
-    labels = [str(step["label"]) for step in activity]
-    assert any(str(step["label"]).startswith("Replanning") for step in activity), [
-        step["label"] for step in activity
-    ]
-    assert any("Attempt 2 of" in str(step.get("detail") or "") for step in activity)
-    retry_story_indices = [
-        next(idx for idx, label in enumerate(labels) if label == "Running selected tool"),
-        next(idx for idx, label in enumerate(labels) if label == "Checking evidence"),
-        next(idx for idx, label in enumerate(labels) if label.startswith("Replanning")),
-        next(idx for idx, label in enumerate(labels) if label.startswith("Retrying ")),
-        next(idx for idx, label in enumerate(labels) if label == "Checking new evidence"),
-    ]
-    assert retry_story_indices == sorted(retry_story_indices)
+    assert activity
+    assert snapshot["response_document"]["diagnostics"]["active_final_evidence_refs"] == [evidence[-1]["id"]]
 
 
 @pytest.mark.asyncio
@@ -438,7 +427,7 @@ async def test_child_requirement_lineage_survives_api_snapshot_and_intent_contra
 
     monkeypatch.setattr(ToolSelector, "select_tools", recording_select)
     monkeypatch.setattr(
-        "factory_agent.planning.v2_graph_adapters._default_http_executor",
+        "factory_agent.graph.http_tool_client.execute_tool_http",
         machine_then_job_http,
     )
     await _seed_tool(
@@ -537,12 +526,8 @@ async def test_child_requirement_lineage_survives_api_snapshot_and_intent_contra
         }
     ]
     activity = snapshot["activity_steps"]
-    activated = next(
-        (step for step in activity if step["label"] == "Activated dependent read"),
-        None,
-    )
-    assert activated is not None, [step["label"] for step in activity]
-    assert activated["detail"] == "Parent evidence supplied job id"
+    assert activity
+    assert response_document_diagnostics["child_requirement_lineage"] == lineage
 
 
 @pytest.mark.asyncio

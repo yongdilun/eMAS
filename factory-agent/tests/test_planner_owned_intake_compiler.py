@@ -93,7 +93,7 @@ def test_compiler_rejects_singular_dependent_read_without_referent():
 
 
 def test_compiler_binds_updated_jobs_read_to_previous_mutation():
-    user_goal = "Change planned low-priority jobs to medium priority, then show the updated jobs."
+    user_goal = "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs."
     sketch = build_requirement_sketch_for_text(
         user_goal,
         capability_map=build_v2_capability_map(
@@ -110,6 +110,7 @@ def test_compiler_binds_updated_jobs_read_to_previous_mutation():
         ("req-002", "filtered_collection", "job"),
     ]
     assert ledger.requirements[1].depends_on == ["req-001"]
+    assert ledger.requirements[1].requested_fields == ["job_id", "status"]
     assert ledger.requirements[1].constraints == {
         "depends_on_result_binding": "updated_jobs",
         "result_binding_source_requirement": "req-001",

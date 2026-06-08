@@ -35,12 +35,9 @@ const ACTIVITY_TIMELINE_ENABLED = !['0', 'false', 'off'].includes(
 const STREAM_BUFFER_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_STREAM_BUFFER_MS || 40)
 const PROGRESS_STAGE_MIN_MS = Number(import.meta.env?.VITE_FACTORY_AGENT_PROGRESS_STAGE_MIN_MS || 700)
 const STARTER_PROMPTS = Object.freeze([
-  'Change all low priority job to medium, then change all medium priority job to high',
-  'Find all low priority jobs',
+  'Read job JOB-SEED-005. If it has a product, read the product too.',
+  'Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.',
   'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?',
-  'Read jobs JOB-SEED-001 and JOB-SEED-002. For each job that includes a product id, read that product. Summarize each job with its product.',
-  'Read jobs JOB-SEED-001, JOB-SEED-002, and JOB-SEED-003.',
-  'According to OSHA 1910.147(c)(1), what must the energy control program consist of? Use the exact regulation clause.',
 ])
 
 function isProgressSummary(text) {

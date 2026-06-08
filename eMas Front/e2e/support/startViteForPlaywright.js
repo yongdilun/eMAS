@@ -1,4 +1,9 @@
 import { createServer } from 'vite'
+import react from '@vitejs/plugin-react'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 const args = new Map()
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -37,19 +42,41 @@ if (chatEmergencyDisabledReason) {
 }
 
 const server = await createServer({
+  root: repoRoot,
+  configFile: false,
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': resolve(repoRoot, 'src'),
+    },
+  },
   server: {
     host: '127.0.0.1',
     port,
     strictPort: true,
+    fs: {
+      allow: [repoRoot],
+    },
   },
 })
 
 await server.listen()
 server.printUrls()
 
+let closing = false
 async function close() {
-  await server.close()
-  process.exit(0)
+  if (closing) return
+  closing = true
+  const forceExit = setTimeout(() => process.exit(0), 5_000)
+  forceExit.unref?.()
+  try {
+    server.httpServer?.closeIdleConnections?.()
+    server.httpServer?.closeAllConnections?.()
+    await server.close()
+  } finally {
+    clearTimeout(forceExit)
+    process.exit(0)
+  }
 }
 
 process.on('SIGTERM', close)

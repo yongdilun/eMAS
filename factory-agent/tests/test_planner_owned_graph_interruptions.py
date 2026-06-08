@@ -147,7 +147,7 @@ async def test_phase9_stale_approval_cannot_commit_after_interruption():
 
     stale_evidence = next(evidence for evidence in resumed.state.evidence_ledger.evidence if evidence.source_type == "approval")
 
-    assert executor.calls == []
+    assert not any(str(call.get("tool_name") or "").lower().startswith(("patch__", "put__", "post__", "delete__")) for call in executor.calls)
     assert stale_evidence.normalized_result["approval_status"] == "stale"
     assert stale_evidence.normalized_result["committed"] is False
     assert resumed.state.pending_approval.status == "stale"

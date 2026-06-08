@@ -2799,7 +2799,7 @@ def test_phase7_activity_projects_completed_approval_caption_rows_into_display_t
             TimelineEventResponse(
                 event_id="plan:876",
                 event_type="plan_created",
-                content="Change planned low-priority jobs to medium priority, then show the updated jobs.",
+                content="Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
                 created_at=created_at + timedelta(seconds=9),
                 details={"plan_id": "plan-876"},
             ),
@@ -3096,7 +3096,7 @@ def test_phase7_activity_projects_incomplete_approval_flow_without_leaking_graph
             TimelineEventResponse(
                 event_id="plan:incomplete-display",
                 event_type="plan_created",
-                content="Change planned low-priority jobs to medium priority, then show the updated jobs.",
+                content="Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
                 created_at=created_at,
             )
         ],

@@ -995,6 +995,11 @@ class PlannerOwnedAgentGraph:
             validate_planner_decision(state, decision)
             guard_decision = _record_repeated_retrieval_guard_trace(state, decision.capability_need)
             if guard_decision is not None and guard_decision.blocked:
+                _block_requirement_after_repeated_retrieval_guard(
+                    state,
+                    requirement_id=decision.requirement_id,
+                    guard_diagnostics=guard_decision.as_diagnostics(),
+                )
                 blocked.append(
                     {
                         "decision_id": decision.decision_id,
@@ -3375,6 +3380,33 @@ def _record_repeated_retrieval_guard_trace(
         "decisions": decisions,
     }
     return active_decision
+
+
+def _block_requirement_after_repeated_retrieval_guard(
+    state: PlannerOwnedAgentGraphState,
+    *,
+    requirement_id: str | None,
+    guard_diagnostics: Mapping[str, Any],
+) -> None:
+    if not requirement_id:
+        return
+    requirement = _requirement_by_id(state, requirement_id)
+    if requirement is None or requirement.status != "open":
+        return
+    requirement.status = "blocked"
+    requirement.satisfaction_checks.append(
+        SatisfactionCheck(
+            check="repeated_retrieval_guard",
+            expected="unique bounded retrieval need",
+            actual=guard_diagnostics.get("need_key"),
+            passed=False,
+        )
+    )
+    state.execution_trace.diagnostics["repeated_retrieval_guard_blocked_requirement"] = {
+        "requirement_id": requirement_id,
+        "need_key": guard_diagnostics.get("need_key"),
+        "reason": "blocked_repeated_need",
+    }
 
 
 def _current_missing_evidence_reasons(state: PlannerOwnedAgentGraphState) -> list[dict[str, Any]]:

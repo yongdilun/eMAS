@@ -86,6 +86,7 @@ EXPECTED_PATH_METHODS = {
     "/sessions/{session_id}/events/activity": ["get"],
     "/sessions/{session_id}/events/semantic": ["get"],
     "/sessions/{session_id}/execute": ["post"],
+    "/sessions/{session_id}/interactions/{interaction_id}/decide": ["post"],
     "/sessions/{session_id}/messages": ["get", "post"],
     "/sessions/{session_id}/plans": ["post"],
     "/sessions/{session_id}/snapshot": ["get"],

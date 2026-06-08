@@ -759,7 +759,7 @@ async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_fin
     )
 
     staged = await graph.run(
-        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
         session_context={"session_id": "phase8-read-after-write"},
         options={
             "thread_id": "phase8-read-after-write",
@@ -810,8 +810,8 @@ async def test_phase8_approved_write_runs_dependent_updated_jobs_read_before_fin
         {"id": "JOB-LOW-002", "priority": "medium"},
     ]
     assert [call["args"] for call in executor.calls if call["method"] == "GET"] == [
-        {"id": "JOB-LOW-001"},
-        {"id": "JOB-LOW-002"},
+        {"fields": "job_id,status", "id": "JOB-LOW-001"},
+        {"fields": "job_id,status", "id": "JOB-LOW-002"},
     ]
     observed_read_ids = []
     for evidence in req_002_evidence:
@@ -1028,7 +1028,7 @@ async def test_phase8_dependent_updated_jobs_read_completes_when_selector_return
     )
 
     staged = await graph.run(
-        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
         session_context={"session_id": "phase8-read-after-write-collection-only"},
     )
     resumed = await graph.resume_from_approval(
@@ -1042,8 +1042,8 @@ async def test_phase8_dependent_updated_jobs_read_completes_when_selector_return
         "get__jobs_{id}",
     ]
     assert [call["args"] for call in executor.calls if call["method"] == "GET"] == [
-        {"id": "JOB-LOW-001"},
-        {"id": "JOB-LOW-002"},
+        {"fields": "job_id,status", "id": "JOB-LOW-001"},
+        {"fields": "job_id,status", "id": "JOB-LOW-002"},
     ]
 
 
@@ -1116,7 +1116,7 @@ async def test_phase8_dependent_updated_jobs_read_rejects_cross_entity_id_tools(
     )
 
     staged = await graph.run(
-        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
         session_context={"session_id": "phase8-cross-entity-read-tool"},
     )
     resumed = await graph.resume_from_approval(
@@ -1213,7 +1213,7 @@ async def test_phase8_live_approval_preview_stages_row_ids_when_write_window_is_
     )
 
     staged = await graph.run(
-        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
         session_context={"session_id": "phase8-live-preview-tiny-window"},
     )
     staged_args = [

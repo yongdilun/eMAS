@@ -2,8 +2,15 @@
 from pathlib import Path
 import os
 
-# Ensure `factory-agent/` is on sys.path so imports like `import main` work.
+# Ensure repo-level test helpers and `factory-agent/` are on sys.path so imports
+# like `tests.rag_eval.*` and `import main` work from this suite.
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+os.environ.setdefault("LANGSMITH_TRACING", "false")
+
 FACTORY_AGENT_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = FACTORY_AGENT_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(FACTORY_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(FACTORY_AGENT_DIR))
 

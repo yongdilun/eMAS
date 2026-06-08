@@ -1,14 +1,38 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { createServer } from 'vite'
+import reactPlugin from '@vitejs/plugin-react'
+
+const testDir = path.dirname(fileURLToPath(import.meta.url))
+const projectRoot = path.resolve(testDir, '../..')
 
 export async function createViteSsrServer() {
   return createServer({
     appType: 'custom',
+    configFile: false,
     logLevel: 'error',
-    server: { middlewareMode: true, hmr: false },
+    plugins: [reactPlugin()],
+    root: projectRoot,
+    resolve: {
+      alias: {
+        '@': path.resolve(projectRoot, 'src'),
+      },
+    },
+    optimizeDeps: {
+      include: [],
+      noDiscovery: true,
+    },
+    server: {
+      middlewareMode: true,
+      hmr: false,
+      fs: {
+        allow: [projectRoot],
+      },
+    },
   })
 }
 

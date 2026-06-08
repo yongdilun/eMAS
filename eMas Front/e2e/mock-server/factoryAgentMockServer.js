@@ -35,6 +35,8 @@ const sessions = new Map()
 let requestLog = []
 let connectionLog = []
 let sseFrameLog = []
+const activeSockets = new Set()
+const activeSseResponses = new Set()
 
 function now() {
   return new Date().toISOString()
@@ -740,6 +742,10 @@ async function runSseScript({ req, res, url, sessionId, stream, frames }) {
 
   res.on('close', markClosed)
   req.on('aborted', markClosed)
+  activeSseResponses.add(res)
+  res.on('close', () => {
+    activeSseResponses.delete(res)
+  })
 
   let activityRevision = Number(session?.activity_revision || 0)
   const activityStepsById = new Map()
@@ -1285,9 +1291,26 @@ const server = http.createServer(async (req, res) => {
   sendJson(req, url, res, 404, { detail: `No mock route for ${req.method} ${url.pathname}` })
 })
 
+server.on('connection', (socket) => {
+  activeSockets.add(socket)
+  socket.on('close', () => {
+    activeSockets.delete(socket)
+  })
+})
+
 server.listen(port, '127.0.0.1', () => {
   console.log(`Factory Agent mock listening on http://127.0.0.1:${port}`)
 })
 
-process.on('SIGTERM', () => server.close(() => process.exit(0)))
-process.on('SIGINT', () => server.close(() => process.exit(0)))
+function shutdown() {
+  for (const res of activeSseResponses) {
+    if (!res.writableEnded) res.end()
+  }
+  for (const socket of activeSockets) {
+    socket.destroy()
+  }
+  server.close(() => process.exit(0))
+}
+
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)

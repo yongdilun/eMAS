@@ -1257,6 +1257,7 @@ export function mixedOperationRagDocument(session) {
         type: 'knowledge_answer',
         contract: KNOWLEDGE_ANSWER_CONTRACT,
         operation_id: 'pw-plan-rd-mixed-operation-rag',
+        title: 'Procedure guidance',
         answer: guidance,
         segments: [{ text: guidance, citation_ids: [citation.citation_id] }],
         citations: [citation],

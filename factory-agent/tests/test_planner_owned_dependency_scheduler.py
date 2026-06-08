@@ -322,7 +322,7 @@ def test_dependency_scheduler_serializes_mutation_until_prerequisite_read_is_sat
 
 def test_dependency_scheduler_blocks_updated_jobs_read_until_write_evidence_exists():
     state = build_initial_planner_owned_agent_graph_state(
-        "Change planned low-priority jobs to medium priority, then show the updated jobs.",
+        "Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.",
         tools_by_name={
             "get__jobs": _job_collection_tool(),
             "get__jobs_{id}": _job_status_tool(),

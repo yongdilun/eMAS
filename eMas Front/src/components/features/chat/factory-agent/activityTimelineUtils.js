@@ -6,6 +6,8 @@ import {
   typedPresentationIsAuthoritative,
 } from './presentationContract.js'
 
+const RUN_COMPLETE_LABEL = 'run complete'
+
 /**
  * When the activity timeline is enabled for the latest turn, defer assistant
  * prose, tables, and stream-gated extras until the strip shows a terminal step,
@@ -235,13 +237,13 @@ export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = 
   const firstTerminal = rows.findIndex((step) => {
     const label = String(step?.label || '').toLowerCase()
     const group = String(step?.group || '').toLowerCase()
-    return (step?.state === 'complete' && group === 'response') || label === 'run complete'
+    return (step?.state === 'complete' && group === 'response') || label === RUN_COMPLETE_LABEL
   })
   const candidateRows = firstTerminal >= 0 ? rows.slice(0, firstTerminal) : rows
   const withoutTerminal = candidateRows.filter((step) => {
     const label = String(step?.label || '').toLowerCase()
     const group = String(step?.group || '').toLowerCase()
-    return !(step?.state === 'complete' && group === 'response') && label !== 'run complete'
+    return !(step?.state === 'complete' && group === 'response') && label !== RUN_COMPLETE_LABEL
   })
   const withoutResponseScaffolding = withoutTerminal.filter((step) => !isResponseScaffoldingStep(step))
   if (status === 'WAITING_USER_ACTION') {
@@ -269,7 +271,7 @@ export function stripPrematureTerminalActivitySteps(steps = [], sessionStatus = 
     const beforeWaiting = withoutResponseScaffolding.filter((step, index) => {
       if (index === latestWaitingAction) return false
       const label = String(step?.label || '').toLowerCase()
-      return label !== 'rendering response' && label !== 'preparing response' && label !== 'run complete'
+      return label !== 'rendering response' && label !== 'preparing response' && label !== RUN_COMPLETE_LABEL
     })
     return [...beforeWaiting, waitingStep].filter(Boolean).map((step, index, rows) => {
       if (index >= rows.length - 1 || !FINALIZED_STATES.has(step?.state)) return step
@@ -353,7 +355,7 @@ const ACTIVITY_LABEL_ORDER = new Map([
   ['review generated schedule', 120],
   ['preparing response', 130],
   ['rendering response', 140],
-  ['run complete', 150],
+  [RUN_COMPLETE_LABEL, 150],
   ['something needs attention', 150],
 ])
 
@@ -368,7 +370,7 @@ function isResponseScaffoldingStep(step) {
   return group === 'response' && (
     label === 'preparing response' ||
     label === 'rendering response' ||
-    label === 'run complete'
+    label === RUN_COMPLETE_LABEL
   )
 }
 

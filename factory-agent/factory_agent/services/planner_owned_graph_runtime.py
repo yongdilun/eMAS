@@ -893,9 +893,17 @@ class PlannerOwnedGraphRuntimeAdapter:
             risk_summary="Waiting for graph-native approval before committing staged changes.",
             steps=[],
         )
+        refreshed = await self._session_lookup(db, session_id=sess.session_id) or sess
+        refreshed.status = "WAITING_APPROVAL"
+        refreshed.error = summary
+        refreshed.completed_at = None
+        refreshed.replan_context = context
+        bump_session_revision(refreshed)
+        await db.commit()
+
         response = await self._persist_plan(
             db=db,
-            sess=sess,
+            sess=refreshed,
             draft=draft,
             tools_by_name=tools_by_name,
             backend_used="planner_owned_agent_graph",
@@ -905,7 +913,7 @@ class PlannerOwnedGraphRuntimeAdapter:
             context_to_keep=context,
             tool_outputs=[],
         )
-        refreshed = await self._session_lookup(db, session_id=sess.session_id) or sess
+        refreshed = await self._session_lookup(db, session_id=refreshed.session_id) or refreshed
         refreshed.status = "WAITING_APPROVAL"
         refreshed.error = summary
         refreshed.completed_at = None

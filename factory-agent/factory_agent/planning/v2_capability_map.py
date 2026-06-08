@@ -822,7 +822,8 @@ def _prepare_requirement_intents(intents: list[Intent], aliases: FieldAliases) -
     coalesced = _coalesce_field_continuation_intents(intents, aliases)
     prepared: list[Intent] = []
     for intent in coalesced:
-        prepared.extend(_expand_mixed_entity_intent(intent))
+        for expanded in _expand_mixed_entity_intent(intent):
+            prepared.extend(_expand_mixed_operational_document_intent(expanded))
     return prepared
 
 
@@ -1141,6 +1142,52 @@ def _expand_mixed_entity_intent(intent: Intent) -> list[Intent]:
                 )
             )
     return expanded
+
+
+def _expand_mixed_operational_document_intent(intent: Intent) -> list[Intent]:
+    text = (intent.description or "").strip()
+    if not text or " and " not in text.lower():
+        return [intent]
+
+    for match in re.finditer(r"\s+\band\s+", text, re.IGNORECASE):
+        left = text[: match.start()].strip(" \t,;")
+        right = text[match.end() :].strip(" \t,;")
+        if not left or not right:
+            continue
+        left_frame = semantic_frame_for_text(left)
+        left_source = _source_for_frame(left_frame, left)
+        right_clause = right if _starts_with_action_verb(right) else f"Show {right}"
+        right_frame = semantic_frame_for_text(right_clause)
+        right_source = _source_for_frame(right_frame, right_clause)
+        if left_source != "operational_state" or right_source != "document_knowledge":
+            continue
+        if not (left_frame.entity or any(left_frame.normalized_entities.values())):
+            continue
+        return [
+            split_user_intents(left)[0].model_copy(
+                update={
+                    "intent_id": f"{intent.intent_id}:operational",
+                    "depends_on": list(intent.depends_on),
+                }
+            ),
+            split_user_intents(right_clause)[0].model_copy(
+                update={
+                    "intent_id": f"{intent.intent_id}:document",
+                    "depends_on": list(intent.depends_on),
+                }
+            ),
+        ]
+    return [intent]
+
+
+def _starts_with_action_verb(text: str) -> bool:
+    return bool(
+        re.match(
+            r"\s*(?:assist|check|describe|explain|find|get|list|lookup|read|report|show|summari[sz]e|view)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _entity_from_constraint_field(field: str | None) -> str | None:
