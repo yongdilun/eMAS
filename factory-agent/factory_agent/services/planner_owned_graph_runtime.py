@@ -1181,31 +1181,21 @@ class PlannerOwnedGraphRuntimeAdapter:
         result: PlannerOwnedGraphResult,
         tool_outputs: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
-        output = next(
-            (
-                item
-                for item in tool_outputs
-                if isinstance(item, Mapping)
-                and str(item.get("tool_name") or "").strip() == _RESCHEDULE_ALL_TOOL
-                and str(item.get("status") or "").upper() != "FAILED"
-            ),
-            None,
-        )
+        output = self._reschedule_all_output(tool_outputs)
+        if output is None:
+            output = self._reschedule_all_output_from_evidence(result)
         if output is None:
             return None
-        result_payload = output.get("result") if isinstance(output.get("result"), Mapping) else {}
-        data = result_payload.get("data") if isinstance(result_payload.get("data"), Mapping) else result_payload
-        proposals = data.get("proposals") if isinstance(data, Mapping) and isinstance(data.get("proposals"), list) else []
+        data = self._reschedule_all_payload_data(output)
+        proposals = data.get("proposals") if isinstance(data.get("proposals"), list) else []
         proposals = [dict(item) for item in proposals if isinstance(item, Mapping)]
         proposal_ids = self._proposal_ids_from_reschedule_output(output, proposals)
         if not proposal_ids and not proposals:
             return None
         approval_id = str(output.get("approval_id") or "").strip() or None
-        summary = data.get("summary") if isinstance(data, Mapping) and isinstance(data.get("summary"), Mapping) else {}
+        summary = data.get("summary") if isinstance(data.get("summary"), Mapping) else {}
         message = (
             str(data.get("message") or "").strip()
-            if isinstance(data, Mapping)
-            else ""
         )
         if not message:
             message = f"Review {len(proposal_ids) or len(proposals)} generated reschedule proposal(s) before applying."
@@ -1235,19 +1225,103 @@ class PlannerOwnedGraphRuntimeAdapter:
             },
         }
 
+    def _reschedule_all_output(
+        self,
+        tool_outputs: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                dict(item)
+                for item in tool_outputs
+                if isinstance(item, Mapping)
+                and str(item.get("tool_name") or "").strip() == _RESCHEDULE_ALL_TOOL
+                and str(item.get("status") or "").upper() != "FAILED"
+            ),
+            None,
+        )
+
+    def _reschedule_all_output_from_evidence(
+        self,
+        result: PlannerOwnedGraphResult,
+    ) -> dict[str, Any] | None:
+        state = result.state
+        for evidence in reversed(list(state.evidence_ledger.evidence)):
+            if str(evidence.tool_name or "").strip() != _RESCHEDULE_ALL_TOOL:
+                continue
+            if self._evidence_failed(evidence):
+                continue
+            if not self._evidence_active_for_runtime_result(state, evidence):
+                continue
+            return {
+                "tool_name": evidence.tool_name,
+                "args": dict(evidence.args or {}),
+                "result": self._step_result_payload(evidence),
+                "http_status": evidence.diagnostic_metadata.get("http_status")
+                or evidence.normalized_result.get("status_code"),
+                "latency_ms": evidence.diagnostic_metadata.get("latency_ms"),
+                "status": "DONE",
+                "requirement_id": evidence.requirement_id,
+                "approval_id": evidence.approval_id,
+                "summary": str(evidence.normalized_result.get("summary") or ""),
+                "evidence_ref": evidence.id,
+                "graph_authorized_execution": True,
+                "aggregated_from": evidence.diagnostic_metadata.get("aggregated_from"),
+            }
+        return None
+
+    def _evidence_active_for_runtime_result(
+        self,
+        state: Any,
+        evidence: EvidenceLedgerEntry,
+    ) -> bool:
+        metadata = dict(evidence.diagnostic_metadata or {})
+        if metadata.get("active_revision_satisfaction") is False:
+            return False
+        if (
+            metadata.get("stale_after_graph_revision") is True
+            or metadata.get("stale_after_user_interrupt") is True
+            or metadata.get("stale_after_graph_replan") is True
+            or metadata.get("superseded_reason") == "replan_spine_retry"
+        ):
+            return False
+        requirement = self._requirement_by_id(state, evidence.requirement_id)
+        return requirement is not None and str(getattr(requirement, "status", "") or "") != "superseded"
+
+    def _reschedule_all_payload_data(
+        self,
+        output: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        root = output.get("result") if isinstance(output.get("result"), Mapping) else {}
+        candidates: list[Mapping[str, Any]] = []
+
+        def collect(value: Any, depth: int = 0) -> None:
+            if depth > 4 or not isinstance(value, Mapping):
+                return
+            candidates.append(value)
+            for key in ("data", "body", "result", "payload", "response", "value"):
+                collect(value.get(key), depth + 1)
+
+        collect(root)
+        for candidate in candidates:
+            if (
+                isinstance(candidate.get("proposals"), list)
+                or isinstance(candidate.get("proposal_ids"), list)
+                or isinstance(candidate.get("proposalIds"), list)
+            ):
+                return dict(candidate)
+        return dict(root)
+
     def _proposal_ids_from_reschedule_output(
         self,
         output: Mapping[str, Any],
         proposals: list[dict[str, Any]],
     ) -> list[str]:
         ids: list[str] = []
-        result_payload = output.get("result") if isinstance(output.get("result"), Mapping) else {}
-        data = result_payload.get("data") if isinstance(result_payload.get("data"), Mapping) else result_payload
-        if isinstance(data, Mapping):
-            for key in ("proposal_ids", "proposalIds"):
-                raw_ids = data.get(key)
-                if isinstance(raw_ids, list):
-                    ids.extend(str(item).strip() for item in raw_ids if str(item or "").strip())
+        data = self._reschedule_all_payload_data(output)
+        for key in ("proposal_ids", "proposalIds"):
+            raw_ids = data.get(key)
+            if isinstance(raw_ids, list):
+                ids.extend(str(item).strip() for item in raw_ids if str(item or "").strip())
         for proposal in proposals:
             for key in ("proposal_id", "proposalId", "id"):
                 value = str(proposal.get(key) or "").strip()

@@ -116,7 +116,8 @@ test.describe('Phase 17 security, privacy, and abuse hardening @security @privac
 
     await openChat(page)
 
-    await expect(page.getByText(/Session not found|Requested resource was not found|Factory Agent needs attention/i).first()).toBeVisible()
+    await expect(page.getByText('Start a session from the sidebar.')).toBeVisible()
+    await expect(page.getByText(/Requested resource was not found|Factory Agent needs attention/i)).toHaveCount(0)
     await expect(page.getByText(securityOtherUserSecret)).toHaveCount(0)
     await expect(page.getByText(securitySafeOwnAnswer)).toHaveCount(0)
     await expect

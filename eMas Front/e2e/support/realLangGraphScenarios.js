@@ -77,7 +77,14 @@ export async function goApiJson(path, options = {}) {
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
+  let body = null
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch (err) {
+      throw new Error(`Go API ${options.method || 'GET'} ${path} returned non-JSON: ${response.status} ${text.slice(0, 300)}`)
+    }
+  }
   if (!response.ok) {
     throw new Error(`Go API ${options.method || 'GET'} ${path} failed: ${response.status} ${text}`)
   }
@@ -126,6 +133,10 @@ export async function resetSeededJobPriorities() {
   for (const [jobId, priority] of Object.entries(canonicalJobPriorities)) {
     await goApiJson(`/jobs/${jobId}`, { method: 'PUT', body: { priority } })
   }
+}
+
+export async function resetCanonicalGoApiSeed() {
+  await goApiJson('/__e2e/reset', { method: 'POST' })
 }
 
 export async function resetFactoryAgentSessions() {

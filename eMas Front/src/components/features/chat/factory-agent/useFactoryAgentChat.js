@@ -354,6 +354,13 @@ export function useFactoryAgentChat() {
     lastSnapshotRef.current = null
   }, [])
 
+  const clearPendingDecisionState = useCallback(() => {
+    setPendingApproval(null)
+    setPendingInteraction(null)
+    setApprovalReason('')
+    setResumeHint(null)
+  }, [])
+
   const getStashedBundlePresentation = useCallback((approvalId) => {
     if (!approvalId) return null
     return bundleTableByApprovalIdRef.current.get(approvalId) ?? null
@@ -576,6 +583,7 @@ export function useFactoryAgentChat() {
   const startNewSession = useCallback(async () => {
     setLoading(true)
     setError(null)
+    clearPendingDecisionState()
     try {
       const created = await factoryAgentApi.createSession({
         user_id: DEFAULT_USER_ID,
@@ -595,12 +603,13 @@ export function useFactoryAgentChat() {
     } finally {
       setLoading(false)
     }
-  }, [mergeSessionSummary, refreshSessionList, safelyRefreshSnapshot])
+  }, [clearPendingDecisionState, mergeSessionSummary, refreshSessionList, safelyRefreshSnapshot])
 
   const switchSession = useCallback(async (sessionId) => {
     if (!sessionId) return
     setLoading(true)
     setError(null)
+    clearPendingDecisionState()
     try {
       await safelyRefreshSnapshot(sessionId)
     } catch (err) {
@@ -608,7 +617,7 @@ export function useFactoryAgentChat() {
     } finally {
       setLoading(false)
     }
-  }, [safelyRefreshSnapshot])
+  }, [clearPendingDecisionState, safelyRefreshSnapshot])
 
   const renameSession = useCallback(async (sessionId, name) => {
     const trimmed = (name || '').trim()

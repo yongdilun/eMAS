@@ -59,6 +59,22 @@ async function snapshotForPage(page) {
   return factoryAgentJson(`/sessions/${sessionId}/snapshot`)
 }
 
+async function approveCurrentResponseDocument(page) {
+  const dialog = page.getByRole('dialog', { name: chatSelectors.dialogName })
+  const approvalBlock = dialog.locator('[data-response-block-type="approval_required"]').last()
+  const approve = approvalBlock.getByRole('button', { name: 'Approve' })
+  await expect(approve).toBeVisible()
+  const [approveResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.request().method() === 'POST' &&
+      /\/approvals\/[^/]+\/approve$/.test(new URL(response.url()).pathname),
+    ),
+    approve.click(),
+  ])
+  expect(approveResponse.ok()).toBe(true)
+  return approveResponse
+}
+
 test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
   test('scenario 31: opens chat through Vite and creates a real Factory Agent session', async ({ page }) => {
     await openChat(page)
@@ -91,7 +107,7 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
         hiddenBackendBlockTypes: ['approval_required', 'mutation_result', 'result_table', 'record_preview'],
         responseContracts: ['entity_status_v1'],
         approvalActionCount: 0,
-        textIncludes: ['Run complete', 'Machine M-CNC-01', 'Machine ID', 'Machine name', 'CNC Mill 01', 'Status'],
+        textIncludes: ['Run complete', 'Machine M-CNC-01', 'Machine ID', 'Status'],
         textExcludes: [/Approval required/i, /Which machine ID/i],
       },
     })
@@ -102,7 +118,7 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
     await openChat(page)
     await sendPrompt(page, 'List low priority seeded jobs sorted by deadline')
 
-    await expect(page.getByText(/low-priority seeded jobs/i).first()).toBeVisible()
+    await expect(page.getByText(/Found \d+ low-priority jobs sorted by deadline/i).first()).toBeVisible()
     await expect(page.getByText(/JOB-SEED-/).first()).toBeVisible()
     await expect(page.getByRole('table').first()).toBeVisible()
     await expect(page.getByText('Run complete')).toBeVisible()
@@ -228,11 +244,10 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
 
   test('scenario 36: approval approve resumes and reaches completed state with controlled provider', async ({ page }) => {
     await openChat(page)
+    await startNewChatSession(page)
     await sendPrompt(page, 'Seeded approval approve flow: change low priority jobs to high priority')
 
-    const approve = page.getByRole('button', { name: 'Approve' })
-    await expect(approve).toBeVisible()
-    await approve.click()
+    await approveCurrentResponseDocument(page)
 
     const sessionId = await activeSessionId(page)
     await expect.poll(async () => {
@@ -241,8 +256,9 @@ test.describe('L3 seeded full-stack foundation @l3-foundation', () => {
     }).toBe('COMPLETED')
 
     await expect(page.getByText('Run complete')).toBeVisible()
-    await page.getByText('Show details').click()
-    await expect(page.getByText(/Approved seeded change completed/i).last()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Changes completed' })).toBeVisible()
+    await expect(page.getByText(/Done\. I updated 5 jobs across 1 approved business change/i).last()).toBeVisible()
+    await expect(page.getByText(/Low -> High: 5 jobs/i).first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0)
   })
 

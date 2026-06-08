@@ -433,6 +433,121 @@ async def test_reschedule_all_graph_result_waits_for_embedded_user_action(db_ses
 
 
 @pytest.mark.asyncio
+async def test_reschedule_all_review_uses_valid_execution_evidence_not_only_response_refs(db_session):
+    service = _service()
+    session_id = "phase20-reschedule-all-response-ref-filter"
+    sess = Session(
+        session_id=session_id,
+        user_id="u1",
+        status="EXECUTING",
+        current_intent="reschedule every job",
+        llm_call_count=0,
+    )
+    db_session.add(sess)
+    db_session.add(
+        Message(
+            message_id="phase20-reschedule-all-response-ref-user",
+            session_id=session_id,
+            role="user",
+            content="reschedule every job",
+            mode="normal",
+        )
+    )
+    await db_session.commit()
+
+    state = build_initial_planner_owned_agent_graph_state(
+        "reschedule every job",
+        tools_by_name={},
+    )
+    requirement_id = state.requirement_ledger.requirements[0].id
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-approval-approved",
+            requirement_id=requirement_id,
+            source_type="approval",
+            source_of_truth="operational_state",
+            confidence="deterministic",
+            approval_id="approval-reschedule-all",
+            normalized_result={
+                "approval_status": "approved",
+                "status": "approved",
+                "reason": "approved_by_user",
+                "committed": False,
+            },
+        )
+    )
+    state.evidence_ledger.evidence.append(
+        EvidenceLedgerEntry(
+            id="ev-reschedule-all",
+            requirement_id=requirement_id,
+            source_type="api_tool",
+            source_of_truth="operational_state",
+            confidence="deterministic",
+            tool_name="post__ai_scheduling_reschedule-all",
+            args={},
+            normalized_result={
+                "status_code": 200,
+                "body": {
+                    "success": True,
+                    "data": {
+                        "proposals": [
+                            {"proposal_id": "PROP-001", "job_id": "JOB-001"},
+                            {"proposal_id": "PROP-002", "job_id": "JOB-002"},
+                        ],
+                        "summary": {"generated": 2, "feasible_count": 2},
+                        "message": "Review 2 generated reschedule proposal(s) before applying.",
+                    },
+                },
+            },
+            approval_id="approval-reschedule-all",
+            diagnostic_metadata={"graph_authorized_execution": True, "http_status": 200},
+        )
+    )
+    state.response_document_context.evidence_refs = ["ev-approval-approved"]
+    result = PlannerOwnedGraphResult(
+        state=state,
+        node_order=["tool_execution_node", "response_document_node"],
+        checkpoint_config={"configurable": {"thread_id": session_id, "checkpoint_id": "checkpoint-reschedule-all"}},
+    )
+    adapter = PlannerOwnedGraphRuntimeAdapter(
+        settings=_settings(),
+        tool_selector=SimpleNamespace(),
+        rag_pipeline=None,
+        uuid_factory=lambda: "reschedule-interaction",
+        persist_plan=service._persist_plan,
+        session_lookup=lambda db, session_id: db.get(Session, session_id),
+    )
+
+    await adapter.persist_result(
+        db=db_session,
+        sess=sess,
+        tools_by_name={
+            "post__ai_scheduling_reschedule-all": ToolInfo(
+                name="post__ai_scheduling_reschedule-all",
+                description="Reschedule all jobs",
+                endpoint="/ai/scheduling/reschedule-all",
+                method="POST",
+                input_schema={"type": "object", "properties": {}},
+                output_schema={"type": "object"},
+                is_read_only=False,
+                requires_approval=True,
+                side_effect_level="HIGH",
+                capability_tags=["scheduling", "reschedule", "all", "job"],
+            )
+        },
+        intent="reschedule every job",
+        mode="normal",
+        result=result,
+    )
+
+    refreshed = await db_session.get(Session, session_id)
+    pending = (refreshed.replan_context or {})["pending_interaction"]
+    assert refreshed.status == "WAITING_USER_ACTION"
+    assert pending["proposal_ids"] == ["PROP-001", "PROP-002"]
+    assert pending["message"] == "Review 2 generated reschedule proposal(s) before applying."
+
+
+@pytest.mark.asyncio
 async def test_phase10_behavior_normal_v2_plan_creation_enters_graph_path(monkeypatch):
     service = _service()
     calls: list[dict[str, Any]] = []

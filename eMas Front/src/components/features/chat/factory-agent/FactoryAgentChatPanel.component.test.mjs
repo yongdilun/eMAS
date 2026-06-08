@@ -1010,7 +1010,13 @@ test('FactoryAgentChatPanel keeps response_document graph tool metadata for appr
     session: { session_id: 'session-rd-reschedule', name: 'RD reschedule', status: 'WAITING_APPROVAL' },
     sessionList: [{ session_id: 'session-rd-reschedule', name: 'RD reschedule', status: 'WAITING_APPROVAL' }],
     activeSessionName: 'RD reschedule',
-    pendingApproval: null,
+    isSending: true,
+    pendingApproval: {
+      approval_id: 'stale-approval-from-previous-session',
+      tool_name: 'put__jobs_{id}',
+      risk_summary: 'Stale approval from another chat.',
+      args: { selected_graph_tool_call: { tool_name: 'put__jobs_{id}' } },
+    },
     decideApproval: (...args) => {
       decided = args
     },
@@ -1031,6 +1037,7 @@ test('FactoryAgentChatPanel keeps response_document graph tool metadata for appr
 
   assert.equal(decided?.[0], 'approve')
   assert.equal(decided?.[1]?.selected_graph_tool_call?.tool_name, 'post__ai_scheduling_reschedule-all')
+  assert.equal(decided?.[2]?.approval_id, 'approval-rd-reschedule')
   assert.equal(decided?.[2]?.tool_name, 'post__ai_scheduling_reschedule-all')
 
   await view.unmount()
@@ -1166,7 +1173,7 @@ test('FactoryAgentChatPanel treats embedded reschedule close as cancel decision'
   await view.unmount()
 })
 
-test('FactoryAgentChatPanel disables approval actions while initial send is finishing', async () => {
+test('FactoryAgentChatPanel keeps pending approval actions enabled if send state is stale', async () => {
   const pendingApproval = {
     approval_id: 'approval-sending-1',
     tool_name: 'post__ai_scheduling_reschedule-all',
@@ -1199,9 +1206,10 @@ test('FactoryAgentChatPanel disables approval actions while initial send is fini
   const view = await renderPanelWithState(chatState)
 
   const approveButton = Array.from(view.container.querySelectorAll('button')).find((button) =>
-    button.textContent.includes('Approving'),
+    button.textContent.trim() === 'Approve',
   )
-  assert.equal(approveButton?.disabled, true)
+  assert.ok(approveButton)
+  assert.equal(approveButton.disabled, false)
 
   await view.unmount()
 })

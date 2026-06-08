@@ -1718,6 +1718,25 @@ export function SourceDrawer({ source, sources = [], pdfSource, onOpenPdf, onBac
   )
 }
 
+function approvalTargetFromBlock(block) {
+  if (!block?.approval_id) return null
+  const blockArgs = block.args && typeof block.args === 'object' ? block.args : {}
+  const details = block.details && typeof block.details === 'object' ? block.details : {}
+  const args = { ...blockArgs }
+  for (const key of ['preview', 'selected_graph_tool_call', 'staged_graph_tool_calls', 'bundle_ui']) {
+    if (args[key] == null && block[key] != null) args[key] = block[key]
+  }
+  if (args.preview_details == null && Object.keys(details).length > 0) args.preview_details = details
+  return {
+    approval_id: block.approval_id,
+    operation_id: block.operation_id || null,
+    tool_name: block.tool_name || details.tool_name || args.selected_graph_tool_call?.tool_name || args.bundle_ui?.write_tool_name || null,
+    risk_summary: block.summary || block.title || 'Review the proposed change before it is applied.',
+    status: 'PENDING',
+    ...(Object.keys(args).length > 0 ? { args } : {}),
+  }
+}
+
 function ApprovalBlock({
   block,
   pendingApproval,
@@ -1728,15 +1747,21 @@ function ApprovalBlock({
   setApprovalReason,
 }) {
   const rows = Array.isArray(block.rows) ? block.rows : []
-  const manualInputRequired = approvalRequiresManualInput(pendingApproval)
+  const blockApprovalId = block?.approval_id ? String(block.approval_id) : ''
+  const pendingApprovalId = pendingApproval?.approval_id ? String(pendingApproval.approval_id) : ''
+  const actionApproval =
+    pendingApprovalId && (!blockApprovalId || pendingApprovalId === blockApprovalId)
+      ? pendingApproval
+      : approvalTargetFromBlock(block)
+  const manualInputRequired = approvalRequiresManualInput(actionApproval)
   if (showApprovalActions && manualInputRequired) {
     return (
       <ApprovalCard
-        approval={pendingApproval}
+        approval={actionApproval}
         reason={approvalReason}
         onReasonChange={setApprovalReason}
-        onApprove={(args) => decideApproval?.('approve', args, pendingApproval)}
-        onReject={() => decideApproval?.('reject', undefined, pendingApproval)}
+        onApprove={(args) => decideApproval?.('approve', args, actionApproval)}
+        onReject={() => decideApproval?.('reject', undefined, actionApproval)}
         deciding={isDecidingApproval}
       />
     )
@@ -1759,17 +1784,17 @@ function ApprovalBlock({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled={isDecidingApproval}
+              disabled={isDecidingApproval || !actionApproval?.approval_id}
               aria-busy={isDecidingApproval ? 'true' : 'false'}
-              onClick={() => decideApproval?.('approve', pendingApproval?.args, pendingApproval)}
+              onClick={() => decideApproval?.('approve', actionApproval?.args, actionApproval)}
               className="inline-flex min-w-[6.5rem] items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-hover disabled:opacity-70"
             >
               {isDecidingApproval ? 'Approving...' : 'Approve'}
             </button>
             <button
               type="button"
-              disabled={isDecidingApproval}
-              onClick={() => decideApproval?.('reject', undefined, pendingApproval)}
+              disabled={isDecidingApproval || !actionApproval?.approval_id}
+              onClick={() => decideApproval?.('reject', undefined, actionApproval)}
               className="rounded-md bg-inverse-canvas px-3 py-1.5 text-xs font-semibold text-inverse-ink hover:opacity-90 disabled:opacity-60"
             >
               Reject

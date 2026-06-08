@@ -19,8 +19,8 @@ import {
   originalLowJobIds,
   originalMediumJobIds,
   pendingApprovalsForPage,
+  resetCanonicalGoApiSeed,
   resetFactoryAgentSessions,
-  resetSeededJobPriorities,
   sendPrompt,
   snapshotForPage,
   timelineText,
@@ -81,6 +81,18 @@ async function pendingRescheduleInteraction(page) {
   return interaction?.kind === 'reschedule_all_review' ? interaction : null
 }
 
+async function expectEmbeddedRescheduleReview(page) {
+  const dialog = page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText(/Proposals\s*\d+/i)
+  await expect(dialog).toContainText(/Feasible\s*\d+/i)
+  await expect(dialog).toContainText(/Conflicts\s*\d+/i)
+  await expect(dialog).toContainText(/Late\s*\d+/i)
+  await expect(dialog.getByRole('button', { name: /Resolve in Resolution Center/i })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: /Apply all/i })).toBeEnabled()
+  return dialog
+}
+
 function planRows(snapshot) {
   return Array.isArray(snapshot?.steps) ? snapshot.steps : []
 }
@@ -98,8 +110,8 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
   test.describe.configure({ timeout: 150_000 })
 
   test.beforeEach(async () => {
+    await resetCanonicalGoApiSeed()
     await resetFactoryAgentSessions()
-    await resetSeededJobPriorities()
   })
 
   test('CJ-001 create-job prompt opens real LangGraph manual-input form @critical', async ({ page }) => {
@@ -210,10 +222,7 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
       expect(openedNewPage).toBe(false)
       expect(page.context().pages().length).toBe(initialPageCount)
       expect(page.url()).toBe(initialUrl)
-      await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
-      await expect(page.getByText(/proposal\(s\) are infeasible/i).first()).toBeVisible()
-      await expect(page.getByRole('button', { name: /Resolve in Resolution Center/i })).toBeVisible()
-      await expect(page.getByRole('button', { name: /Apply all/i })).toBeEnabled()
+      await expectEmbeddedRescheduleReview(page)
 
       await page.getByRole('button', { name: /Apply all/i }).click()
       await expect
@@ -259,9 +268,7 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
       await expect(page.getByText(/Data too long/i)).toHaveCount(0)
       await expect(page.getByText(/Rendering response\s+Current|Current\s+Rendering response/i)).toHaveCount(0)
       await expect(page.getByText(/Preparing response\s+Current|Current\s+Preparing response/i)).toHaveCount(0)
-      await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
-      await expect(page.getByText(/proposal\(s\) are infeasible/i).first()).toBeVisible()
-      await expect(page.getByRole('button', { name: /Resolve in Resolution Center/i })).toBeVisible()
+      await expectEmbeddedRescheduleReview(page)
 
       expect(openedNewPage).toBe(false)
       expect(page.context().pages().length).toBe(initialPageCount)
@@ -272,7 +279,7 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
       expect(openedNewPage).toBe(false)
       expect(page.context().pages().length).toBe(initialPageCount)
       expect(page.url()).toBe(initialUrl)
-      await page.getByRole('button', { name: 'Close' }).click()
+      await page.getByText('Close', { exact: true }).click()
       await expect(page.getByRole('dialog', { name: /Review (?:generated )?(?:reschedule|schedule)/i })).toBeVisible()
 
       await page.getByRole('button', { name: 'Cancel', exact: true }).click()

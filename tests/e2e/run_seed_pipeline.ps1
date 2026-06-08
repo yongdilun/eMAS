@@ -412,7 +412,11 @@ try {
         -Arguments @(
           "-m", "pytest",
           "factory-agent/tests/test_seed_pipeline_manifest.py",
-          "factory-agent/tests/test_reliability_e2e.py",
+          "factory-agent/tests/test_seeded_scenario_engine.py",
+          "factory-agent/tests/test_planner_owned_graph_interruptions.py::test_phase9_stale_approval_cannot_commit_after_interruption",
+          "factory-agent/tests/test_planner_owned_graph_decision_contract.py::test_replan_spine_decision_gate_allows_bounded_retry_for_transient_timeout_memory",
+          "factory-agent/tests/test_planner_owned_graph_execution_observation.py::test_replan_spine_retries_after_retriable_missing_evidence_and_then_satisfies",
+          "factory-agent/tests/test_response_document_contract.py::test_mixed_api_and_rag_response_keeps_api_claim_out_of_cited_knowledge_segments",
           "-q"
         )
     } finally {

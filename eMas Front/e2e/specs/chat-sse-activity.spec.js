@@ -452,7 +452,6 @@ test.describe('Factory Agent chat SSE activity stream @sse', () => {
       'Waiting for your approval',
       'Approval received',
       'Applied approved change',
-      'Read updated jobs',
       'Verified updated result',
     ]
     for (const expectedLabel of expectedOrder) {

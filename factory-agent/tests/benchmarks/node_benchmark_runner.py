@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1119,8 +1120,26 @@ def _update_baseline_from_report(node: str) -> None:
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(text, encoding="utf-8")
-    os.replace(temp, path)
+    last_error: PermissionError | None = None
+    for attempt in range(5):
+        temp.write_text(text, encoding="utf-8")
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            time.sleep(0.05 * (attempt + 1))
+    try:
+        path.write_text(text, encoding="utf-8")
+        return
+    except PermissionError:
+        if last_error is not None:
+            raise last_error
+        raise
 
 
 def _json_default(value: Any) -> Any:

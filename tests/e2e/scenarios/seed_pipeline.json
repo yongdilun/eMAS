@@ -2625,7 +2625,7 @@
     "complexity": "pause_resume_replan",
     "difficulty": "hard",
     "reliability_area": "pause_resume_workflow",
-    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_pause_resume_live_instruction_update_rejects_stale_approval_and_completes"
+    "test_surface": "factory-agent/tests/test_planner_owned_graph_interruptions.py::test_phase9_stale_approval_cannot_commit_after_interruption"
   },
   {
     "id": "reliability-llm-transient-retry",
@@ -2648,7 +2648,7 @@
     "complexity": "transient_retry",
     "difficulty": "hard",
     "reliability_area": "llm_failure_recovery",
-    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_transient_llm_failure_is_retried_without_losing_session_state"
+    "test_surface": "factory-agent/tests/test_planner_owned_graph_decision_contract.py::test_replan_spine_decision_gate_allows_bounded_retry_for_transient_timeout_memory"
   },
   {
     "id": "reliability-transaction-rollback-bundle",
@@ -2695,6 +2695,6 @@
     "complexity": "api_then_rag",
     "difficulty": "hard",
     "reliability_area": "rag_normal_tool_mix",
-    "test_surface": "factory-agent/tests/test_reliability_e2e.py::test_rag_sources_and_normal_tool_output_share_the_same_snapshot"
+    "test_surface": "factory-agent/tests/test_response_document_contract.py::test_mixed_api_and_rag_response_keeps_api_claim_out_of_cited_knowledge_segments"
   }
 ]

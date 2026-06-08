@@ -134,10 +134,20 @@ test.describe('Phase 17 production-grade operational readiness @operational', ()
     const categories = new Set(matrix.map((entry) => entry.category))
 
     expect(categories).toEqual(
-      new Set(['pr', 'seeded', 'hard', 'release', 'synthetic', 'security/privacy', 'reliability']),
+      new Set([
+        'pr',
+        'seeded',
+        'hard',
+        'real-langgraph',
+        'release',
+        'synthetic',
+        'security/privacy',
+        'reliability',
+      ]),
     )
     expect(matrix.some((entry) => entry.args.includes('--project=chromium'))).toBe(true)
     expect(matrix.some((entry) => entry.args.includes('--project=chromium-seeded'))).toBe(true)
+    expect(matrix.some((entry) => entry.args.includes('--project=chromium-real-langgraph'))).toBe(true)
     expect(matrix.some((entry) => entry.args.includes('--project=chromium-release'))).toBe(true)
     expect(matrix.some((entry) => entry.args.includes('--project=chromium-synthetic'))).toBe(true)
     expect(matrix.every((entry) => gateSeverityRules[entry.severityOnFailure])).toBe(true)
