@@ -1,0 +1,88 @@
+[
+  {
+    "id": "evidence-observation-001-api-normalization",
+    "node": "evidence_observation_node",
+    "behavior": "API evidence normalization",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "evidence_ledger.evidence"
+    ]
+  },
+  {
+    "id": "evidence-observation-002-rag-citation",
+    "node": "evidence_observation_node",
+    "behavior": "RAG citation evidence",
+    "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "LOTO procedure for M-CNC-01", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "evidence_ledger.evidence.0.citations"
+    ]
+  },
+  {
+    "id": "evidence-observation-003-no-match",
+    "node": "evidence_observation_node",
+    "behavior": "no-match evidence",
+    "prompt": "Show status for missing machine M-NOPE-404.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-NOPE-404"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "evidence_ledger.evidence"
+    ]
+  },
+  {
+    "id": "evidence-observation-004-stale-background-ignored",
+    "node": "evidence_observation_node",
+    "behavior": "stale background result ignored",
+    "prompt": "Ignore stale machine M-CNC-01 status from an old checkpoint.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "graph_diagnostics.stale_background_results_ignored"
+    ]
+  },
+  {
+    "id": "evidence-observation-005-multi-entity-aggregation",
+    "node": "evidence_observation_node",
+    "behavior": "multi-entity aggregation",
+    "prompt": "List low priority jobs sorted by deadline.",
+    "fixture": {
+      "tool_name": "get__jobs",
+      "args": {"priority": "low", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "evidence_ledger.evidence"
+    ]
+  },
+  {
+    "id": "evidence-observation-006-child-requirement-expansion",
+    "node": "evidence_observation_node",
+    "behavior": "child requirement expansion",
+    "prompt": "Show machine M-CNC-01 status, then show the active job if the result has an active job id.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.evidence_observation",
+      "requirement_ledger.requirements",
+      "graph_diagnostics.requirement_expansion"
+    ]
+  }
+]
+
