@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-06-08T04:34:33.367712+00:00",
+  "mode": "strict_xfail_first_run",
+  "node": "semantic_intake_node",
+  "xfail": {
+    "semantic-intake-008-missing-entity": {
+      "behavior": "missing entity",
+      "first_status": "failed",
+      "reason": "expected evidence path is empty: requirement_ledger.requirements"
+    }
+  }
+}

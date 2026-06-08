@@ -1,0 +1,134 @@
+[
+  {
+    "id": "semantic-intake-001-single-read",
+    "node": "semantic_intake_node",
+    "behavior": "single read",
+    "prompt": "Show machine M-CNC-01 status.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-002-filtered-list",
+    "node": "semantic_intake_node",
+    "behavior": "filtered list",
+    "prompt": "List low priority jobs sorted by deadline ascending, limit 3.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-003-document-rag",
+    "node": "semantic_intake_node",
+    "behavior": "document/RAG",
+    "prompt": "Use LOTO procedure documents to explain lockout steps for machine M-CNC-01.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-004-mutation",
+    "node": "semantic_intake_node",
+    "behavior": "mutation",
+    "prompt": "Change job JOB-BENCH-001 priority to high.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-005-multi-intent-cascade",
+    "node": "semantic_intake_node",
+    "behavior": "multi-intent cascade",
+    "prompt": "Show machine M-CNC-01 status, then if it has an active job show that job status.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-006-conditional-follow-up",
+    "node": "semantic_intake_node",
+    "behavior": "conditional follow-up",
+    "prompt": "Check machine M-CNC-01; if it is running, show the active job details.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-007-formatting-instruction",
+    "node": "semantic_intake_node",
+    "behavior": "formatting instruction",
+    "prompt": "Show machine M-CNC-01 status and answer in one compact table.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-008-missing-entity",
+    "node": "semantic_intake_node",
+    "behavior": "missing entity",
+    "prompt": "Show the machine status.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-009-pronoun-follow-up",
+    "node": "semantic_intake_node",
+    "behavior": "pronoun follow-up",
+    "prompt": "For machine M-CNC-01, show its current job and then show its deadline.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  },
+  {
+    "id": "semantic-intake-010-llm-repair-fallback",
+    "node": "semantic_intake_node",
+    "behavior": "LLM repair/fallback",
+    "prompt": "Show status for M-CNC-01; then make sure every requested clause is represented even if the model returns one item.",
+    "expected_evidence": [
+      "planner_diagnostics.semantic_intake",
+      "requirement_ledger.requirements",
+      "graph_diagnostics.semantic_intake"
+    ],
+    "expected_contains": {
+      "node_order": "semantic_intake_node"
+    }
+  }
+]
+
