@@ -1,5 +1,5 @@
-Factory Agent Test Commands
-===========================
+Factory Agent And eMAS Test Commands
+====================================
 
 Run these commands from the repository root:
 C:\Users\dilun\OneDrive\Documents\eMas APi
@@ -7,28 +7,79 @@ C:\Users\dilun\OneDrive\Documents\eMas APi
 These commands are written for PowerShell.
 
 
-1. Full node benchmark suite
-----------------------------
+0. Notes
+--------
+
+- Node benchmarks are opt-in. They run only when FACTORY_AGENT_RUN_NODE_BENCHMARKS=1.
+- Some full Python runs on this Windows machine may need TMP/TEMP set to a repo-local folder.
+- Live LLM/RAG commands are intentionally opt-in and depend on local/provider env.
+- Seeded, real LangGraph, release, synthetic, reliability, security, privacy, and operational Playwright lanes are not the default PR gate unless the team promotes them.
+
+
+1. Recommended Fast PR Gate
+---------------------------
+
+Backend oracles, frontend unit/component tests, and deterministic mocked Chromium E2E:
+
+Push-Location "eMas Front"; npm run test:backend-oracles; npm test; npm run test:e2e:mocked; Pop-Location
+
+
+2. Factory Agent Python Tests
+-----------------------------
+
+Full factory-agent pytest suite:
+
+Push-Location .\factory-agent; New-Item -ItemType Directory -Force ..\.tmp | Out-Null; $env:TMP=(Resolve-Path ..\.tmp); $env:TEMP=(Resolve-Path ..\.tmp); python -m pytest -q; Pop-Location
+
+Collect tests only:
+
+Push-Location .\factory-agent; python -m pytest --collect-only -q; Pop-Location
+
+API/auth/contract-focused checks:
+
+Push-Location .\factory-agent; python -m pytest tests\test_config_app_mode.py tests\test_api_endpoints.py tests\test_phase3_contract_coverage.py tests\test_event_stream_runtime.py tests\test_approval_atomicity.py -q; Pop-Location
+
+Planner-owned graph regression checks:
+
+Push-Location .\factory-agent; python -m pytest tests\test_planner_owned_graph_state_contract.py tests\test_planner_owned_graph_decision_contract.py tests\test_planner_owned_graph_execution_observation.py tests\test_planner_owned_graph_approval_resume.py tests\test_planner_owned_graph_interruptions.py tests\test_planner_owned_graph_retrieval_contract.py tests\test_planner_owned_satisfaction.py -q; Pop-Location
+
+Parser regression added by the benchmark fix branch:
+
+Push-Location .\factory-agent; python -m pytest tests\test_planner_owned_intake_compiler.py::test_semicolon_conditional_active_job_splits_into_parent_and_branch -q; Pop-Location
+
+RAG contract/unit checks:
+
+Push-Location .\factory-agent; python -m pytest tests\test_rag_answer_contract.py tests\test_rag_context_building.py tests\test_rag_generation.py tests\test_rag_retrieval.py tests\test_rag_reranking.py tests\test_rag_query_rewriting.py tests\test_response_document_contract.py -q; Pop-Location
+
+Backend oracle command used by the frontend PR gate:
+
+Push-Location "eMas Front"; npm run test:backend-oracles; Pop-Location
+
+
+3. Factory Agent Node Benchmarks
+--------------------------------
+
+Full node benchmark suite.
 Expected current result: 81 passed.
 
 $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='all'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
 
-
-2. Normal pytest skip guard
----------------------------
+Normal pytest skip guard.
 Expected current result: 81 skipped.
 
 Remove-Item Env:\FACTORY_AGENT_RUN_NODE_BENCHMARKS -ErrorAction SilentlyContinue; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_NODE -ErrorAction SilentlyContinue; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
 
-
-3. Run one benchmark node
--------------------------
-Replace <node> with one of the node names listed below.
+Run one benchmark node. Replace <node> with a node name from section 4.
 
 $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='<node>'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
 
+Refresh benchmark baseline and reports intentionally.
+Use this only after changing a scenario or intentionally accepting a new result.
 
-4. Run each benchmark node
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='<node-or-all>'; $env:FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE='1'; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+4. Run Each Benchmark Node
 --------------------------
 
 $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='semantic_intake_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
@@ -54,24 +105,267 @@ $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NO
 $env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='response_document_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
 
 
-5. Refresh benchmark baseline and reports intentionally
--------------------------------------------------------
-Use this only after changing a scenario or intentionally accepting a new result.
+5. Go Backend Tests
+-------------------
 
-$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='<node-or-all>'; $env:FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE='1'; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+Full Go backend suite:
+
+Push-Location .\emas; go test ./...; Pop-Location
+
+Fast e2e checks and approval driver:
+
+Push-Location .\emas; go test ./internal/e2e -count=1 -v; Pop-Location
+
+Seeded Go E2E scenarios:
+
+Push-Location .\emas; $env:E2E_SEEDED='1'; go test ./internal/e2e -run TestSeedPipelineSeededScenariosOptIn -count=1 -v; Remove-Item Env:\E2E_SEEDED -ErrorAction SilentlyContinue; Pop-Location
+
+Live LLM parser evaluation, opt-in:
+
+Push-Location .\emas; $env:LLM_INTEGRATION='1'; go test ./internal/service -run TestAICommandOrchestrator_Fixtures_CISafe -count=1; Remove-Item Env:\LLM_INTEGRATION -ErrorAction SilentlyContinue; Pop-Location
 
 
-6. Parser regression added by the fix branch
+6. Seed Pipeline And Stateful Oracles
+-------------------------------------
+
+Run the shared seed pipeline:
+
+.\tests\e2e\run_seed_pipeline.ps1
+
+Show responses:
+
+.\tests\e2e\run_seed_pipeline.ps1 -ShowResponses
+
+Skip Python checks:
+
+.\tests\e2e\run_seed_pipeline.ps1 -SkipPython
+
+Skip seeded Go scenarios:
+
+.\tests\e2e\run_seed_pipeline.ps1 -SkipSeeded
+
+Run real Factory Agent API scenarios against seeded Go API and local FastAPI:
+
+.\tests\e2e\run_seed_pipeline.ps1 -AgentApi
+
+Run live Factory Agent API scenarios using configured LLM backend:
+
+.\tests\e2e\run_seed_pipeline.ps1 -LiveAgent
+
+Run one Factory Agent API scenario:
+
+.\tests\e2e\run_seed_pipeline.ps1 -SkipFast -SkipPython -SkipSeeded -AgentApi -AgentScenario factory-simple-read
+
+
+7. Frontend Unit, Build, And Lint
+---------------------------------
+
+Frontend unit/component tests:
+
+Push-Location "eMas Front"; npm test; Pop-Location
+
+Frontend production build:
+
+Push-Location "eMas Front"; npm run build; Pop-Location
+
+Frontend lint:
+
+Push-Location "eMas Front"; npm run lint; Pop-Location
+
+Overlap/layout guard:
+
+Push-Location "eMas Front"; npm run verify-overlaps; Pop-Location
+
+Factory Agent HTTP smoke script:
+
+Push-Location "eMas Front"; npm run factory-agent-smoke; Pop-Location
+
+
+8. Frontend Chromium / Mocked Playwright E2E
 --------------------------------------------
-Expected current result: 1 passed.
 
-Push-Location .\factory-agent; python -m pytest tests\test_planner_owned_intake_compiler.py::test_semicolon_conditional_active_job_splits_into_parent_and_branch -q; Pop-Location
+Default deterministic mocked Chromium E2E:
+
+Push-Location "eMas Front"; npm run test:e2e:mocked; Pop-Location
+
+All mocked Chromium E2E:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium; Pop-Location
+
+Response document / final answer / approval / event storm:
+
+Push-Location "eMas Front"; npm run test:e2e:response-document; Pop-Location
+
+Normal-use mocked scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium --grep "@normal-use"; Pop-Location
+
+Reliability mocked scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e:reliability; Pop-Location
+
+Security/privacy mocked scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium --grep "@security|@privacy"; Pop-Location
+
+Operational readiness mocked scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e:operational; Pop-Location
+
+Headed browser:
+
+Push-Location "eMas Front"; npm run test:e2e:headed; Pop-Location
+
+Playwright debug:
+
+Push-Location "eMas Front"; npm run test:e2e:debug; Pop-Location
+
+Open Playwright HTML report:
+
+Push-Location "eMas Front"; npm run test:e2e:report; Pop-Location
 
 
-7. Useful cleanup after benchmark runs
+9. Seeded Full-Stack Playwright E2E
+-----------------------------------
+
+Seeded foundation scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium-seeded --grep "@l3-foundation"; Pop-Location
+
+Seeded hard scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium-seeded --grep "@l3-hard"; Pop-Location
+
+Seeded stateful oracles:
+
+Push-Location "eMas Front"; npm run test:e2e:seeded-oracles; Pop-Location
+
+Seeded normal-use scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium-seeded --grep "@normal-use"; Pop-Location
+
+Seeded data-integrity scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e -- --project=chromium-seeded --grep "@data-integrity"; Pop-Location
+
+Seeded reliability scenarios:
+
+Push-Location "eMas Front"; npm run test:e2e:reliability:seeded; Pop-Location
+
+
+10. Real LangGraph, Release, Synthetic
 --------------------------------------
+
+Real LangGraph critical browser proof:
+
+Push-Location "eMas Front"; npm run test:e2e:real-langgraph; Pop-Location
+
+Release validation:
+
+Push-Location "eMas Front"; npm run test:e2e:release; Pop-Location
+
+Release security/privacy:
+
+Push-Location "eMas Front"; npm run test:e2e:release -- --grep "@security|@privacy"; Pop-Location
+
+Synthetic local release-harness monitor:
+
+Push-Location "eMas Front"; npm run test:e2e:synthetic; Pop-Location
+
+Synthetic live mode, read-only production/staging canary:
+
+Push-Location "eMas Front"; $env:PLAYWRIGHT_SYNTHETIC_LIVE='1'; $env:PLAYWRIGHT_SYNTHETIC_BASE_URL='https://staging.example.com'; $env:PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN='<synthetic-read-only-token>'; $env:PLAYWRIGHT_SYNTHETIC_OWNER='chatbot-oncall'; npm run test:e2e:synthetic; Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_LIVE -ErrorAction SilentlyContinue; Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_BASE_URL -ErrorAction SilentlyContinue; Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN -ErrorAction SilentlyContinue; Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_OWNER -ErrorAction SilentlyContinue; Pop-Location
+
+
+11. Reliability, Soak, And Operational Gates
+--------------------------------------------
+
+Standalone reliability soak:
+
+Push-Location "eMas Front"; $env:PLAYWRIGHT_RELIABILITY_SOAK_REPEAT='2'; node e2e/support/soakRunner.js --repeat 2; Remove-Item Env:\PLAYWRIGHT_RELIABILITY_SOAK_REPEAT -ErrorAction SilentlyContinue; Pop-Location
+
+Operational gate dry run:
+
+Push-Location "eMas Front"; npm run operational:gate -- --dry-run; Pop-Location
+
+Operational gate:
+
+Push-Location "eMas Front"; npm run operational:gate; Pop-Location
+
+Factory Agent load/backpressure smoke:
+
+Push-Location .\factory-agent; python scripts\load_test_backpressure.py --sessions 20 --concurrency 10; Pop-Location
+
+Factory Agent load/backpressure larger run:
+
+Push-Location .\factory-agent; python scripts\load_test_backpressure.py --sessions 100 --concurrency 100 --require-100-success; Pop-Location
+
+
+12. Live RAG Evaluation
+-----------------------
+
+Ingest RAG corpus:
+
+Push-Location .\factory-agent; python -m factory_agent.rag.ingestion; Pop-Location
+
+Run RAG eval wrapper with ingestion:
+
+.\tests\rag_eval\run_rag_eval.ps1 -Ingest
+
+Run RAG eval wrapper:
+
+.\tests\rag_eval\run_rag_eval.ps1
+
+Filter RAG eval cases:
+
+.\tests\rag_eval\run_rag_eval.ps1 -Filter loto-
+
+Run RAG eval pytest wrapper:
+
+.\tests\rag_eval\run_rag_eval.ps1 -Action Pytest -Filter loto-
+
+Run RAG eval harness unit tests, no live opt-in required:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; python -m pytest tests\rag_eval -q; $env:PYTHONPATH=$oldPythonPath
+
+Run RAG eval CLI:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; python -m tests.rag_eval.run_eval --variant V3; $env:PYTHONPATH=$oldPythonPath
+
+Run RAG eval with optional judge:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; python -m tests.rag_eval.run_eval --variant V3 --judge; $env:PYTHONPATH=$oldPythonPath
+
+Run live RAG pytest, skipped unless opt-in env is set:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; $env:FACTORY_AGENT_LIVE_RAG='1'; python -m pytest factory-agent\tests\test_rag_live_llm.py -v; Remove-Item Env:\FACTORY_AGENT_LIVE_RAG -ErrorAction SilentlyContinue; $env:PYTHONPATH=$oldPythonPath
+
+Run live RAG query-debug pytest, skipped unless opt-in env is set:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; $env:FACTORY_AGENT_LIVE_RAG='1'; python -m pytest factory-agent\tests\test_rag_live_query_debug.py -v; Remove-Item Env:\FACTORY_AGENT_LIVE_RAG -ErrorAction SilentlyContinue; $env:PYTHONPATH=$oldPythonPath
+
+Single-query citation debug:
+
+$oldPythonPath=$env:PYTHONPATH; $env:PYTHONPATH="$(Resolve-Path .\factory-agent);$oldPythonPath"; $env:FACTORY_AGENT_LIVE_RAG='1'; python -m tests.rag_eval.run_query_debug --variant V12 --case-id loto-before-service-debug --query "According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?"; Remove-Item Env:\FACTORY_AGENT_LIVE_RAG -ErrorAction SilentlyContinue; $env:PYTHONPATH=$oldPythonPath
+
+
+13. Environment Cleanup
+-----------------------
+
+Remove benchmark env:
 
 Remove-Item Env:\FACTORY_AGENT_RUN_NODE_BENCHMARKS -ErrorAction SilentlyContinue
 Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_NODE -ErrorAction SilentlyContinue
 Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue
 
+Remove live/e2e env commonly set by this runbook:
+
+Remove-Item Env:\E2E_SEEDED -ErrorAction SilentlyContinue
+Remove-Item Env:\LLM_INTEGRATION -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_LIVE_RAG -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_LIVE_LLM -ErrorAction SilentlyContinue
+Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_LIVE -ErrorAction SilentlyContinue
+Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_BASE_URL -ErrorAction SilentlyContinue
+Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:\PLAYWRIGHT_SYNTHETIC_OWNER -ErrorAction SilentlyContinue
+Remove-Item Env:\PLAYWRIGHT_RELIABILITY_SOAK_REPEAT -ErrorAction SilentlyContinue
