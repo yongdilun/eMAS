@@ -1,0 +1,47 @@
+[
+  {
+    "id": "finalize-001-passed",
+    "node": "finalize_node",
+    "behavior": "passed finalize",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "planner_diagnostics.finalize_node",
+      "planner_decisions",
+      "final_validation_result"
+    ]
+  },
+  {
+    "id": "finalize-002-deferred-approval-write",
+    "node": "finalize_node",
+    "behavior": "deferred for approval/write",
+    "prompt": "Change job JOB-BENCH-001 priority to high and defer finalize for approval.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "planner_diagnostics.finalize_node",
+      "pending_approval.approval_id"
+    ]
+  },
+  {
+    "id": "finalize-003-failed-validation",
+    "node": "finalize_node",
+    "behavior": "failed validation",
+    "prompt": "Finalize without valid evidence.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "planner_diagnostics.finalize_node",
+      "planner_decisions",
+      "final_validation_result"
+    ]
+  }
+]
+
