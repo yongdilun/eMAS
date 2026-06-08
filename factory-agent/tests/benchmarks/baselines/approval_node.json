@@ -1,0 +1,6 @@
+{
+  "generated_at": "2026-06-08T04:46:21.016646+00:00",
+  "mode": "strict_xfail_first_run",
+  "node": "approval_node",
+  "xfail": {}
+}

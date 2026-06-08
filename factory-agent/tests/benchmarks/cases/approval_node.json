@@ -1,0 +1,95 @@
+[
+  {
+    "id": "approval-001-pending",
+    "node": "approval_node",
+    "behavior": "pending approval",
+    "prompt": "Change job JOB-BENCH-001 priority to high and wait for approval.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.approval_id"
+    ],
+    "expected_equals": {
+      "pending_approval.status": "pending"
+    }
+  },
+  {
+    "id": "approval-002-approve",
+    "node": "approval_node",
+    "behavior": "approve",
+    "prompt": "Approve the staged priority update for JOB-BENCH-001.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.approval_id"
+    ],
+    "expected_equals": {
+      "pending_approval.status": "approved"
+    }
+  },
+  {
+    "id": "approval-003-reject",
+    "node": "approval_node",
+    "behavior": "reject",
+    "prompt": "Reject the staged priority update for JOB-BENCH-001.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.approval_id"
+    ],
+    "expected_equals": {
+      "pending_approval.status": "rejected"
+    }
+  },
+  {
+    "id": "approval-004-expired-stale",
+    "node": "approval_node",
+    "behavior": "expired/stale approval",
+    "prompt": "Show an expired approval for JOB-BENCH-001.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.approval_id"
+    ],
+    "expected_equals": {
+      "pending_approval.status": "expired"
+    }
+  },
+  {
+    "id": "approval-005-double-click-replay",
+    "node": "approval_node",
+    "behavior": "double-click replay",
+    "prompt": "Replay an approval double click for JOB-BENCH-001.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.payload"
+    ]
+  },
+  {
+    "id": "approval-006-no-record-preview",
+    "node": "approval_node",
+    "behavior": "no-record preview",
+    "prompt": "Preview a write approval where the target record is no longer present.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.payload"
+    ]
+  },
+  {
+    "id": "approval-007-multi-row-staged-write",
+    "node": "approval_node",
+    "behavior": "multi-row staged write",
+    "prompt": "Stage multiple low priority jobs for priority update approval.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.payload"
+    ]
+  },
+  {
+    "id": "approval-008-second-approval-after-first-write",
+    "node": "approval_node",
+    "behavior": "second approval after first write",
+    "prompt": "Show the second approval after the first priority write has completed.",
+    "expected_evidence": [
+      "graph_diagnostics.approval_node",
+      "pending_approval.payload"
+    ]
+  }
+]
+
