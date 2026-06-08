@@ -1,0 +1,101 @@
+[
+  {
+    "id": "planner-choose-001-deterministic-single-tool",
+    "node": "planner_choose_tool_node",
+    "behavior": "deterministic single tool",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_decisions",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-002-collection-tool",
+    "node": "planner_choose_tool_node",
+    "behavior": "collection tool",
+    "prompt": "List low priority jobs sorted by deadline ascending.",
+    "fixture": {
+      "selector_names": ["get__jobs", "get__jobs_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_decisions",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-003-rag-tool",
+    "node": "planner_choose_tool_node",
+    "behavior": "RAG tool",
+    "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
+    "fixture": {
+      "selector_names": ["rag_search_documents"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_decisions",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-004-llm-choice-among-candidates",
+    "node": "planner_choose_tool_node",
+    "behavior": "LLM choice among candidates",
+    "prompt": "Show status for job JOB-BENCH-001, not the list of jobs.",
+    "fixture": {
+      "selector_names": ["get__jobs", "get__jobs_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_proposer_diagnostics",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-005-outside-window-rejection",
+    "node": "planner_choose_tool_node",
+    "behavior": "outside-window rejection",
+    "prompt": "Choose only from the current candidate window for machine M-CNC-01 status.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_proposer_diagnostics",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-006-failed-tool-memory-retry",
+    "node": "planner_choose_tool_node",
+    "behavior": "failed-tool-memory retry",
+    "prompt": "Retry machine M-CNC-01 status after the previous tool failed.",
+    "fixture": {
+      "selector_names": ["get__machines_{id}", "get__jobs_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "graph_diagnostics.failed_tool_memory",
+      "selected_tool_names"
+    ]
+  },
+  {
+    "id": "planner-choose-007-write-tool-selection",
+    "node": "planner_choose_tool_node",
+    "behavior": "write tool selection",
+    "prompt": "Change job JOB-BENCH-001 priority to high.",
+    "fixture": {
+      "selector_names": ["patch__jobs_{id}", "get__jobs_{id}"]
+    },
+    "expected_evidence": [
+      "planner_diagnostics.planner_choose_tool_node",
+      "planner_decisions",
+      "selected_tool_names"
+    ]
+  }
+]
+
