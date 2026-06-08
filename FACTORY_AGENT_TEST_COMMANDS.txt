@@ -1,0 +1,77 @@
+Factory Agent Test Commands
+===========================
+
+Run these commands from the repository root:
+C:\Users\dilun\OneDrive\Documents\eMas APi
+
+These commands are written for PowerShell.
+
+
+1. Full node benchmark suite
+----------------------------
+Expected current result: 81 passed.
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='all'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+2. Normal pytest skip guard
+---------------------------
+Expected current result: 81 skipped.
+
+Remove-Item Env:\FACTORY_AGENT_RUN_NODE_BENCHMARKS -ErrorAction SilentlyContinue; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_NODE -ErrorAction SilentlyContinue; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+3. Run one benchmark node
+-------------------------
+Replace <node> with one of the node names listed below.
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='<node>'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+4. Run each benchmark node
+--------------------------
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='semantic_intake_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='requirement_ledger_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='planner_decision_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='tool_retrieval_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='planner_choose_tool_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='tool_execution_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='evidence_observation_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='satisfaction_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='approval_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='finalize_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='response_document_node'; Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+5. Refresh benchmark baseline and reports intentionally
+-------------------------------------------------------
+Use this only after changing a scenario or intentionally accepting a new result.
+
+$env:FACTORY_AGENT_RUN_NODE_BENCHMARKS='1'; $env:FACTORY_AGENT_NODE_BENCHMARK_NODE='<node-or-all>'; $env:FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE='1'; python -m pytest "factory-agent\tests\benchmarks\test_planner_owned_node_benchmarks.py" -q
+
+
+6. Parser regression added by the fix branch
+--------------------------------------------
+Expected current result: 1 passed.
+
+Push-Location .\factory-agent; python -m pytest tests\test_planner_owned_intake_compiler.py::test_semicolon_conditional_active_job_splits_into_parent_and_branch -q; Pop-Location
+
+
+7. Useful cleanup after benchmark runs
+--------------------------------------
+
+Remove-Item Env:\FACTORY_AGENT_RUN_NODE_BENCHMARKS -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_NODE -ErrorAction SilentlyContinue
+Remove-Item Env:\FACTORY_AGENT_NODE_BENCHMARK_UPDATE_BASELINE -ErrorAction SilentlyContinue
+
