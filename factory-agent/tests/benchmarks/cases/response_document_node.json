@@ -1,0 +1,144 @@
+[
+  {
+    "id": "response-document-001-status-result",
+    "node": "response_document_node",
+    "behavior": "status result",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-002-result-table",
+    "node": "response_document_node",
+    "behavior": "result table",
+    "prompt": "List low priority jobs sorted by deadline.",
+    "fixture": {
+      "tool_name": "get__jobs",
+      "args": {"priority": "low", "limit": 3}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-003-document-answer",
+    "node": "response_document_node",
+    "behavior": "document answer",
+    "prompt": "Use LOTO documents to explain lockout for M-CNC-01.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "LOTO procedure for M-CNC-01", "limit": 3}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-004-insufficient-context",
+    "node": "response_document_node",
+    "behavior": "insufficient context",
+    "prompt": "Use documents to answer a procedure question with insufficient context.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "unknown insufficient context procedure", "limit": 3}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-005-no-record",
+    "node": "response_document_node",
+    "behavior": "no record",
+    "prompt": "Show status for missing machine M-NOPE-404.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-NOPE-404"}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-006-approval-required",
+    "node": "response_document_node",
+    "behavior": "approval required",
+    "prompt": "Change job JOB-BENCH-001 priority to high and render pending approval.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "response_document_context.pending_approval_id",
+      "response_document_context.diagnostics.blocks"
+    ]
+  },
+  {
+    "id": "response-document-007-mutation-result",
+    "node": "response_document_node",
+    "behavior": "mutation result",
+    "prompt": "Render the completed mutation result for JOB-BENCH-001 priority change.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-008-approval-decision",
+    "node": "response_document_node",
+    "behavior": "approval decision",
+    "prompt": "Render the approval decision for JOB-BENCH-001 priority change.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "response_document_context.pending_approval_id",
+      "response_document_context.diagnostics.blocks"
+    ]
+  },
+  {
+    "id": "response-document-009-replan-limit-diagnostic",
+    "node": "response_document_node",
+    "behavior": "replan-limit diagnostic",
+    "prompt": "Render a diagnostic after the replan limit is reached.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"},
+      "max_replans": 0
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.blocks",
+      "response_document_context.diagnostics.summary"
+    ]
+  },
+  {
+    "id": "response-document-010-stale-evidence-not-reused",
+    "node": "response_document_node",
+    "behavior": "stale evidence not reused",
+    "prompt": "Render response without reusing stale machine M-CNC-01 evidence.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "response_document_context.diagnostics.historical_evidence_refs",
+      "response_document_context.diagnostics.response_evidence_refs"
+    ]
+  }
+]
+
