@@ -1,0 +1,129 @@
+[
+  {
+    "id": "satisfaction-001-satisfied",
+    "node": "satisfaction_node",
+    "behavior": "satisfied",
+    "prompt": "Show machine M-CNC-01 status.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "satisfaction_state.requirements"
+    ]
+  },
+  {
+    "id": "satisfaction-002-impossible-no-match",
+    "node": "satisfaction_node",
+    "behavior": "impossible/no-match",
+    "prompt": "Show status for missing machine M-NOPE-404.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-NOPE-404"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "satisfaction_state.requirements"
+    ]
+  },
+  {
+    "id": "satisfaction-003-failed-tool",
+    "node": "satisfaction_node",
+    "behavior": "failed tool API 500",
+    "prompt": "Show machine M-CNC-01 status while the API returns 500.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "satisfaction_state.requirements"
+    ]
+  },
+  {
+    "id": "satisfaction-004-wrong-source",
+    "node": "satisfaction_node",
+    "behavior": "wrong source",
+    "prompt": "Show operational status for machine M-CNC-01 using document evidence only.",
+    "fixture": {
+      "tool_name": "rag_search_documents",
+      "args": {"query": "machine operational status in documents", "limit": 3}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "satisfaction_state.requirements"
+    ]
+  },
+  {
+    "id": "satisfaction-005-ambiguous-evidence",
+    "node": "satisfaction_node",
+    "behavior": "ambiguous evidence",
+    "prompt": "Show status for machine M-CNC-01 where evidence could refer to multiple entities.",
+    "fixture": {
+      "tool_name": "get__jobs",
+      "args": {"priority": "low", "limit": 2}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "satisfaction_state.requirements"
+    ]
+  },
+  {
+    "id": "satisfaction-006-stale-evidence-excluded",
+    "node": "satisfaction_node",
+    "behavior": "stale evidence excluded",
+    "prompt": "Exclude stale machine M-CNC-01 evidence from satisfaction.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "graph_diagnostics.phase9_active_revision_evidence.historical_evidence_refs"
+    ]
+  },
+  {
+    "id": "satisfaction-007-write-deferral",
+    "node": "satisfaction_node",
+    "behavior": "write deferral",
+    "prompt": "Change job JOB-BENCH-001 priority to high.",
+    "fixture": {
+      "tool_name": "patch__jobs_{id}",
+      "args": {"id": "JOB-BENCH-001", "priority": "high"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.satisfaction"
+    ]
+  },
+  {
+    "id": "satisfaction-008-replan",
+    "node": "satisfaction_node",
+    "behavior": "replan",
+    "prompt": "Show machine M-CNC-01 status and recover if the first tool result is insufficient.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"}
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "graph_diagnostics.planner_owned_replan_spine"
+    ]
+  },
+  {
+    "id": "satisfaction-009-replan-limit",
+    "node": "satisfaction_node",
+    "behavior": "replan limit",
+    "prompt": "Show machine M-CNC-01 status after the replan limit is reached.",
+    "fixture": {
+      "tool_name": "get__machines_{id}",
+      "args": {"id": "M-CNC-01"},
+      "max_replans": 0
+    },
+    "expected_evidence": [
+      "graph_diagnostics.phase9_active_revision_evidence",
+      "graph_diagnostics.planner_owned_replan_spine"
+    ]
+  }
+]
+
