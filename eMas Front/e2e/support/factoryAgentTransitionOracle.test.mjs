@@ -18,11 +18,27 @@ function probe(overrides = {}) {
         state: 'waiting_approval',
         revision: 8,
         current_step_id: 'approval-2',
+        run_steps: [
+          { step_id: 'read-1', kind: 'read', state: 'completed', title: 'Read job status' },
+          { step_id: 'approval-2', kind: 'approval', state: 'waiting', title: 'Waiting for approval 2', approval_id: 'approval-2' },
+        ],
         blocks: [
           { type: 'completed_step', approval_id: 'approval-1' },
           { type: 'approval_required', approval_id: 'approval-2' },
         ],
       },
+      steps: [
+        { tool_name: 'get__jobs_{id}', status: 'DONE', args: { id: 'JOB-SEED-005' } },
+        { tool_name: 'put__jobs_{id}', status: 'WAITING_APPROVAL', args: { id: 'JOB-SEED-005', priority: 'medium' } },
+      ],
+      timeline: [
+        { event_type: 'tool_result', tool_name: 'get__jobs_{id}', content: 'Read JOB-SEED-005' },
+        { event_type: 'approval_required', approval_id: 'approval-2', content: 'Approval required' },
+      ],
+      activity_steps: [
+        { label: 'Finding information path' },
+        { label: 'Waiting for your approval' },
+      ],
     },
     ui: {
       headerStatus: 'Waiting for approval',
@@ -132,6 +148,30 @@ test('transition oracle forbids internal diagnostics and final stale approval te
   assert.match(result.violations.join('\n'), /visible block types still contained approval_required/)
   assert.match(result.violations.join('\n'), /internal non_terminal_snapshot reason/)
   assert.match(result.violations.join('\n'), /stale Approval required after completion/)
+})
+
+test('transition oracle can fail on middle-step evidence before final text', () => {
+  const result = evaluateTransitionProbe(probe(), {
+    sessionStatus: 'WAITING_APPROVAL',
+    responseState: 'waiting_approval',
+    pendingApprovalId: 'approval-2',
+    backendStepSequence: [
+      { toolName: 'get__jobs_{id}', args: { id: 'JOB-SEED-005' } },
+      { toolName: 'get__products_{id}', args: { id: 'P-001' } },
+    ],
+    responseRunStepKinds: ['read', 'approval'],
+    responseRunStepTitles: [/Read job/i, /Waiting for approval 2/i],
+    timelineEventsInOrder: [
+      { eventType: 'tool_result', toolName: 'get__jobs_{id}' },
+      { eventType: 'approval_required', approvalId: 'approval-2' },
+    ],
+    activityLabelsInOrder: [/Finding information path/i, /Waiting for your approval/i],
+  })
+
+  assert.equal(result.ok, false)
+  assert.match(result.violations.join('\n'), /backend step sequence missing get__products_\{id\}/)
+  assert.doesNotMatch(result.violations.join('\n'), /response_document run_step kinds missing read/)
+  assert.doesNotMatch(result.violations.join('\n'), /timeline missing ordered/)
 })
 
 test('transition oracle scopes text checks to the active response instead of stale sidebar sessions', () => {

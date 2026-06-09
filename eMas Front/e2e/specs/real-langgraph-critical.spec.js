@@ -36,6 +36,9 @@ const so041Changes = [
   { source: 'medium', target: 'high' },
   { source: 'high', target: 'low' },
 ]
+const starterReadJobProductPrompt = 'Read JOB-SEED-005. If it has a product, read the product too.'
+const starterPriorityUpdatePrompt = 'Change planned low-priority jobs to medium priority, then show the id and status of the updated jobs.'
+const starterLotoProcedurePrompt = 'According to the LOTO procedure, what steps must workers complete before beginning service or maintenance?'
 
 async function pendingApprovalWithRows(page, expectedJobIds) {
   await expect
@@ -97,6 +100,13 @@ function planRows(snapshot) {
   return Array.isArray(snapshot?.steps) ? snapshot.steps : []
 }
 
+function plannedLowJobIdsFromRows(rowsById) {
+  return Object.values(rowsById)
+    .filter((row) => row?.job_id && row.priority === 'low' && row.status === 'planned')
+    .map((row) => row.job_id)
+    .sort()
+}
+
 function expectPlanAuditMatchesRows(snapshot, { jobIds, requestedPriority }) {
   const rows = planRows(snapshot).filter((step) => step.tool_name === 'put__jobs_{id}')
   const matching = rows.filter((step) => jobIds.includes(step.args?.id) && step.args?.priority === requestedPriority)
@@ -104,6 +114,10 @@ function expectPlanAuditMatchesRows(snapshot, { jobIds, requestedPriority }) {
   for (const row of matching) {
     expect(row.status).toBe('DONE')
   }
+}
+
+function responseDocumentText(snapshot) {
+  return JSON.stringify(snapshot?.response_document || {})
 }
 
 test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
@@ -295,6 +309,142 @@ test.describe('Phase 7 real LangGraph critical browser proof @critical', () => {
     } finally {
       page.context().off('page', onPage)
     }
+  })
+
+  test('SP-001 starter read job and conditional product path exposes middle-step evidence @critical', async ({ page }, testInfo) => {
+    const initialRows = await currentSeededJobRowsById(['JOB-SEED-005'])
+    const job = initialRows['JOB-SEED-005']
+    expect(job?.product_id, 'JOB-SEED-005 should have a product_id for this conditional-read proof').toBeTruthy()
+
+    await openChat(page)
+    await sendPrompt(page, starterReadJobProductPrompt)
+
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'SP-001 real LangGraph starter read job then product',
+      snapshotForPage,
+      testInfo,
+      timeout: 120_000,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['record_preview'],
+        backendBlockTypes: ['record_preview'],
+        hiddenBlockTypes: ['approval_required', 'mutation_result', 'diagnostic'],
+        hiddenBackendBlockTypes: ['approval_required', 'mutation_result', 'diagnostic'],
+        responseRunStepKinds: ['read', 'completed'],
+        responseRunStepTitles: [/Read 1/i, /Read product status/i, /Run complete/i],
+        activityLabelsInclude: [/Run complete/i],
+        textIncludes: [/JOB-SEED-005/i, new RegExp(job.product_id, 'i')],
+        textExcludes: [/Approval required/i, /Which job ID/i, /Which product/i, /Factory Agent needs attention/i],
+      },
+    })
+  })
+
+  test('SP-002 starter priority update waits for approval and proves read-after-write evidence @critical', async ({ page }, testInfo) => {
+    const initialRows = await currentSeededJobRowsById()
+    const plannedLowJobIds = plannedLowJobIdsFromRows(initialRows)
+    expect(plannedLowJobIds.length, 'seed should include planned low-priority jobs').toBeGreaterThan(0)
+
+    await openChat(page)
+    await sendPrompt(page, starterPriorityUpdatePrompt)
+
+    const approval = await pendingApprovalWithRows(page, plannedLowJobIds)
+    await expectGraphPriorityApproval(approval, {
+      status: 'PENDING',
+      jobIds: plannedLowJobIds,
+      requestedPriority: 'medium',
+      originalPriority: 'low',
+    })
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'SP-002 real LangGraph starter update waits for approval',
+      snapshotForPage,
+      testInfo,
+      expected: {
+        sessionStatus: 'WAITING_APPROVAL',
+        responseState: 'waiting_approval',
+        pendingApprovalId: approval.approval_id,
+        visibleBlockTypes: ['approval_required'],
+        backendBlockTypes: ['approval_required'],
+        approvalActionCount: 2,
+        responseRunStepKinds: ['read', 'approval'],
+        responseRunStepTitles: [/Found \d+ records/i, /Waiting for approval/i],
+        timelineEventsInOrder: [
+          { eventType: 'approval_required', approvalId: approval.approval_id },
+        ],
+        textIncludes: [/low/i, /medium/i],
+        textExcludes: [/Run complete/i, /Changes completed/i],
+      },
+    })
+
+    await page.getByRole('button', { name: 'Approve' }).click()
+    await expectJobsAtPriority(plannedLowJobIds, 'medium')
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'SP-002 real LangGraph starter update completes after approved write',
+      snapshotForPage,
+      testInfo,
+      timeout: 120_000,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['result_summary', 'mutation_result'],
+        backendBlockTypes: ['result_summary', 'mutation_result'],
+        hiddenBlockTypes: ['approval_required'],
+        hiddenBackendBlockTypes: ['approval_required'],
+        responseContracts: ['business_change_v1'],
+        approvalActionCount: 0,
+        responseRunStepKinds: ['mutation', 'completed'],
+        timelineEventsInOrder: [
+          { eventType: 'approval_required', approvalId: approval.approval_id },
+          { eventType: 'approval_decided', approvalId: approval.approval_id, status: 'APPROVED' },
+          'tool_result',
+          'session_completed',
+        ],
+        activityLabelsInclude: [/Run complete/i],
+        textIncludes: [/Run complete/i, /medium/i, new RegExp(plannedLowJobIds[0], 'i')],
+        textExcludes: [/Waiting for approval/i, /Approval required/i, /Which updated jobs/i],
+      },
+    })
+
+    const snapshot = await snapshotForPage(page)
+    expectPlanAuditMatchesRows(snapshot, { jobIds: plannedLowJobIds, requestedPriority: 'medium' })
+    const documentText = responseDocumentText(snapshot)
+    for (const jobId of plannedLowJobIds) expect(documentText).toContain(jobId)
+    expect(documentText).toMatch(/status/i)
+  })
+
+  test('SP-003 starter LOTO procedure returns source-backed RAG structure, not just final prose @critical', async ({ page }, testInfo) => {
+    await openChat(page)
+    await sendPrompt(page, starterLotoProcedurePrompt)
+
+    await expectTransitionCheckpoint(page, {
+      checkpoint: 'SP-003 real LangGraph starter LOTO source-backed answer',
+      snapshotForPage,
+      testInfo,
+      timeout: 120_000,
+      expected: {
+        sessionStatus: 'COMPLETED',
+        responseState: 'completed',
+        pendingApprovalId: null,
+        visibleBlockTypes: ['knowledge_answer', 'source_list'],
+        backendBlockTypes: ['knowledge_answer', 'source_list'],
+        hiddenBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        hiddenBackendBlockTypes: ['approval_required', 'diagnostic', 'mutation_result'],
+        responseContracts: ['knowledge_answer_v1', 'source_list_v1'],
+        approvalActionCount: 0,
+        activityLabelsInclude: [/Run complete/i],
+        textIncludes: [/LOTO|lockout|tagout|service|maintenance/i],
+        textExcludes: [/Which machine ID/i, /Approval required/i, /\bNo results\b/i, /Factory Agent needs attention/i],
+      },
+    })
+
+    const snapshot = await snapshotForPage(page)
+    const knowledgeBlock = snapshot.response_document?.blocks?.find((block) => block.type === 'knowledge_answer')
+    const sourceBlock = snapshot.response_document?.blocks?.find((block) => block.type === 'source_list')
+    expect(knowledgeBlock?.contract).toBe('knowledge_answer_v1')
+    expect(sourceBlock?.contract).toBe('source_list_v1')
+    expect(Array.isArray(sourceBlock?.sources) && sourceBlock.sources.length > 0).toBe(true)
   })
 
   test('SO-001/SO-035 uses real LangGraph approvals, original-state rows, and terminal evidence', async ({ page }) => {

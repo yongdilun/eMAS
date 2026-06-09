@@ -51,6 +51,10 @@ function labelForPattern(pattern) {
 function backendSummary(snapshot) {
   const document = snapshot?.response_document || {}
   const blocks = Array.isArray(document.blocks) ? document.blocks : []
+  const backendSteps = Array.isArray(snapshot?.steps) ? snapshot.steps : []
+  const runSteps = Array.isArray(document.run_steps) ? document.run_steps : []
+  const timeline = Array.isArray(snapshot?.timeline) ? snapshot.timeline : []
+  const activitySteps = Array.isArray(snapshot?.activity_steps) ? snapshot.activity_steps : []
   const contracts = uniq([
     ...blocks.map((block) => block?.contract),
     ...blocks.flatMap((block) => Array.isArray(block?.groups) ? block.groups.map((group) => group?.contract) : []),
@@ -70,6 +74,89 @@ function backendSummary(snapshot) {
     responseBlockTypes: blocks.map((block) => block?.type).filter(Boolean),
     responseApprovalIds: blocks.map((block) => block?.approval_id).filter(Boolean),
     responseContracts: contracts,
+    backendSteps,
+    backendStepTools: backendSteps.map((step) => step?.tool_name || step?.toolName).filter(Boolean),
+    responseRunSteps: runSteps,
+    responseRunStepTitles: runSteps.map((step) => step?.title || step?.label || '').filter(Boolean),
+    responseRunStepKinds: runSteps.map((step) => step?.kind).filter(Boolean),
+    timeline,
+    timelineEventTypes: timeline.map((event) => event?.event_type || event?.type).filter(Boolean),
+    activityLabels: activitySteps.map((step) => step?.label || step?.description || '').filter(Boolean),
+  }
+}
+
+function valuesEqual(actual, expected) {
+  return JSON.stringify(actual) === JSON.stringify(expected)
+}
+
+function stepToolName(step) {
+  return step?.tool_name || step?.toolName || ''
+}
+
+function stepMatches(step, expectedStep) {
+  if (expectedStep.toolName && stepToolName(step) !== expectedStep.toolName) return false
+  if (expectedStep.status && step?.status !== expectedStep.status) return false
+  const args = step?.args || {}
+  for (const [key, expectedValue] of Object.entries(expectedStep.args || {})) {
+    if (!valuesEqual(args[key], expectedValue)) return false
+  }
+  return true
+}
+
+function timelineEventMatches(event, expectedEvent) {
+  const eventType = event?.event_type || event?.type || ''
+  if (typeof expectedEvent === 'string') return eventType === expectedEvent
+  if (expectedEvent.eventType && eventType !== expectedEvent.eventType) return false
+  if (expectedEvent.approvalId && (event?.approval_id || event?.details?.approval_id) !== expectedEvent.approvalId) return false
+  if (expectedEvent.status && event?.status !== expectedEvent.status) return false
+  if (expectedEvent.toolName && (event?.tool_name || event?.details?.tool_name) !== expectedEvent.toolName) return false
+  if (expectedEvent.text && !matches(`${event?.content || ''} ${event?.message || ''} ${event?.summary || ''}`, expectedEvent.text)) return false
+  return true
+}
+
+function addOrderedPatternViolations(violations, actualValues, expectedValues, label) {
+  let cursor = 0
+  for (const expectedValue of asArray(expectedValues)) {
+    const found = actualValues.findIndex((actualValue, index) => index >= cursor && matches(actualValue, expectedValue))
+    if (found < 0) {
+      violations.push(`${label} missing ordered ${labelForPattern(expectedValue)}`)
+      continue
+    }
+    cursor = found + 1
+  }
+}
+
+function addMiddleStepViolations(violations, backend, expected) {
+  addListExpectationViolations(violations, backend.backendStepTools, expected.backendStepTools, 'backend step tools')
+  let stepCursor = 0
+  for (const expectedStep of asArray(expected.backendStepSequence)) {
+    const found = backend.backendSteps.findIndex((step, index) => index >= stepCursor && stepMatches(step, expectedStep))
+    if (found < 0) {
+      violations.push(`backend step sequence missing ${expectedStep.toolName || '<any tool>'} ${JSON.stringify(expectedStep.args || {})}`)
+      continue
+    }
+    stepCursor = found + 1
+  }
+
+  addListExpectationViolations(violations, backend.responseRunStepKinds, expected.responseRunStepKinds, 'response_document run_step kinds')
+  addOrderedPatternViolations(violations, backend.responseRunStepTitles, expected.responseRunStepTitles, 'response_document run_step titles')
+
+  let timelineCursor = 0
+  for (const expectedEvent of asArray(expected.timelineEventsInOrder || expected.timelineEventTypesInOrder)) {
+    const found = backend.timeline.findIndex((event, index) => index >= timelineCursor && timelineEventMatches(event, expectedEvent))
+    if (found < 0) {
+      const label = typeof expectedEvent === 'string' ? expectedEvent : expectedEvent.label || expectedEvent.eventType || '<event>'
+      violations.push(`timeline missing ordered ${label}`)
+      continue
+    }
+    timelineCursor = found + 1
+  }
+
+  addOrderedPatternViolations(violations, backend.activityLabels, expected.activityLabelsInOrder, 'activity labels')
+  for (const pattern of asArray(expected.activityLabelsInclude)) {
+    if (!backend.activityLabels.some((label) => matches(label, pattern))) {
+      violations.push(`activity labels missing ${labelForPattern(pattern)}`)
+    }
   }
 }
 
@@ -192,6 +279,7 @@ export function evaluateTransitionProbe(probe, expected = {}) {
   addAbsentListExpectationViolations(violations, backend.responseBlockTypes, expected.hiddenBackendBlockTypes, 'response_document block types')
   addListExpectationViolations(violations, backend.responseContracts, expected.responseContracts, 'response_document contracts')
   addListExpectationViolations(violations, ui.visibleContracts, expected.responseContracts, 'visible response contracts')
+  addMiddleStepViolations(violations, backend, expected)
 
   if (Object.hasOwn(expected, 'approvalActionCount')) {
     const count = ui.approvalActionLabels.length
