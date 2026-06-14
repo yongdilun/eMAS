@@ -259,13 +259,14 @@ func (s *AIPredictiveService) finalizeProposalPlan(job *domain.Job, preview *Sol
 		opts.BatchState = newSubproductBatchState(s)
 	}
 
+	analysisState := opts.BatchState.clone()
 	attemptState := opts.BatchState.clone()
 
 	if err := s.decorateProposalWithInventoryPlan(job, preview, proposal, opts.TentativeSlots, attemptState, opts.RootOrderIndex, opts.TargetCompletion); err != nil {
 		return nil, err
 	}
 
-	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, attemptState.ledger); err == nil {
+	if shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(proposal, analysisState.ledger); err == nil {
 		proposal.MaterialShortages = shortages
 		proposal.ShortageResolutions = resolutions
 		proposal.GlobalScore = score
@@ -344,11 +345,13 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 			}
 			if materialCheck.AnyShort {
 				if readyAt, canReflow := latestShortDemandReadyAt(materialCheck.ShortDemands); canReflow && readyAt.After(bounds.Start) && materialReflowPasses < limits.MaxParentReflowPasses {
+					accelerationNeeds := materialAccelerationNeedsFromShortDemands(job.JobID, step.JobStepID, bounds.Start, *readyAt, materialCheck.ShortDemands)
 					materialReflowPasses++
 					delta := readyAt.Sub(bounds.Start)
 					previousSlots := append([]ProposedSlot(nil), proposal.ProposedSlots...)
 					s.shiftProposalSuffix(proposal, step.JobStepID, delta, stepSequence)
 					if err := s.repairReflowedProposalSuffix(job.JobID, proposal, tentativeSlots, targetCompletion); err == nil {
+						appendMaterialAccelerationNeeds(proposal, accelerationNeeds)
 						stepBounds = boundsByJobStep(proposal.ProposedSlots)
 						proposal.InventoryActions = previousActions
 						proposal.DependentJobs = previousDeps
@@ -447,12 +450,13 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 				childCount++
 				state.totalGeneratedNodes++
 				planKey := fmt.Sprintf("%s|%s|%02d|%02d", job.JobID, productID, step.StepSequence, childCount)
-				childPlan, childActions, childSlots, childCompletion, nestedCount, err := s.planVirtualSubproductJob(job, step, bounds.Start, productID, shortage, planKey, 1, rootOrder, tentativeSlots, localTentative, state, limits, targetCompletion)
+				childPlan, childActions, childSlots, childCompletion, childAccelerationNeeds, nestedCount, err := s.planVirtualSubproductJob(job, step, bounds.Start, productID, shortage, planKey, 1, rootOrder, tentativeSlots, localTentative, state, limits, targetCompletion)
 				if err != nil {
 					return err
 				}
 				childCount += nestedCount
 				proposal.DependentJobs = append(proposal.DependentJobs, childPlan...)
+				appendMaterialAccelerationNeeds(proposal, childAccelerationNeeds)
 
 				if len(childActions) > 0 {
 					pendingActions[planKey] = append(pendingActions[planKey], childActions...)
@@ -487,10 +491,11 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 							topUpKey := fmt.Sprintf("%s|topup|%02d", planKey, topUpPasses)
 							childCount++
 							state.totalGeneratedNodes++
-							topUpPlans, topUpActions, topUpSlots, topUpCompletion, nestedCount, topUpErr := s.planVirtualSubproductJob(job, step, bounds.Start, productID, shortage, topUpKey, 1, rootOrder, tentativeSlots, localTentative, state, limits, targetCompletion)
+							topUpPlans, topUpActions, topUpSlots, topUpCompletion, topUpAccelerationNeeds, nestedCount, topUpErr := s.planVirtualSubproductJob(job, step, bounds.Start, productID, shortage, topUpKey, 1, rootOrder, tentativeSlots, localTentative, state, limits, targetCompletion)
 							if topUpErr == nil {
 								childCount += nestedCount
 								proposal.DependentJobs = append(proposal.DependentJobs, topUpPlans...)
+								appendMaterialAccelerationNeeds(proposal, topUpAccelerationNeeds)
 
 								if len(topUpActions) > 0 {
 									pendingActions[topUpKey] = append(pendingActions[topUpKey], topUpActions...)
@@ -684,7 +689,7 @@ func (s *AIPredictiveService) decorateProposalWithInventoryPlan(job *domain.Job,
 	return nil
 }
 
-func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, consumerStep SolverPreviewStep, needAt time.Time, productID string, shortage float64, planKey string, depth int, rootOrder int, batchTentative, localTentative []TentativeSlot, state *subproductBatchState, limits schedulerSubproductLimits, parentTargetCompletion *time.Time) ([]DependentJobPlan, []InventoryAction, []TentativeSlot, *time.Time, int, error) {
+func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, consumerStep SolverPreviewStep, needAt time.Time, productID string, shortage float64, planKey string, depth int, rootOrder int, batchTentative, localTentative []TentativeSlot, state *subproductBatchState, limits schedulerSubproductLimits, parentTargetCompletion *time.Time) ([]DependentJobPlan, []InventoryAction, []TentativeSlot, *time.Time, []materialAccelerationNeed, int, error) {
 	if depth > limits.MaxDependencyDepth {
 		dep := DependentJobPlan{
 			PlanKey:           planKey,
@@ -704,7 +709,7 @@ func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, co
 				PlannedProduction: shortage,
 			},
 		}
-		return []DependentJobPlan{dep}, nil, nil, nil, 0, nil
+		return []DependentJobPlan{dep}, nil, nil, nil, nil, 0, nil
 	}
 	plannedQty := s.roundPlannedSubproductQty(productID, shortage)
 	sharedTentative := append(append([]TentativeSlot{}, batchTentative...), localTentative...)
@@ -743,7 +748,7 @@ func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, co
 					Available:         0,
 					PlannedProduction: plannedQty,
 				},
-			}}, nil, nil, nil, 0, nil
+			}}, nil, nil, nil, nil, 0, nil
 		}
 		candidateProposal, err := s.buildProposalForPreview(virtualJob, preview, sharedTentative, attempt.TargetCompletion)
 		if err != nil {
@@ -763,9 +768,9 @@ func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, co
 	}
 	if proposal == nil {
 		if lastBuildErr != nil {
-			return nil, nil, nil, nil, 0, lastBuildErr
+			return nil, nil, nil, nil, nil, 0, lastBuildErr
 		}
-		return nil, nil, nil, nil, 0, fmt.Errorf("failed to build child proposal for %s", productID)
+		return nil, nil, nil, nil, nil, 0, fmt.Errorf("failed to build child proposal for %s", productID)
 	}
 	childStatus := planningStatusPlanned
 	childReasonCode := ""
@@ -803,9 +808,9 @@ func (s *AIPredictiveService) planVirtualSubproductJob(parentJob *domain.Job, co
 		state.ledger = committedState.ledger
 		state.totalGeneratedNodes = committedState.totalGeneratedNodes
 		tentative := proposedSlotsToTentatives(proposal.ProposedSlots)
-		return deps, append([]InventoryAction{}, proposal.InventoryActions...), tentative, proposal.EstimatedCompletion, len(proposal.DependentJobs), nil
+		return deps, append([]InventoryAction{}, proposal.InventoryActions...), tentative, proposal.EstimatedCompletion, append([]materialAccelerationNeed(nil), proposal.materialAccelerationNeeds...), len(proposal.DependentJobs), nil
 	}
-	return deps, append([]InventoryAction{}, proposal.InventoryActions...), nil, nil, len(proposal.DependentJobs), nil
+	return deps, append([]InventoryAction{}, proposal.InventoryActions...), nil, nil, append([]materialAccelerationNeed(nil), proposal.materialAccelerationNeeds...), len(proposal.DependentJobs), nil
 }
 
 func buildChildPlanningAttempts(parentDeadline time.Time, parentTargetCompletion *time.Time, needAt time.Time) []childPlanningAttempt {
@@ -1415,6 +1420,64 @@ type stepMaterialCheckResult struct {
 	ShortDemands []*DemandMaterial
 	Partial      *PartialFeasibilityPlan
 	DeferredNode *DeferredPlanningNode
+}
+
+func materialAccelerationNeedsFromShortDemands(jobID, jobStepID string, needAt, readyAt time.Time, demands []*DemandMaterial) []materialAccelerationNeed {
+	out := make([]materialAccelerationNeed, 0, len(demands))
+	needAt = normalizeMaterialEventTime(needAt)
+	readyAt = normalizeMaterialEventTime(readyAt)
+	if !readyAt.After(needAt) {
+		return out
+	}
+	for _, demand := range demands {
+		if demand == nil || strings.TrimSpace(demand.MaterialID) == "" {
+			continue
+		}
+		slotDeficit := roundDisplayQty(demand.RequiredQty - math.Max(demand.AvailableQty, 0))
+		if slotDeficit <= 0 {
+			continue
+		}
+		out = append(out, materialAccelerationNeed{
+			MaterialID:   strings.TrimSpace(demand.MaterialID),
+			JobID:        strings.TrimSpace(jobID),
+			JobStepID:    strings.TrimSpace(jobStepID),
+			NeedAt:       needAt,
+			ReadyAt:      readyAt,
+			RequiredQty:  roundDisplayQty(demand.RequiredQty),
+			AvailableQty: roundDisplayQty(math.Max(demand.AvailableQty, 0)),
+			ShortageQty:  slotDeficit,
+		})
+	}
+	return out
+}
+
+func appendMaterialAccelerationNeeds(proposal *SchedulingProposal, needs []materialAccelerationNeed) {
+	if proposal == nil || len(needs) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(proposal.materialAccelerationNeeds)+len(needs))
+	for _, existing := range proposal.materialAccelerationNeeds {
+		seen[materialAccelerationNeedSignature(existing)] = struct{}{}
+	}
+	for _, need := range needs {
+		sig := materialAccelerationNeedSignature(need)
+		if _, ok := seen[sig]; ok {
+			continue
+		}
+		proposal.materialAccelerationNeeds = append(proposal.materialAccelerationNeeds, need)
+		seen[sig] = struct{}{}
+	}
+}
+
+func materialAccelerationNeedSignature(need materialAccelerationNeed) string {
+	return strings.Join([]string{
+		strings.TrimSpace(need.MaterialID),
+		strings.TrimSpace(need.JobID),
+		strings.TrimSpace(need.JobStepID),
+		normalizeMaterialEventTime(need.NeedAt).Format(time.RFC3339),
+		normalizeMaterialEventTime(need.ReadyAt).Format(time.RFC3339),
+		fmt.Sprintf("%.4f", roundDisplayQty(need.ShortageQty)),
+	}, "|")
 }
 
 func (s *AIPredictiveService) checkAllStepMaterials(step SolverPreviewStep, consumeAt time.Time, inputs []domain.ProcessStepMaterial, state *subproductBatchState) (*stepMaterialCheckResult, error) {

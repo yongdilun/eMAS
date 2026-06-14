@@ -187,12 +187,7 @@ export function unwrapSchedulingBatchPayload(raw) {
       : pickArr(summary || {}, ['by_material', 'byMaterial']).length > 0
         ? pickArr(summary || {}, ['by_material', 'byMaterial'])
         : pickArr(nested || {}, ['by_material', 'byMaterial'])
-  const byProduct =
-    pickArr(layer, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate']).length > 0
-      ? pickArr(layer, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate'])
-      : pickArr(summary || {}, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate']).length > 0
-        ? pickArr(summary || {}, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate'])
-        : pickArr(nested || {}, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate'])
+  const byProduct = []
   const materialReplenishmentAggregate =
     pickArr(summary || {}, ['material_replenishment_aggregate', 'materialReplenishmentAggregate']).length > 0
       ? pickArr(summary || {}, ['material_replenishment_aggregate', 'materialReplenishmentAggregate'])
@@ -217,7 +212,6 @@ export function mergeBatchSummaryWithAggregate({
     base.material_replenishment_aggregate = materialReplenishmentAggregate
   }
   if (byMaterial.length) base.by_material = byMaterial
-  if (byProduct.length) base.by_product = byProduct
   if (Object.keys(base).length === 0) return null
   return base
 }

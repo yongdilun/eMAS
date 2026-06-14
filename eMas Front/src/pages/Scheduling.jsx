@@ -279,6 +279,9 @@ const buildNormalizedRecommendation = (resolution, source = 'primary') => {
     }
 }
 
+const isMaterialReplenishmentResolution = (resolution) =>
+    isReplenishRecommendation(buildNormalizedRecommendation(resolution, 'filter'))
+
 /** 422: backend rejected approve because proposal is not feasible (contract §4E). */
 const isInfeasibleApprovalBlockedError = (err, msg) => {
     const s = `${msg || ''} ${err?.message || ''}`.toLowerCase()
@@ -355,13 +358,13 @@ const Scheduling = () => {
         return [
             ...selectedResolutionsPrimary.map((r) => buildNormalizedRecommendation(r, 'primary')),
             ...selectedResolutionsFromShortages.map((r) => buildNormalizedRecommendation(r, 'fallback')),
-        ]
+        ].filter(isReplenishRecommendation)
     }, [selectedResolutionsPrimary, selectedResolutionsFromShortages])
     const selectedResolutions = useMemo(
-        () => [...selectedResolutionsPrimary, ...selectedResolutionsFromShortages],
+        () => [...selectedResolutionsPrimary, ...selectedResolutionsFromShortages].filter(isMaterialReplenishmentResolution),
         [selectedResolutionsPrimary, selectedResolutionsFromShortages],
     )
-    const hasRecommendationActions = selectedResolutionsPrimary.length > 0 || selectedResolutionsFromShortages.length > 0
+    const hasRecommendationActions = selectedResolutions.length > 0
     const selectedShortagesByStep = byStepId(selectedShortages)
 
     const infeasibleProposals = useMemo(
@@ -435,7 +438,7 @@ const Scheduling = () => {
         ))
     }, [])
 
-    const normalizeReplenishmentItem = (item, fallbackSnapshot, fallbackMaterialId, applyOptionType = null) => {
+    const normalizeReplenishmentItem = (item, fallbackSnapshot, fallbackMaterialId) => {
         const materialId = item?.material_id || fallbackMaterialId
         if (!materialId) return null
         const qty = suggestionQty(item)
@@ -449,7 +452,6 @@ const Scheduling = () => {
         if (item.notes) payload.notes = item.notes
         const snapshot = item.inventory_snapshot || fallbackSnapshot
         if (snapshot) payload.inventory_snapshot = snapshot
-        if (applyOptionType === 'schedule_production') payload.option_type = 'schedule_production'
         return payload
     }
 
@@ -461,16 +463,14 @@ const Scheduling = () => {
         return normalizedRecommendations
             .filter((rec) => {
                 const sel = shortageSelections[resolutionSelectionKey(rec)]
-                return sel === 'replenish' || sel === 'schedule_production'
+                return isReplenishRecommendation({ ...rec, option_type: sel || rec.option_type })
             })
             .map((rec) => {
-                const sel = shortageSelections[resolutionSelectionKey(rec)]
                 const shortage = selectedShortages.find((s) => normalizeId(s?.material_id) === normalizeId(rec.entity_id))
                 return normalizeReplenishmentItem(
                     rec?.replenishment || rec?.raw?.replenishment || rec?.raw,
                     shortage?.snapshot || snapshotsByMaterial[rec.entity_id],
                     rec.entity_id,
-                    sel === 'schedule_production' ? 'schedule_production' : null,
                 )
             })
             .filter(Boolean)
@@ -479,16 +479,15 @@ const Scheduling = () => {
     const handleApplySingleRecommendation = async (recommendation) => {
         if (!selectedProposal?.proposal_id) return
         const entityId = recommendation?.entity_id
+        if (!isReplenishRecommendation(recommendation)) {
+            toast.info('This recommendation is not a material replenishment row.')
+            return
+        }
         const shortage = selectedShortages.find((s) => normalizeId(s?.material_id) === normalizeId(entityId))
-        const applyOpt =
-            String(recommendation?.option_type ?? '').trim().toLowerCase() === 'schedule_production'
-                ? 'schedule_production'
-                : null
         const payload = normalizeReplenishmentItem(
             recommendation?.replenishment || recommendation?.raw?.replenishment || recommendation?.raw,
             shortage?.snapshot,
             entityId,
-            applyOpt,
         )
         if (!payload) {
             toast.info('This recommendation has no quantity/time payload for apply-replenishment.')
@@ -506,11 +505,7 @@ const Scheduling = () => {
             } else if (notice?.level === 'info') {
                 toast.info(notice.text)
             } else {
-                toast.success(
-                    applyOpt === 'schedule_production'
-                        ? `Recorded planned production availability for product ${payload.material_id}.`
-                        : `Added expected arrival for ${payload.material_id}.`,
-                )
+                toast.success(`Added expected arrival for ${payload.material_id}.`)
             }
         } catch (err) {
             const msg = (err?.message || '').toLowerCase()
@@ -522,11 +517,6 @@ const Scheduling = () => {
         } finally {
             setShortageActionLoading('')
         }
-    }
-
-    const handleScheduleProductionRecommendation = (recommendation) => {
-        const entityId = recommendation?.entity_id || 'this item'
-        toast.info(`Schedule production recommended for ${entityId}. Use Jobs page to create dependent production, then re-run replan.`)
     }
 
     const handleRefreshShortageAnalysis = async () => {
@@ -559,7 +549,7 @@ const Scheduling = () => {
     const handleApplyReplenishment = async () => {
         if (!selectedProposal?.proposal_id) return
         if (selectedReplenishmentPayload.length === 0) {
-            toast.info('No replenish or schedule_production items selected for this proposal.')
+            toast.info('No material replenishment items selected for this proposal.')
             return
         }
         setShortageActionLoading('apply-replenishment')
@@ -574,7 +564,7 @@ const Scheduling = () => {
             } else if (notice?.level === 'info') {
                 toast.info(notice.text)
             } else {
-                toast.success('Apply-replenishment completed for selected material arrivals and/or planned production.')
+                toast.success('Apply-replenishment completed for selected material arrivals.')
             }
         } catch (err) {
             const msg = (err?.message || '').toLowerCase()
@@ -591,7 +581,7 @@ const Scheduling = () => {
     const handleReplenishAndReplan = async () => {
         if (!selectedProposal?.job_id) return
         if (selectedReplenishmentPayload.length === 0) {
-            toast.info('No replenish or schedule_production items selected for replan.')
+            toast.info('No material replenishment items selected for replan.')
             return
         }
         const jobId = selectedProposal.job_id
@@ -2052,12 +2042,10 @@ const Scheduling = () => {
                                                         const selKey = resolutionSelectionKey(rec)
                                                         const qty = rec?.suggested_qty || 0
                                                         const suggestedAt = rec?.suggested_arrive_at
-                                                        const optLc = String(rec?.option_type ?? '').trim().toLowerCase()
                                                         const canApplyOneClick =
-                                                            (isReplenishRecommendation(rec) || optLc === 'schedule_production') &&
+                                                            isReplenishRecommendation(rec) &&
                                                             qty > 0 &&
                                                             !!suggestedAt
-                                                        const isScheduleProduction = optLc === 'schedule_production'
                                                         return (
                                                             <div key={`${selKey}-${rec?.option_type}-${idx}`} className="rounded-md border border-amber-200 dark:border-amber-700 p-2">
                                                                 <p className="text-[11px] text-amber-900 dark:text-amber-100">
@@ -2092,19 +2080,7 @@ const Scheduling = () => {
                                                                     >
                                                                         {shortageActionLoading === `single-${selKey}`
                                                                             ? 'Applying…'
-                                                                            : isScheduleProduction
-                                                                                ? 'Apply planned production'
-                                                                                : 'Add needed material'}
-                                                                    </button>
-                                                                )}
-                                                                {isScheduleProduction && !canApplyOneClick && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => handleScheduleProductionRecommendation(rec)}
-                                                                        disabled={shortageActionLoading !== ''}
-                                                                        className="mt-2 h-7 px-2 rounded-md bg-blue-700 text-white text-[11px] font-semibold hover:bg-primary disabled:opacity-50"
-                                                                    >
-                                                                        Plan dependent production (manual)
+                                                                            : 'Add needed material'}
                                                                     </button>
                                                                 )}
                                                             </div>

@@ -17,6 +17,18 @@ func NewInventoryRepository(db *gorm.DB) *InventoryRepository {
 	return &InventoryRepository{db: db}
 }
 
+var activeReservationJobStatuses = []string{
+	domain.JobStatusPlanned,
+	domain.JobStatusScheduled,
+	domain.JobStatusRunning,
+	domain.JobStatusBlocked,
+	domain.JobStatusPaused,
+}
+
+func scopeActiveReservationJobs(q *gorm.DB) *gorm.DB {
+	return q.Where("(job_id = '' OR job_id IN (SELECT job_id FROM jobs WHERE status IN ?))", activeReservationJobStatuses)
+}
+
 func (r *InventoryRepository) GetMaterialByID(id string) (*domain.InventoryMaterials, error) {
 	var m domain.InventoryMaterials
 	err := r.db.Where("material_id = ?", id).First(&m).Error
@@ -232,6 +244,9 @@ func (r *InventoryRepository) ListReservationsExcluding(materialID string, statu
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	if status == domain.InventoryReservationStatusPending {
+		q = scopeActiveReservationJobs(q)
+	}
 	if len(excludeJobIDs) > 0 {
 		q = q.Where("job_id NOT IN ?", excludeJobIDs)
 	}
@@ -245,6 +260,9 @@ func (r *InventoryRepository) ListReservationsByMaterialUntil(materialID string,
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	if status == domain.InventoryReservationStatusPending {
+		q = scopeActiveReservationJobs(q)
+	}
 	var list []domain.InventoryReservation
 	err := q.Order("needed_at ASC").Find(&list).Error
 	return list, err
@@ -252,10 +270,10 @@ func (r *InventoryRepository) ListReservationsByMaterialUntil(materialID string,
 
 func (r *InventoryRepository) SumActiveReservations(materialID string) (float64, error) {
 	var total float64
-	err := r.db.Model(&domain.InventoryReservation{}).
-		Where("material_id = ? AND status = ?", materialID, domain.InventoryReservationStatusPending).
-		Select("COALESCE(SUM(reserved_qty),0)").
-		Scan(&total).Error
+	q := r.db.Model(&domain.InventoryReservation{}).
+		Where("material_id = ? AND status = ?", materialID, domain.InventoryReservationStatusPending)
+	q = scopeActiveReservationJobs(q)
+	err := q.Select("COALESCE(SUM(reserved_qty),0)").Scan(&total).Error
 	return total, err
 }
 
@@ -267,6 +285,7 @@ func (r *InventoryRepository) SumActiveReservationsUntilExcluding(materialID str
 	var total float64
 	q := r.db.Model(&domain.InventoryReservation{}).
 		Where("material_id = ? AND status = ? AND needed_at <= ?", materialID, domain.InventoryReservationStatusPending, neededAt)
+	q = scopeActiveReservationJobs(q)
 	if len(excludeJobIDs) > 0 {
 		q = q.Where("job_id NOT IN ?", excludeJobIDs)
 	}
@@ -279,10 +298,10 @@ func (r *InventoryRepository) SumActiveReservationsUntilExcluding(materialID str
 // future-scheduled slots, so the scheduler knows the real free inventory.
 func (r *InventoryRepository) SumAllActiveReservations(materialID string) (float64, error) {
 	var total float64
-	err := r.db.Model(&domain.InventoryReservation{}).
-		Where("material_id = ? AND status = ?", materialID, domain.InventoryReservationStatusPending).
-		Select("COALESCE(SUM(reserved_qty),0)").
-		Scan(&total).Error
+	q := r.db.Model(&domain.InventoryReservation{}).
+		Where("material_id = ? AND status = ?", materialID, domain.InventoryReservationStatusPending)
+	q = scopeActiveReservationJobs(q)
+	err := q.Select("COALESCE(SUM(reserved_qty),0)").Scan(&total).Error
 	return total, err
 }
 

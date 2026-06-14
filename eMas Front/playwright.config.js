@@ -15,6 +15,7 @@ const selectedGrep = process.argv
   .flatMap((arg, index, all) => (arg === '--grep' ? [all[index + 1]] : arg.startsWith('--grep=') ? [arg.slice('--grep='.length)] : []))
   .filter(Boolean)
 const selectedSeeded = selectedProjects.some((project) => project === 'chromium-seeded')
+const selectedDirectShortageResolution = process.argv.some((arg) => arg.includes('full-stack-shortage-resolution.spec.js'))
 const selectedRealLangGraph = selectedProjects.some((project) => project === 'chromium-real-langgraph')
 const selectedRelease = selectedProjects.some((project) => project === 'chromium-release')
 const selectedSynthetic = selectedProjects.some((project) => project === 'chromium-synthetic')
@@ -71,7 +72,7 @@ if (selectedMocked) {
 }
 if (selectedSeeded) {
   webServer.push({
-    command: `node e2e/support/startSeededStackForPlaywright.js`,
+    command: `node e2e/support/startSeededStackForPlaywright.js${selectedDirectShortageResolution ? ' --skip-factory-agent' : ''}`,
     url: seededEnv.viteBaseUrl,
     reuseExistingServer: false,
     timeout: 150_000,
@@ -134,6 +135,7 @@ export default defineConfig({
     {
       name: 'chromium-seeded',
       testMatch: /full-stack-.*\.spec\.js/,
+      outputDir: 'playwright-output/chromium-seeded',
       use: {
         ...devices['Desktop Chrome'],
         baseURL: seededEnv.viteBaseUrl,

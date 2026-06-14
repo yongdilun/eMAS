@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -187,7 +188,7 @@ type ShortageResolutionOption struct {
 	Replenishment         *ReplenishmentSuggestion `json:"replenishment,omitempty"`
 	EarliestFeasibleStart *time.Time               `json:"earliest_feasible_start,omitempty"`
 	AffectedJobIDs        []string                 `json:"affected_job_ids,omitempty"`
-	// DependencyProductID links a material-level replenish option to a subproduct shortage (schedule_production row).
+	// DependencyProductID links a raw-material replenish option to a subproduct shortage.
 	DependencyProductID string   `json:"dependency_product_id,omitempty"`
 	IsActionable        bool     `json:"is_actionable"`
 	QualityFlags        []string `json:"quality_flags,omitempty"`
@@ -245,20 +246,6 @@ type BatchMaterialReplenishmentLine struct {
 	Rationale               string    `json:"rationale"`
 }
 
-// BatchScheduleProductionLine is one consolidated schedule_production recommendation for the
-// whole batch (subproduct / FG planned inventory). Apply via apply-replenishment with
-// option_type=schedule_production, same as per-proposal shortage_resolutions rows.
-type BatchScheduleProductionLine struct {
-	ProductID               string    `json:"product_id"`
-	ProductName             string    `json:"product_name,omitempty"`
-	RecommendedQty          float64   `json:"recommended_qty"`
-	SuggestedArriveAt       time.Time `json:"suggested_arrive_at"`
-	EarliestPossibleArrival time.Time `json:"earliest_possible_arrival"`
-	OptionType              string    `json:"option_type"`
-	AffectedJobIDs          []string  `json:"affected_job_ids"`
-	Rationale               string    `json:"rationale"`
-}
-
 type ReplanConvergenceWarning struct {
 	MaterialID    string  `json:"material_id"`
 	DeficitBefore float64 `json:"deficit_before"`
@@ -304,6 +291,17 @@ type InventoryAction struct {
 	PlanKey     string    `json:"plan_key,omitempty"`
 }
 
+type materialAccelerationNeed struct {
+	MaterialID   string
+	JobID        string
+	JobStepID    string
+	NeedAt       time.Time
+	ReadyAt      time.Time
+	RequiredQty  float64
+	AvailableQty float64
+	ShortageQty  float64
+}
+
 type CreatedDependencyLink struct {
 	DependencyID string `json:"dependency_id"`
 	ParentJobID  string `json:"parent_job_id"`
@@ -341,6 +339,8 @@ type SchedulingProposal struct {
 	DeferredNodes        []DeferredPlanningNode     `json:"deferred_nodes,omitempty"`
 	ConvergenceWarnings  []ReplanConvergenceWarning `json:"convergence_warnings,omitempty"`
 	GlobalScore          float64                    `json:"global_score,omitempty"`
+
+	materialAccelerationNeeds []materialAccelerationNeed
 
 	// Alternatives are additional distinct schedules for the same job generated via
 	// a heuristic portfolio; each alternative does not include nested alternatives.
@@ -439,6 +439,7 @@ type AIPredictiveService struct {
 	jobSlotService  *JobSlotService
 	eventRepo       *repository.SchedulingEventRepository
 	metrics         *AIMetrics
+	batchMu         *sync.Mutex
 }
 
 func NewAIPredictiveService(
@@ -467,6 +468,7 @@ func NewAIPredictiveService(
 		jobSlotService:  jobSlotService,
 		eventRepo:       eventRepo,
 		metrics:         NewAIMetrics(),
+		batchMu:         &sync.Mutex{},
 	}
 }
 

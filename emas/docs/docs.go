@@ -10981,7 +10981,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "option_type": {
-                    "description": "OptionType: omit or \"replenish\" (default) = material expected arrival; \"schedule_production\" = planned subproduct stock (product_id in material_id).",
+                    "description": "OptionType: omit or \"replenish\" (default) = material expected arrival. Other values are ignored by material apply.",
                     "type": "string"
                 },
                 "quantity": {

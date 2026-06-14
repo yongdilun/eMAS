@@ -7,8 +7,25 @@ import { seededRuntimeEnv } from './fullStackEnv.js'
 
 const repoRoot = path.resolve(process.cwd(), '..')
 const env = seededRuntimeEnv(repoRoot)
+const skipFactoryAgent =
+  process.argv.includes('--skip-factory-agent') ||
+  String(process.env.PLAYWRIGHT_SEEDED_SKIP_FACTORY_AGENT || '').trim() === '1'
 
-fs.rmSync(env.artifactDir, { recursive: true, force: true })
+function prepareArtifactDir(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true })
+  } catch (err) {
+    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+    const rotated = `${dir}-${stamp}`
+    try {
+      if (fs.existsSync(dir)) fs.renameSync(dir, rotated)
+    } catch {
+      throw err
+    }
+  }
+}
+
+prepareArtifactDir(env.artifactDir)
 fs.mkdirSync(env.artifactDir, { recursive: true })
 fs.mkdirSync(path.dirname(env.goDbPath), { recursive: true })
 
@@ -129,39 +146,45 @@ try {
       E2E_SERVER_ADDR: `127.0.0.1:${env.goApiPort}`,
       E2E_SQLITE_PATH: env.goDbPath,
       GIN_MODE: 'release',
+      AI_AUTH_REQUIRED: 'true',
+      AI_BATCH_TIMEOUT_MS: '240000',
     },
   })
   await waitForJson(env.goApiHealthUrl, { timeoutMs: 60_000, label: 'seeded Go API' })
 
-  startProcess('factoryAgent', pythonExe(), ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(env.factoryAgentPort)], {
-    cwd: path.join(repoRoot, 'factory-agent'),
-    env: {
-      APP_MODE: 'development',
-      DATABASE_URL: env.factoryAgentDatabaseUrl,
-      GO_API_BASE_URL: env.goApiBaseUrl,
-      OPENAPI_URL: env.openApiUrl,
-      JWT_REQUIRED: '0',
-      CORS_ALLOW_ORIGINS: `${env.viteBaseUrl},http://localhost:${env.vitePort}`,
-      REDIS_URL: '',
-      FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER: '1',
-      ...blankOpenAICompatibleEnv(),
-      FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE: '1',
-      FACTORY_AGENT_TOOLS_MD_PATH: path.join(env.artifactDir, 'factory-agent-tools.md'),
-      SUMMARY_BACKEND: 'deterministic',
-      TOOL_RESULT_SUMMARY_BACKEND: 'deterministic',
-      TOOL_SELECTOR_RERANKER_ENABLED: '0',
-      EMBEDDING_BACKEND: 'disabled',
-      MEMORY_ENABLED: '0',
-      VECTOR_MEMORY_ENABLED: '0',
-      CHECKPOINT_ENABLED: '1',
-      GRAPH_CHECKPOINT_BACKEND: 'memory',
-      ENFORCE_TOOL_REGISTRY_HEALTH: '1',
-      AUTO_REPAIR_TOOL_REGISTRY: '1',
-      MIN_HEALTHY_TOOL_COUNT: '20',
-      HTTP_TIMEOUT_S: '5',
-    },
-  })
-  await waitForJson(env.factoryAgentReadyUrl, { timeoutMs: 90_000, label: 'Factory Agent' })
+  if (!skipFactoryAgent) {
+    startProcess('factoryAgent', pythonExe(), ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(env.factoryAgentPort)], {
+      cwd: path.join(repoRoot, 'factory-agent'),
+      env: {
+        APP_MODE: 'development',
+        DATABASE_URL: env.factoryAgentDatabaseUrl,
+        GO_API_BASE_URL: env.goApiBaseUrl,
+        OPENAPI_URL: env.openApiUrl,
+        JWT_REQUIRED: '0',
+        CORS_ALLOW_ORIGINS: `${env.viteBaseUrl},http://localhost:${env.vitePort}`,
+        REDIS_URL: '',
+        FACTORY_AGENT_ALLOW_OFFLINE_PLANNER_PROPOSER: '1',
+        ...blankOpenAICompatibleEnv(),
+        FACTORY_AGENT_PLAYWRIGHT_SEEDED_MODE: '1',
+        FACTORY_AGENT_TOOLS_MD_PATH: path.join(env.artifactDir, 'factory-agent-tools.md'),
+        SUMMARY_BACKEND: 'deterministic',
+        TOOL_RESULT_SUMMARY_BACKEND: 'deterministic',
+        TOOL_SELECTOR_RERANKER_ENABLED: '0',
+        EMBEDDING_BACKEND: 'disabled',
+        MEMORY_ENABLED: '0',
+        VECTOR_MEMORY_ENABLED: '0',
+        CHECKPOINT_ENABLED: '1',
+        GRAPH_CHECKPOINT_BACKEND: 'memory',
+        ENFORCE_TOOL_REGISTRY_HEALTH: '1',
+        AUTO_REPAIR_TOOL_REGISTRY: '1',
+        MIN_HEALTHY_TOOL_COUNT: '20',
+        HTTP_TIMEOUT_S: '5',
+      },
+    })
+    await waitForJson(env.factoryAgentReadyUrl, { timeoutMs: 90_000, label: 'Factory Agent' })
+  } else {
+    append(fingerprint.logs.factoryAgent, `[${new Date().toISOString()}] skipped for direct Go API seeded spec\n`)
+  }
 
   startProcess('vite', process.execPath, [
     'e2e/support/startViteForPlaywright.js',
@@ -171,6 +194,14 @@ try {
     env.factoryAgentBaseUrl,
     '--api-url',
     env.goApiBaseUrl,
+    ...(skipFactoryAgent
+      ? [
+        '--chat-emergency-disabled',
+        '1',
+        '--chat-emergency-disabled-reason',
+        'Direct seeded spec uses the Go API without Factory Agent.',
+      ]
+      : []),
   ], {
     cwd: path.join(repoRoot, 'eMas Front'),
     env: {

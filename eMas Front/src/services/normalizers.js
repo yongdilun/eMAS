@@ -236,7 +236,7 @@ export const normalizeShortageEntityId = (resolution = {}) =>
   resolution?.replenishment?.product_id ||
   null
 
-/** Lowercase canonical option_type from API (replenish, schedule_production, …). */
+/** Lowercase canonical option_type from API (replenish, delay_jobs, and related material actions). */
 const canonicalizeOptionType = (resolution = {}) => {
   const raw = resolution?.option_type
   if (raw == null || raw === '') return 'unknown'
@@ -274,26 +274,11 @@ export const isReplenishRecommendation = (rec = {}) => {
   return false
 }
 
-/** Qty, arrival time, and entity present enough to build an apply-replenishment suggestion row. */
-const applyRowHasQtyTimeEntity = (rec = {}) => {
-  const sel = rec?.selected_qty
-  const qty =
-    sel != null && sel !== '' && Number(sel) > 0
-      ? Number(sel)
-      : Number(rec?.suggested_qty ?? 0)
-  const arriveAt = rec?.selected_arrive_at || rec?.suggested_arrive_at
-  return qty > 0 && !!arriveAt && !!rec?.entity_id && rec.entity_id !== 'unknown'
-}
-
 /**
- * Rows eligible for POST apply-replenishment: material replenish options, or schedule_production
- * (backend treats material_id as product_id and creates planned product inventory when option_type is set).
+ * Rows eligible for POST apply-replenishment: material replenish options only.
  */
 export const isApplyReplenishmentSuggestion = (rec = {}) => {
-  if (isReplenishRecommendation(rec)) return true
-  const t = String(rec?.option_type ?? '').trim().toLowerCase()
-  if (t !== 'schedule_production') return false
-  return applyRowHasQtyTimeEntity(rec)
+  return isReplenishRecommendation(rec)
 }
 
 /**
@@ -308,20 +293,16 @@ export const mapRecommendationToApplyItem = (rec = {}) => {
       : Number(rec?.suggested_qty ?? 0)
   const arriveAt = rec?.selected_arrive_at || rec?.suggested_arrive_at
   if (!(qty > 0) || !arriveAt || !rec?.entity_id) return null
-  const t = String(rec?.option_type ?? '').trim().toLowerCase()
-  const isScheduleProduction = t === 'schedule_production'
   const payload = {
     material_id: rec.entity_id,
     quantity: qty,
     arrive_at: arriveAt,
   }
   if (rec?.snapshot) payload.inventory_snapshot = rec.snapshot
-  if (isScheduleProduction) payload.option_type = 'schedule_production'
   return payload
 }
 
-const totalSkippedApplyDuplicates = (d = {}) =>
-  Number(d.skipped_duplicates ?? 0) + Number(d.skipped_planned_duplicates ?? 0)
+const totalSkippedApplyDuplicates = (d = {}) => Number(d.skipped_duplicates ?? 0)
 
 /** Backend treats arrivals in the same ±30m window as duplicates; stagger retries past that window. */
 export const APPLY_REPLENISHMENT_DUPLICATE_WINDOW_NUDGE_MS = 31 * 60 * 1000
@@ -356,10 +337,8 @@ export const extractBatchShortageAggregate = (src) => {
   /** Preferred: batch proposals / reschedule-all `summary.material_replenishment_aggregate` (one row per raw material). */
   let byMaterial = pickList(src, ['material_replenishment_aggregate', 'materialReplenishmentAggregate'])
   if (!byMaterial.length) byMaterial = pickList(src, ['by_material', 'byMaterial'])
-  let byProduct = pickList(src, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate'])
   if (!byMaterial.length && nested) byMaterial = pickList(nested, ['material_replenishment_aggregate', 'materialReplenishmentAggregate'])
   if (!byMaterial.length && nested) byMaterial = pickList(nested, ['by_material', 'byMaterial'])
-  if (!byProduct.length && nested) byProduct = pickList(nested, ['by_product', 'byProduct', 'schedule_production_aggregate', 'scheduleProductionAggregate'])
   const anchorProposalId =
     pick(src, [
       'aggregate_anchor_proposal_id',
@@ -370,11 +349,11 @@ export const extractBatchShortageAggregate = (src) => {
     (nested &&
       pick(nested, ['aggregate_anchor_proposal_id', 'aggregateAnchorProposalId', 'apply_anchor_proposal_id'])) ||
     null
-  return { byMaterial, byProduct, anchorProposalId }
+  return { byMaterial, byProduct: [], anchorProposalId }
 }
 
 /**
- * Normalized lines for UI + apply from `by_material` / `by_product` aggregate arrays.
+ * Normalized material lines for UI + apply from aggregate arrays.
  */
 export const normalizeBatchAggregateLines = (byMaterial = [], byProduct = []) => {
   const lines = []
@@ -396,10 +375,12 @@ export const normalizeBatchAggregateLines = (byMaterial = [], byProduct = []) =>
       if (!material_id || !(q > 0) || !arrive_at) return
       const snap = row.inventory_snapshot || row.inventorySnapshot
       const rawOpt = String(pick(row, ['option_type', 'optionType'], '')).trim().toLowerCase()
-      const isScheduleProduction = rawOpt === 'schedule_production'
+      if (rawOpt === 'schedule_production') return
       lines.push({
         key: `agg:m:${material_id}:${idx}`,
-        kind: isScheduleProduction ? 'schedule_production' : 'material',
+        kind: 'material',
+        id: material_id,
+        label: material_name || material_id,
         material_id,
         material_name,
         qty: q,
@@ -412,39 +393,8 @@ export const normalizeBatchAggregateLines = (byMaterial = [], byProduct = []) =>
             : [],
         rationale: pick(row, ['rationale', 'Rationale', 'notes'], '') || '',
         snapshot: snap || null,
-        raw: row,
-      })
-    })
-    ; (Array.isArray(byProduct) ? byProduct : []).forEach((row, idx) => {
-      const product_id = pick(row, ['product_id', 'productId', 'material_id', 'materialId'])
-      const product_name = pick(row, ['product_name', 'productName', 'material_name', 'materialName'])
-      const q = Number(pick(row, ['recommended_qty', 'recommendedQty', 'quantity', 'qty', 'suggested_qty'], 0))
-      const arrive_at =
-        pick(row, [
-          'suggested_arrive_at',
-          'suggestedArriveAt',
-          'recommended_arrive_at',
-          'recommendedArriveAt',
-          'arrive_at',
-        ]) || null
-      const earliest_possible_arrival = pick(row, ['earliest_possible_arrival', 'earliestPossibleArrival'])
-      if (!product_id || !(q > 0) || !arrive_at) return
-      const snap = row.inventory_snapshot || row.inventorySnapshot
-      lines.push({
-        key: `agg:p:${product_id}:${idx}`,
-        kind: 'schedule_production',
-        material_id: product_id,
-        material_name: product_name,
-        qty: q,
-        arrive_at,
-        earliest_possible_arrival,
-        affected_job_ids: Array.isArray(row.affected_job_ids)
-          ? row.affected_job_ids
-          : Array.isArray(row.affectedJobIds)
-            ? row.affectedJobIds
-            : [],
-        rationale: pick(row, ['rationale', 'Rationale', 'notes'], '') || '',
-        snapshot: snap || null,
+        selected: true,
+        source: 'recommendation',
         raw: row,
       })
     })
@@ -456,7 +406,8 @@ export const buildAggregateApplySuggestions = (lines, draftsByKey = {}) => {
   const out = []
   for (const line of lines || []) {
     const d = draftsByKey[line.key]
-    if (d && d.selected === false) continue
+    const selected = d?.selected !== undefined ? d.selected !== false : line.selected !== false
+    if (!selected) continue
     const qtyRaw = d && d.qty !== undefined && d.qty !== '' ? Number(d.qty) : line.qty
     const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : line.qty
     let arriveIso = line.arrive_at
@@ -466,12 +417,11 @@ export const buildAggregateApplySuggestions = (lines, draftsByKey = {}) => {
     }
     if (!(qty > 0) || !arriveIso) continue
     const row = {
-      material_id: line.material_id,
+      material_id: line.material_id || line.id,
       quantity: qty,
       arrive_at: arriveIso,
     }
     if (line.snapshot) row.inventory_snapshot = line.snapshot
-    if (line.kind === 'schedule_production') row.option_type = 'schedule_production'
     out.push(row)
   }
   return out
@@ -479,7 +429,6 @@ export const buildAggregateApplySuggestions = (lines, draftsByKey = {}) => {
 
 const legacyApplyCreatedCount = (d = {}) =>
   (Array.isArray(d.created_arrivals) ? d.created_arrivals.length : 0) +
-  (Array.isArray(d.created_planned_production) ? d.created_planned_production.length : 0) +
   (Number(d.created_count) || 0)
 
 /**
@@ -502,7 +451,7 @@ export const applyReplenishmentClientNotice = (data) => {
   }
 
   if (d.any_new_records === true) {
-    if (msgIn && /new_expected_arrivals|planned_production_recorded/i.test(msgIn)) return null
+    if (msgIn && /new_expected_arrivals/i.test(msgIn)) return null
     return msgIn ? { level: 'info', text: msgIn } : null
   }
 
@@ -541,7 +490,7 @@ export const applyReplenishmentClientNotice = (data) => {
       level: 'warn',
       text:
         msgIn ||
-        'Apply-replenishment did not report new arrivals or planned production.',
+        'Apply-replenishment did not report new arrivals.',
     }
   }
 
@@ -583,6 +532,105 @@ export const normalizeRecommendation = (resolution = {}, source = 'primary') => 
     replenishment,
     raw: resolution,
   }
+}
+
+export const aggregateMaterialShortageRowsFromProposals = (proposals = []) => {
+  const perProposalMaterial = new Map()
+
+  for (const proposal of Array.isArray(proposals) ? proposals : []) {
+    const primary = Array.isArray(proposal?.shortage_resolutions)
+      ? proposal.shortage_resolutions
+      : Array.isArray(proposal?.shortageResolutions)
+        ? proposal.shortageResolutions
+        : []
+    const materialShortages = Array.isArray(proposal?.material_shortages)
+      ? proposal.material_shortages
+      : Array.isArray(proposal?.materialShortages)
+        ? proposal.materialShortages
+        : []
+    const fallback = materialShortages.flatMap((s) => {
+      if (Array.isArray(s?.per_material_resolutions)) return s.per_material_resolutions
+      if (Array.isArray(s?.perMaterialResolutions)) return s.perMaterialResolutions
+      return []
+    })
+    const rows = [
+      ...primary.map((row) => normalizeRecommendation(row, 'shortage_resolutions')),
+      ...fallback.map((row) => normalizeRecommendation(row, 'per_material_resolutions')),
+    ]
+
+    for (const rec of rows) {
+      if (!isApplyReplenishmentSuggestion(rec)) continue
+      const materialId = String(rec.entity_id || '').trim()
+      const qty = Number(rec.suggested_qty ?? 0)
+      const arriveAt = rec.suggested_arrive_at
+      if (!materialId || materialId === 'unknown' || !(qty > 0) || !arriveAt) continue
+
+      const proposalKey = proposal?.proposal_id || proposal?.proposalId || proposal?.job_id || proposal?.jobId || ''
+      const key = `${proposalKey}|${materialId}`
+      const current = perProposalMaterial.get(key)
+      const currentAt = current?.rec?.suggested_arrive_at ? new Date(current.rec.suggested_arrive_at).getTime() : NaN
+      const nextAt = new Date(arriveAt).getTime()
+      if (
+        !current ||
+        qty > current.qty ||
+        (qty === current.qty && Number.isFinite(nextAt) && (!Number.isFinite(currentAt) || nextAt < currentAt))
+      ) {
+        perProposalMaterial.set(key, { proposal, rec, qty })
+      }
+    }
+  }
+
+  const byMaterial = new Map()
+  const appendUnique = (list, value) => {
+    const text = String(value || '').trim()
+    if (text && !list.includes(text)) list.push(text)
+  }
+
+  for (const { proposal, rec, qty } of perProposalMaterial.values()) {
+    const materialId = String(rec.entity_id || '').trim()
+    const arriveAt = rec.suggested_arrive_at
+    const replenishment = rec.replenishment || {}
+    const existing = byMaterial.get(materialId) || {
+      material_id: materialId,
+      material_name:
+        replenishment.material_name ||
+        replenishment.materialName ||
+        rec.raw?.material_name ||
+        rec.raw?.materialName ||
+        materialId,
+      recommended_qty: 0,
+      suggested_arrive_at: arriveAt,
+      earliest_possible_arrival: rec.earliest_possible_arrival || arriveAt,
+      affected_job_ids: [],
+      option_type: 'replenish',
+      rationale: rec.dependency_product_id
+        ? 'Batch raw-material recommendation for subproduct manufacture.'
+        : 'Batch material recommendation from proposal shortage resolutions.',
+    }
+
+    existing.recommended_qty = Number((Number(existing.recommended_qty || 0) + qty).toFixed(6))
+    const existingAt = existing.suggested_arrive_at ? new Date(existing.suggested_arrive_at).getTime() : NaN
+    const nextAt = arriveAt ? new Date(arriveAt).getTime() : NaN
+    if (Number.isFinite(nextAt) && (!Number.isFinite(existingAt) || nextAt < existingAt)) {
+      existing.suggested_arrive_at = arriveAt
+    }
+    const earliest = rec.earliest_possible_arrival || arriveAt
+    const existingEarliest = existing.earliest_possible_arrival ? new Date(existing.earliest_possible_arrival).getTime() : NaN
+    const nextEarliest = earliest ? new Date(earliest).getTime() : NaN
+    if (Number.isFinite(nextEarliest) && (!Number.isFinite(existingEarliest) || nextEarliest < existingEarliest)) {
+      existing.earliest_possible_arrival = earliest
+    }
+    appendUnique(existing.affected_job_ids, proposal?.job_id || proposal?.jobId)
+    ; (Array.isArray(rec.raw?.affected_job_ids)
+      ? rec.raw.affected_job_ids
+      : Array.isArray(rec.raw?.affectedJobIds)
+        ? rec.raw.affectedJobIds
+        : []
+    ).forEach((jobId) => appendUnique(existing.affected_job_ids, jobId))
+    byMaterial.set(materialId, existing)
+  }
+
+  return [...byMaterial.values()].sort((a, b) => String(a.material_id).localeCompare(String(b.material_id)))
 }
 
 export const buildApplyPayload = (selectedRecommendations = []) =>

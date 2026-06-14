@@ -158,11 +158,6 @@ func (s *AIPredictiveService) injectPredictiveShortages(
 		// reservations from the jobs currently being re-planned in this batch.
 		opening, events, err := s.buildMaterialTimeline(matID, time.Now().UTC(), ledger)
 		if err != nil {
-			agentDebugNDJSON("DIAGNOSTIC", "service.predictive_bom.go:injectPredictiveShortages", "predictive_shortages_timeline_failed", map[string]any{
-				"material_id":  matID,
-				"total_needed": totalNeeded,
-				"error":        err.Error(),
-			})
 			logger.L().Warn("predictive_shortages_timeline_failed",
 				zap.String("material_id", matID),
 				zap.Float64("total_needed", totalNeeded),
@@ -172,22 +167,12 @@ func (s *AIPredictiveService) injectPredictiveShortages(
 
 		minBalance := opening
 		available := opening
-		// Summarize events for diagnostics
-		eventCount := len(events)
 		for _, event := range events {
 			available += event.Delta
 			if available < minBalance {
 				minBalance = available
 			}
 		}
-
-		agentDebugNDJSON("DIAGNOSTIC", "service.predictive_bom.go:injectPredictiveShortages", "predictive_shortages_material_analysis", map[string]any{
-			"material_id":           matID,
-			"material_total_needed": totalNeeded,
-			"current_opening":       opening,
-			"projected_min_balance": minBalance,
-			"future_events":         eventCount,
-		})
 
 		if totalNeeded > minBalance {
 			deficit := totalNeeded - minBalance
@@ -202,14 +187,6 @@ func (s *AIPredictiveService) injectPredictiveShortages(
 			ledger.appendVirtualArrival(matID, deficit, safeArrivalDate)
 			injectedCount++
 
-			agentDebugNDJSON("DIAGNOSTIC", "service.predictive_bom.go:injectPredictiveShortages", "predictive_shortages_injected", map[string]any{
-				"material_id":  matID,
-				"deficit":      deficit,
-				"min_balance":  minBalance,
-				"total_needed": totalNeeded,
-				"arrive_at":    safeArrivalDate.Format(time.RFC3339),
-			})
-
 			logger.L().Info("predictive_shortages_injected_via_negative_reservation",
 				zap.String("material_id", matID),
 				zap.Float64("deficit", deficit),
@@ -217,11 +194,6 @@ func (s *AIPredictiveService) injectPredictiveShortages(
 				zap.Float64("total_needed", totalNeeded),
 				zap.String("arrive_at", safeArrivalDate.Format(time.RFC3339)))
 		} else {
-			agentDebugNDJSON("DIAGNOSTIC", "service.predictive_bom.go:injectPredictiveShortages", "predictive_shortages_sufficient_stock", map[string]any{
-				"material_id":  matID,
-				"min_balance":  minBalance,
-				"total_needed": totalNeeded,
-			})
 			logger.L().Debug("predictive_shortages_sufficient_stock",
 				zap.String("material_id", matID),
 				zap.Float64("min_balance", minBalance),

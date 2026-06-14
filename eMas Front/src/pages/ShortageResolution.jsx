@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import PageHeader from '../components/shared/PageHeader'
 import RecommendationCard from '../components/features/scheduling/RecommendationCard'
@@ -9,14 +9,18 @@ import {
   aiApi,
   apiErrorMessage,
   apiErrorToastOptions,
+  augmentScheduleBatchMessage,
+  inventoryApi,
   mergeBatchSummaryWithAggregate,
   toData,
+  toList,
   unwrapSchedulingBatchPayload,
 } from '../services/api'
 import {
   APPLY_REPLENISHMENT_DUPLICATE_WINDOW_NUDGE_MS,
   applyReplenishmentClientNotice,
   applyReplenishmentDuplicateSkipTotal,
+  aggregateMaterialShortageRowsFromProposals,
   buildAggregateApplySuggestions,
   buildApplyPayload,
   extractBatchShortageAggregate,
@@ -30,6 +34,8 @@ import {
 
 /** Legacy per-proposal apply: stagger times to dodge duplicate-window skips when no batch aggregate API. */
 const APPLY_DEDUPE_MAX_OFFSET_STEPS = 24
+const MAX_MATERIAL_CONVERGENCE_PASSES = 5
+const MATERIAL_SHORTAGE_RE = /material[_\s-]*shortage|raw[_\s-]*material/i
 
 const toLocalInput = (iso) => {
   if (!iso) return ''
@@ -44,6 +50,97 @@ const toIso = (local) => {
   const d = new Date(local)
   if (Number.isNaN(d.getTime())) return null
   return d.toISOString()
+}
+
+const aggregateLineId = (line) => line?.id || line?.material_id || ''
+
+const aggregateLineLabel = (line) => line?.label || line?.material_name || line?.material_id || 'Unknown'
+
+const aggregateLineKindLabel = () => 'Material arrival'
+
+const suggestionMaterialId = (row) => String(row?.material_id || row?.id || '').trim()
+
+const aggregateApplySignature = (suggestions = []) =>
+  JSON.stringify(
+    (suggestions || [])
+      .map((row) => ({
+        material_id: suggestionMaterialId(row),
+        quantity: Number(row?.quantity ?? row?.qty ?? 0),
+        arrive_at: row?.arrive_at || row?.suggested_arrive_at || '',
+      }))
+      .filter((row) => row.material_id && row.quantity > 0 && row.arrive_at)
+      .sort((a, b) => `${a.material_id}|${a.arrive_at}`.localeCompare(`${b.material_id}|${b.arrive_at}`)),
+  )
+
+const materialAggregateApplySuggestionsFromSummary = (summary, excludedMaterialIds = new Set()) => {
+  const aggregate = extractBatchShortageAggregate(summary)
+  const lines = normalizeBatchAggregateLines(aggregate.byMaterial, aggregate.byProduct)
+  const suggestions = buildAggregateApplySuggestions(lines, {})
+  return suggestions.filter((row) => {
+    const materialId = suggestionMaterialId(row)
+    return materialId && !excludedMaterialIds.has(materialId)
+  })
+}
+
+const materialAggregateApplySuggestionsFromProposals = (proposals, excludedMaterialIds = new Set()) => {
+  const rows = aggregateMaterialShortageRowsFromProposals(proposals)
+  const lines = normalizeBatchAggregateLines(rows, [])
+  const suggestions = buildAggregateApplySuggestions(lines, {})
+  return suggestions.filter((row) => {
+    const materialId = suggestionMaterialId(row)
+    return materialId && !excludedMaterialIds.has(materialId)
+  })
+}
+
+const materialAggregateApplySuggestionsFromBatch = (summary, proposals, excludedMaterialIds = new Set()) => {
+  const summaryRows = materialAggregateApplySuggestionsFromSummary(summary, excludedMaterialIds)
+  if (summaryRows.length > 0) return summaryRows
+  return materialAggregateApplySuggestionsFromProposals(proposals, excludedMaterialIds)
+}
+
+const proposalHasMaterialShortage = (proposal) => {
+  if (!proposal || proposal.feasible !== false) return false
+  const reasons = [
+    ...(Array.isArray(proposal.blocked_reasons) ? proposal.blocked_reasons : []),
+    ...(Array.isArray(proposal.blockedReasons) ? proposal.blockedReasons : []),
+    proposal.blocked_reason,
+    proposal.blockedReason,
+    proposal.reason,
+  ]
+    .filter(Boolean)
+    .map(String)
+  if (reasons.some((reason) => MATERIAL_SHORTAGE_RE.test(reason))) return true
+  if (Array.isArray(proposal.material_shortages) && proposal.material_shortages.length > 0) return true
+  if (Array.isArray(proposal.materialShortages) && proposal.materialShortages.length > 0) return true
+  const resolutionRows = Array.isArray(proposal.shortage_resolutions)
+    ? proposal.shortage_resolutions
+    : Array.isArray(proposal.shortageResolutions)
+      ? proposal.shortageResolutions
+      : []
+  return resolutionRows.some((row) => {
+    const type = String(row?.option_type || row?.optionType || '').toLowerCase()
+    return type.includes('replenish') || !!(row?.material_id || row?.materialId || row?.replenishment?.material_id)
+  })
+}
+
+const countMaterialShortageInfeasible = (proposals = []) =>
+  (Array.isArray(proposals) ? proposals : []).filter(proposalHasMaterialShortage).length
+
+const normalizeLookupMaterial = (item = {}) => {
+  const id = item.material_id || item.MaterialID || item.materialId || item.id
+  if (!id) return null
+  return {
+    id,
+    label: item.material_name || item.MaterialName || item.materialName || item.name || id,
+  }
+}
+
+const earliestLocalInput = (a, b) => {
+  const at = a ? new Date(a).getTime() : NaN
+  const bt = b ? new Date(b).getTime() : NaN
+  if (!Number.isFinite(at)) return b || ''
+  if (!Number.isFinite(bt)) return a || ''
+  return at <= bt ? a : b
 }
 
 const ShortageResolution = ({
@@ -64,7 +161,21 @@ const ShortageResolution = ({
   const [showOnlyInfeasible] = useState(true)
   const [showOnlyWithSuggestions] = useState(true)
   const [localBatchSummary, setLocalBatchSummary] = useState(null)
+  const [batchMessage, setBatchMessage] = useState('')
   const [aggDrafts, setAggDrafts] = useState({})
+  const [removedAggregateKeys, setRemovedAggregateKeys] = useState(() => new Set())
+  const [manualAggregateLines, setManualAggregateLines] = useState([])
+  const [addLineOpen, setAddLineOpen] = useState(false)
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupError, setLookupError] = useState('')
+  const [materialOptions, setMaterialOptions] = useState([])
+  const [newLineDraft, setNewLineDraft] = useState({
+    kind: 'material',
+    id: '',
+    qty: '',
+    arriveAtLocal: '',
+  })
+  const draftLoadPromiseRef = useRef(null)
 
   const effectiveBatchSummary = localBatchSummary ?? batchSummaryProp
 
@@ -117,32 +228,40 @@ const ShortageResolution = ({
   }
 
   const loadDraftProposals = useCallback(async () => {
-    setLoading(true)
-    try {
-      // Use the batch endpoint to get both proposals and the aggregate in one go
-      const resp = await aiApi.scheduling.batchProposals({
-        scope: 'all_unscheduled',
-        order_by: orderBy,
-      })
-      const u = unwrapSchedulingBatchPayload(resp)
-      const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
+    if (draftLoadPromiseRef.current) return draftLoadPromiseRef.current
 
-      if (Array.isArray(proposalsList)) {
-        setProposals(proposalsList)
-        const first = proposalsList.find((p) => p.feasible === false && extractRecommendations(p).length > 0) || proposalsList[0]
-        setSelectedProposalId(first?.proposal_id || '')
-      }
+    draftLoadPromiseRef.current = (async () => {
+      setLoading(true)
+      try {
+        // Use the batch endpoint to get both proposals and the aggregate in one go
+        const resp = await aiApi.scheduling.batchProposals({
+          scope: 'all_unscheduled',
+          order_by: orderBy,
+        })
+        const u = unwrapSchedulingBatchPayload(resp)
+        const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
+        setBatchMessage(augmentScheduleBatchMessage(u.message) || '')
 
-      if (summary || byMaterial || byProduct || materialReplenishmentAggregate) {
-        setLocalBatchSummary(
-          mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
-        )
+        if (Array.isArray(proposalsList)) {
+          setProposals(proposalsList)
+          const first = proposalsList.find((p) => p.feasible === false && extractRecommendations(p).length > 0) || proposalsList[0]
+          setSelectedProposalId(first?.proposal_id || '')
+        }
+
+        if (summary || byMaterial || byProduct || materialReplenishmentAggregate) {
+          setLocalBatchSummary(
+            mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
+          )
+        }
+      } catch (err) {
+        toast.error(apiErrorMessage(err, 'Failed to load shortage proposals.'), apiErrorToastOptions(err))
+      } finally {
+        setLoading(false)
+        draftLoadPromiseRef.current = null
       }
-    } catch (err) {
-      toast.error(apiErrorMessage(err, 'Failed to load shortage proposals.'), apiErrorToastOptions(err))
-    } finally {
-      setLoading(false)
-    }
+    })()
+
+    return draftLoadPromiseRef.current
   }, [orderBy, toast])
 
   useEffect(() => {
@@ -164,27 +283,56 @@ const ShortageResolution = ({
     () => normalizeBatchAggregateLines(batchAggregate.byMaterial, batchAggregate.byProduct),
     [batchAggregate.byMaterial, batchAggregate.byProduct],
   )
+  const proposalAggregateLines = useMemo(() => {
+    if (normalizedAggregateLines.length > 0) return []
+    const rows = aggregateMaterialShortageRowsFromProposals(proposals)
+    return normalizeBatchAggregateLines(rows, [])
+  }, [normalizedAggregateLines.length, proposals])
+  const effectiveAggregateLines = normalizedAggregateLines.length > 0
+    ? normalizedAggregateLines
+    : proposalAggregateLines
 
-  const hasAggregateLines = normalizedAggregateLines.length > 0
+  useEffect(() => {
+    setManualAggregateLines([])
+    setRemovedAggregateKeys(new Set())
+    setAggDrafts({})
+  }, [effectiveBatchSummary])
+
+  const aggregateLines = useMemo(
+    () =>
+      [...effectiveAggregateLines, ...manualAggregateLines]
+        .filter((line) => !removedAggregateKeys.has(line.key)),
+    [effectiveAggregateLines, manualAggregateLines, removedAggregateKeys],
+  )
+
+  const hasAggregateLines = effectiveAggregateLines.length > 0 || manualAggregateLines.length > 0
 
   useEffect(() => {
     setAggDrafts((prev) => {
       const next = { ...prev }
-      normalizedAggregateLines.forEach((line) => {
+      aggregateLines.forEach((line) => {
         if (next[line.key] !== undefined) return
         next[line.key] = {
+          selected: line.selected !== false,
           qty: line.qty,
           arriveAtLocal: toLocalInput(line.arrive_at),
         }
       })
       return next
     })
-  }, [normalizedAggregateLines])
+  }, [aggregateLines])
 
   const aggregateApplySuggestions = useMemo(
-    () => buildAggregateApplySuggestions(normalizedAggregateLines, aggDrafts),
-    [normalizedAggregateLines, aggDrafts],
+    () => buildAggregateApplySuggestions(aggregateLines, aggDrafts),
+    [aggregateLines, aggDrafts],
   )
+
+  const normalizedMaterialOptions = useMemo(
+    () => materialOptions.map(normalizeLookupMaterial).filter(Boolean),
+    [materialOptions],
+  )
+
+  const newLineOptions = normalizedMaterialOptions
 
   const filteredProposals = useMemo(() => {
     return proposals.filter((p) => {
@@ -253,6 +401,125 @@ const ShortageResolution = ({
     }))
   }
 
+  const loadAddLineOptions = useCallback(async () => {
+    if (lookupLoading) return
+    if (materialOptions.length > 0) return
+    setLookupLoading(true)
+    setLookupError('')
+    try {
+      const materialsResp = await inventoryApi.list()
+      setMaterialOptions(toList(materialsResp))
+    } catch (err) {
+      const message = apiErrorMessage(err, 'Failed to load materials.')
+      setLookupError(message)
+      toast.error(message, apiErrorToastOptions(err))
+    } finally {
+      setLookupLoading(false)
+    }
+  }, [lookupLoading, materialOptions.length, toast])
+
+  const openAddLine = () => {
+    setAddLineOpen(true)
+    loadAddLineOptions()
+  }
+
+  const resetNewLineDraft = () => {
+    setNewLineDraft({
+      kind: 'material',
+      id: '',
+      qty: '',
+      arriveAtLocal: '',
+    })
+  }
+
+  const removeAggregateLine = (line) => {
+    if (line.source === 'manual') {
+      setManualAggregateLines((prev) => prev.filter((item) => item.key !== line.key))
+    } else {
+      setRemovedAggregateKeys((prev) => {
+        const next = new Set(prev)
+        next.add(line.key)
+        return next
+      })
+    }
+    setAggDrafts((prev) => ({
+      ...prev,
+      [line.key]: { ...(prev[line.key] || {}), selected: false },
+    }))
+  }
+
+  const addAggregateLine = () => {
+    const id = newLineDraft.id
+    const qty = Number(newLineDraft.qty)
+    const arriveAtIso = toIso(newLineDraft.arriveAtLocal)
+    if (!id || !(qty > 0) || !arriveAtIso) {
+      toast.info('Choose a material, then enter quantity and arrival time.')
+      return
+    }
+
+    const option = newLineOptions.find((item) => item.id === id)
+    const label = option?.label || id
+    const kind = 'material'
+    const existing = [...effectiveAggregateLines, ...manualAggregateLines].find(
+      (line) => line.kind === kind && aggregateLineId(line) === id,
+    )
+
+    if (existing) {
+      setRemovedAggregateKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(existing.key)
+        return next
+      })
+      setAggDrafts((prev) => {
+        const current = prev[existing.key] || {}
+        const currentQty = Number(current.qty ?? existing.qty ?? 0)
+        const mergedQty = (Number.isFinite(currentQty) ? currentQty : 0) + qty
+        const currentLocal = current.arriveAtLocal ?? toLocalInput(existing.arrive_at)
+        return {
+          ...prev,
+          [existing.key]: {
+            ...current,
+            selected: true,
+            qty: mergedQty,
+            arriveAtLocal: earliestLocalInput(currentLocal, newLineDraft.arriveAtLocal),
+          },
+        }
+      })
+      setAddLineOpen(false)
+      resetNewLineDraft()
+      return
+    }
+
+    const key = `manual:${kind}:${id}:${Date.now()}`
+    setManualAggregateLines((prev) => [
+      ...prev,
+      {
+        key,
+        kind,
+        id,
+        label,
+        material_id: id,
+        material_name: label,
+        qty,
+        arrive_at: arriveAtIso,
+        selected: true,
+        source: 'manual',
+        affected_job_ids: [],
+        rationale: 'Added by planner.',
+      },
+    ])
+    setAggDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        selected: true,
+        qty,
+        arriveAtLocal: newLineDraft.arriveAtLocal,
+      },
+    }))
+    setAddLineOpen(false)
+    resetNewLineDraft()
+  }
+
   /** When `allowTimeNudge` is false (batch has `material_replenishment_aggregate`), one attempt per proposal — no +31m stagger. */
   const applyLegacyGroupedWithNudge = async (groupedByProposal, allowTimeNudge = true) => {
     const applyWarnTexts = []
@@ -292,20 +559,145 @@ const ShortageResolution = ({
     return { applyCalls, applyWarnTexts, applyInfoTexts }
   }
 
+  const handleRescheduleResponse = async (resp) => {
+    const u = unwrapSchedulingBatchPayload(resp)
+    const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
+    setBatchMessage(augmentScheduleBatchMessage(u.message) || '')
+    setLocalBatchSummary(
+      mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
+    )
+    setDrafts({})
+    setAggDrafts({})
+    setManualAggregateLines([])
+    setRemovedAggregateKeys(new Set())
+    if (embedded && typeof onApplySuccess === 'function') {
+      await Promise.resolve(onApplySuccess(resp))
+      return true
+    }
+    if (Array.isArray(proposalsList) && proposalsList.length > 0) {
+      setProposals(proposalsList)
+      const first = proposalsList.find((p) => extractRecommendations(p).length > 0) || proposalsList[0]
+      setSelectedProposalId(first?.proposal_id || '')
+    } else {
+      await loadDraftProposals()
+    }
+    return false
+  }
+
+  const replanOnly = async () => {
+    setActionLoading(true)
+    try {
+      const resp = await aiApi.scheduling.rescheduleAll({ order_by: orderBy })
+      const handedOff = await handleRescheduleResponse(resp)
+      if (!handedOff) {
+        toast.success('Regenerated schedule without applying shortage rows.')
+      }
+    } catch (err) {
+      toast.error(
+        apiErrorMessage(err, 'Failed to regenerate schedule.'),
+        apiErrorToastOptions(err),
+      )
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const applyAggregateSuggestionsOnce = async (suggestions, proposalList = proposals) => {
+    const anchor =
+      batchAggregate.anchorProposalId ||
+      proposalList.find((p) => p.feasible === false && p.proposal_id)?.proposal_id ||
+      proposalList.find((p) => p.proposal_id)?.proposal_id
+
+    try {
+      const rawBatch = await aiApi.scheduling.applyReplenishmentBatch({
+        suggestions,
+        order_by: orderBy,
+      })
+      const appliedData = toData(rawBatch) || rawBatch
+      return applyReplenishmentClientNotice(appliedData)
+    } catch (err) {
+      if (err.status !== 404) throw err
+      if (!anchor) {
+        throw new Error(
+          'Batch replenishment API is not available yet, and no anchor proposal_id was found for a single apply-replenishment call.',
+        )
+      }
+      const rawApply = await aiApi.scheduling.applyReplenishment(anchor, { suggestions })
+      const appliedData = toData(rawApply) || rawApply
+      return applyReplenishmentClientNotice(appliedData)
+    }
+  }
+
+  const convergeMaterialShortageAfterReplan = async ({
+    initialResp,
+    excludedMaterialIds,
+    seenSignatures,
+    applyWarnTexts,
+    applyInfoTexts,
+    appliedMaterialPasses,
+  }) => {
+    let latestResp = initialResp
+    let additionalApplyCalls = 0
+    let passes = appliedMaterialPasses
+    let stoppedByRepeat = false
+    let stoppedByCap = false
+
+    while (latestResp) {
+      const u = unwrapSchedulingBatchPayload(latestResp)
+      const latestSummary = mergeBatchSummaryWithAggregate({
+        summary: u.summary,
+        byMaterial: u.byMaterial,
+        byProduct: u.byProduct,
+        materialReplenishmentAggregate: u.materialReplenishmentAggregate,
+      })
+      const followupSuggestions = materialAggregateApplySuggestionsFromBatch(
+        latestSummary,
+        u.proposals,
+        excludedMaterialIds,
+      )
+      const remainingMaterialShortages = countMaterialShortageInfeasible(u.proposals)
+
+      if (remainingMaterialShortages === 0 || followupSuggestions.length === 0) {
+        return { latestResp, additionalApplyCalls, passes, stoppedByRepeat, stoppedByCap }
+      }
+      if (passes >= MAX_MATERIAL_CONVERGENCE_PASSES) {
+        stoppedByCap = true
+        return { latestResp, additionalApplyCalls, passes, stoppedByRepeat, stoppedByCap }
+      }
+
+      const signature = aggregateApplySignature(followupSuggestions)
+      if (!signature || seenSignatures.has(signature)) {
+        stoppedByRepeat = true
+        return { latestResp, additionalApplyCalls, passes, stoppedByRepeat, stoppedByCap }
+      }
+      seenSignatures.add(signature)
+
+      const notice = await applyAggregateSuggestionsOnce(followupSuggestions, u.proposals)
+      additionalApplyCalls += 1
+      passes += 1
+      if (notice?.level === 'warn') applyWarnTexts.push(notice.text)
+      else if (notice?.level === 'info') applyInfoTexts.push(notice.text)
+
+      latestResp = await aiApi.scheduling.rescheduleAll({ order_by: orderBy })
+    }
+
+    return { latestResp, additionalApplyCalls, passes, stoppedByRepeat, stoppedByCap }
+  }
+
   const applyAndReplanAll = async () => {
     const legacyArrivals = buildApplyPayload(selectedRecommendationsAll)
     const useAggregate = hasAggregateLines && aggregateApplySuggestions.length > 0
     const useLegacy = !useAggregate && legacyArrivals.length > 0
 
     if (!useAggregate && !useLegacy) {
-      if (selectedRecommendationsAll.length === 0 && !hasAggregateLines) {
+      if (hasAggregateLines) {
+        toast.info('No selected shortage rows with quantity and arrival time. Include a row or use Replan only.')
+      } else if (selectedRecommendationsAll.length === 0) {
         toast.info('Select at least one recommendation (Include), or adjust filters.')
       } else {
         const noneApplyEligible = selectedRecommendationsAll.every((r) => !isApplyReplenishmentSuggestion(r))
         if (noneApplyEligible) {
-          toast.info(
-            'No selected rows are apply-replenishment eligible (replenish or schedule_production with qty and time). Use "Reschedule all (no material apply)" or refresh analysis for options.',
-          )
+          toast.info('No selected rows are material arrivals with quantity and time. Use Replan only or refresh analysis for options.')
         } else {
           toast.info('No apply rows with quantity and arrival time. Edit qty/time on included recommendations.')
         }
@@ -316,42 +708,32 @@ const ShortageResolution = ({
     setActionLoading(true)
     try {
       let applyCalls = 0
+      let appliedMaterialPasses = 0
+      let latestResp = null
+      let stoppedByRepeat = false
+      let stoppedByCap = false
       const applyWarnTexts = []
       const applyInfoTexts = []
+      const seenSignatures = new Set()
+      const excludedMaterialIds = new Set(
+        [
+          ...normalizedAggregateLines.filter((line) => removedAggregateKeys.has(line.key)),
+          ...aggregateLines.filter((line) => {
+            const d = aggDrafts[line.key] || {}
+            const selected = d.selected !== undefined ? d.selected !== false : line.selected !== false
+            return !selected
+          }),
+        ]
+          .map(suggestionMaterialId)
+          .filter(Boolean),
+      )
 
       if (useAggregate) {
-        const anchor =
-          batchAggregate.anchorProposalId ||
-          proposals.find((p) => p.feasible === false && p.proposal_id)?.proposal_id ||
-          proposals.find((p) => p.proposal_id)?.proposal_id
-        let aggregateNotice = null
-        try {
-          const rawBatch = await aiApi.scheduling.applyReplenishmentBatch({
-            suggestions: aggregateApplySuggestions,
-            order_by: orderBy,
-          })
-          applyCalls += 1
-          const appliedData = toData(rawBatch) || rawBatch
-          aggregateNotice = applyReplenishmentClientNotice(appliedData)
-        } catch (err) {
-          if (err.status === 404) {
-            if (!anchor) {
-              toast.error(
-                'Batch replenishment API is not available yet, and no anchor proposal_id was found for a single apply-replenishment call.',
-              )
-              setActionLoading(false)
-              return
-            }
-            const rawApply = await aiApi.scheduling.applyReplenishment(anchor, {
-              suggestions: aggregateApplySuggestions,
-            })
-            applyCalls += 1
-            const appliedData = toData(rawApply) || rawApply
-            aggregateNotice = applyReplenishmentClientNotice(appliedData)
-          } else {
-            throw err
-          }
-        }
+        const signature = aggregateApplySignature(aggregateApplySuggestions)
+        if (signature) seenSignatures.add(signature)
+        const aggregateNotice = await applyAggregateSuggestionsOnce(aggregateApplySuggestions, proposals)
+        applyCalls += 1
+        appliedMaterialPasses += 1
         if (aggregateNotice?.level === 'warn') applyWarnTexts.push(aggregateNotice.text)
         else if (aggregateNotice?.level === 'info') applyInfoTexts.push(aggregateNotice.text)
       } else {
@@ -383,26 +765,50 @@ const ShortageResolution = ({
         toast.info([...new Set(applyInfoTexts)].join(' '))
       }
 
-      const resp = await aiApi.scheduling.rescheduleAll({ order_by: orderBy })
-      const u = unwrapSchedulingBatchPayload(resp)
-      const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
-      setLocalBatchSummary(
-        mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
-      )
-      if (embedded && typeof onApplySuccess === 'function') {
-        setDrafts({})
-        await Promise.resolve(onApplySuccess(resp))
-        return
+      latestResp = await aiApi.scheduling.rescheduleAll({ order_by: orderBy })
+      const convergence = await convergeMaterialShortageAfterReplan({
+        initialResp: latestResp,
+        excludedMaterialIds,
+        seenSignatures,
+        applyWarnTexts,
+        applyInfoTexts,
+        appliedMaterialPasses,
+      })
+      latestResp = convergence.latestResp || latestResp
+      applyCalls += convergence.additionalApplyCalls
+      appliedMaterialPasses = convergence.passes
+      stoppedByRepeat = convergence.stoppedByRepeat
+      stoppedByCap = convergence.stoppedByCap
+
+      const finalPayload = unwrapSchedulingBatchPayload(latestResp)
+      const finalSummary = mergeBatchSummaryWithAggregate({
+        summary: finalPayload.summary,
+        byMaterial: finalPayload.byMaterial,
+        byProduct: finalPayload.byProduct,
+        materialReplenishmentAggregate: finalPayload.materialReplenishmentAggregate,
+      })
+      const remainingMaterialShortages = countMaterialShortageInfeasible(finalPayload.proposals)
+      const remainingMaterialRows = materialAggregateApplySuggestionsFromBatch(
+        finalSummary,
+        finalPayload.proposals,
+        excludedMaterialIds,
+      ).length
+      const handedOff = await handleRescheduleResponse(latestResp)
+      if (!handedOff) {
+        if (remainingMaterialShortages > 0 || remainingMaterialRows > 0) {
+          const reason = stoppedByCap
+            ? `Stopped after ${MAX_MATERIAL_CONVERGENCE_PASSES} material passes.`
+            : stoppedByRepeat
+              ? 'Stopped because the same material recommendation repeated.'
+              : 'No new material recommendation was returned for the remaining shortage.'
+          toast.warning(
+            `${reason} ${remainingMaterialShortages} material-shortage proposal(s) and ${remainingMaterialRows} material row(s) remain.`,
+          )
+        } else {
+          const suffix = appliedMaterialPasses > 1 ? ` after ${appliedMaterialPasses} material passes` : ''
+          toast.success(`Applied selected arrivals and regenerated schedule${suffix}.`)
+        }
       }
-      if (Array.isArray(proposalsList) && proposalsList.length > 0) {
-        setProposals(proposalsList)
-        const first = proposalsList.find((p) => extractRecommendations(p).length > 0) || proposalsList[0]
-        setSelectedProposalId(first?.proposal_id || '')
-      } else {
-        await loadDraftProposals()
-      }
-      setDrafts({})
-      toast.success(`Applied selected arrivals and regenerated schedule.`)
     } catch (err) {
       toast.error(
         apiErrorMessage(err, 'Failed to apply selected arrivals and reschedule.'),
@@ -413,7 +819,7 @@ const ShortageResolution = ({
     }
   }
 
-  const summarySelectedCount = hasAggregateLines ? normalizedAggregateLines.length : selectedRecommendationsAll.length
+  const summarySelectedCount = hasAggregateLines ? aggregateApplySuggestions.length : selectedRecommendationsAll.length
 
   return (
     <div className={`${embedded ? 'h-full' : 'p-6'} flex flex-col min-h-0`}>
@@ -444,94 +850,226 @@ const ShortageResolution = ({
         </PageHeader>
       )}
 
+      {batchMessage && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-400/30 dark:bg-amber-950/35 dark:text-amber-100"
+        >
+          <p className="whitespace-pre-line">{batchMessage}</p>
+        </div>
+      )}
+
 
       {hasAggregateLines && (
-        <div className="mb-6 rounded-lg border border-hairline bg-surface-1 overflow-hidden">
-          <div className="bg-surface-2 px-4 py-3 border-b border-hairline flex justify-between items-center">
-            <div>
-              <h3 className="text-sm font-semibold text-ink flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] text-white">
-                  {normalizedAggregateLines.length}
+        <div className="mb-6 overflow-hidden rounded-md border border-hairline bg-surface-1">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-hairline bg-surface-2 px-4 py-3">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-primary px-1.5 text-[10px] text-white">
+                  {aggregateLines.length}
                 </span>
                 Unified Material Shortage Resolution
               </h3>
-              <p className="text-[11px] text-ink-subtle mt-0.5">
-                Aggregated demand across all impacted jobs. Applying creates a single arrival record for each material.
+              <p className="mt-0.5 text-[11px] text-ink-subtle">
+                Material rows are included by default. Add or remove material arrivals before apply.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={openAddLine}
+              className="inline-flex h-8 items-center rounded-md border border-hairline bg-surface-1 px-3 text-xs font-semibold text-ink hover:bg-surface-3"
+            >
+              Add line
+            </button>
           </div>
-          <div className="p-4">
-            <div className="grid grid-cols-12 gap-4 mb-2 px-2 text-[10px] font-bold text-ink-subtle uppercase tracking-wider">
-              <div className="col-span-4">Material / Component</div>
-              <div className="col-span-2">Required Qty</div>
-              <div className="col-span-3">Suggested Arrival</div>
-              <div className="col-span-3">Impacted Jobs</div>
+
+          {addLineOpen && (
+            <div className="border-b border-hairline bg-surface-1 px-4 py-3">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(12rem,1fr)_8rem_13rem_auto] xl:items-end">
+                <label className="text-xs font-medium text-ink-subtle">
+                  Material
+                  <select
+                    aria-label="Material"
+                    className="mt-1 h-9 w-full rounded-md border border-hairline bg-surface-2 px-2 text-sm text-ink outline-none focus:ring-1 focus:ring-primary"
+                    value={newLineDraft.id}
+                    disabled={lookupLoading}
+                    onInput={(e) => setNewLineDraft((prev) => ({ ...prev, id: e.target.value }))}
+                    onChange={(e) => setNewLineDraft((prev) => ({ ...prev, id: e.target.value }))}
+                  >
+                    <option value="">{lookupLoading ? 'Loading...' : 'Select one'}</option>
+                    {newLineOptions.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.id} - {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-medium text-ink-subtle">
+                  Qty
+                  <input
+                    aria-label="New line quantity"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="mt-1 h-9 w-full rounded-md border border-hairline bg-surface-2 px-2 text-sm text-ink outline-none focus:ring-1 focus:ring-primary"
+                    value={newLineDraft.qty}
+                    onInput={(e) => setNewLineDraft((prev) => ({ ...prev, qty: e.target.value }))}
+                    onChange={(e) => setNewLineDraft((prev) => ({ ...prev, qty: e.target.value }))}
+                  />
+                </label>
+                <label className="text-xs font-medium text-ink-subtle">
+                  Arrival time
+                  <input
+                    aria-label="New line arrival time"
+                    type="datetime-local"
+                    className="mt-1 h-9 w-full rounded-md border border-hairline bg-surface-2 px-2 text-sm text-ink outline-none focus:ring-1 focus:ring-primary [color-scheme:light] dark:[color-scheme:dark]"
+                    value={newLineDraft.arriveAtLocal}
+                    onInput={(e) => setNewLineDraft((prev) => ({ ...prev, arriveAtLocal: e.target.value }))}
+                    onChange={(e) => setNewLineDraft((prev) => ({ ...prev, arriveAtLocal: e.target.value }))}
+                  />
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={addAggregateLine}
+                    className="h-9 rounded-md bg-primary px-3 text-xs font-semibold text-white hover:bg-primary/90"
+                  >
+                    Add selected line
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddLineOpen(false)
+                      resetNewLineDraft()
+                    }}
+                    className="h-9 rounded-md border border-hairline px-3 text-xs font-semibold text-ink-subtle hover:bg-surface-2 hover:text-ink"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              {lookupError && (
+                <p className="mt-2 text-xs text-red-600 dark:text-red-300">{lookupError}</p>
+              )}
             </div>
-            <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-2">
-              {normalizedAggregateLines.map((line) => {
+          )}
+
+          <div className="p-4">
+            <div className="mb-2 hidden grid-cols-[2rem_minmax(12rem,1.4fr)_9rem_13rem_minmax(10rem,1fr)_4rem] gap-3 px-2 text-[10px] font-bold uppercase text-ink-subtle xl:grid">
+              <div>Use</div>
+                  <div>Material</div>
+              <div>Qty</div>
+              <div>Arrival</div>
+              <div>Impacted jobs</div>
+              <div></div>
+            </div>
+            <div className="max-h-[45vh] space-y-2 overflow-y-auto pr-2">
+              {aggregateLines.length === 0 && (
+                <div className="rounded-md border border-dashed border-hairline bg-surface-2 p-6 text-center text-sm text-ink-subtle">
+                  No active shortage rows. Add a material line, or use Replan only.
+                </div>
+              )}
+              {aggregateLines.map((line) => {
                 const d = aggDrafts[line.key] || {}
+                const selected = d.selected !== undefined ? d.selected !== false : line.selected !== false
+                const id = aggregateLineId(line)
+                const label = aggregateLineLabel(line)
                 return (
                   <div
                     key={line.key}
-                    className="grid grid-cols-12 gap-4 items-center p-3 rounded-lg border border-hairline bg-surface-1 transition-all"
+                    data-shortage-line-kind={line.kind || 'material'}
+                    data-shortage-line-id={id}
+                    className={`grid grid-cols-1 gap-3 rounded-md border p-3 transition-colors xl:grid-cols-[2rem_minmax(12rem,1.4fr)_9rem_13rem_minmax(10rem,1fr)_4rem] xl:items-center ${
+                      selected
+                        ? 'border-hairline bg-surface-1 hover:bg-surface-2'
+                        : 'border-hairline bg-surface-2/70'
+                    }`}
                   >
-                    <div className="col-span-4 flex items-center gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold text-sm truncate" title={line.material_name || line.material_id}>
-                          {line.material_name || line.material_id}
-                        </div>
-                        <div className="text-[10px] font-mono opacity-60 flex items-center gap-1">
-                          {line.material_id}
-                          <span className={`px-1 rounded-[4px] ${line.kind === 'schedule_production' ? 'bg-primary/10 text-primary' : 'bg-surface-2 text-ink-subtle '}`}>
-                            {line.kind === 'schedule_production' ? 'Plan Production' : 'Material'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="col-span-2">
-                      <div className="relative">
-                        <input
-                          type="number"
-                          className="w-full h-8 pl-2 pr-1 text-sm font-medium rounded border border-hairline bg-surface-1 focus:ring-1 focus:ring-primary outline-none transition-all"
-                          value={d.qty ?? line.qty}
-                          onChange={(e) => handleAggregateDraftChange(line.key, 'qty', e.target.value)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="col-span-3">
+                    <label className="flex items-center gap-2 text-xs font-medium text-ink-subtle xl:justify-center">
                       <input
+                        aria-label={`Include ${id}`}
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(e) => handleAggregateDraftChange(line.key, 'selected', e.target.checked)}
+                        className="h-4 w-4 rounded border-hairline bg-surface-1 text-primary focus:ring-primary"
+                      />
+                      <span className="xl:hidden">Include</span>
+                    </label>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-ink" title={label}>
+                        {label}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-subtle">
+                        <span className="font-mono">{id}</span>
+                        <span
+                          className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-semibold text-ink-subtle"
+                        >
+                          {aggregateLineKindLabel(line.kind)}
+                        </span>
+                        {line.source === 'manual' && (
+                          <span className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-semibold text-ink-subtle">
+                            Added
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <label className="text-xs font-medium text-ink-subtle">
+                      <span className="xl:hidden">Qty</span>
+                      <input
+                        aria-label={`Quantity for ${id}`}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        disabled={!selected}
+                        className="mt-1 h-9 w-full rounded-md border border-hairline bg-surface-2 px-2 text-sm font-medium text-ink outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:border-hairline-strong disabled:text-ink-subtle disabled:opacity-100 xl:mt-0"
+                        value={d.qty ?? line.qty}
+                        onInput={(e) => handleAggregateDraftChange(line.key, 'qty', e.target.value)}
+                        onChange={(e) => handleAggregateDraftChange(line.key, 'qty', e.target.value)}
+                      />
+                    </label>
+                    <label className="text-xs font-medium text-ink-subtle">
+                      <span className="xl:hidden">Arrival time</span>
+                      <input
+                        aria-label={`Arrival time for ${id}`}
                         type="datetime-local"
-                        className="w-full h-8 px-2 text-xs rounded border border-hairline bg-surface-1 focus:ring-1 focus:ring-primary outline-none transition-all"
+                        disabled={!selected}
+                        className="mt-1 h-9 w-full rounded-md border border-hairline bg-surface-2 px-2 text-xs text-ink outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:border-hairline-strong disabled:text-ink-subtle disabled:opacity-100 xl:mt-0 [color-scheme:light] dark:[color-scheme:dark]"
                         value={d.arriveAtLocal ?? toLocalInput(line.arrive_at)}
+                        onInput={(e) => handleAggregateDraftChange(line.key, 'arriveAtLocal', e.target.value)}
                         onChange={(e) => handleAggregateDraftChange(line.key, 'arriveAtLocal', e.target.value)}
                       />
-                    </div>
-
-                    <div className="col-span-3">
+                    </label>
+                    <div className="min-w-0">
                       {line.affected_job_ids?.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
-                          {line.affected_job_ids.slice(0, 4).map(jobId => (
-                            <span key={jobId} className="px-1.5 py-0.5 rounded bg-surface-1 border border-hairline text-[9px] font-medium text-ink-subtle">
+                          {line.affected_job_ids.slice(0, 4).map((jobId) => (
+                            <span key={jobId} className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 text-[9px] font-medium text-ink-subtle">
                               {jobId}
                             </span>
                           ))}
                           {line.affected_job_ids.length > 4 && (
-                            <span className="text-[9px] text-ink-tertiary font-medium self-center">
+                            <span className="self-center text-[9px] font-medium text-ink-tertiary">
                               +{line.affected_job_ids.length - 4} more
                             </span>
                           )}
                         </div>
                       ) : (
-                        <span className="text-[10px] italic text-ink-tertiary">No specific jobs linked</span>
+                        <span className="text-[10px] italic text-ink-tertiary">No linked jobs</span>
                       )}
                       {line.rationale && (
-                        <div className="text-[9px] mt-1 text-ink-subtle italic line-clamp-1" title={line.rationale}>
+                        <div className="mt-1 truncate text-[10px] text-ink-subtle" title={line.rationale}>
                           {line.rationale}
                         </div>
                       )}
                     </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${id}`}
+                      onClick={() => removeAggregateLine(line)}
+                      className="h-8 rounded-md border border-hairline px-2 text-xs font-semibold text-ink-subtle hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-900/20 dark:hover:text-red-300"
+                    >
+                      Remove
+                    </button>
                   </div>
                 )
               })}
@@ -604,6 +1142,8 @@ const ShortageResolution = ({
         selectedCount={summarySelectedCount}
         loading={actionLoading}
         onApplyReplan={applyAndReplanAll}
+        onReplanOnly={replanOnly}
+        avoidFloatingAssistant={!embedded}
       />
     </div>
   )

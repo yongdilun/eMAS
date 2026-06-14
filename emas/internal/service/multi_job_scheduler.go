@@ -114,21 +114,15 @@ type ScheduleJobSetOpts struct {
 // (unless opts.PersistProposals is false).
 func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []string, generatedBy, orderBy string, opts *ScheduleJobSetOpts) ([]*SchedulingProposal, *BatchProposalSummary, error) {
 	batchStarted := time.Now()
+	if s != nil && s.batchMu != nil {
+		s.batchMu.Lock()
+		defer s.batchMu.Unlock()
+	}
 	if s.scheduling != nil {
 		cloned := *s
 		cloned.scheduling = s.scheduling.WithRuntimeCache()
 		s = &cloned
 	}
-	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_SCHEDULE_JOB_SET_ENTER", map[string]any{
-		"requested_job_count": len(jobIDs),
-		"order_by":            orderBy,
-		"persist_proposals":   opts != nil && opts.PersistProposals,
-	})
-	logger.L().Error("DIAGNOSTIC_SCHEDULE_JOB_SET_ENTER",
-		zap.String("msg", "Entered ScheduleJobSet"),
-		zap.Int("requested_job_count", len(jobIDs)),
-		zap.String("order_by", orderBy),
-		zap.Bool("persist_proposals", opts != nil && opts.PersistProposals))
 	if opts == nil {
 		opts = &ScheduleJobSetOpts{PersistProposals: true}
 	}
@@ -163,7 +157,8 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	if err != nil {
 		return nil, nil, err
 	}
-	tentativeSlots = append(tentativeSlots, tentativeSlotsFromActiveRows(activeRows, selectedJobIDs)...)
+	baseTentativeSlots := tentativeSlotsFromActiveRows(activeRows, selectedJobIDs)
+	tentativeSlots = append(tentativeSlots, baseTentativeSlots...)
 	proposals := make([]*SchedulingProposal, 0, len(jobs))
 	completionTargets := computeCompletionTargets(s, jobs)
 	batchState := newSubproductBatchState(s)
@@ -177,45 +172,10 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	}
 	batchState.ledger.excludedJobIDs = excludedList
 
-	// --- PREDICTIVE BOM PRE-PASS: Inject virtual stock ---
-	// This 1-pass optimization calculates the total raw material requirements for all
-	// jobs in the batch, then injects virtual stock into the shared ledger. This prevents
-	// the scheduler from hitting shortage blocks on the deep BOM during the main loop.
-	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_PREPASS_CHECKPOINT_1", map[string]any{
-		"job_count": len(jobs),
-	})
-	logger.L().Error("DIAGNOSTIC_PREPASS_CHECKPOINT_1", zap.String("msg", "About to start predictive BOM prepass"), zap.Int("job_count", len(jobs)))
-
-	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "predictive_bom_prepass_starting", map[string]any{
-		"batch_job_count": len(jobs),
-	})
-	logger.L().Info("predictive_bom_prepass_starting",
-		zap.Int("batch_job_count", len(jobs)))
-
-	// --- PREDICTIVE BOM PRE-PASS: Inject virtual stock ---
-	prepassStarted := time.Now()
-	batchDemand := s.calculateGrossBatchDemand(jobs)
-	s.injectPredictiveShortages(batchDemand, batchState.ledger)
-	logBatchTiming("predictive_bom_prepass",
-		zap.Int("job_count", len(jobs)),
-		zap.Int("virtual_arrivals", len(batchState.ledger.virtualArrivals)),
-		zap.Duration("elapsed", time.Since(prepassStarted)),
-	)
-	// -------------------------------------------------------
-	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "DIAGNOSTIC_AFTER_injectPredictiveShortages", map[string]any{
-		"virtual_arrivals": len(batchState.ledger.virtualArrivals),
-	})
-	logger.L().Error("DIAGNOSTIC_AFTER_injectPredictiveShortages", zap.String("msg", "Returned from injectPredictiveShortages"), zap.Int("virtual_arrivals", len(batchState.ledger.virtualArrivals)))
-
-	agentDebugNDJSON("DIAGNOSTIC", "multi_job_scheduler.ScheduleJobSet", "predictive_bom_prepass_complete", map[string]any{
-		"virtual_arrivals_count": len(batchState.ledger.virtualArrivals),
-	})
-	logger.L().Info("predictive_bom_prepass_complete",
-		zap.Int("virtual_arrivals_count", len(batchState.ledger.virtualArrivals)))
-	// -------------------------------------------------------
-
-	// Now the scheduler runs. Because the ledger is pre-seeded with the exact
-	// virtual stock needed for the whole deep BOM, it won't hit any shortage blocks!
+	// Material feasibility must be driven by real on-hand stock, pending arrivals,
+	// and reservations in the shared batch ledger. Do not seed virtual stock here:
+	// it hides genuine shortages and lets lower-priority jobs consume material that
+	// does not exist anywhere in the planning timeline.
 	for rootIndex, job := range jobs {
 		select {
 		case <-ctx.Done():
@@ -389,6 +349,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 			zap.Int("tentative_slots_after", len(tentativeSlots)),
 		)
 	}
+	generationBlocked := summary.Blocked
 
 	// Rebalance by deadline pressure before final conflict repair.
 	rebalanceStarted := time.Now()
@@ -446,14 +407,26 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	if machines := overlappingMachinesInProposals(proposals); len(machines) > 0 {
 		return nil, nil, newSchedulingActionError(422, "internal scheduling validation failed (reason_code=overlap_unresolved): proposal overlaps remain on machines "+strings.Join(machines, ", "))
 	}
+	if err := s.refreshInventoryPlansForFinalSlots(proposals, jobs, baseTentativeSlots, completionTargets, excludedList); err != nil {
+		return nil, nil, err
+	}
+	tentativeSlots = rebuildTentativeSlots(baseTentativeSlots, proposals)
 
 	enrichProposalsWithDeadlineStatus(proposals, summary, deadlineByJobID)
 	// Run the convergence loop: up to maxConvergencePasses full re-evaluations
 	// using the real planner pipeline so the returned aggregates are stable and
 	// one-shot apply by the frontend drives infeasible_count to 0.
 	var convPasses int
-	summary.MaterialReplenishmentAggregate, summary.ScheduleProductionAggregate, convPasses =
+	summary.MaterialReplenishmentAggregate, convPasses =
 		s.convergeBatchShortageAggregates(proposals, tentativeSlots, completionTargets, excludedList)
+	// Defensive promotion: the UI should never need to fall back to per-proposal
+	// material cards when proposals still carry actionable material shortage
+	// resolutions. This also catches stable convergence states where the final
+	// proposal pass exposes a child-material shortage after the aggregate pass.
+	if proposalMaterialAgg := s.buildBatchMaterialAggregateFromResolutionOptions(proposals); len(proposalMaterialAgg) > 0 {
+		summary.MaterialReplenishmentAggregate = mergeMatAggMax(summary.MaterialReplenishmentAggregate, proposalMaterialAgg)
+	}
+	summary.Blocked = generationBlocked + countInfeasibleBatchProposals(proposals)
 	// #region agent log
 	{
 		infeasibleIDs := make([]string, 0)
@@ -494,21 +467,12 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 				"affected_job_count":       len(m.AffectedJobIDs),
 			})
 		}
-		schedLines := make([]map[string]any, 0, len(summary.ScheduleProductionAggregate))
-		for _, sp := range summary.ScheduleProductionAggregate {
-			schedLines = append(schedLines, map[string]any{
-				"product_id":               sp.ProductID,
-				"recommended_qty":          sp.RecommendedQty,
-				"suggested_arrive_rfc3339": sp.SuggestedArriveAt.UTC().Format(time.RFC3339),
-			})
-		}
 		agentDebugNDJSON("BATCH", "multi_job_scheduler.ScheduleJobSet", "batch_infeasible_and_aggregates", map[string]any{
 			"generated":                        summary.Generated,
 			"blocked":                          summary.Blocked,
 			"infeasible_count":                 len(infeasibleIDs),
 			"infeasible_job_ids":               infeasibleIDs,
 			"material_replenishment_aggregate": matLines,
-			"schedule_production_aggregate":    schedLines,
 			"infeasible_detail":                detail,
 			"convergence_passes":               convPasses,
 		})
@@ -542,6 +506,148 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 		zap.Duration("elapsed", time.Since(batchStarted)),
 	)
 	return response, summary, nil
+}
+
+func countInfeasibleBatchProposals(proposals []*SchedulingProposal) int {
+	n := 0
+	for _, p := range proposals {
+		if p != nil && !p.Feasible {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *AIPredictiveService) refreshInventoryPlansForFinalSlots(proposals []*SchedulingProposal, jobs []domain.Job, baseTentative []TentativeSlot, completionTargets map[string]*time.Time, excludedJobIDs []string) error {
+	if s == nil || s.scheduling == nil || len(proposals) == 0 {
+		return nil
+	}
+	sortProposalsByJobOrder(proposals, jobs)
+	jobsByID := make(map[string]*domain.Job, len(jobs))
+	for i := range jobs {
+		jobsByID[jobs[i].JobID] = &jobs[i]
+	}
+	batchState := newSubproductBatchState(s)
+	batchState.ledger.excludedJobIDs = append([]string(nil), excludedJobIDs...)
+	committedTentatives := append([]TentativeSlot(nil), baseTentative...)
+	previewCache := make(map[string]*SolverPreview, len(proposals))
+
+	for i, proposal := range proposals {
+		if proposal == nil {
+			continue
+		}
+		job := jobsByID[proposal.JobID]
+		if job == nil {
+			loaded, err := s.scheduling.getJobByID(proposal.JobID)
+			if err != nil || loaded == nil {
+				continue
+			}
+			job = loaded
+		}
+		preview := previewCache[proposal.JobID]
+		if preview == nil {
+			loaded, err := s.scheduling.BuildSolverPreviewWithTentativeSlotsAndFloor(proposal.JobID, committedTentatives, nil)
+			if err != nil || loaded == nil {
+				continue
+			}
+			preview = loaded
+			previewCache[proposal.JobID] = preview
+		}
+
+		candidate := shallowCloneProposal(proposal)
+		candidate.BlockedReasons = materialIndependentBlockedReasons(candidate.BlockedReasons)
+		candidate.Feasible = len(candidate.BlockedReasons) == 0
+		targetCompletion := completionTargets[proposal.JobID]
+		attemptState := batchState.clone()
+		analysisLedger := attemptState.ledger.clone()
+
+		if err := s.decorateProposalWithInventoryPlan(job, preview, candidate, committedTentatives, attemptState, i, targetCompletion); err != nil {
+			return err
+		}
+		shortages, resolutions, score, err := s.analyzeProposalMaterialShortages(candidate, analysisLedger)
+		if err != nil {
+			return err
+		}
+		candidate.MaterialShortages = shortages
+		candidate.ShortageResolutions = resolutions
+		candidate.GlobalScore = score
+
+		nonMaterialBlocked := materialIndependentBlockedReasons(candidate.BlockedReasons)
+		candidate.Feasible = len(nonMaterialBlocked) == 0
+		for _, sh := range shortages {
+			if !sh.AllStepMaterialsFeasible {
+				candidate.Feasible = false
+				nonMaterialBlocked = appendUniqueString(nonMaterialBlocked, "reason_code=material_shortage")
+				break
+			}
+		}
+		candidate.BlockedReasons = nonMaterialBlocked
+		candidate.InventoryActionCount = len(candidate.InventoryActions)
+		proposals[i] = candidate
+
+		if candidate.Feasible {
+			batchState.ledger = attemptState.ledger
+			batchState.totalGeneratedNodes = attemptState.totalGeneratedNodes
+		}
+		committedTentatives = append(committedTentatives, proposedSlotsToTentatives(candidate.ProposedSlots)...)
+		for _, dep := range candidate.DependentJobs {
+			committedTentatives = append(committedTentatives, proposedSlotsToTentatives(dep.ProposedSlots)...)
+		}
+	}
+	return nil
+}
+
+func sortProposalsByJobOrder(proposals []*SchedulingProposal, jobs []domain.Job) {
+	if len(proposals) == 0 || len(jobs) == 0 {
+		return
+	}
+	order := make(map[string]int, len(jobs))
+	for i := range jobs {
+		order[jobs[i].JobID] = i
+	}
+	missingBase := len(jobs) + len(proposals)
+	sort.SliceStable(proposals, func(i, j int) bool {
+		if proposals[i] == nil || proposals[j] == nil {
+			return proposals[i] != nil
+		}
+		oi, ok := order[proposals[i].JobID]
+		if !ok {
+			oi = missingBase + i
+		}
+		oj, ok := order[proposals[j].JobID]
+		if !ok {
+			oj = missingBase + j
+		}
+		if oi != oj {
+			return oi < oj
+		}
+		return proposals[i].JobID < proposals[j].JobID
+	})
+}
+
+func materialIndependentBlockedReasons(reasons []string) []string {
+	out := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		if strings.Contains(reason, "material_shortage") {
+			continue
+		}
+		out = appendUniqueString(out, reason)
+	}
+	return out
+}
+
+func rebuildTentativeSlots(base []TentativeSlot, proposals []*SchedulingProposal) []TentativeSlot {
+	out := append([]TentativeSlot(nil), base...)
+	for _, proposal := range proposals {
+		if proposal == nil {
+			continue
+		}
+		out = append(out, proposedSlotsToTentatives(proposal.ProposedSlots)...)
+		for _, dep := range proposal.DependentJobs {
+			out = append(out, proposedSlotsToTentatives(dep.ProposedSlots)...)
+		}
+	}
+	return out
 }
 
 func (s *AIPredictiveService) validateProposalSlotsStrict(jobID string, proposal *SchedulingProposal) error {
@@ -1054,9 +1160,6 @@ type BatchProposalSummary struct {
 	StarvedJobsCount int          `json:"starved_jobs_count,omitempty"`
 	// MaterialReplenishmentAggregate: one line per raw material for bulk apply-replenishment.
 	MaterialReplenishmentAggregate []BatchMaterialReplenishmentLine `json:"material_replenishment_aggregate,omitempty"`
-	// ScheduleProductionAggregate: one line per subproduct/FG for bulk apply-replenishment
-	// (option_type=schedule_production). Required when jobs are short on P-* not only MAT-*.
-	ScheduleProductionAggregate []BatchScheduleProductionLine `json:"schedule_production_aggregate,omitempty"`
 }
 
 // LateJobRef references a job that is late; used in batch summary.

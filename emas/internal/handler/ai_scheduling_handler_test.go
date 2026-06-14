@@ -25,6 +25,7 @@ func TestAISchedulingHandler_Features(t *testing.T) {
 	testAISchedulingProposalLifecycle(t, r)
 	testAISchedulingApplyProposal(t, r)
 	testAISchedulingBatchProposals(t, r)
+	testAISchedulingApplyReplenishmentBatchOnlyCreatesSubmittedRows(t, db, r)
 	testAISchedulingGetProposal404(t, r)
 	testAISchedulingSplitSuggestion(t, r)
 	testAISchedulingMachineRanking(t, r)
@@ -430,6 +431,72 @@ func testAISchedulingBatchProposals(t *testing.T, r *gin.Engine) {
 	}, plannerAuthHeaders())
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty job_ids and no scope, got %d body: %s", w.Code, w.Body.String())
+	}
+}
+
+func testAISchedulingApplyReplenishmentBatchOnlyCreatesSubmittedRows(t *testing.T, db *gorm.DB, r *gin.Engine) {
+	testutil.Request(r, "POST", "/api/v1/products", map[string]interface{}{
+		"product_id": "P-BATCH-PLAN", "product_name": "Batch Planned Product",
+	})
+	testutil.Request(r, "POST", "/api/v1/inventory/materials", map[string]interface{}{
+		"material_id": "MAT-BATCH-APPLY", "material_name": "Batch Apply Material", "unit": "pcs",
+		"current_stock": 0, "min_stock": 0, "reorder_level": 1, "storage_location": "TEST",
+	})
+
+	arriveAt := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+	w := testutil.RequestWithHeaders(r, "POST", "/api/v1/ai/scheduling/apply-replenishment-batch", map[string]interface{}{
+		"suggestions": []map[string]interface{}{
+			{
+				"material_id": "MAT-BATCH-APPLY",
+				"quantity":    12,
+				"arrive_at":   arriveAt,
+			},
+		},
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply material-only batch replenishment: got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var materialArrivalCount int64
+	if err := db.Model(&domain.InventoryExpectedArrival{}).Where("material_id = ?", "MAT-BATCH-APPLY").Count(&materialArrivalCount).Error; err != nil {
+		t.Fatalf("count material arrivals: %v", err)
+	}
+	if materialArrivalCount != 1 {
+		t.Fatalf("expected one material expected arrival, got %d", materialArrivalCount)
+	}
+	var plannedProductCount int64
+	if err := db.Model(&domain.ProductInventory{}).Where("product_id = ? AND status = ?", "P-BATCH-PLAN", domain.ProductInventoryStatusPlanned).Count(&plannedProductCount).Error; err != nil {
+		t.Fatalf("count planned product inventory before product row: %v", err)
+	}
+	if plannedProductCount != 0 {
+		t.Fatalf("expected no planned product inventory without submitted product row, got %d", plannedProductCount)
+	}
+
+	w = testutil.RequestWithHeaders(r, "POST", "/api/v1/ai/scheduling/apply-replenishment-batch", map[string]interface{}{
+		"suggestions": []map[string]interface{}{
+			{
+				"option_type": "schedule_production",
+				"material_id": "P-BATCH-PLAN",
+				"quantity":    5,
+				"arrive_at":   time.Now().UTC().Add(72 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply unsupported planned-product batch row: got %d, body: %s", w.Code, w.Body.String())
+	}
+	_, data, _ := testutil.DecodeResponse(w)
+	if body, ok := data.(map[string]interface{}); ok {
+		if got, _ := body["unsupported_schedule_production_rows"].(float64); int(got) != 1 {
+			t.Fatalf("unsupported_schedule_production_rows=%v, want 1; body=%#v", body["unsupported_schedule_production_rows"], body)
+		}
+	}
+
+	if err := db.Model(&domain.ProductInventory{}).Where("product_id = ? AND status = ?", "P-BATCH-PLAN", domain.ProductInventoryStatusPlanned).Count(&plannedProductCount).Error; err != nil {
+		t.Fatalf("count planned product inventory after product row: %v", err)
+	}
+	if plannedProductCount != 0 {
+		t.Fatalf("schedule_production rows must not create planned product inventory, got %d", plannedProductCount)
 	}
 }
 

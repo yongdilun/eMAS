@@ -482,7 +482,7 @@ type InventorySnapshotInput struct {
 }
 
 type ReplenishmentArrivalItem struct {
-	// OptionType: omit or "replenish" (default) = material expected arrival; "schedule_production" = planned subproduct stock (product_id in material_id).
+	// OptionType: omit or "replenish" (default) = material expected arrival. Other values are ignored by material apply.
 	OptionType        string                  `json:"option_type,omitempty"`
 	MaterialID        string                  `json:"material_id" binding:"required"`
 	Quantity          float64                 `json:"quantity" binding:"required,gt=0"`

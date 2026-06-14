@@ -9,9 +9,8 @@ const RecommendationCard = ({
 }) => {
     const rec = recommendation || {}
     const selected = value?.selected !== false
-    const opt = String(rec.option_type ?? '').trim().toLowerCase()
     const canEditApplyFields =
-        selected && (isReplenishRecommendation(rec) || opt === 'schedule_production')
+        selected && isReplenishRecommendation(rec)
 
     return (
         <div className="rounded-lg border border-hairline bg-surface-1 p-3 space-y-2 hover:bg-surface-2 transition-colors">

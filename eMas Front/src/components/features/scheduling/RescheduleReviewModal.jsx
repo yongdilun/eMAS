@@ -520,6 +520,9 @@ export function RescheduleReviewPanel({
               <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-800">
                 <span className="font-semibold">{blockedRows.length} proposal(s) are infeasible</span>
                 <span className="ml-2">{blockedRows.slice(0, 3).map((row) => `${row.job}: ${row.blockedReason}`).join('; ')}</span>
+                {blockedRows.length > 3 && (
+                  <span className="ml-2 font-medium">Showing first 3.</span>
+                )}
               </div>
             )}
             {validationSoftReasons.length > 0 && (
