@@ -1080,7 +1080,8 @@ test('FactoryAgentChatPanel renders embedded reschedule review without opening a
     assert.match(view.text(), /Review reschedule proposal/)
     assert.match(view.text(), /PROP-001/)
     assert.match(view.text(), /JOB-002/)
-    assert.match(view.text(), /Resolve in Resolution Center/)
+    assert.doesNotMatch(view.text(), /Resolve in Resolution Center/)
+    assert.doesNotMatch(view.text(), /View Acceleration Options/)
     assert.equal(openCalls, 0)
 
     const collapseButton = view.container.querySelector('button[aria-label="Hide proposal details"]')

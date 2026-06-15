@@ -1,0 +1,61 @@
+name: Scheduler Evaluation
+
+on:
+  pull_request:
+    paths:
+      - "emas/internal/service/**"
+      - "emas/internal/handler/**"
+      - "emas/internal/schedulereval/**"
+      - "emas/cmd/scheduler_eval/**"
+      - "emas/testdata/scheduler_eval/**"
+      - ".github/workflows/scheduler-eval.yml"
+  workflow_dispatch:
+    inputs:
+      endpoints:
+        description: "batch-proposals, reschedule-all, or both"
+        required: false
+        default: "both"
+
+jobs:
+  scheduler-eval:
+    name: Scheduler correctness and quality scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: emas/go.mod
+          cache-dependency-path: emas/go.sum
+
+      - name: Run scheduler evaluator tests
+        working-directory: emas
+        run: go test ./internal/schedulereval -count=1
+
+      - name: Run isolated scheduler evaluation suite
+        working-directory: emas
+        run: |
+          mkdir -p test-results/scheduler-eval
+          ENDPOINTS="${{ github.event_name == 'workflow_dispatch' && inputs.endpoints || 'both' }}"
+          go run ./cmd/scheduler_eval \
+            -scenario all \
+            -endpoint "$ENDPOINTS" \
+            -use-memory-db \
+            -compare-schedulers \
+            -timeout 180s \
+            -git-sha "${{ github.sha }}" \
+            -json-out test-results/scheduler-eval/report.json \
+            -markdown-out test-results/scheduler-eval/report.md
+
+      - name: Upload scheduler evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-evaluation-report
+          path: emas/test-results/scheduler-eval/
+          if-no-files-found: ignore
+          retention-days: 14

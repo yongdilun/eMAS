@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "description": "Tracked V1 scheduler evaluation scenario expectations. Quality and performance metrics are report-only until thresholds stabilize.",
+  "hard_gates": [
+    "machine_overlap_count == 0",
+    "invalid_time_range_count == 0",
+    "missing_slots_count == 0",
+    "duplicate_slot_count == 0",
+    "step_order_violation_count == 0",
+    "feasible_without_slots == 0",
+    "infeasible_without_reason == 0",
+    "material_shortage_without_evidence == 0",
+    "silent_excluded_jobs == 0"
+  ],
+  "scenarios": [
+    {
+      "id": "canonical_seed",
+      "source": "go run ./cmd/seed or scheduler_eval -reset-canonical",
+      "expected": "fresh canonical seed is fully feasible; late jobs may wait for future arrivals but must not expose shortage-resolution rows",
+      "blocking": "hard correctness gates plus no material-shortage aggregate rows",
+      "report_only_metrics": ["runtime_ms", "jobs_per_second", "late_count", "total_tardiness_mins", "makespan_mins", "machine_utilization_pct", "schedule_hash"]
+    },
+    {
+      "id": "true_material_shortage",
+      "expected": "at least one infeasible job with material shortage evidence and aggregate material recommendations"
+    },
+    {
+      "id": "delayed_material_wait",
+      "expected": "jobs with material arriving later are scheduled after arrival instead of falsely marked infeasible"
+    },
+    {
+      "id": "child_bom_shortage",
+      "expected": "parent child-product shortage traces to raw-material evidence"
+    },
+    {
+      "id": "no_shortage_control",
+      "expected": "zero material infeasible jobs and zero material aggregate rows"
+    },
+    {
+      "id": "resource_overload",
+      "expected": "late/resource pressure is reported as quality impact, not material shortage"
+    },
+    {
+      "id": "one_shot_resolution",
+      "expected": "after applying recommended material rows and rerunning, no material infeasible jobs remain and all feasible jobs have slots"
+    }
+  ]
+}

@@ -50,6 +50,7 @@ simulator_output/
 coverage
 coverage.*
 *.coverprofile
+test-results/
 
 # Generated scheduling/debug outputs
 all_proposals.json

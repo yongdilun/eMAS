@@ -91,6 +91,40 @@ export function proposalToPreviewJob(proposal) {
 
 export const isProposalFeasible = (proposal) => proposal?.feasible !== false
 
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function materialAggregateRows(summary) {
+  return asArray(summary?.material_replenishment_aggregate || summary?.materialReplenishmentAggregate)
+}
+
+function materialAccelerationRows(summary) {
+  return asArray(summary?.material_acceleration_aggregate || summary?.materialAccelerationAggregate)
+}
+
+function proposalHasShortageEvidence(proposal) {
+  if (!proposal) return false
+  if (asArray(proposal.material_shortages || proposal.materialShortages).length > 0) return true
+  if (asArray(proposal.shortage_resolutions || proposal.shortageResolutions).length > 0) return true
+  const reasons = [
+    ...asArray(proposal.blocked_reasons || proposal.blockedReasons),
+    proposal.blocked_reason,
+    proposal.blockedReason,
+    proposal.reason,
+  ].filter(Boolean)
+  return reasons.some((reason) => String(reason || '').toLowerCase().includes('shortage'))
+}
+
+function hasResolvableShortage(proposals, summary) {
+  if (materialAggregateRows(summary).length > 0) return true
+  return asArray(proposals).some((proposal) => !isProposalFeasible(proposal) && proposalHasShortageEvidence(proposal))
+}
+
+function hasOptionalAcceleration(summary) {
+  return materialAccelerationRows(summary).length > 0
+}
+
 export function proposalBlockedReason(proposal) {
   const reasons = proposal?.blocked_reasons || proposal?.blockedReasons
   if (Array.isArray(reasons) && reasons.length > 0) return String(reasons[0])
@@ -382,6 +416,9 @@ export function RescheduleReviewPanel({
   const conflictCount = countFromSummary(validation, ['conflict_count', 'conflictCount'], countFromSummary(summary, ['conflict_count', 'conflictCount'], 0))
   const lateCount = countFromSummary(summary, ['late_count', 'lateCount'], rows.filter((row) => row.isLate).length)
   const blockedRows = rows.filter((row) => !row.feasible)
+  const canOpenResolutionCenter = showResolveAction && hasResolvableShortage(normalizedProposals, summary)
+  const canOpenAccelerationOptions =
+    showResolveAction && !canOpenResolutionCenter && hasOptionalAcceleration(summary)
   const applyDisabled = loading || disableApplyAll || ids.length === 0
   const isApplying = loading && actionState !== 'cancel'
   const isCancelling = loading && actionState === 'cancel'
@@ -474,14 +511,14 @@ export function RescheduleReviewPanel({
                 {isCancelling ? <InlineBusyIndicator label="Cancelling" /> : cancelLabel}
               </button>
             )}
-            {showResolveAction && onResolve && (
+            {(canOpenResolutionCenter || canOpenAccelerationOptions) && onResolve && (
               <button
                 type="button"
                 onClick={onResolve}
                 disabled={loading}
                 className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60"
               >
-                Resolve in Resolution Center
+                {canOpenResolutionCenter ? 'Resolve in Resolution Center' : 'View Acceleration Options'}
               </button>
             )}
             <button

@@ -6704,7 +6704,7 @@ definitions:
         items:
           type: string
       order_by:
-        description: '"edd" | "epo" | "fifo" (default: "epo")'
+        description: '"edd" | "epo" | "fifo" | "readiness" | "material_priority" | "weighted_tardiness_material" | "product_deadline_fifo" (default: "product_deadline_fifo")'
         type: string
       scope:
         description: '"all_unscheduled" = all jobs with status planned/scheduled and
@@ -7263,7 +7263,7 @@ definitions:
           without side effects'
         type: boolean
       order_by:
-        description: '"edd" | "epo" | "fifo" | "readiness" (default: "epo")'
+        description: '"edd" | "epo" | "fifo" | "readiness" | "material_priority" | "weighted_tardiness_material" | "product_deadline_fifo" (default: "product_deadline_fifo")'
         type: string
   dto.Response:
     type: object

@@ -1364,7 +1364,7 @@ Same shape as `GET /ai/scheduling/jobs/:id/proposal`, plus persisted lifecycle f
 
 ### POST /ai/scheduling/batch-proposals
 
-Generate and persist AI proposals for multiple jobs in one batch. Jobs are scheduled with shared machine state so that each subsequent job sees the tentative slots from earlier jobs. Sort order is configurable via `order_by` (default `epo`). Requires `planner`, `manager`, or `admin` role.
+Generate and persist AI proposals for multiple jobs in one batch. Jobs are scheduled with shared machine state so that each subsequent job sees the tentative slots from earlier jobs. Sort order is configurable via `order_by` (default `product_deadline_fifo`). Requires `planner`, `manager`, or `admin` role.
 
 **Request Body**
 
@@ -1372,7 +1372,7 @@ Generate and persist AI proposals for multiple jobs in one batch. Jobs are sched
 |-------|------|-------------|
 | `job_ids` | `string[]` | Explicit job IDs to schedule; if omitted and `scope` is set, use scope |
 | `scope` | `string` | `"all_unscheduled"` = all jobs with status `planned` or `scheduled` and no active (planned/running) slots |
-| `order_by` | `string` | Job ordering: `"edd"` (earliest due date), `"epo"` (priority then deadline), `"fifo"` (first in, first out), `"readiness"` (earliest ready first). Default: `"epo"` or `AI_BATCH_ORDER_BY` |
+| `order_by` | `string` | Job ordering: `"edd"` (earliest due date), `"epo"` (priority then deadline), `"fifo"` (first in, first out), `"readiness"` (earliest ready first), `"material_priority"`, `"weighted_tardiness_material"`, or `"product_deadline_fifo"`. Default: `"product_deadline_fifo"` or `AI_BATCH_ORDER_BY` |
 
 Either `job_ids` or `scope: "all_unscheduled"` must be provided.
 
@@ -1393,7 +1393,7 @@ Remove the current schedule and regenerate proposals for all planned/scheduled j
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `order_by` | `string` | Job ordering: `"edd"`, `"epo"`, `"fifo"`, or `"readiness"`. Default: `"epo"` |
+| `order_by` | `string` | Job ordering: `"edd"`, `"epo"`, `"fifo"`, `"readiness"`, `"material_priority"`, `"weighted_tardiness_material"`, or `"product_deadline_fifo"`. Default: `"product_deadline_fifo"` |
 
 **Response (200)** `data`:
 
@@ -1655,7 +1655,7 @@ After the initial greedy schedule, the optimizer iterates over each step and tri
 | `AI_COMPAT_APPLY_ENABLED` | `false` | Enable deprecated job-based compatibility apply endpoint |
 | `AI_PROPOSAL_APPLY_REQUIRES_APPROVAL` | `true` | Require `approved` status before `apply` |
 | `AI_SOLVER_KPI_GATE` | `false` | Gate solver-default rollout behind persisted KPI thresholds |
-| `AI_BATCH_ORDER_BY` | `epo` | Default job ordering for batch proposals: `edd`, `epo`, `fifo` |
+| `AI_BATCH_ORDER_BY` | `product_deadline_fifo` | Default job ordering for batch proposals and reschedule-all: `edd`, `epo`, `fifo`, `readiness`, `material_priority`, `weighted_tardiness_material`, `product_deadline_fifo` |
 
 ### Rollout State Progression
 

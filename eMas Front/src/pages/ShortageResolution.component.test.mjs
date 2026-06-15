@@ -40,8 +40,28 @@ function batchSummary() {
   }
 }
 
+function accelerationBatchSummary() {
+  return {
+    material_replenishment_aggregate: [],
+    material_acceleration_aggregate: [
+      {
+        material_id: 'MAT-010',
+        material_name: 'M8 Hex Bolt',
+        recommended_qty: 25,
+        suggested_arrive_at: '2026-06-20T08:00:00.000Z',
+        affected_job_ids: ['JOB-007'],
+        rationale: 'Batch material acceleration for late jobs waiting on delayed arrivals.',
+      },
+    ],
+  }
+}
+
 function seedProposals() {
   return [{ proposal_id: 'AIPROP-001', job_id: 'JOB-001', feasible: false }]
+}
+
+function feasibleSeedProposals() {
+  return [{ proposal_id: 'AIPROP-007', job_id: 'JOB-007', feasible: true }]
 }
 
 async function setFieldValue(field, value) {
@@ -174,6 +194,51 @@ test('ShortageResolution applies only selected aggregate rows with edited values
   assert.equal(applyCall.body.suggestions[0].quantity, 40)
   assert.equal(applyCall.body.suggestions[0].option_type, undefined)
   assert.match(applyCall.body.suggestions[0].arrive_at, /^2026-06-23T/)
+
+  await view.unmount()
+})
+
+test('ShortageResolution shows optional acceleration unchecked and applies it only after switch is enabled', async () => {
+  const calls = []
+  const view = await renderShortageResolution({
+    props: {
+      seedProposals: feasibleSeedProposals(),
+      batchSummary: accelerationBatchSummary(),
+    },
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(String(url)).pathname
+      if (path.endsWith('/ai/scheduling/apply-replenishment-batch')) {
+        calls.push({ path, body: JSON.parse(options.body) })
+        return jsonResponse({ success: true, data: { any_new_records: true, created_arrivals: [{}] } })
+      }
+      if (path.endsWith('/ai/scheduling/reschedule-all')) {
+        calls.push({ path, body: JSON.parse(options.body) })
+        return jsonResponse({
+          success: true,
+          data: { proposals: feasibleSeedProposals(), summary: accelerationBatchSummary() },
+        })
+      }
+      return jsonResponse({ success: true, data: [] })
+    },
+  })
+
+  await waitFor(() => assert.match(view.container.textContent, /Optional Material Acceleration/))
+  assert.match(view.container.textContent, /Optional acceleration/)
+  assert.equal(checkbox(view.container, 'Include MAT-010').checked, false)
+  assert.equal(checkbox(view.container, 'Include optional acceleration').checked, false)
+
+  await click(button(view.container, 'Apply and Replan'))
+  await waitFor(() => assert.equal(calls.length, 0))
+
+  await click(checkbox(view.container, 'Include optional acceleration'))
+  await waitFor(() => assert.equal(checkbox(view.container, 'Include MAT-010').checked, true))
+  await click(button(view.container, 'Apply and Replan'))
+
+  await waitFor(() => assert.equal(calls.some((call) => call.path.endsWith('/ai/scheduling/reschedule-all')), true))
+  const applyCall = calls.find((call) => call.path.endsWith('/ai/scheduling/apply-replenishment-batch'))
+  assert.ok(applyCall)
+  assert.deepEqual(applyCall.body.suggestions.map((row) => row.material_id), ['MAT-010'])
+  assert.equal(applyCall.body.suggestions[0].quantity, 25)
 
   await view.unmount()
 })

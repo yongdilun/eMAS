@@ -71,6 +71,31 @@ test('buildAggregateApplySuggestions emits only material arrivals', () => {
   ])
 })
 
+test('extractBatchAccelerationAggregate reads optional acceleration rows separately', () => {
+  const summary = {
+    material_replenishment_aggregate: [
+      {
+        material_id: 'MAT-REQ',
+        recommended_qty: 10,
+        suggested_arrive_at: '2026-06-19T08:00:00.000Z',
+      },
+    ],
+    material_acceleration_aggregate: [
+      {
+        material_id: 'MAT-010',
+        recommended_qty: 25,
+        suggested_arrive_at: '2026-06-20T08:00:00.000Z',
+      },
+    ],
+  }
+
+  const shortage = normalizers.extractBatchShortageAggregate(summary)
+  const acceleration = normalizers.extractBatchAccelerationAggregate(summary)
+
+  assert.deepEqual(shortage.byMaterial.map((row) => row.material_id), ['MAT-REQ'])
+  assert.deepEqual(acceleration.byMaterial.map((row) => row.material_id), ['MAT-010'])
+})
+
 test('aggregateMaterialShortageRowsFromProposals dedupes proposal alternatives', () => {
   const rows = normalizers.aggregateMaterialShortageRowsFromProposals([
     {

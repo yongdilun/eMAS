@@ -5,6 +5,7 @@ import (
 	"emas/internal/repository"
 	"emas/internal/seeddata"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -342,7 +343,7 @@ func TestSeededSubproductRawMaterialApplyClearsRepeatedChildAggregate(t *testing
 	}
 }
 
-func TestCanonicalSeedShortageResolutionOneShotClearsAllMaterialShortages(t *testing.T) {
+func TestCanonicalSeedBatchProposalsDoesNotExposeShortageRowsWhenAllFeasible(t *testing.T) {
 	t.Setenv("AI_AUTH_REQUIRED", "true")
 	t.Setenv("AI_BATCH_TIMEOUT_MS", "240000")
 
@@ -351,8 +352,9 @@ func TestCanonicalSeedShortageResolutionOneShotClearsAllMaterialShortages(t *tes
 	r := testutil.NewTestRouter(db, router.Setup)
 
 	w := testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/batch-proposals", map[string]interface{}{
-		"scope":    "all_unscheduled",
-		"order_by": "epo",
+		"scope":                     "all_unscheduled",
+		"order_by":                  "epo",
+		"include_inventory_actions": true,
 	}, plannerAuthHeaders())
 	if w.Code != http.StatusOK {
 		t.Fatalf("initial canonical batch-proposals status = %d, body=%s", w.Code, w.Body.String())
@@ -362,84 +364,10 @@ func TestCanonicalSeedShortageResolutionOneShotClearsAllMaterialShortages(t *tes
 		t.Fatalf("initial canonical batch-proposals success=false body=%s", w.Body.String())
 	}
 	payload := data.(map[string]interface{})
-	summary := payload["summary"].(map[string]interface{})
-	assertNoScheduleProductionAggregate(t, summary)
-	suggestions := materialSuggestionsFromSummary(t, summary)
-	if len(suggestions) == 0 {
-		t.Fatalf("canonical seed should expose unified material recommendations; summary=%s", prettyValueJSON(summary))
-	}
-	if !suggestionsContainMaterials(suggestions, "MAT-010") {
-		t.Fatalf("canonical seed first aggregate must include child raw-material cascade MAT-010; suggestions=%s summary=%s", prettyValueJSON(suggestions), prettyValueJSON(summary))
-	}
-
-	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/apply-replenishment-batch", map[string]interface{}{
-		"suggestions": suggestions,
-		"order_by":    "epo",
-	}, plannerAuthHeaders())
-	if w.Code != http.StatusOK {
-		t.Fatalf("canonical apply aggregate status = %d, body=%s", w.Code, w.Body.String())
-	}
-	success, applyData, _ := testutil.DecodeResponse(w)
-	if !success {
-		t.Fatalf("canonical apply aggregate success=false body=%s", w.Body.String())
-	}
-	created, _ := applyData.(map[string]interface{})["created_arrivals"].([]interface{})
-	if len(created) == 0 {
-		t.Fatalf("expected canonical apply to create material arrivals, got %s", prettyValueJSON(applyData))
-	}
-
-	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/reschedule-all", map[string]interface{}{
-		"order_by": "epo",
-	}, plannerAuthHeaders())
-	if w.Code != http.StatusOK {
-		t.Fatalf("canonical post-apply reschedule-all status = %d, body=%s", w.Code, w.Body.String())
-	}
-	success, data, _ = testutil.DecodeResponse(w)
-	if !success {
-		t.Fatalf("canonical post-apply reschedule-all success=false body=%s", w.Body.String())
-	}
-	replannedPayload := data.(map[string]interface{})
-	replannedSummary := replannedPayload["summary"].(map[string]interface{})
-	assertNoScheduleProductionAggregate(t, replannedSummary)
-	assertNoMaterialShortageInfeasible(t, replannedPayload, "after canonical one-shot material apply")
-	if remaining := materialSuggestionsFromSummary(t, replannedSummary); len(remaining) > 0 {
-		t.Fatalf("canonical one-shot apply should leave no material aggregate rows; remaining=%s summary=%s", prettyValueJSON(remaining), prettyValueJSON(replannedSummary))
-	}
-	if fallback := proposalsWithMaterialRecommendations(replannedPayload); len(fallback) > 0 {
-		t.Fatalf("canonical one-shot apply should not fall back to per-proposal shortage UI; proposals with recommendations=%s", strings.Join(fallback, ", "))
-	}
-	proposals, _ := replannedPayload["proposals"].([]interface{})
-	if len(proposals) == 0 {
-		t.Fatalf("canonical post-apply reschedule returned no proposals; payload=%s", prettyValueJSON(replannedPayload))
-	}
-	unscheduled := make([]string, 0)
-	infeasible := make([]string, 0)
-	for _, raw := range proposals {
-		p, _ := raw.(map[string]interface{})
-		if p == nil {
-			continue
-		}
-		jobID, _ := p["job_id"].(string)
-		if !proposalFeasible(p) {
-			infeasible = append(infeasible, jobID)
-			continue
-		}
-		if slotCount(p) == 0 {
-			unscheduled = append(unscheduled, jobID)
-		}
-	}
-	if len(infeasible) > 0 {
-		t.Fatalf("canonical one-shot apply left infeasible proposals: %s", strings.Join(infeasible, ", "))
-	}
-	if len(unscheduled) > 0 {
-		t.Fatalf("canonical one-shot apply left feasible proposals without slots: %s", strings.Join(unscheduled, ", "))
-	}
-	if blocked, _ := replannedSummary["blocked"].(float64); int(blocked) != 0 {
-		t.Fatalf("canonical post-apply summary.blocked=%v, want 0; summary=%s", replannedSummary["blocked"], prettyValueJSON(replannedSummary))
-	}
+	assertAllFeasibleWithoutShortageResolution(t, db, payload, "canonical batch-proposals")
 }
 
-func TestCanonicalSeedRescheduleAllFirstAggregateIncludesDeepCascadeAndClears(t *testing.T) {
+func TestCanonicalSeedRescheduleAllDoesNotExposeShortageRowsWhenAllFeasible(t *testing.T) {
 	t.Setenv("AI_AUTH_REQUIRED", "true")
 	t.Setenv("AI_BATCH_TIMEOUT_MS", "240000")
 
@@ -458,57 +386,180 @@ func TestCanonicalSeedRescheduleAllFirstAggregateIncludesDeepCascadeAndClears(t 
 		t.Fatalf("initial canonical reschedule-all success=false body=%s", w.Body.String())
 	}
 	payload := data.(map[string]interface{})
-	summary := payload["summary"].(map[string]interface{})
-	assertNoScheduleProductionAggregate(t, summary)
-	suggestions := materialSuggestionsFromSummary(t, summary)
-	if len(suggestions) == 0 {
-		t.Fatalf("canonical reschedule-all should expose unified material recommendations; summary=%s", prettyValueJSON(summary))
+	assertAllFeasibleWithoutShortageResolution(t, db, payload, "canonical reschedule-all")
+}
+
+func TestCanonicalSeedAccelerationReplanHasNoProposalOverlaps(t *testing.T) {
+	t.Setenv("AI_AUTH_REQUIRED", "true")
+	t.Setenv("AI_BATCH_TIMEOUT_MS", "240000")
+
+	db := testutil.NewTestDB(t)
+	testutil.SeedCanonical(t, db)
+	r := testutil.NewTestRouter(db, router.Setup)
+
+	w := testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/batch-proposals", map[string]interface{}{
+		"scope":                     "all_unscheduled",
+		"order_by":                  "epo",
+		"include_inventory_actions": true,
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial canonical batch-proposals status = %d, body=%s", w.Code, w.Body.String())
 	}
-	if !suggestionsContainMaterials(suggestions, "MAT-010") {
-		t.Fatalf("canonical reschedule-all first aggregate must include deep child raw-material cascade MAT-010; suggestions=%s summary=%s", prettyValueJSON(suggestions), prettyValueJSON(summary))
+	success, data, _ := testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("initial canonical batch-proposals success=false body=%s", w.Body.String())
 	}
-	if fallback := proposalsWithMaterialRecommendations(payload); len(fallback) > 0 {
-		t.Fatalf("canonical reschedule-all first screen must use unified aggregate, not per-proposal fallback rows; proposals with recommendations=%s", strings.Join(fallback, ", "))
+	initialPayload := data.(map[string]interface{})
+	initialSummary := initialPayload["summary"].(map[string]interface{})
+	accelerationSuggestions := materialAccelerationSuggestionsFromSummary(t, initialSummary)
+	if len(accelerationSuggestions) == 0 {
+		t.Fatalf("canonical seed should expose optional acceleration rows before this test can reproduce; summary=%s", prettyValueJSON(initialSummary))
 	}
 
 	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/apply-replenishment-batch", map[string]interface{}{
-		"suggestions": suggestions,
+		"suggestions": accelerationSuggestions,
 		"order_by":    "epo",
 	}, plannerAuthHeaders())
 	if w.Code != http.StatusOK {
-		t.Fatalf("canonical reschedule-all aggregate apply status = %d, body=%s", w.Code, w.Body.String())
+		t.Fatalf("apply optional acceleration status = %d, body=%s", w.Code, w.Body.String())
 	}
-	success, applyData, _ := testutil.DecodeResponse(w)
+	success, _, _ = testutil.DecodeResponse(w)
 	if !success {
-		t.Fatalf("canonical reschedule-all aggregate apply success=false body=%s", w.Body.String())
-	}
-	created, _ := applyData.(map[string]interface{})["created_arrivals"].([]interface{})
-	if len(created) == 0 {
-		t.Fatalf("expected canonical reschedule-all aggregate apply to create material arrivals, got %s", prettyValueJSON(applyData))
+		t.Fatalf("apply optional acceleration success=false body=%s", w.Body.String())
 	}
 
 	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/reschedule-all", map[string]interface{}{
 		"order_by": "epo",
 	}, plannerAuthHeaders())
 	if w.Code != http.StatusOK {
-		t.Fatalf("canonical post-apply reschedule-all status = %d, body=%s", w.Code, w.Body.String())
+		t.Fatalf("post-acceleration reschedule-all status = %d, body=%s", w.Code, w.Body.String())
 	}
 	success, data, _ = testutil.DecodeResponse(w)
 	if !success {
-		t.Fatalf("canonical post-apply reschedule-all success=false body=%s", w.Body.String())
+		t.Fatalf("post-acceleration reschedule-all success=false body=%s", w.Body.String())
 	}
 	replannedPayload := data.(map[string]interface{})
-	replannedSummary := replannedPayload["summary"].(map[string]interface{})
-	assertNoScheduleProductionAggregate(t, replannedSummary)
-	assertNoMaterialShortageInfeasible(t, replannedPayload, "after canonical reschedule-all one-shot material apply")
-	if remaining := materialSuggestionsFromSummary(t, replannedSummary); len(remaining) > 0 {
-		t.Fatalf("canonical reschedule-all one-shot apply should leave no material aggregate rows; remaining=%s summary=%s", prettyValueJSON(remaining), prettyValueJSON(replannedSummary))
+	assertNoMaterialShortageInfeasible(t, replannedPayload, "post-acceleration reschedule")
+	proposalIDs := proposalIDsFromPayload(replannedPayload)
+	if len(proposalIDs) == 0 {
+		t.Fatalf("post-acceleration reschedule returned no proposal ids; payload=%s", prettyValueJSON(replannedPayload))
 	}
-	if fallback := proposalsWithMaterialRecommendations(replannedPayload); len(fallback) > 0 {
-		t.Fatalf("canonical reschedule-all one-shot apply should not fall back to per-proposal shortage UI; proposals with recommendations=%s", strings.Join(fallback, ", "))
+
+	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/verify-overlaps", map[string]interface{}{
+		"scope":        "proposals",
+		"proposal_ids": proposalIDs,
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("post-acceleration verify-overlaps status = %d, body=%s", w.Code, w.Body.String())
 	}
-	if blocked, _ := replannedSummary["blocked"].(float64); int(blocked) != 0 {
-		t.Fatalf("canonical reschedule-all post-apply summary.blocked=%v, want 0; summary=%s", replannedSummary["blocked"], prettyValueJSON(replannedSummary))
+	success, data, _ = testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("post-acceleration verify-overlaps success=false body=%s", w.Body.String())
+	}
+	verifyPayload := data.(map[string]interface{})
+	if valid, _ := verifyPayload["valid"].(bool); !valid {
+		t.Fatalf("post-acceleration proposals should be applyable without conflicts; verify=%s replanned_summary=%s", prettyValueJSON(verifyPayload), prettyValueJSON(replannedPayload["summary"]))
+	}
+}
+
+func TestCanonicalSeedAccelerationApplyAllCreatesNoConflicts(t *testing.T) {
+	t.Setenv("AI_AUTH_REQUIRED", "true")
+	t.Setenv("AI_BATCH_TIMEOUT_MS", "240000")
+
+	db := testutil.NewTestDB(t)
+	testutil.SeedCanonical(t, db)
+	r := testutil.NewTestRouter(db, router.Setup)
+
+	w := testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/batch-proposals", map[string]interface{}{
+		"scope":                     "all_unscheduled",
+		"order_by":                  "epo",
+		"include_inventory_actions": true,
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial canonical batch-proposals status = %d, body=%s", w.Code, w.Body.String())
+	}
+	success, data, _ := testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("initial canonical batch-proposals success=false body=%s", w.Body.String())
+	}
+	initialPayload := data.(map[string]interface{})
+	initialSummary := initialPayload["summary"].(map[string]interface{})
+	accelerationSuggestions := materialAccelerationSuggestionsFromSummary(t, initialSummary)
+	if len(accelerationSuggestions) == 0 {
+		t.Fatalf("canonical seed should expose optional acceleration rows before this test can reproduce; summary=%s", prettyValueJSON(initialSummary))
+	}
+
+	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/apply-replenishment-batch", map[string]interface{}{
+		"suggestions": accelerationSuggestions,
+		"order_by":    "epo",
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply optional acceleration status = %d, body=%s", w.Code, w.Body.String())
+	}
+	success, _, _ = testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("apply optional acceleration success=false body=%s", w.Body.String())
+	}
+
+	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/reschedule-all", map[string]interface{}{
+		"order_by": "epo",
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("post-acceleration reschedule-all status = %d, body=%s", w.Code, w.Body.String())
+	}
+	success, data, _ = testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("post-acceleration reschedule-all success=false body=%s", w.Body.String())
+	}
+	replannedPayload := data.(map[string]interface{})
+	proposals := proposalsFromPayload(t, replannedPayload)
+	if len(proposals) == 0 {
+		t.Fatalf("post-acceleration reschedule returned no proposals; payload=%s", prettyValueJSON(replannedPayload))
+	}
+
+	batchID := fmt.Sprintf("test-apply-all-%d", time.Now().UnixNano())
+	appliedJobIDs := make([]string, 0, len(proposals))
+	for _, proposal := range proposals {
+		proposalID, _ := proposal["proposal_id"].(string)
+		jobID, _ := proposal["job_id"].(string)
+		if proposalID == "" || jobID == "" || !proposalFeasible(proposal) {
+			continue
+		}
+		w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/proposals/"+proposalID+"/approve", map[string]interface{}{
+			"notes":                "Apply All regression",
+			"skip_staleness_check": true,
+		}, plannerAuthHeaders())
+		if w.Code != http.StatusOK {
+			t.Fatalf("approve proposal %s job %s status = %d, body=%s", proposalID, jobID, w.Code, w.Body.String())
+		}
+		w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/proposals/"+proposalID+"/apply", map[string]interface{}{
+			"idempotency_key":      batchID + "-" + proposalID + "-apply",
+			"skip_staleness_check": true,
+		}, plannerAuthHeaders())
+		if w.Code != http.StatusOK {
+			t.Fatalf("apply proposal %s job %s status = %d, body=%s", proposalID, jobID, w.Code, w.Body.String())
+		}
+		success, _, _ = testutil.DecodeResponse(w)
+		if !success {
+			t.Fatalf("apply proposal %s job %s success=false body=%s", proposalID, jobID, w.Body.String())
+		}
+		appliedJobIDs = append(appliedJobIDs, jobID)
+	}
+
+	w = testutil.RequestWithHeaders(r, http.MethodPost, "/api/v1/ai/scheduling/verify-overlaps", map[string]interface{}{
+		"scope":   "applied",
+		"job_ids": appliedJobIDs,
+	}, plannerAuthHeaders())
+	if w.Code != http.StatusOK {
+		t.Fatalf("post-apply verify-overlaps status = %d, body=%s", w.Code, w.Body.String())
+	}
+	success, data, _ = testutil.DecodeResponse(w)
+	if !success {
+		t.Fatalf("post-apply verify-overlaps success=false body=%s", w.Body.String())
+	}
+	verifyPayload := data.(map[string]interface{})
+	if valid, _ := verifyPayload["valid"].(bool); !valid {
+		t.Fatalf("Apply All after acceleration should create no applied-slot conflicts; verify=%s", prettyValueJSON(verifyPayload))
 	}
 }
 
@@ -572,11 +623,8 @@ func TestCanonicalSeedFileBackedShortageResolutionMatchesSeededServer(t *testing
 		if res.status != http.StatusOK {
 			t.Fatalf("file-backed canonical batch-proposals[%d] status = %d, body=%s", res.index, res.status, res.body)
 		}
-		if len(res.suggestions) == 0 {
-			t.Fatalf("file-backed canonical seed request[%d] should expose unified material recommendations; summary=%s", res.index, prettyValueJSON(res.summary))
-		}
-		if !suggestionsContainMaterials(res.suggestions, "MAT-010") {
-			t.Fatalf("file-backed canonical seed request[%d] first aggregate must include MAT-010; suggestions=%s summary=%s", res.index, prettyValueJSON(res.suggestions), prettyValueJSON(res.summary))
+		if len(res.suggestions) > 0 {
+			t.Fatalf("file-backed canonical seed request[%d] should not expose shortage rows when all proposals are feasible; suggestions=%s summary=%s", res.index, prettyValueJSON(res.suggestions), prettyValueJSON(res.summary))
 		}
 	}
 }
@@ -807,6 +855,109 @@ func materialSuggestionsFromSummary(t *testing.T, summary map[string]interface{}
 	return out
 }
 
+func materialAccelerationSuggestionsFromSummary(t *testing.T, summary map[string]interface{}) []map[string]interface{} {
+	t.Helper()
+	rows, _ := summary["material_acceleration_aggregate"].([]interface{})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(map[string]interface{})
+		materialID, _ := row["material_id"].(string)
+		qty, _ := row["recommended_qty"].(float64)
+		arriveAt, _ := row["suggested_arrive_at"].(string)
+		if materialID == "" || qty <= 0 || arriveAt == "" {
+			t.Fatalf("invalid material acceleration row: %#v", row)
+		}
+		out = append(out, map[string]interface{}{
+			"material_id": materialID,
+			"quantity":    qty,
+			"arrive_at":   arriveAt,
+		})
+	}
+	return out
+}
+
+func proposalIDsFromPayload(payload map[string]interface{}) []string {
+	proposals, _ := payload["proposals"].([]interface{})
+	ids := make([]string, 0, len(proposals))
+	for _, raw := range proposals {
+		p, _ := raw.(map[string]interface{})
+		if p == nil {
+			continue
+		}
+		id, _ := p["proposal_id"].(string)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func proposalsFromPayload(t *testing.T, payload map[string]interface{}) []map[string]interface{} {
+	t.Helper()
+	rows, _ := payload["proposals"].([]interface{})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, raw := range rows {
+		p, _ := raw.(map[string]interface{})
+		if p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func assertAllFeasibleWithoutShortageResolution(t *testing.T, db *gorm.DB, payload map[string]interface{}, context string) {
+	t.Helper()
+	summary, _ := payload["summary"].(map[string]interface{})
+	proposals, _ := payload["proposals"].([]interface{})
+	if len(proposals) == 0 {
+		t.Fatalf("%s returned no proposals; payload=%s", context, prettyValueJSON(payload))
+	}
+	assertNoScheduleProductionAggregate(t, summary)
+	if blocked, _ := summary["blocked"].(float64); int(blocked) != 0 {
+		t.Fatalf("%s summary.blocked=%v, want 0 for canonical feasible seed; diagnostics=%s", context, summary["blocked"], canonicalMaterialDiagnostics(t, db, payload, "MAT-010"))
+	}
+	if !allProposalRowsFeasible(proposals) {
+		t.Fatalf("%s should return all canonical proposals feasible; diagnostics=%s", context, canonicalMaterialDiagnostics(t, db, payload, "MAT-010"))
+	}
+	if remaining := materialSuggestionsFromSummary(t, summary); len(remaining) > 0 {
+		t.Fatalf("%s should not expose material shortage aggregate rows when all proposals are feasible; remaining=%s diagnostics=%s", context, prettyValueJSON(remaining), canonicalMaterialDiagnostics(t, db, payload, materialIDsFromSuggestionMaps(remaining)...))
+	}
+	accelerationRows := materialAccelerationRows(summary)
+	if len(accelerationRows) == 0 {
+		t.Fatalf("%s should expose optional material acceleration rows separately from shortage rows; summary=%s diagnostics=%s", context, prettyValueJSON(summary), canonicalMaterialDiagnostics(t, db, payload, "MAT-010"))
+	}
+	if !suggestionsContainMaterials(accelerationRows, "MAT-010") {
+		t.Fatalf("%s optional acceleration should include MAT-010 for canonical late job acceleration; acceleration=%s diagnostics=%s", context, prettyValueJSON(accelerationRows), canonicalMaterialDiagnostics(t, db, payload, "MAT-010"))
+	}
+	if fallback := proposalsWithMaterialRecommendations(payload); len(fallback) > 0 {
+		t.Fatalf("%s should not expose per-proposal shortage recommendations when all proposals are feasible; proposals with recommendations=%s diagnostics=%s", context, strings.Join(fallback, ", "), canonicalMaterialDiagnostics(t, db, payload, "MAT-010"))
+	}
+	unscheduled := make([]string, 0)
+	for _, raw := range proposals {
+		p, _ := raw.(map[string]interface{})
+		if p == nil {
+			continue
+		}
+		if slotCount(p) == 0 {
+			jobID, _ := p["job_id"].(string)
+			unscheduled = append(unscheduled, jobID)
+		}
+	}
+	if len(unscheduled) > 0 {
+		t.Fatalf("%s left feasible proposals without slots: %s", context, strings.Join(unscheduled, ", "))
+	}
+}
+
+func allProposalRowsFeasible(rows []interface{}) bool {
+	for _, raw := range rows {
+		p, _ := raw.(map[string]interface{})
+		if p != nil && !proposalFeasible(p) {
+			return false
+		}
+	}
+	return true
+}
+
 func suggestionsContainMaterials(rows []map[string]interface{}, ids ...string) bool {
 	wanted := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -824,6 +975,248 @@ func suggestionsContainMaterials(rows []map[string]interface{}, ids ...string) b
 		}
 	}
 	return true
+}
+
+func materialIDsFromSuggestionMaps(rows []map[string]interface{}) []string {
+	ids := make([]string, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		id, _ := row["material_id"].(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func canonicalMaterialDiagnostics(t *testing.T, db *gorm.DB, payload map[string]interface{}, extraMaterialIDs ...string) string {
+	t.Helper()
+	materialSet := map[string]struct{}{}
+	for _, id := range extraMaterialIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			materialSet[id] = struct{}{}
+		}
+	}
+	summary, _ := payload["summary"].(map[string]interface{})
+	for _, row := range materialAggregateRows(summary) {
+		id, _ := row["material_id"].(string)
+		if id != "" {
+			materialSet[id] = struct{}{}
+		}
+	}
+	proposals, _ := payload["proposals"].([]interface{})
+	for _, raw := range proposals {
+		p, _ := raw.(map[string]interface{})
+		for _, id := range materialIDsFromProposalEvidence(p) {
+			materialSet[id] = struct{}{}
+		}
+	}
+	materialIDs := make([]string, 0, len(materialSet))
+	for id := range materialSet {
+		materialIDs = append(materialIDs, id)
+	}
+	sort.Strings(materialIDs)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nsummary generated=%v blocked=%v late=%v feasible=%v\n",
+		summary["generated"], summary["blocked"], summary["late"], summary["feasible"])
+	if len(materialIDs) == 0 {
+		b.WriteString("materials: <none detected>\n")
+	} else {
+		fmt.Fprintf(&b, "materials: %s\n", strings.Join(materialIDs, ", "))
+	}
+
+	aggregateRows := materialAggregateRows(summary)
+	if len(aggregateRows) == 0 {
+		b.WriteString("aggregate rows: <none>\n")
+	} else {
+		b.WriteString("aggregate rows:\n")
+		for _, row := range aggregateRows {
+			fmt.Fprintf(&b, "  - %s qty=%v arrive=%v affected=%d rationale=%v\n",
+				row["material_id"], row["recommended_qty"], row["suggested_arrive_at"], interfaceSliceLen(row["affected_job_ids"]), row["rationale"])
+		}
+	}
+
+	if len(materialIDs) > 0 {
+		var materials []domain.InventoryMaterials
+		if err := db.Where("material_id IN ?", materialIDs).Order("material_id ASC").Find(&materials).Error; err != nil {
+			fmt.Fprintf(&b, "inventory query error: %v\n", err)
+		} else if len(materials) == 0 {
+			b.WriteString("inventory: <no matching material rows>\n")
+		} else {
+			b.WriteString("inventory:\n")
+			for _, material := range materials {
+				fmt.Fprintf(&b, "  - %s stock=%.4g status=%s updated=%s\n",
+					material.MaterialID, material.CurrentStock, material.Status, material.LastUpdated.UTC().Format(time.RFC3339))
+			}
+		}
+
+		var arrivals []domain.InventoryExpectedArrival
+		if err := db.Where("material_id IN ? AND status = ?", materialIDs, domain.ExpectedArrivalStatusPending).
+			Order("material_id ASC, expected_arrive_at ASC").
+			Find(&arrivals).Error; err != nil {
+			fmt.Fprintf(&b, "arrival query error: %v\n", err)
+		} else if len(arrivals) == 0 {
+			b.WriteString("pending arrivals: <none>\n")
+		} else {
+			b.WriteString("pending arrivals:\n")
+			for _, arrival := range arrivals {
+				fmt.Fprintf(&b, "  - %s qty=%.4g at=%s ref=%s notes=%s\n",
+					arrival.MaterialID, arrival.Quantity, arrival.ExpectedArriveAt.UTC().Format(time.RFC3339), arrival.ReferenceJobID, arrival.Notes)
+			}
+		}
+	}
+
+	interesting := materialInterestingProposals(proposals)
+	if len(interesting) == 0 {
+		b.WriteString("material shortage proposals: <none>\n")
+	} else {
+		b.WriteString("material shortage proposals:\n")
+		for _, p := range interesting {
+			fmt.Fprintf(&b, "  - %s feasible=%v slots=%d reasons=%v shortages=%s resolutions=%s actions=%s\n",
+				p["job_id"], p["feasible"], slotCount(p), p["blocked_reasons"],
+				strings.Join(materialIDsFromShortageRows(p["material_shortages"]), ","),
+				strings.Join(materialIDsFromResolutionRows(p["shortage_resolutions"]), ","),
+				strings.Join(materialActionSummary(p), "; "))
+		}
+	}
+	return b.String()
+}
+
+func materialAggregateRows(summary map[string]interface{}) []map[string]interface{} {
+	rows, _ := summary["material_replenishment_aggregate"].([]interface{})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(map[string]interface{})
+		if row != nil {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func materialAccelerationRows(summary map[string]interface{}) []map[string]interface{} {
+	rows, _ := summary["material_acceleration_aggregate"].([]interface{})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(map[string]interface{})
+		if row != nil {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func materialInterestingProposals(rows []interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0)
+	for _, raw := range rows {
+		p, _ := raw.(map[string]interface{})
+		if p == nil {
+			continue
+		}
+		if blockedReasonsContainShortage(p["blocked_reasons"]) || proposalHasDirectShortageEvidence(p) || len(materialActionSummary(p)) > 0 {
+			out = append(out, p)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		ii, _ := out[i]["job_id"].(string)
+		jj, _ := out[j]["job_id"].(string)
+		return ii < jj
+	})
+	return out
+}
+
+func materialIDsFromProposalEvidence(p map[string]interface{}) []string {
+	seen := map[string]struct{}{}
+	for _, id := range materialIDsFromShortageRows(p["material_shortages"]) {
+		seen[id] = struct{}{}
+	}
+	for _, id := range materialIDsFromResolutionRows(p["shortage_resolutions"]) {
+		seen[id] = struct{}{}
+	}
+	for _, summary := range materialActionSummary(p) {
+		fields := strings.Fields(summary)
+		if len(fields) > 0 && strings.HasPrefix(fields[0], "MAT-") {
+			seen[fields[0]] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func materialIDsFromShortageRows(raw interface{}) []string {
+	rows, _ := raw.([]interface{})
+	seen := map[string]struct{}{}
+	for _, item := range rows {
+		row, _ := item.(map[string]interface{})
+		id, _ := row["material_id"].(string)
+		id = strings.TrimSpace(id)
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+		for _, nested := range materialIDsFromResolutionRows(row["per_material_resolutions"]) {
+			seen[nested] = struct{}{}
+		}
+	}
+	return sortedStringSet(seen)
+}
+
+func materialIDsFromResolutionRows(raw interface{}) []string {
+	rows, _ := raw.([]interface{})
+	seen := map[string]struct{}{}
+	for _, item := range rows {
+		row, _ := item.(map[string]interface{})
+		id, _ := row["material_id"].(string)
+		id = strings.TrimSpace(id)
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	return sortedStringSet(seen)
+}
+
+func materialActionSummary(p map[string]interface{}) []string {
+	rows, _ := p["inventory_actions"].([]interface{})
+	out := make([]string, 0)
+	for _, raw := range rows {
+		action, _ := raw.(map[string]interface{})
+		if action == nil || action["action_type"] != "reserve_material" {
+			continue
+		}
+		materialID, _ := action["material_id"].(string)
+		if materialID == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s qty=%v at=%v step=%v", materialID, action["quantity"], action["effective_at"], action["job_step_id"]))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedStringSet(seen map[string]struct{}) []string {
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func interfaceSliceLen(raw interface{}) int {
+	rows, _ := raw.([]interface{})
+	return len(rows)
 }
 
 func blockedReasonsContainShortage(raw interface{}) bool {

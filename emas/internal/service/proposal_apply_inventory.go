@@ -287,11 +287,11 @@ func (s *AIPredictiveService) applyDependentSlots(slotService *JobSlotService, c
 			if !validation.Valid && len(validation.Reasons) > 0 {
 				reasonLower := strings.ToLower(validation.Reasons[0])
 				if strings.Contains(reasonLower, "overlapping") || strings.Contains(reasonLower, "outside") || strings.Contains(reasonLower, "calendar") || strings.Contains(reasonLower, "previous process step completes") {
-					// Scan at most 14 days (672 half-hour slots) to find a valid window.
-					// The original 4096-step cap caused 26-second timeouts when no slot
-					// existed within the full horizon.
+					// Scan forward from the proposed dependent slot, not from wall-clock now.
+					// Apply All often applies child jobs weeks after today; using now+14d as
+					// the cap made every future child repair fail before the scan even started.
 					scanStart := alignSuccessorStart(start.Add(30 * time.Minute))
-					scanCap := alignSuccessorStart(time.Now().UTC().Add(14 * 24 * time.Hour))
+					scanCap := alignSuccessorStart(start.Add(14 * 24 * time.Hour))
 					for scanSteps := 0; scanSteps < 672 && !scanStart.After(scanCap); scanSteps++ {
 						scanEnd := scanStart.Add(time.Duration(rs.DurationMins) * time.Minute)
 						scanCheck, scanErr := slotService.scheduling.ValidateSlotWithOptions(jobStepID, rs.MachineID, scanStart, scanEnd, rs.Quantity, "", SlotValidationOptions{IgnoreMinSplitQty: ignoreMinSplitQty})

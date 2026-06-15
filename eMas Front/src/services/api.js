@@ -194,7 +194,13 @@ export function unwrapSchedulingBatchPayload(raw) {
       : pickArr(layer, ['material_replenishment_aggregate', 'materialReplenishmentAggregate']).length > 0
         ? pickArr(layer, ['material_replenishment_aggregate', 'materialReplenishmentAggregate'])
         : []
-  return { proposals, summary, message, byMaterial, byProduct, materialReplenishmentAggregate }
+  const materialAccelerationAggregate =
+    pickArr(summary || {}, ['material_acceleration_aggregate', 'materialAccelerationAggregate']).length > 0
+      ? pickArr(summary || {}, ['material_acceleration_aggregate', 'materialAccelerationAggregate'])
+      : pickArr(layer, ['material_acceleration_aggregate', 'materialAccelerationAggregate']).length > 0
+        ? pickArr(layer, ['material_acceleration_aggregate', 'materialAccelerationAggregate'])
+        : []
+  return { proposals, summary, message, byMaterial, byProduct, materialReplenishmentAggregate, materialAccelerationAggregate }
 }
 
 /**
@@ -206,10 +212,14 @@ export function mergeBatchSummaryWithAggregate({
   byMaterial = [],
   byProduct = [],
   materialReplenishmentAggregate = [],
+  materialAccelerationAggregate = [],
 }) {
   const base = summary && typeof summary === 'object' ? { ...summary } : {}
   if (materialReplenishmentAggregate.length) {
     base.material_replenishment_aggregate = materialReplenishmentAggregate
+  }
+  if (materialAccelerationAggregate.length) {
+    base.material_acceleration_aggregate = materialAccelerationAggregate
   }
   if (byMaterial.length) base.by_material = byMaterial
   if (Object.keys(base).length === 0) return null

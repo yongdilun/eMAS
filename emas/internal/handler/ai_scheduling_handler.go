@@ -123,8 +123,8 @@ func (h *AISchedulingHandler) GenerateBatchProposals(c *gin.Context) {
 	if orderBy == "" {
 		orderBy = featureflags.BatchOrderBy()
 	}
-	if orderBy != "edd" && orderBy != "epo" && orderBy != "fifo" && orderBy != "readiness" {
-		orderBy = "epo"
+	if !isAllowedBatchOrderBy(orderBy) {
+		orderBy = featureflags.DefaultBatchOrderBy
 	}
 	opts := &service.ScheduleJobSetOpts{
 		IncludeInventoryActions: req.IncludeInventoryActions,
@@ -180,8 +180,8 @@ func (h *AISchedulingHandler) RescheduleAll(c *gin.Context) {
 	if orderBy == "" {
 		orderBy = featureflags.BatchOrderBy()
 	}
-	if orderBy != "edd" && orderBy != "epo" && orderBy != "fifo" && orderBy != "readiness" {
-		orderBy = "epo"
+	if !isAllowedBatchOrderBy(orderBy) {
+		orderBy = featureflags.DefaultBatchOrderBy
 	}
 	proposals, summary, err := h.service.RescheduleAll(c.Request.Context(), orderBy, actorFromContext(c), req.DryRun)
 	if err != nil {
@@ -215,6 +215,15 @@ func (h *AISchedulingHandler) RescheduleAll(c *gin.Context) {
 		data["message"] = buildLateJobsMessage(summary.LateCount, summary.Generated)
 	}
 	c.JSON(http.StatusOK, dto.Response{Success: true, Data: data})
+}
+
+func isAllowedBatchOrderBy(orderBy string) bool {
+	switch orderBy {
+	case "edd", "epo", "fifo", "readiness", "material_priority", "weighted_tardiness_material", "product_deadline_fifo":
+		return true
+	default:
+		return false
+	}
 }
 
 // @Summary Verify overlaps

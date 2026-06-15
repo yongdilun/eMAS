@@ -94,8 +94,10 @@ func SolverKpiGateEnabled() bool {
 	return envBool("AI_SOLVER_KPI_GATE", false)
 }
 
+const DefaultBatchOrderBy = "product_deadline_fifo"
+
 func BatchOrderBy() string {
-	return strings.ToLower(envString("AI_BATCH_ORDER_BY", "epo"))
+	return strings.ToLower(envString("AI_BATCH_ORDER_BY", DefaultBatchOrderBy))
 }
 
 func ChatbotV2Enabled() bool {

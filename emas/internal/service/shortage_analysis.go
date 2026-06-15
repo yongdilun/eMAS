@@ -748,7 +748,6 @@ func (s *AIPredictiveService) buildBatchMaterialReplenishmentAggregate(proposals
 		})
 	}
 	out = mergeMatAggMax(out, s.buildBatchMaterialAggregateFromResolutionOptions(proposals))
-	out = mergeMatAggMax(out, s.buildBatchMaterialAggregateFromAccelerationNeeds(proposals))
 	sort.Slice(out, func(i, j int) bool { return out[i].MaterialID < out[j].MaterialID })
 	return out
 }

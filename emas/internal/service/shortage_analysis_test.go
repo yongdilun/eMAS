@@ -4,6 +4,7 @@ import (
 	"emas/internal/domain"
 	"emas/internal/repository"
 	"emas/internal/testutil"
+	"strings"
 	"testing"
 	"time"
 )
@@ -345,7 +346,7 @@ func TestBatchAggregatesAffectedJobsOnlyShortageCausers(t *testing.T) {
 	}
 }
 
-func TestBatchMaterialAggregateIncludesLateFutureArrivalWaits(t *testing.T) {
+func TestBatchMaterialAggregateExcludesLateFutureArrivalAcceleration(t *testing.T) {
 	ai, invRepo := newTestAIPredictiveService(t)
 	now := alignSuccessorStart(time.Now().UTC())
 
@@ -403,16 +404,21 @@ func TestBatchMaterialAggregateIncludesLateFutureArrivalWaits(t *testing.T) {
 	}
 
 	agg := ai.buildBatchMaterialReplenishmentAggregate(proposals, nil)
-	if len(agg) != 1 {
-		t.Fatalf("aggregate count = %d, want 1: %#v", len(agg), agg)
+	if len(agg) != 0 {
+		t.Fatalf("late feasible jobs waiting on future arrivals should not appear as shortage aggregate rows: %#v", agg)
 	}
-	if agg[0].MaterialID != "MAT-WAIT" || agg[0].RecommendedQty != 20 {
-		t.Fatalf("aggregate = %#v, want MAT-WAIT qty 20", agg[0])
+
+	acc := ai.buildBatchMaterialAggregateFromAccelerationNeeds(proposals)
+	if len(acc) != 1 {
+		t.Fatalf("late feasible jobs should still expose one optional acceleration row, got %#v", acc)
 	}
-	if got := agg[0].AffectedJobIDs; len(got) != 1 || got[0] != "JOB-LATE-WAIT" {
-		t.Fatalf("affected jobs = %#v, want only JOB-LATE-WAIT", got)
+	if acc[0].MaterialID != "MAT-WAIT" || acc[0].RecommendedQty != 20 {
+		t.Fatalf("optional acceleration row = %#v, want MAT-WAIT qty 20", acc[0])
 	}
-	if !agg[0].SuggestedArriveAt.Before(now.Add(2 * time.Hour)) {
-		t.Fatalf("suggested arrival = %s, want before need time %s", agg[0].SuggestedArriveAt, now.Add(2*time.Hour))
+	if len(acc[0].AffectedJobIDs) != 1 || acc[0].AffectedJobIDs[0] != "JOB-LATE-WAIT" {
+		t.Fatalf("optional acceleration affected jobs = %#v, want JOB-LATE-WAIT only", acc[0].AffectedJobIDs)
+	}
+	if !strings.Contains(acc[0].Rationale, "acceleration") {
+		t.Fatalf("optional acceleration rationale = %q, want explicit acceleration wording", acc[0].Rationale)
 	}
 }

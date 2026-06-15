@@ -266,7 +266,8 @@ async function createSubproductRawMaterialShortageFixture() {
   })
 }
 
-async function openShortageResolution(page) {
+async function openShortageResolution(page, options = {}) {
+  const { expectMaterialRows = true } = options
   await page.addInitScript(() => {
     window.localStorage.setItem('theme', JSON.stringify('dark'))
   })
@@ -283,9 +284,11 @@ async function openShortageResolution(page) {
 
   await expect(page.locator('html')).toHaveClass(/dark/)
   await expect(page.getByRole('heading', { name: 'Shortage Resolution Center' })).toBeVisible()
-  await expect(page.getByText('Unified Material Shortage Resolution')).toBeVisible({ timeout: 90_000 })
-  await expect(page.locator('[data-shortage-line-kind="material"]').first()).toBeVisible()
-  await expect(page.locator('[data-shortage-line-kind="schedule_production"]')).toHaveCount(0)
+  if (expectMaterialRows) {
+    await expect(page.getByText('Unified Material Shortage Resolution')).toBeVisible({ timeout: 90_000 })
+    await expect(page.locator('[data-shortage-line-kind="material"]').first()).toBeVisible()
+    await expect(page.locator('[data-shortage-line-kind="schedule_production"]')).toHaveCount(0)
+  }
 
   return batchBody?.data || batchBody
 }
@@ -479,90 +482,159 @@ test.describe('canonical seeded shortage resolution @shortage-resolution-direct 
     await resetSeededGoApi()
   })
 
-  test('one Apply and Replan clears canonical seed material shortages without Factory Agent', async ({ page }, testInfo) => {
-    const initialPayload = await openShortageResolution(page)
+  test('canonical direct shortage center shows optional acceleration when all seeded jobs are feasible', async ({ page }, testInfo) => {
+    const initialPayload = await openShortageResolution(page, { expectMaterialRows: false })
     const initialSummary = initialPayload?.summary || {}
     const initialRows = initialSummary.material_replenishment_aggregate || []
-    const initialMaterialIds = initialRows.map((row) => row.material_id)
+    const accelerationRows = initialSummary.material_acceleration_aggregate || []
+    const initialProposals = Array.isArray(initialPayload?.proposals) ? initialPayload.proposals : []
 
     await testInfo.attach('canonical-initial-shortage-summary.json', {
       body: JSON.stringify(initialSummary, null, 2),
       contentType: 'application/json',
     })
 
-    expect(initialRows.length).toBeGreaterThan(0)
-    expect(initialMaterialIds).toContain('MAT-010')
+    expect(initialProposals.length).toBeGreaterThan(0)
+    expect(initialProposals.filter((proposal) => proposal.feasible === false)).toEqual([])
+    expect(initialSummary.blocked || 0).toBe(0)
+    expect(initialRows).toEqual([])
+    expect(accelerationRows.length).toBeGreaterThan(0)
+    expect(accelerationRows.map((row) => row.material_id)).toContain('MAT-010')
     expect(initialSummary.schedule_production_aggregate || []).toEqual([])
+    await expect(page.getByText('Optional Material Acceleration')).toBeVisible()
+    await expect(page.getByLabel('Include optional acceleration')).not.toBeChecked()
+    await expect(page.locator('[data-material-action-source="acceleration"]').first()).toBeVisible()
+    await expect(page.locator('[data-material-action-source="acceleration"]').first().getByRole('checkbox')).not.toBeChecked()
     await expect(page.locator('[data-shortage-line-kind="schedule_production"]')).toHaveCount(0)
-    await expect(page.getByText(/^Proposals \(/)).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath('canonical-shortage-resolution-dark.png'), fullPage: true })
-
-    const { payload, rescheduleData } = await applyAndCapture(page)
-    const submittedRows = payload?.suggestions || []
-    const finalSummary = rescheduleData?.summary || {}
-    const finalProposals = Array.isArray(rescheduleData?.proposals) ? rescheduleData.proposals : []
-
-    await testInfo.attach('canonical-one-shot-apply-and-replan.json', {
-      body: JSON.stringify({ submittedRows, finalSummary }, null, 2),
-      contentType: 'application/json',
-    })
-
-    expect(submittedRows.length).toBeGreaterThan(0)
-    expect(submittedRows.every((row) => String(row.material_id || '').startsWith('MAT-'))).toBe(true)
-    expect(submittedRows.some((row) => row.option_type === 'schedule_production')).toBe(false)
-    expect(finalProposals.length).toBeGreaterThan(0)
-    expect(materialShortageInfeasible(finalProposals)).toEqual([])
-    expect(finalProposals.filter((proposal) => proposal.feasible === false)).toEqual([])
-    expect(finalProposals.every((proposal) => Array.isArray(proposal.proposed_slots) && proposal.proposed_slots.length > 0)).toBe(true)
-    expect(finalSummary.blocked || 0).toBe(0)
-    expect(finalSummary.material_replenishment_aggregate || []).toEqual([])
-    expect(finalSummary.schedule_production_aggregate || []).toEqual([])
+    await page.screenshot({ path: testInfo.outputPath('canonical-shortage-resolution-acceleration-dark.png'), fullPage: true })
   })
 
-  test('modal first aggregate includes deep child material and clears in one Apply/Replan', async ({ page }, testInfo) => {
+  test('canonical modal hides shortage resolution action when all seeded jobs are feasible', async ({ page }, testInfo) => {
     const initialPayload = await openSchedulingPreview(page)
     const initialSummary = initialPayload?.summary || {}
     const initialRows = initialSummary.material_replenishment_aggregate || []
-    const initialMaterialIds = initialRows.map((row) => row.material_id)
+    const accelerationRows = initialSummary.material_acceleration_aggregate || []
+    const initialProposals = Array.isArray(initialPayload?.proposals) ? initialPayload.proposals : []
 
     await testInfo.attach('canonical-modal-initial-reschedule-summary.json', {
       body: JSON.stringify(initialSummary, null, 2),
       contentType: 'application/json',
     })
 
-    expect(initialRows.length).toBeGreaterThan(0)
-    expect(initialMaterialIds).toContain('MAT-010')
+    expect(initialProposals.length).toBeGreaterThan(0)
+    expect(initialProposals.filter((proposal) => proposal.feasible === false)).toEqual([])
+    expect(initialSummary.blocked || 0).toBe(0)
+    expect(initialRows).toEqual([])
+    expect(accelerationRows.length).toBeGreaterThan(0)
     expect(initialSummary.schedule_production_aggregate || []).toEqual([])
+    await expect(page.getByRole('button', { name: 'Resolve in Resolution Center' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'View Acceleration Options' })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('canonical-modal-acceleration-action-dark.png'), fullPage: true })
+  })
 
-    await page.getByRole('button', { name: 'Resolve in Resolution Center' }).click()
+  test('canonical optional acceleration replan remains conflict-free and applyable', async ({ page }, testInfo) => {
+    const initialPayload = await openSchedulingPreview(page)
+    expect(initialPayload?.summary?.material_replenishment_aggregate || []).toEqual([])
+    expect(initialPayload?.summary?.material_acceleration_aggregate?.length || 0).toBeGreaterThan(0)
+    await expect(page.getByRole('button', { name: 'View Acceleration Options' })).toBeVisible()
+
+    const verifyBodies = []
+    const validationBodies = []
+    const captureValidationResponses = async (response) => {
+      if (response.request().method() !== 'POST') return
+      if (
+        response.url().includes('/ai/scheduling/verify-overlaps') ||
+        response.url().includes('/scheduling/slots/validate')
+      ) {
+        try {
+          const body = await response.json()
+          const data = body?.data || body
+          if (response.url().includes('/ai/scheduling/verify-overlaps')) verifyBodies.push(data)
+          else validationBodies.push(data)
+        } catch {
+          // Explicit assertions below surface bad response bodies/statuses.
+        }
+      }
+    }
+    page.on('response', captureValidationResponses)
+
+    await page.getByRole('button', { name: 'View Acceleration Options' }).click()
     await expect(page.getByRole('heading', { name: 'Shortage Resolution Center' }).first()).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Unified Material Shortage Resolution')).toBeVisible()
-    await expect(page.locator('[data-shortage-line-kind="material"]').filter({ hasText: 'MAT-010' })).toBeVisible()
-    await expect(page.locator('[data-shortage-line-kind="schedule_production"]')).toHaveCount(0)
-    await expect(page.getByText(/^Proposals \(/)).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath('canonical-modal-shortage-resolution-dark.png'), fullPage: true })
-
+    await expect(page.getByText('Optional Material Acceleration')).toBeVisible()
+    await page.getByLabel('Include optional acceleration').check()
     const { applyPayloads, rescheduleData } = await applyAndCaptureFromEmbeddedResolution(page)
-    const submittedRows = applyPayloads.flatMap((payload) => payload?.suggestions || [])
-    const finalSummary = rescheduleData?.summary || {}
-    const finalProposals = Array.isArray(rescheduleData?.proposals) ? rescheduleData.proposals : []
 
-    await testInfo.attach('canonical-modal-one-shot-apply-and-replan.json', {
-      body: JSON.stringify({ submittedRows, finalSummary }, null, 2),
+    await expect.poll(() => verifyBodies.length, { timeout: 120_000 }).toBeGreaterThan(0)
+    await expect.poll(() => validationBodies.length, { timeout: 120_000 }).toBeGreaterThan(0)
+
+    const submittedRows = applyPayloads.flatMap((payload) => payload?.suggestions || [])
+    const finalProposals = Array.isArray(rescheduleData?.proposals) ? rescheduleData.proposals : []
+    const proposalIds = finalProposals.map((proposal) => proposal.proposal_id).filter(Boolean)
+    const directVerify = await goApiJson('/ai/scheduling/verify-overlaps', {
+      method: 'POST',
+      body: {
+        scope: 'proposals',
+        proposal_ids: proposalIds,
+      },
+    })
+
+    await testInfo.attach('canonical-acceleration-applyability.json', {
+      body: JSON.stringify(
+        {
+          submittedRows,
+          finalSummary: rescheduleData?.summary,
+          latestVerify: verifyBodies.at(-1),
+          directVerify: directVerify?.data || directVerify,
+          validationFailures: validationBodies.filter((row) => Array.isArray(row?.hard_reasons) && row.hard_reasons.length > 0),
+        },
+        null,
+        2,
+      ),
       contentType: 'application/json',
     })
 
-    expect(submittedRows.length).toBeGreaterThan(0)
-    expect(submittedRows.some((row) => row.material_id === 'MAT-010')).toBe(true)
-    expect(submittedRows.every((row) => String(row.material_id || '').startsWith('MAT-'))).toBe(true)
-    expect(submittedRows.some((row) => row.option_type === 'schedule_production')).toBe(false)
+    expect(submittedRows.map((row) => row.material_id)).toContain('MAT-010')
     expect(finalProposals.length).toBeGreaterThan(0)
-    expect(materialShortageInfeasible(finalProposals)).toEqual([])
     expect(finalProposals.filter((proposal) => proposal.feasible === false)).toEqual([])
-    expect(finalProposals.every((proposal) => Array.isArray(proposal.proposed_slots) && proposal.proposed_slots.length > 0)).toBe(true)
-    expect(finalSummary.blocked || 0).toBe(0)
-    expect(finalSummary.material_replenishment_aggregate || []).toEqual([])
-    expect(finalSummary.schedule_production_aggregate || []).toEqual([])
+    expect(directVerify?.data?.valid ?? directVerify?.valid).toBe(true)
+    expect(verifyBodies.at(-1)?.valid).toBe(true)
+    expect(validationBodies.filter((row) => Array.isArray(row?.hard_reasons) && row.hard_reasons.length > 0)).toEqual([])
+    await expect(page.getByText(/Schedule conflicts detected/i)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Apply All' })).toBeEnabled()
+
+    const jobIds = finalProposals.map((proposal) => proposal.job_id).filter(Boolean)
+    await page.getByRole('button', { name: 'Apply All' }).click()
+    await expect(page.getByRole('heading', { name: 'Apply All' })).toBeVisible()
+    await page.getByRole('button', { name: 'Write to job plan' }).click()
+
+    await expect
+      .poll(
+        () => verifyBodies.some((body) => body?.scope === 'applied' || body?.Scope === 'applied'),
+        { timeout: 240_000 },
+      )
+      .toBe(true)
+    const directAppliedVerify = await goApiJson('/ai/scheduling/verify-overlaps', {
+      method: 'POST',
+      body: {
+        scope: 'applied',
+        job_ids: jobIds,
+      },
+    })
+    await testInfo.attach('canonical-acceleration-applied-overlap-check.json', {
+      body: JSON.stringify(
+        {
+          appliedVerifyFromUi: verifyBodies.filter((body) => body?.scope === 'applied' || body?.Scope === 'applied'),
+          directAppliedVerify: directAppliedVerify?.data || directAppliedVerify,
+        },
+        null,
+        2,
+      ),
+      contentType: 'application/json',
+    })
+
+    expect(directAppliedVerify?.data?.valid ?? directAppliedVerify?.valid).toBe(true)
+    await expect(page.getByText(/Schedule conflicts detected/i)).toHaveCount(0)
+    page.off('response', captureValidationResponses)
   })
 })
 

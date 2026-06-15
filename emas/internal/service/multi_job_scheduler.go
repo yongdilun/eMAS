@@ -110,7 +110,7 @@ type ScheduleJobSetOpts struct {
 // ScheduleJobSet schedules a set of jobs in priority order, using shared machine
 // state (tentative slots from earlier jobs in the batch). Jobs are filtered to
 // planned/scheduled with no active slots (unless opts.IncludeJobsWithActiveSlots),
-// sorted by orderBy (edd/epo/fifo/readiness), and each proposal is persisted
+// sorted by orderBy (edd/epo/fifo/readiness/material_priority/weighted_tardiness_material/product_deadline_fifo), and each proposal is persisted
 // (unless opts.PersistProposals is false).
 func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []string, generatedBy, orderBy string, opts *ScheduleJobSetOpts) ([]*SchedulingProposal, *BatchProposalSummary, error) {
 	batchStarted := time.Now()
@@ -426,6 +426,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 	if proposalMaterialAgg := s.buildBatchMaterialAggregateFromResolutionOptions(proposals); len(proposalMaterialAgg) > 0 {
 		summary.MaterialReplenishmentAggregate = mergeMatAggMax(summary.MaterialReplenishmentAggregate, proposalMaterialAgg)
 	}
+	summary.MaterialAccelerationAggregate = s.buildBatchMaterialAggregateFromAccelerationNeeds(proposals)
 	summary.Blocked = generationBlocked + countInfeasibleBatchProposals(proposals)
 	// #region agent log
 	{
@@ -473,6 +474,7 @@ func (s *AIPredictiveService) ScheduleJobSet(ctx context.Context, jobIDs []strin
 			"infeasible_count":                 len(infeasibleIDs),
 			"infeasible_job_ids":               infeasibleIDs,
 			"material_replenishment_aggregate": matLines,
+			"material_acceleration_count":      len(summary.MaterialAccelerationAggregate),
 			"infeasible_detail":                detail,
 			"convergence_passes":               convPasses,
 		})
@@ -1160,6 +1162,9 @@ type BatchProposalSummary struct {
 	StarvedJobsCount int          `json:"starved_jobs_count,omitempty"`
 	// MaterialReplenishmentAggregate: one line per raw material for bulk apply-replenishment.
 	MaterialReplenishmentAggregate []BatchMaterialReplenishmentLine `json:"material_replenishment_aggregate,omitempty"`
+	// MaterialAccelerationAggregate: optional raw-material arrivals that may reduce lateness
+	// for already-feasible jobs waiting on future supply. These are not shortage fixes.
+	MaterialAccelerationAggregate []BatchMaterialReplenishmentLine `json:"material_acceleration_aggregate,omitempty"`
 }
 
 // LateJobRef references a job that is late; used in batch summary.
@@ -1370,30 +1375,74 @@ func sortJobsByOrder(jobs []domain.Job, orderBy string, readinessAt map[string]t
 		}
 		return time.Now()
 	}
+	priorityOrder := map[string]int{
+		domain.JobPriorityUrgent: 4,
+		domain.JobPriorityHigh:   3,
+		domain.JobPriorityMedium: 2,
+		domain.JobPriorityLow:    1,
+	}
+	priority := func(value string) int {
+		p := priorityOrder[value]
+		if p == 0 {
+			return 1
+		}
+		return p
+	}
 	switch orderBy {
 	case "readiness":
-		priorityOrder := map[string]int{
-			domain.JobPriorityUrgent: 4,
-			domain.JobPriorityHigh:   3,
-			domain.JobPriorityMedium: 2,
-			domain.JobPriorityLow:    1,
-		}
 		sort.Slice(jobs, func(i, j int) bool {
 			ri, rj := ready(jobs[i].JobID), ready(jobs[j].JobID)
 			if !ri.Equal(rj) {
 				return ri.Before(rj)
 			}
-			pi, pj := priorityOrder[jobs[i].Priority], priorityOrder[jobs[j].Priority]
-			if pi == 0 {
-				pi = 1
-			}
-			if pj == 0 {
-				pj = 1
-			}
+			pi, pj := priority(jobs[i].Priority), priority(jobs[j].Priority)
 			if pi != pj {
 				return pi > pj
 			}
 			return jobs[i].Deadline.Before(jobs[j].Deadline)
+		})
+	case "material_priority":
+		sort.Slice(jobs, func(i, j int) bool {
+			pi, pj := priority(jobs[i].Priority), priority(jobs[j].Priority)
+			if pi != pj {
+				return pi > pj
+			}
+			ri, rj := ready(jobs[i].JobID), ready(jobs[j].JobID)
+			if !ri.Equal(rj) {
+				return ri.Before(rj)
+			}
+			if !jobs[i].Deadline.Equal(jobs[j].Deadline) {
+				return jobs[i].Deadline.Before(jobs[j].Deadline)
+			}
+			if !jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+				return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+			}
+			return jobs[i].JobID < jobs[j].JobID
+		})
+	case "weighted_tardiness_material":
+		sort.SliceStable(jobs, func(i, j int) bool {
+			if !jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+				return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+			}
+			ri, rj := ready(jobs[i].JobID), ready(jobs[j].JobID)
+			if !ri.Equal(rj) {
+				return ri.Before(rj)
+			}
+			return false
+		})
+	case "product_deadline_fifo":
+		sort.SliceStable(jobs, func(i, j int) bool {
+			if !jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+				return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+			}
+			if jobs[i].ProductID == jobs[j].ProductID && !jobs[i].Deadline.Equal(jobs[j].Deadline) {
+				return jobs[i].Deadline.Before(jobs[j].Deadline)
+			}
+			ri, rj := ready(jobs[i].JobID), ready(jobs[j].JobID)
+			if !ri.Equal(rj) {
+				return ri.Before(rj)
+			}
+			return false
 		})
 	case "edd":
 		sort.Slice(jobs, func(i, j int) bool {
@@ -1412,21 +1461,9 @@ func sortJobsByOrder(jobs []domain.Job, orderBy string, readinessAt map[string]t
 	case "epo":
 		fallthrough
 	default:
-		priorityOrder := map[string]int{
-			domain.JobPriorityUrgent: 4,
-			domain.JobPriorityHigh:   3,
-			domain.JobPriorityMedium: 2,
-			domain.JobPriorityLow:    1,
-		}
 		sort.Slice(jobs, func(i, j int) bool {
-			pi := priorityOrder[jobs[i].Priority]
-			if pi == 0 {
-				pi = 1
-			}
-			pj := priorityOrder[jobs[j].Priority]
-			if pj == 0 {
-				pj = 1
-			}
+			pi := priority(jobs[i].Priority)
+			pj := priority(jobs[j].Priority)
 			if pi != pj {
 				return pi > pj
 			}

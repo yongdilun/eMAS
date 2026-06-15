@@ -184,6 +184,82 @@ func Test_sortJobsByOrder_readiness(t *testing.T) {
 	}
 }
 
+func Test_sortJobsByOrder_materialPriority(t *testing.T) {
+	now := time.Now().UTC()
+	soon := now.Add(2 * time.Hour)
+	later := now.Add(48 * time.Hour)
+	jobs := []domain.Job{
+		{JobID: "J1", Priority: domain.JobPriorityHigh, Deadline: now.Add(4 * time.Hour), CreatedAt: now},
+		{JobID: "J2", Priority: domain.JobPriorityHigh, Deadline: now.Add(8 * time.Hour), CreatedAt: now},
+		{JobID: "J3", Priority: domain.JobPriorityMedium, Deadline: now.Add(time.Hour), CreatedAt: now},
+	}
+	readinessAt := map[string]time.Time{
+		"J1": later,
+		"J2": soon,
+		"J3": now,
+	}
+	sortJobsByOrder(jobs, "material_priority", readinessAt)
+	if jobs[0].JobID != "J2" {
+		t.Fatalf("material_priority: first should be J2 (same high priority, earlier material readiness), got %s", jobs[0].JobID)
+	}
+	if jobs[1].JobID != "J1" {
+		t.Fatalf("material_priority: second should be J1 (high priority still beats medium), got %s", jobs[1].JobID)
+	}
+	if jobs[2].JobID != "J3" {
+		t.Fatalf("material_priority: third should be J3 (lower priority), got %s", jobs[2].JobID)
+	}
+}
+
+func Test_sortJobsByOrder_weightedTardinessMaterial(t *testing.T) {
+	now := time.Now().UTC()
+	older := now.Add(-12 * time.Hour)
+	newer := now.Add(-1 * time.Hour)
+	jobs := []domain.Job{
+		{JobID: "J1", Priority: domain.JobPriorityHigh, Deadline: now.Add(4 * time.Hour), CreatedAt: newer},
+		{JobID: "J2", Priority: domain.JobPriorityMedium, Deadline: now.Add(8 * time.Hour), CreatedAt: older},
+		{JobID: "J3", Priority: domain.JobPriorityMedium, Deadline: now.Add(6 * time.Hour), CreatedAt: older},
+	}
+	readinessAt := map[string]time.Time{
+		"J1": now,
+		"J2": now.Add(3 * time.Hour),
+		"J3": now.Add(time.Hour),
+	}
+	sortJobsByOrder(jobs, "weighted_tardiness_material", readinessAt)
+	if jobs[0].JobID != "J3" {
+		t.Fatalf("weighted_tardiness_material: first should be J3 (older release, same priority, earlier material readiness), got %s", jobs[0].JobID)
+	}
+	if jobs[1].JobID != "J2" {
+		t.Fatalf("weighted_tardiness_material: second should be J2 (older release before newer high-priority work), got %s", jobs[1].JobID)
+	}
+	if jobs[2].JobID != "J1" {
+		t.Fatalf("weighted_tardiness_material: third should be J1 (newer release), got %s", jobs[2].JobID)
+	}
+}
+
+func Test_sortJobsByOrder_productDeadlineFIFO(t *testing.T) {
+	now := time.Now().UTC()
+	jobs := []domain.Job{
+		{JobID: "J1", ProductID: "P-A", Priority: domain.JobPriorityLow, Deadline: now.AddDate(0, 0, 21), CreatedAt: now},
+		{JobID: "J3", ProductID: "P-A", Priority: domain.JobPriorityMedium, Deadline: now.AddDate(0, 0, 8), CreatedAt: now},
+		{JobID: "J2", ProductID: "P-B", Priority: domain.JobPriorityHigh, Deadline: now.AddDate(0, 0, 9), CreatedAt: now},
+	}
+	readinessAt := map[string]time.Time{
+		"J1": now,
+		"J2": now,
+		"J3": now,
+	}
+
+	sortJobsByOrder(jobs, "product_deadline_fifo", readinessAt)
+
+	got := []string{jobs[0].JobID, jobs[1].JobID, jobs[2].JobID}
+	want := []string{"J3", "J1", "J2"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("product_deadline_fifo order=%v, want %v", got, want)
+		}
+	}
+}
+
 func Test_sortJobsByOrder_defaultFallback(t *testing.T) {
 	now := time.Now().UTC()
 	jobs := []domain.Job{

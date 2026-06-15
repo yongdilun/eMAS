@@ -352,6 +352,28 @@ export const extractBatchShortageAggregate = (src) => {
   return { byMaterial, byProduct: [], anchorProposalId }
 }
 
+export const extractBatchAccelerationAggregate = (src) => {
+  if (!src || typeof src !== 'object') {
+    return { byMaterial: [], byProduct: [], anchorProposalId: null }
+  }
+  const nested = src.batch_acceleration || src.batchAcceleration || src.acceleration_aggregate || src.accelerationAggregate
+  let byMaterial = pickList(src, ['material_acceleration_aggregate', 'materialAccelerationAggregate'])
+  if (!byMaterial.length) byMaterial = pickList(src, ['by_acceleration_material', 'byAccelerationMaterial'])
+  if (!byMaterial.length && nested) byMaterial = pickList(nested, ['material_acceleration_aggregate', 'materialAccelerationAggregate'])
+  if (!byMaterial.length && nested) byMaterial = pickList(nested, ['by_material', 'byMaterial'])
+  const anchorProposalId =
+    pick(src, [
+      'aggregate_anchor_proposal_id',
+      'aggregateAnchorProposalId',
+      'apply_anchor_proposal_id',
+      'applyAnchorProposalId',
+    ]) ||
+    (nested &&
+      pick(nested, ['aggregate_anchor_proposal_id', 'aggregateAnchorProposalId', 'apply_anchor_proposal_id'])) ||
+    null
+  return { byMaterial, byProduct: [], anchorProposalId }
+}
+
 /**
  * Normalized material lines for UI + apply from aggregate arrays.
  */

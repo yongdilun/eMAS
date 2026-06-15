@@ -442,13 +442,13 @@ type ProposalDecisionRequest struct {
 type BatchProposalsRequest struct {
 	JobIDs                  []string `json:"job_ids"`  // explicit job IDs; if empty and Scope set, use scope
 	Scope                   string   `json:"scope"`    // "all_unscheduled" = all jobs with status planned/scheduled and no active slots
-	OrderBy                 string   `json:"order_by"` // "edd" | "epo" | "fifo" (default: "epo")
+	OrderBy                 string   `json:"order_by"` // "edd" | "epo" | "fifo" | "readiness" | "material_priority" | "weighted_tardiness_material" | "product_deadline_fifo" (default: "product_deadline_fifo")
 	IncludeInventoryActions bool     `json:"include_inventory_actions"`
 }
 
 // RescheduleAllRequest for POST /ai/scheduling/reschedule-all
 type RescheduleAllRequest struct {
-	OrderBy string `json:"order_by"` // "edd" | "epo" | "fifo" | "readiness" (default: "epo")
+	OrderBy string `json:"order_by"` // "edd" | "epo" | "fifo" | "readiness" | "material_priority" | "weighted_tardiness_material" | "product_deadline_fifo" (default: "product_deadline_fifo")
 	DryRun  bool   `json:"dry_run"`  // if true: preview only, no cancel/delete/persist; returns proposals without side effects
 }
 

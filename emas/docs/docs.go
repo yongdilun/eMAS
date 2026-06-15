@@ -10228,7 +10228,7 @@ const docTemplate = `{
                     }
                 },
                 "order_by": {
-                    "description": "\"edd\" | \"epo\" | \"fifo\" (default: \"epo\")",
+                    "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
                     "type": "string"
                 },
                 "scope": {
@@ -10997,7 +10997,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "order_by": {
-                    "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" (default: \"epo\")",
+                    "description": "\"edd\" | \"epo\" | \"fifo\" | \"readiness\" | \"material_priority\" | \"weighted_tardiness_material\" | \"product_deadline_fifo\" (default: \"product_deadline_fifo\")",
                     "type": "string"
                 }
             }

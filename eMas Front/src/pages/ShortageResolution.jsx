@@ -23,6 +23,7 @@ import {
   aggregateMaterialShortageRowsFromProposals,
   buildAggregateApplySuggestions,
   buildApplyPayload,
+  extractBatchAccelerationAggregate,
   extractBatchShortageAggregate,
   isApplyReplenishmentSuggestion,
   mapRecommendationToApplyItem,
@@ -56,7 +57,7 @@ const aggregateLineId = (line) => line?.id || line?.material_id || ''
 
 const aggregateLineLabel = (line) => line?.label || line?.material_name || line?.material_id || 'Unknown'
 
-const aggregateLineKindLabel = () => 'Material arrival'
+const aggregateLineKindLabel = (line) => line?.source === 'acceleration' ? 'Optional acceleration' : 'Material arrival'
 
 const suggestionMaterialId = (row) => String(row?.material_id || row?.id || '').trim()
 
@@ -239,7 +240,14 @@ const ShortageResolution = ({
           order_by: orderBy,
         })
         const u = unwrapSchedulingBatchPayload(resp)
-        const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
+        const {
+          proposals: proposalsList,
+          summary,
+          byMaterial,
+          byProduct,
+          materialReplenishmentAggregate,
+          materialAccelerationAggregate,
+        } = u
         setBatchMessage(augmentScheduleBatchMessage(u.message) || '')
 
         if (Array.isArray(proposalsList)) {
@@ -250,7 +258,13 @@ const ShortageResolution = ({
 
         if (summary || byMaterial || byProduct || materialReplenishmentAggregate) {
           setLocalBatchSummary(
-            mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
+            mergeBatchSummaryWithAggregate({
+              summary,
+              byMaterial,
+              byProduct,
+              materialReplenishmentAggregate,
+              materialAccelerationAggregate,
+            }),
           )
         }
       } catch (err) {
@@ -283,14 +297,33 @@ const ShortageResolution = ({
     () => normalizeBatchAggregateLines(batchAggregate.byMaterial, batchAggregate.byProduct),
     [batchAggregate.byMaterial, batchAggregate.byProduct],
   )
+  const accelerationAggregate = useMemo(
+    () => extractBatchAccelerationAggregate(effectiveBatchSummary),
+    [effectiveBatchSummary],
+  )
+  const normalizedAccelerationLines = useMemo(
+    () =>
+      normalizeBatchAggregateLines(accelerationAggregate.byMaterial, accelerationAggregate.byProduct).map((line) => ({
+        ...line,
+        key: line.key.replace(/^agg:/, 'acc:'),
+        selected: false,
+        source: 'acceleration',
+        rationale: line.rationale || 'Optional material acceleration for feasible late jobs.',
+      })),
+    [accelerationAggregate.byMaterial, accelerationAggregate.byProduct],
+  )
   const proposalAggregateLines = useMemo(() => {
     if (normalizedAggregateLines.length > 0) return []
     const rows = aggregateMaterialShortageRowsFromProposals(proposals)
     return normalizeBatchAggregateLines(rows, [])
   }, [normalizedAggregateLines.length, proposals])
-  const effectiveAggregateLines = normalizedAggregateLines.length > 0
+  const requiredAggregateLines = normalizedAggregateLines.length > 0
     ? normalizedAggregateLines
     : proposalAggregateLines
+  const effectiveAggregateLines = useMemo(
+    () => [...requiredAggregateLines, ...normalizedAccelerationLines],
+    [requiredAggregateLines, normalizedAccelerationLines],
+  )
 
   useEffect(() => {
     setManualAggregateLines([])
@@ -306,6 +339,27 @@ const ShortageResolution = ({
   )
 
   const hasAggregateLines = effectiveAggregateLines.length > 0 || manualAggregateLines.length > 0
+  const requiredAggregateCount = aggregateLines.filter((line) => line.source !== 'acceleration').length
+  const optionalAccelerationCount = aggregateLines.filter((line) => line.source === 'acceleration').length
+  const optionalAccelerationSelectedCount = aggregateLines.filter((line) => {
+    if (line.source !== 'acceleration') return false
+    const d = aggDrafts[line.key] || {}
+    return (d.selected !== undefined ? d.selected !== false : line.selected !== false)
+  }).length
+  const allOptionalAccelerationSelected =
+    optionalAccelerationCount > 0 && optionalAccelerationSelectedCount === optionalAccelerationCount
+
+  const handleOptionalAccelerationToggle = (checked) => {
+    setAggDrafts((prev) => {
+      const next = { ...prev }
+      aggregateLines
+        .filter((line) => line.source === 'acceleration')
+        .forEach((line) => {
+          next[line.key] = { ...(next[line.key] || {}), selected: checked }
+        })
+      return next
+    })
+  }
 
   useEffect(() => {
     setAggDrafts((prev) => {
@@ -561,10 +615,23 @@ const ShortageResolution = ({
 
   const handleRescheduleResponse = async (resp) => {
     const u = unwrapSchedulingBatchPayload(resp)
-    const { proposals: proposalsList, summary, byMaterial, byProduct, materialReplenishmentAggregate } = u
+    const {
+      proposals: proposalsList,
+      summary,
+      byMaterial,
+      byProduct,
+      materialReplenishmentAggregate,
+      materialAccelerationAggregate,
+    } = u
     setBatchMessage(augmentScheduleBatchMessage(u.message) || '')
     setLocalBatchSummary(
-      mergeBatchSummaryWithAggregate({ summary, byMaterial, byProduct, materialReplenishmentAggregate }),
+      mergeBatchSummaryWithAggregate({
+        summary,
+        byMaterial,
+        byProduct,
+        materialReplenishmentAggregate,
+        materialAccelerationAggregate,
+      }),
     )
     setDrafts({})
     setAggDrafts({})
@@ -590,7 +657,7 @@ const ShortageResolution = ({
       const resp = await aiApi.scheduling.rescheduleAll({ order_by: orderBy })
       const handedOff = await handleRescheduleResponse(resp)
       if (!handedOff) {
-        toast.success('Regenerated schedule without applying shortage rows.')
+        toast.success('Regenerated schedule without applying material rows.')
       }
     } catch (err) {
       toast.error(
@@ -649,6 +716,7 @@ const ShortageResolution = ({
         byMaterial: u.byMaterial,
         byProduct: u.byProduct,
         materialReplenishmentAggregate: u.materialReplenishmentAggregate,
+        materialAccelerationAggregate: u.materialAccelerationAggregate,
       })
       const followupSuggestions = materialAggregateApplySuggestionsFromBatch(
         latestSummary,
@@ -691,7 +759,7 @@ const ShortageResolution = ({
 
     if (!useAggregate && !useLegacy) {
       if (hasAggregateLines) {
-        toast.info('No selected shortage rows with quantity and arrival time. Include a row or use Replan only.')
+        toast.info('No selected material rows with quantity and arrival time. Include a row or use Replan only.')
       } else if (selectedRecommendationsAll.length === 0) {
         toast.info('Select at least one recommendation (Include), or adjust filters.')
       } else {
@@ -786,6 +854,7 @@ const ShortageResolution = ({
         byMaterial: finalPayload.byMaterial,
         byProduct: finalPayload.byProduct,
         materialReplenishmentAggregate: finalPayload.materialReplenishmentAggregate,
+        materialAccelerationAggregate: finalPayload.materialAccelerationAggregate,
       })
       const remainingMaterialShortages = countMaterialShortageInfeasible(finalPayload.proposals)
       const remainingMaterialRows = materialAggregateApplySuggestionsFromBatch(
@@ -868,19 +937,35 @@ const ShortageResolution = ({
                 <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-primary px-1.5 text-[10px] text-white">
                   {aggregateLines.length}
                 </span>
-                Unified Material Shortage Resolution
+                {requiredAggregateCount > 0 ? 'Unified Material Shortage Resolution' : 'Optional Material Acceleration'}
               </h3>
               <p className="mt-0.5 text-[11px] text-ink-subtle">
-                Material rows are included by default. Add or remove material arrivals before apply.
+                {requiredAggregateCount > 0
+                  ? 'Required material rows are included by default. Optional acceleration rows are off until included.'
+                  : 'All jobs are feasible. Optional acceleration rows can reduce lateness and are off by default.'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openAddLine}
-              className="inline-flex h-8 items-center rounded-md border border-hairline bg-surface-1 px-3 text-xs font-semibold text-ink hover:bg-surface-3"
-            >
-              Add line
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {optionalAccelerationCount > 0 && (
+                <label className="inline-flex h-8 items-center gap-2 rounded-md border border-hairline bg-surface-1 px-3 text-xs font-semibold text-ink hover:bg-surface-3">
+                  <input
+                    aria-label="Include optional acceleration"
+                    type="checkbox"
+                    checked={allOptionalAccelerationSelected}
+                    onChange={(e) => handleOptionalAccelerationToggle(e.target.checked)}
+                    className="h-4 w-4 rounded border-hairline bg-surface-1 text-primary focus:ring-primary"
+                  />
+                  <span>Include optional acceleration</span>
+                </label>
+              )}
+              <button
+                type="button"
+                onClick={openAddLine}
+                className="inline-flex h-8 items-center rounded-md border border-hairline bg-surface-1 px-3 text-xs font-semibold text-ink hover:bg-surface-3"
+              >
+                Add line
+              </button>
+            </div>
           </div>
 
           {addLineOpen && (
@@ -966,7 +1051,7 @@ const ShortageResolution = ({
             <div className="max-h-[45vh] space-y-2 overflow-y-auto pr-2">
               {aggregateLines.length === 0 && (
                 <div className="rounded-md border border-dashed border-hairline bg-surface-2 p-6 text-center text-sm text-ink-subtle">
-                  No active shortage rows. Add a material line, or use Replan only.
+                  No active material rows. Add a material line, or use Replan only.
                 </div>
               )}
               {aggregateLines.map((line) => {
@@ -979,9 +1064,14 @@ const ShortageResolution = ({
                     key={line.key}
                     data-shortage-line-kind={line.kind || 'material'}
                     data-shortage-line-id={id}
+                    data-material-action-source={line.source || 'recommendation'}
                     className={`grid grid-cols-1 gap-3 rounded-md border p-3 transition-colors xl:grid-cols-[2rem_minmax(12rem,1.4fr)_9rem_13rem_minmax(10rem,1fr)_4rem] xl:items-center ${
                       selected
-                        ? 'border-hairline bg-surface-1 hover:bg-surface-2'
+                        ? line.source === 'acceleration'
+                          ? 'border-sky-300/60 bg-sky-50/60 hover:bg-sky-50 dark:border-sky-500/30 dark:bg-sky-950/20 dark:hover:bg-sky-950/30'
+                          : 'border-hairline bg-surface-1 hover:bg-surface-2'
+                        : line.source === 'acceleration'
+                          ? 'border-sky-200/60 bg-surface-2/70 dark:border-sky-500/20'
                         : 'border-hairline bg-surface-2/70'
                     }`}
                   >
@@ -1004,7 +1094,7 @@ const ShortageResolution = ({
                         <span
                           className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-semibold text-ink-subtle"
                         >
-                          {aggregateLineKindLabel(line.kind)}
+                          {aggregateLineKindLabel(line)}
                         </span>
                         {line.source === 'manual' && (
                           <span className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-semibold text-ink-subtle">
